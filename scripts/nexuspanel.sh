@@ -77,6 +77,28 @@ panel_is_listening() {
   [ "$(panel_http_code /api/setup/status)" = "200" ]
 }
 
+# Ensure data dir has required files (safe to run on install and update).
+seed_data_dir() {
+  mkdir -p "${DATA_DIR}" "${DATA_DIR}/backups"
+  if [ ! -f "${DATA_DIR}/xray_config.json" ] && [ -f "${APP_DIR}/xray_config.json" ]; then
+    cp "${APP_DIR}/xray_config.json" "${DATA_DIR}/xray_config.json"
+    ok "Created ${DATA_DIR}/xray_config.json"
+  fi
+}
+
+# Open panel port in UFW when present (never enables inactive UFW — avoids SSH lockout).
+configure_firewall() {
+  command -v ufw >/dev/null 2>&1 || return 0
+  log "Configuring firewall (UFW) for port ${PANEL_PORT}..."
+  ufw allow 22/tcp comment 'SSH' >/dev/null 2>&1 || true
+  ufw allow "${PANEL_PORT}/tcp" comment 'NexusPanel' >/dev/null 2>&1 || true
+  if ufw status 2>/dev/null | grep -qi "Status: active"; then
+    ok "UFW: SSH (22) and NexusPanel (${PANEL_PORT}) allowed."
+  else
+    ok "UFW rules added (firewall not enabled — enable manually if you use UFW)."
+  fi
+}
+
 # --------------------------------------------------------------------------- #
 # Dependencies
 # --------------------------------------------------------------------------- #
@@ -173,7 +195,13 @@ fetch_repo() {
 
 install_cli() {
   log "Installing 'nexuspanel' command..."
-  curl -fsSL "${SCRIPT_URL}" -o "${BIN_PATH}" 2>/dev/null || cp "$0" "${BIN_PATH}" 2>/dev/null || true
+  if [ -f "${APP_DIR}/scripts/nexuspanel.sh" ]; then
+    cp "${APP_DIR}/scripts/nexuspanel.sh" "${BIN_PATH}"
+  elif [ -f "$0" ] && [ "$0" != "${BIN_PATH}" ]; then
+    cp "$0" "${BIN_PATH}"
+  else
+    curl -fsSL "${SCRIPT_URL}" -o "${BIN_PATH}" 2>/dev/null || true
+  fi
   chmod +x "${BIN_PATH}" 2>/dev/null || true
 }
 
@@ -192,11 +220,14 @@ build_node_image() {
 
 wait_for_panel() {
   local url="http://127.0.0.1:${PANEL_PORT}/api/setup/status"
-  log "Waiting for panel API..."
-  for _ in $(seq 1 45); do
-    if curl -sf "$url" >/dev/null 2>&1; then
+  log "Waiting for panel API (migrations may take 1–3 minutes on first install)..."
+  for i in $(seq 1 90); do
+    if panel_is_listening; then
       ok "Panel API is up."
       return 0
+    fi
+    if [ $((i % 15)) -eq 0 ]; then
+      log "Still starting... (${i}/90)"
     fi
     sleep 2
   done
@@ -212,12 +243,9 @@ cmd_install() {
   prepare_low_memory
   install_deps
   fetch_repo
-  mkdir -p "${DATA_DIR}" "${DATA_DIR}/backups"
-  if [ ! -f "${DATA_DIR}/xray_config.json" ] && [ -f "${APP_DIR}/xray_config.json" ]; then
-    cp "${APP_DIR}/xray_config.json" "${DATA_DIR}/xray_config.json"
-    ok "Created ${DATA_DIR}/xray_config.json"
-  fi
+  seed_data_dir
   write_env
+  configure_firewall
   install_cli
   log "Building and starting panel (first run may take a few minutes)..."
   compose up -d --build
@@ -329,7 +357,18 @@ cmd_doctor() {
   echo
 }
 
-cmd_update()  { need_root; fetch_repo; install_cli; compose up -d --build; ok "Updated."; print_access; }
+cmd_update()  {
+  need_root
+  fetch_repo
+  seed_data_dir
+  load_env_creds
+  configure_firewall
+  install_cli
+  compose up -d --build
+  wait_for_panel
+  ok "Updated."
+  print_access
+}
 cmd_up()      { need_root; compose up -d; ok "Started."; }
 cmd_down()    { need_root; compose down; ok "Stopped."; }
 cmd_restart() { need_root; compose restart; ok "Restarted."; }

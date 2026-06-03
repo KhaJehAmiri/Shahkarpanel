@@ -6,17 +6,24 @@
 set -e
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 
-if [ -f "$ROOT/app/dashboard-v2/package.json" ]; then
-  echo "==> Building NexusPanel dashboard-v2 (Vite/React)…"
+if [ -f "$ROOT/app/dashboard-next/package.json" ]; then
+  echo "==> Building NexusPanel dashboard-next (Next.js 14 static export)…"
+  (cd "$ROOT/app/dashboard-next" && npm install && NEXT_PUBLIC_BASE_API=/api/ npm run build)
+  if [ -f "$ROOT/app/dashboard-next/out/dashboard/index.html" ]; then
+    cp "$ROOT/app/dashboard-next/out/dashboard/index.html" "$ROOT/app/dashboard-next/out/dashboard/404.html"
+  fi
+  if [ -f "$ROOT/app/dashboard-next/out/index.html" ]; then
+    cp "$ROOT/app/dashboard-next/out/index.html" "$ROOT/app/dashboard-next/out/404.html"
+  fi
+fi
+
+# Legacy fallback only when Next.js build is missing
+if [ ! -f "$ROOT/app/dashboard-next/out/dashboard/index.html" ] && [ -f "$ROOT/app/dashboard-v2/package.json" ]; then
+  echo "==> Building NexusPanel dashboard-v2 (fallback)…"
   (cd "$ROOT/app/dashboard-v2" && npm install && VITE_BASE_API=/api/ npm run build && cp ./build/index.html ./build/404.html)
 fi
 
-if [ -f "$ROOT/app/dashboard-next/package.json" ]; then
-  echo "==> Building NexusPanel dashboard-next (Next.js 14 static export)…"
-  (cd "$ROOT/app/dashboard-next" && npm install && npm run build)
-fi
-
-if [ ! -f "$ROOT/app/dashboard-v2/build/index.html" ] && [ ! -f "$ROOT/app/dashboard/build/index.html" ]; then
+if [ ! -f "$ROOT/app/dashboard-next/out/dashboard/index.html" ] && [ ! -f "$ROOT/app/dashboard-v2/build/index.html" ] && [ ! -f "$ROOT/app/dashboard/build/index.html" ]; then
   echo "==> Building legacy dashboard…"
   (cd "$ROOT/app/dashboard" && VITE_BASE_API=/api/ npm run build --if-present -- --outDir build --assetsDir statics && cp ./build/index.html ./build/404.html)
 fi

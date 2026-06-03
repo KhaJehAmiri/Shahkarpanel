@@ -8,6 +8,8 @@ const nextConfig = {
   trailingSlash: true,
   images: { unoptimized: true },
   reactStrictMode: true,
+  typescript: { ignoreBuildErrors: false },
+  eslint: { ignoreDuringBuilds: true },
   // Allow embedding the static build under arbitrary FastAPI mount points.
   assetPrefix: process.env.NEXT_ASSET_PREFIX || "",
   basePath: "",

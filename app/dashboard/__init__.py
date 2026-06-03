@@ -9,11 +9,21 @@ from fastapi.staticfiles import StaticFiles
 
 base_dir = Path(__file__).parent
 
-# Phase 7: prefer the new NexusPanel dashboard (dashboard-v2) when it has been
-# built. Falls back to the legacy build so the panel keeps working either way.
+# Phase 9: prefer Next.js static export (dashboard-next/out/dashboard) when built.
+# Falls back to dashboard-v2, then legacy dashboard build.
+_next_dashboard = base_dir.parent / 'dashboard-next' / 'out' / 'dashboard'
 _v2_build = base_dir.parent / 'dashboard-v2' / 'build'
-build_dir = _v2_build if (_v2_build / 'index.html').is_file() else base_dir / 'build'
-statics_dir = build_dir / 'statics'
+_legacy_build = base_dir / 'build'
+
+if (_next_dashboard / 'index.html').is_file():
+    build_dir = _next_dashboard
+    statics_dir = None  # Next.js uses /_next/ for assets
+elif (_v2_build / 'index.html').is_file():
+    build_dir = _v2_build
+    statics_dir = build_dir / 'statics'
+else:
+    build_dir = _legacy_build
+    statics_dir = build_dir / 'statics'
 
 
 def build():
@@ -58,7 +68,12 @@ def run_build():
         except OSError:
             pass
 
-    log.info("Serving NexusPanel dashboard from %s", build_dir)
+    using_next = (_next_dashboard / 'index.html').is_file()
+    log.info(
+        "Serving NexusPanel dashboard from %s (%s)",
+        build_dir,
+        "Next.js" if using_next else "Vite/legacy",
+    )
 
     # Subscription page assets (graphical sub page, phase 8). Must be mounted
     # before the dashboard catch-all so the path is reachable.
@@ -91,7 +106,7 @@ def run_build():
         next_fonts = next_build / 'fonts'
         if next_fonts.is_dir():
             app.mount(
-                '/next-fonts',
+                '/fonts',
                 StaticFiles(directory=next_fonts),
                 name="next-fonts",
             )
@@ -101,11 +116,12 @@ def run_build():
         StaticFiles(directory=build_dir, html=True),
         name="dashboard"
     )
-    app.mount(
-        '/statics/',
-        StaticFiles(directory=statics_dir, html=True),
-        name="statics"
-    )
+    if statics_dir and statics_dir.is_dir():
+        app.mount(
+            '/statics/',
+            StaticFiles(directory=statics_dir, html=True),
+            name="statics"
+        )
 
 
 @app.on_event("startup")

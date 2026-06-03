@@ -105,6 +105,8 @@
     "configs": "Конфиги",
     "subUrl": "URL подписки",
     "downloadWireguard": "Скачать WireGuard .conf",
+    "wgNativePeer": "нативный пир",
+    "wgHint": "Ключи и IP пира генерируются автоматически. Скачайте .conf в деталях пользователя.",
     "open": "Открыть",
     "share": "Поделиться",
     "of": "из",

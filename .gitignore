@@ -15,9 +15,11 @@ eggs/
 .eggs/
 lib/
 lib64/
-# NexusPanel dashboard (TypeScript panel utilities — not Python lib/)
+# NexusPanel dashboard (TypeScript utilities — not Python lib/)
 !app/dashboard-next/src/panel/lib/
 !app/dashboard-next/src/panel/lib/**
+!app/dashboard-next/src/lib/
+!app/dashboard-next/src/lib/**
 parts/
 sdist/
 var/

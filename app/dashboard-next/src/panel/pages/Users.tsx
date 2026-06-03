@@ -178,6 +178,15 @@ const UserFormModal: FC<{ mode: "create" | "edit"; user?: UserItem; onClose: () 
         method: user?.proxies?.[proto]?.method || "chacha20-ietf-poly1305",
       };
     });
+    // WireGuard is a first-class protocol that is *not* an Xray inbound, so it
+    // never comes back from /inbounds. Surface it as a synthetic toggle: the
+    // server generates the peer keypair + allocates the IP automatically.
+    next["wireguard"] = {
+      enabled: mode === "edit" ? userProtos.includes("wireguard") : false,
+      tags: [],
+      flow: "",
+      method: "",
+    };
     setProtos(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inbounds.data]);
@@ -268,18 +277,22 @@ const UserFormModal: FC<{ mode: "create" | "edit"; user?: UserItem; onClose: () 
                       <div className="nx-row" style={{ gap: 10 }}>
                         <Checkbox checked={v.enabled} />
                         <b>{PROTO_LABEL[p] || p}</b>
-                        <span className="nx-faint" style={{ fontSize: 11 }}>{inbounds.data?.[p].length} inbound(s)</span>
+                        <span className="nx-faint" style={{ fontSize: 11 }}>{p === "wireguard" ? t("users.wgNativePeer") : `${inbounds.data?.[p]?.length || 0} inbound(s)`}</span>
                       </div>
                     </div>
                     {v.enabled && (
                       <div style={{ marginTop: 10, paddingInlineStart: 28 }}>
+                        {p === "wireguard" ? (
+                          <div className="nx-faint" style={{ fontSize: 12, marginBottom: 8 }}>{t("users.wgHint")}</div>
+                        ) : (
                         <div className="nx-row" style={{ gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
-                          {inbounds.data?.[p].map((i) => (
+                          {inbounds.data?.[p]?.map((i) => (
                             <button key={i.tag} type="button" className={`nx-btn sm ${v.tags.includes(i.tag) ? "primary" : ""}`} onClick={() => toggleTag(p, i.tag)}>
                               {v.tags.includes(i.tag) ? "✓ " : ""}{i.tag} <span style={{ opacity: 0.6 }}>:{i.port}</span>
                             </button>
                           ))}
                         </div>
+                        )}
                         {p === "vless" && (
                           <div className="nx-row" style={{ gap: 8 }}>
                             <span className="nx-faint" style={{ fontSize: 12 }}>flow</span>

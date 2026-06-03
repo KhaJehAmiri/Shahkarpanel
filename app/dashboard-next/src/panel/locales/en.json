@@ -105,6 +105,8 @@
     "configs": "Configs",
     "subUrl": "Subscription URL",
     "downloadWireguard": "Download WireGuard .conf",
+    "wgNativePeer": "native peer",
+    "wgHint": "Keys and peer IP are generated automatically. Download the .conf from user details.",
     "open": "Open",
     "share": "Share",
     "of": "of",

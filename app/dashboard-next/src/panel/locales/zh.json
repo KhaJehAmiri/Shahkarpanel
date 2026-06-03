@@ -105,6 +105,8 @@
     "configs": "配置",
     "subUrl": "订阅 URL",
     "downloadWireguard": "下载 WireGuard .conf",
+    "wgNativePeer": "原生对等点",
+    "wgHint": "密钥和对等 IP 自动生成。请从用户详情下载 .conf。",
     "open": "打开",
     "share": "分享",
     "of": "/",

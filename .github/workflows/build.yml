@@ -55,7 +55,5 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            nexuspanel/nexuspanel:latest
-            nexuspanel/nexuspanel:${{github.ref_name}}
-            ghcr.io/nexuspanel/nexuspanel:latest
-            ghcr.io/nexuspanel/nexuspanel:${{github.ref_name}}
+            ghcr.io/khajehamiri/nexuspanel:latest
+            ghcr.io/khajehamiri/nexuspanel:${{github.ref_name}}

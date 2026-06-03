@@ -46,7 +46,7 @@
 ## 快速开始
 
 ```bash
-git clone https://github.com/nexuspanel/nexuspanel.git
+git clone https://github.com/KhaJehAmiri/nexuspanel.git
 cd nexuspanel
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
@@ -126,4 +126,4 @@ MIT — [LICENSE](LICENSE)。
 
 ## 贡献
 
-[CONTRIBUTING.md](CONTRIBUTING.md) · [github.com/nexuspanel/nexuspanel](https://github.com/nexuspanel/nexuspanel)
+[CONTRIBUTING.md](CONTRIBUTING.md) · [github.com/KhaJehAmiri/nexuspanel](https://github.com/KhaJehAmiri/nexuspanel)

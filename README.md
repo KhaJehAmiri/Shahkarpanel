@@ -46,7 +46,7 @@ New capabilities are **off by default** behind feature flags until you enable th
 ## Quick start (development)
 
 ```bash
-git clone https://github.com/nexuspanel/nexuspanel.git
+git clone https://github.com/KhaJehAmiri/nexuspanel.git
 cd nexuspanel
 
 python3 -m venv .venv
@@ -186,4 +186,10 @@ MIT — see [LICENSE](LICENSE).
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Issues and PRs welcome on [github.com/nexuspanel/nexuspanel](https://github.com/nexuspanel/nexuspanel).
+See [CONTRIBUTING.md](CONTRIBUTING.md). Issues and PRs welcome on [github.com/KhaJehAmiri/nexuspanel](https://github.com/KhaJehAmiri/nexuspanel).
+
+### One-line install (VPS)
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/nexuspanel/master/scripts/nexuspanel.sh) install
+```

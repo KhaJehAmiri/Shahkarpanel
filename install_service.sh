@@ -2,7 +2,7 @@
 
 SERVICE_NAME="nexuspanel"
 SERVICE_DESCRIPTION="NexusPanel Service"
-SERVICE_DOCUMENTATION="https://github.com/nexuspanel/nexuspanel"
+SERVICE_DOCUMENTATION="https://github.com/KhaJehAmiri/nexuspanel"
 MAIN_PY_PATH="$PWD/main.py"
 SERVICE_FILE="/etc/systemd/system/$SERVICE_NAME.service"
 

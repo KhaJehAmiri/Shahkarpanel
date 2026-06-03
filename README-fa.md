@@ -29,7 +29,27 @@
 | **تجاری** | RBAC، پلن، کیف پول و فاکتور، API v2 و کلید API |
 | **هوشمندی** | تشخیص کاربر سنگین، پیش‌بینی اتمام حجم، بازار پلاگین |
 
-قابلیت‌های جدید پیش‌فرض **خاموش** هستند و با Feature Flag روشن می‌شوند.
+قابلیت‌های جدید پیش‌فرض **خاموش** هستند — بعد از نصب از **Setup wizard** در داشبورد (`#/manage/`) روشن می‌شوند.
+
+---
+
+## نصب یک‌خطی (پیشنهادی برای VPS)
+
+روی سرور تازه اوبونتو/دبیان، **root**:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/nexuspanel/master/scripts/nexuspanel.sh) install
+```
+
+اسکریپت Docker و git را نصب می‌کند، ریپو را clone می‌کند، پنل را build و بالا می‌آورد، ایمیج **`nexuspanel/node`** را برای افزودن نود با SSH می‌سازد، و **یوزر/پسورد ادمین** را چاپ می‌کند.
+
+مدیریت:
+
+```bash
+nexuspanel status | logs | update | backup
+```
+
+مخزن: [github.com/KhaJehAmiri/nexuspanel](https://github.com/KhaJehAmiri/nexuspanel)
 
 ---
 
@@ -46,7 +66,7 @@
 ## راه‌اندازی سریع (توسعه)
 
 ```bash
-git clone https://github.com/nexuspanel/nexuspanel.git
+git clone https://github.com/KhaJehAmiri/nexuspanel.git
 cd nexuspanel
 
 python3 -m venv .venv
@@ -162,4 +182,4 @@ MIT — فایل [LICENSE](LICENSE).
 
 ## مشارکت
 
-[CONTRIBUTING.md](CONTRIBUTING.md) — مخزن: [github.com/nexuspanel/nexuspanel](https://github.com/nexuspanel/nexuspanel).
+[CONTRIBUTING.md](CONTRIBUTING.md) — مخزن: [github.com/KhaJehAmiri/nexuspanel](https://github.com/KhaJehAmiri/nexuspanel).

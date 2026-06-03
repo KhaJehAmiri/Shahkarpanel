@@ -3,7 +3,7 @@
 # NexusPanel installer & manager.
 #
 # One-line install (run as root):
-#   bash <(curl -fsSL https://raw.githubusercontent.com/nexuspanel/nexuspanel/master/scripts/nexuspanel.sh) install
+#   bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/nexuspanel/master/scripts/nexuspanel.sh) install
 #
 # After install, manage with:  nexuspanel <command>
 #   install | update | up | down | restart | status | logs
@@ -103,6 +103,9 @@ PANEL_PUBLIC_ADDRESS=$(curl -fsSL https://api.ipify.org 2>/dev/null || echo "127
 # Backups
 BACKUP_DIR=/var/lib/nexuspanel/backups
 BACKUP_INTERVAL_HOURS=24
+
+# Node agent image (built by installer if node/Dockerfile exists)
+NODE_AGENT_IMAGE=nexuspanel/node:latest
 EOF
   chmod 600 "$env_file"
 
@@ -131,6 +134,32 @@ install_cli() {
   chmod +x "${BIN_PATH}" 2>/dev/null || true
 }
 
+build_node_image() {
+  if [ ! -f "${APP_DIR}/node/Dockerfile" ]; then
+    warn "node/Dockerfile not found; skip node-agent image build."
+    return
+  fi
+  log "Building nexuspanel/node agent image (SSH provisioning)..."
+  if docker build -t nexuspanel/node:latest "${APP_DIR}/node"; then
+    ok "Node image: nexuspanel/node:latest"
+  else
+    warn "Node image build failed. Build manually: docker build -t nexuspanel/node:latest ${APP_DIR}/node"
+  fi
+}
+
+wait_for_panel() {
+  local url="http://127.0.0.1:${PANEL_PORT}/api/setup/status"
+  log "Waiting for panel API..."
+  for _ in $(seq 1 45); do
+    if curl -sf "$url" >/dev/null 2>&1; then
+      ok "Panel API is up."
+      return 0
+    fi
+    sleep 2
+  done
+  warn "Panel API did not respond in time. Check: nexuspanel logs"
+}
+
 # --------------------------------------------------------------------------- #
 # Commands
 # --------------------------------------------------------------------------- #
@@ -142,8 +171,10 @@ cmd_install() {
   mkdir -p "${DATA_DIR}" "${DATA_DIR}/backups"
   write_env
   install_cli
-  log "Building and starting containers (first run may take a few minutes)..."
+  log "Building and starting panel (first run may take a few minutes)..."
   compose up -d --build
+  build_node_image
+  wait_for_panel
   ok "NexusPanel is up."
   print_access
 }
@@ -159,6 +190,8 @@ print_access() {
     echo "  ${YELLOW}Save these credentials now.${NC}"
   fi
   echo "  Manage    : ${BOLD}nexuspanel status | logs | update | backup${NC}"
+  echo "  White-label: ${BOLD}http://${ip}:${PANEL_PORT}/dashboard/#/manage/${NC}"
+  echo "  ${YELLOW}First login → Setup wizard (enable tenants, provisioning, tunnels).${NC}"
   echo
 }
 

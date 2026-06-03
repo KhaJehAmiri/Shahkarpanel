@@ -1,3 +1,3 @@
-export const REPO_URL = "https://github.com/nexuspanel/nexuspanel";
-export const ORGANIZATION_URL = "https://github.com/nexuspanel";
-export const DOCS_URL = "https://github.com/nexuspanel/nexuspanel#readme";
+export const REPO_URL = "https://github.com/KhaJehAmiri/nexuspanel";
+export const ORGANIZATION_URL = "https://github.com/KhaJehAmiri";
+export const DOCS_URL = "https://github.com/KhaJehAmiri/nexuspanel#readme";

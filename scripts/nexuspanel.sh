@@ -272,7 +272,7 @@ cmd_info() {
   print_access
 }
 
-cmd_update()  { need_root; fetch_repo; compose up -d --build; ok "Updated."; }
+cmd_update()  { need_root; fetch_repo; install_cli; compose up -d --build; ok "Updated."; print_access; }
 cmd_up()      { need_root; compose up -d; ok "Started."; }
 cmd_down()    { need_root; compose down; ok "Stopped."; }
 cmd_restart() { need_root; compose restart; ok "Restarted."; }

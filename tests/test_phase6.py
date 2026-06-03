@@ -4,10 +4,9 @@ import json
 
 import pytest
 
-from app import billing, provisioning, tenant as tenant_svc
-from app import tunnel as tunnel_svc
+from app import billing, provisioning, tenant as tenant_svc, tunnel as tunnel_svc
 from app.db import GetDB
-from app.db.models import Admin, Node, Tunnel, User
+from app.db.models import Admin, Tunnel, User
 from app.models.user import UserStatus
 
 

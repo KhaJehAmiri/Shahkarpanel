@@ -42,23 +42,49 @@ temp_table = sa.sql.table(
 )
 
 
+def _postgresql_old_enum_name() -> str:
+    """c106bb40c861 created type proxyhostalpn on PostgreSQL."""
+    bind = op.get_bind()
+    if bind.engine.name == 'postgresql':
+        return 'proxyhostalpn'
+    return enum_name
+
+
+def _postgresql_drop_alpn_default() -> None:
+    bind = op.get_bind()
+    if bind.engine.name == 'postgresql':
+        op.execute('ALTER TABLE hosts ALTER COLUMN alpn DROP DEFAULT')
+
+
+def _postgresql_set_alpn_default(type_name: str) -> None:
+    bind = op.get_bind()
+    if bind.engine.name == 'postgresql':
+        op.execute(
+            sa.text(f"ALTER TABLE hosts ALTER COLUMN alpn SET DEFAULT 'none'::{type_name}")
+        )
+
+
 def upgrade():
+    pg_old_enum = _postgresql_old_enum_name()
+    pg_old_type = sa.Enum(*old_values, name=pg_old_enum)
+
     # temp type to use instead of old one
     temp_type.create(op.get_bind(), checkfirst=False)
+    _postgresql_drop_alpn_default()
 
     # changing of column type from old enum to new one.
     # SQLite will create temp table for this
     with op.batch_alter_table(table_name) as batch_op:
         batch_op.alter_column(
             column_name,
-            existing_type=old_type,
+            existing_type=pg_old_type if pg_old_enum != enum_name else old_type,
             type_=temp_type,
             existing_nullable=False,
             postgresql_using=f"{column_name}::text::{temp_enum_name}"
         )
 
     # remove old enum, create new enum
-    old_type.drop(op.get_bind(), checkfirst=False)
+    pg_old_type.drop(op.get_bind(), checkfirst=False)
     new_type.create(op.get_bind(), checkfirst=False)
 
     # changing of column type from temp enum to new one.
@@ -74,6 +100,7 @@ def upgrade():
 
     # remove temp enum
     temp_type.drop(op.get_bind(), checkfirst=False)
+    _postgresql_set_alpn_default(enum_name)
 
 
 def downgrade():
@@ -89,7 +116,11 @@ def downgrade():
     )
     op.execute(update_query)
 
+    pg_old_enum = _postgresql_old_enum_name()
+    pg_old_type = sa.Enum(*old_values, name=pg_old_enum)
+
     temp_type.create(op.get_bind(), checkfirst=False)
+    _postgresql_drop_alpn_default()
 
     with op.batch_alter_table(table_name) as batch_op:
         batch_op.alter_column(
@@ -101,15 +132,16 @@ def downgrade():
         )
 
     new_type.drop(op.get_bind(), checkfirst=False)
-    old_type.create(op.get_bind(), checkfirst=False)
+    pg_old_type.create(op.get_bind(), checkfirst=False)
 
     with op.batch_alter_table(table_name) as batch_op:
         batch_op.alter_column(
             column_name,
             existing_type=temp_type,
-            type_=old_type,
+            type_=pg_old_type if pg_old_enum != enum_name else old_type,
             existing_nullable=False,
-            postgresql_using=f"{column_name}::text::{enum_name}"
+            postgresql_using=f"{column_name}::text::{pg_old_enum}"
         )
 
     temp_type.drop(op.get_bind(), checkfirst=False)
+    _postgresql_set_alpn_default(pg_old_enum)

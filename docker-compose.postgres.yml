@@ -26,13 +26,13 @@ services:
     restart: always
     network_mode: host
     environment:
-      POSTGRES_USER: nexuspanel
-      POSTGRES_PASSWORD: change-me
-      POSTGRES_DB: nexuspanel
+      POSTGRES_USER: ${POSTGRES_USER:-nexuspanel}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+      POSTGRES_DB: ${POSTGRES_DB:-nexuspanel}
     volumes:
       - /var/lib/nexuspanel/postgres:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U nexuspanel -d nexuspanel"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nexuspanel} -d ${POSTGRES_DB:-nexuspanel}"]
       interval: 5s
       timeout: 5s
       retries: 10

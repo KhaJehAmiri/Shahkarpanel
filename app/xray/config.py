@@ -7,7 +7,6 @@ from pathlib import PosixPath
 from typing import Union
 
 import commentjson
-from sqlalchemy import func
 
 from app.db import GetDB
 from app.db import models as db_models
@@ -373,9 +372,9 @@ class XRayConfig(dict):
             query = db.query(
                 db_models.User.id,
                 db_models.User.username,
-                func.lower(db_models.Proxy.type).label('type'),
+                db_models.Proxy.type,
                 db_models.Proxy.settings,
-                func.group_concat(db_models.excluded_inbounds_association.c.inbound_tag).label('excluded_inbound_tags')
+                db_models.excluded_inbounds_association.c.inbound_tag,
             ).join(
                 db_models.Proxy, db_models.User.id == db_models.Proxy.user_id
             ).outerjoin(
@@ -383,23 +382,26 @@ class XRayConfig(dict):
                 db_models.Proxy.id == db_models.excluded_inbounds_association.c.proxy_id
             ).filter(
                 db_models.User.status.in_([UserStatus.active, UserStatus.on_hold])
-            ).group_by(
-                func.lower(db_models.Proxy.type),
-                db_models.User.id,
-                db_models.User.username,
-                db_models.Proxy.settings,
             )
             result = query.all()
 
+            # Aggregate excluded inbound tags per (proxy_type, user) in Python so
+            # the query stays dialect-agnostic: lower(enum) and group_concat()
+            # behave differently across SQLite / PostgreSQL / MySQL.
             grouped_data = defaultdict(list)
+            _seen = {}
 
             for row in result:
-                grouped_data[row.type].append((
-                    row.id,
-                    row.username,
-                    row.settings,
-                    [i for i in row.excluded_inbound_tags.split(',') if i] if row.excluded_inbound_tags else None
-                ))
+                proxy_type = row.type.value if hasattr(row.type, "value") else str(row.type)
+                proxy_type = proxy_type.lower()
+                key = (proxy_type, row.id)
+                entry = _seen.get(key)
+                if entry is None:
+                    entry = [row.id, row.username, row.settings, []]
+                    _seen[key] = entry
+                    grouped_data[proxy_type].append(entry)
+                if row.inbound_tag and row.inbound_tag not in entry[3]:
+                    entry[3].append(row.inbound_tag)
 
             for proxy_type, rows in grouped_data.items():
 

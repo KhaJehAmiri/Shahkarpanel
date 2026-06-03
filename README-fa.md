@@ -1,185 +1,281 @@
-<p align="center">
-  <strong style="font-size: 2rem; letter-spacing: -0.03em;">NexusPanel</strong>
-</p>
+<div align="center">
 
-<p align="center">
-  پلتفرم حرفه‌ای مدیریت پراکسی — چندنود، آماده فروش و مانیتورینگ.<br/>
-  مبتنی بر <a href="https://github.com/XTLS/Xray-core">Xray-core</a>.
-</p>
+<img src="https://raw.githubusercontent.com/KhaJehAmiri/nexuspanel/master/app/dashboard/src/assets/logo.svg" width="88" alt="NexusPanel" />
 
-<p align="center">
-  <a href="./README.md">English</a> ·
-  <a href="./README-fa.md">فارسی</a> ·
-  <a href="./README-zh-cn.md">简体中文</a> ·
-  <a href="./README-ru.md">Русский</a>
-</p>
+# NexusPanel
 
----
+**پلتفرم حرفه‌ای مدیریت پراکسی — چندنود، وایت‌لیبل، آماده فروش**
 
-## معرفی
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![Xray](https://img.shields.io/badge/Powered%20by-Xray--core-512BD4)](https://github.com/XTLS/Xray-core)
+[![Tests](https://img.shields.io/badge/Tests-pytest-0A9EDC)](tests/)
+[![Docker](https://img.shields.io/badge/Deploy-Docker-2496ED?logo=docker&logoColor=white)](docker-compose.yml)
 
-**NexusPanel** یک پنل کنترل کامل برای زیرساخت پراکسی مبتنی بر Xray است: ریسلر، صورتحساب، کلاستر، مسیریابی هوشمند، اتوماسیون و تحلیل ترافیک — در یک محصول.
+[English](./README.md) · **فارسی** · [简体中文](./README-zh-cn.md) · [Русский](./README-ru.md)
 
-| لایه | امکانات |
-|------|---------|
-| **هسته** | کاربر، اینباند، هاست، نود، سابسکرایب، ربات تلگرام |
-| **زیرساخت** | PostgreSQL، Event Bus با Redis، بکاپ، Feature Flag، لاگ JSON |
-| **عملیات** | Prometheus، Grafana، Rule Engine، پلاگین، Workflow |
-| **مقیاس** | HA با Leader Election، سلامت نود، Failover، Smart Routing |
-| **تجاری** | RBAC، پلن، کیف پول و فاکتور، API v2 و کلید API |
-| **هوشمندی** | تشخیص کاربر سنگین، پیش‌بینی اتمام حجم، بازار پلاگین |
+[نصب سریع](#-نصب-یکخطی-vps) · [معماری](#-معماری) · [امکانات](#-امکانات-کلیدی) · [امنیت و tests](#-امنیت-و-پوشه-tests-روی-گیتهاب) · [مخزن](https://github.com/KhaJehAmiri/nexuspanel)
 
-قابلیت‌های جدید پیش‌فرض **خاموش** هستند — بعد از نصب از **Setup wizard** در داشبورد (`#/manage/`) روشن می‌شوند.
+</div>
 
 ---
 
-## نصب یک‌خطی (پیشنهادی برای VPS)
+## فهرست
 
-روی سرور تازه اوبونتو/دبیان، **root**:
+- [NexusPanel چیست؟](#nexuspanel-چیست)
+- [نصب یک‌خطی (VPS)](#-نصب-یکخطی-vps)
+- [معماری](#-معماری)
+- [امکانات کلیدی](#-امکانات-کلیدی)
+- [وایت‌لیبل و نمایندگی](#-وایتلیبل-و-نمایندگی)
+- [تونل ایران ↔ خارج](#-تونل-ایران--خارج)
+- [پیش‌نیاز](#-پیشنیاز)
+- [توسعه محلی](#-توسعه-محلی)
+- [Docker تولید](#-docker-تولید)
+- [تنظیمات](#-تنظیمات)
+- [امنیت و پوشه `tests` روی گیت‌هاب](#-امنیت-و-پوشه-tests-روی-گیتهاب)
+- [لایسنس](#-لایسنس)
+
+---
+
+## NexusPanel چیست؟
+
+پنل کنترل **تمام‌عیار** برای زیرساخت Xray: از مدیریت کاربر و نود تا **فروش، ریسلر، HA، اتوماسیون و تحلیل ترافیک** — در یک محصول واحد با داشبورد مدرن React.
+
+| برای چه کسی؟ | چه مشکلی حل می‌کند؟ |
+|--------------|---------------------|
+| ارائه‌دهنده سرویس (ISP/VPN) | چند نود، مانیتورینگ، failover |
+| فروشنده / ریسلر | وایت‌لیبل، کیف پول، نود اختصاصی با تخفیف |
+| تیم فنی | API v2، Rule Engine، Workflow، پلاگین |
+
+> قابلیت‌های پیشرفته پیش‌فرض **خاموش** هستند و از **Setup wizard** (`/dashboard/#/manage/`) یا Feature Flag روشن می‌شوند.
+
+---
+
+## نصب یک‌خطی (VPS)
+
+روی **اوبونتو / دبیان** تازه، با کاربر **root**:
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/nexuspanel/master/scripts/nexuspanel.sh) install
 ```
 
-اسکریپت Docker و git را نصب می‌کند، ریپو را clone می‌کند، پنل را build و بالا می‌آورد، ایمیج **`nexuspanel/node`** را برای افزودن نود با SSH می‌سازد، و **یوزر/پسورد ادمین** را چاپ می‌کند.
+<details>
+<summary><strong>اسکریپت نصب چه کار می‌کند؟</strong></summary>
 
-مدیریت:
+| مرحله | عملیات |
+|--------|--------|
+| 1 | نصب Docker و git |
+| 2 | Clone از `KhaJehAmiri/nexuspanel` → `/opt/nexuspanel` |
+| 3 | ساخت `.env` (رمز ادمین، JWT، `NODE_BOOTSTRAP_TOKEN`) |
+| 4 | Build و اجرای پنل با Docker Compose |
+| 5 | Build ایمیج `nexuspanel/node` برای افزودن نود با SSH |
+| 6 | چاپ آدرس داشبورد و مشخصات ورود |
 
-```bash
-nexuspanel status | logs | update | backup
+</details>
+
+**بعد از نصب**
+
+| مورد | آدرس / دستور |
+|------|----------------|
+| داشبورد | `http://SERVER_IP:8000/dashboard/` |
+| وایت‌لیبل / Setup | `http://SERVER_IP:8000/dashboard/#/manage/` |
+| مدیریت | `nexuspanel status` · `logs` · `update` · `backup` |
+
+---
+
+## معماری
+
+```mermaid
+flowchart TB
+  subgraph clients [کلاینت‌ها]
+    U[کاربر نهایی]
+  end
+
+  subgraph panel [NexusPanel — یک نصب]
+    API[FastAPI + داشبورد React]
+    DB[(PostgreSQL / SQLite)]
+    R[Redis — Event Bus / HA]
+    API --> DB
+    API --> R
+  end
+
+  subgraph nodes [نودها]
+    N1[نود مالک]
+    N2[نود نماینده BYO]
+    NR[relay ایران]
+    NE[exit خارج]
+  end
+
+  U -->|سابسکرایب| API
+  API -->|کنترل Xray| N1
+  API --> N2
+  U -->|اتصال| NR
+  NR -->|تونل رمزنگاری| NE
+  NE -->|اینترنت| Internet((خارج))
 ```
 
-مخزن: [github.com/KhaJehAmiri/nexuspanel](https://github.com/KhaJehAmiri/nexuspanel)
+---
+
+## امکانات کلیدی
+
+<table>
+<tr>
+<th>لایه</th>
+<th>امکانات</th>
+<th>وضعیت</th>
+</tr>
+<tr>
+<td><strong>هسته</strong></td>
+<td>کاربر، اینباند، هاست، نود، سابسکرایب، تلگرام</td>
+<td>پایدار</td>
+</tr>
+<tr>
+<td><strong>زیرساخت</strong></td>
+<td>PostgreSQL، Event Bus، بکاپ، Feature Flag، لاگ JSON</td>
+<td>فاز ۰</td>
+</tr>
+<tr>
+<td><strong>عملیات</strong></td>
+<td>Prometheus، Grafana، Rule Engine، پلاگین، Webhook</td>
+<td>فاز ۱</td>
+</tr>
+<tr>
+<td><strong>کلاستر</strong></td>
+<td>Auto-heal، bootstrap نود، failover، OpenTelemetry</td>
+<td>فاز ۲</td>
+</tr>
+<tr>
+<td><strong>تجاری</strong></td>
+<td>RBAC، پلن، کیف پول، فاکتور، API v2</td>
+<td>فاز ۳</td>
+</tr>
+<tr>
+<td><strong>مقیاس</strong></td>
+<td>HA Leader، Smart Routing، Workflow</td>
+<td>فاز ۴</td>
+</tr>
+<tr>
+<td><strong>هوشمندی</strong></td>
+<td>تشخیص مصرف غیرعادی، پیش‌بینی اتمام حجم، Marketplace</td>
+<td>فاز ۵</td>
+</tr>
+<tr>
+<td><strong>وایت‌لیبل</strong></td>
+<td>Tenant، برند، نود SSH، تونل relay/exit، نصب یک‌خطی</td>
+<td>فاز ۶</td>
+</tr>
+</table>
+
+---
+
+## وایت‌لیبل و نمایندگی
+
+یک نصب پنل → **چند نماینده** با برند جدا، **بدون سرور دوم اجباری**:
+
+| قابلیت | توضیح |
+|--------|--------|
+| **Tenant** | جداسازی ادمین، کاربر، پلن و نود per نماینده |
+| **Branding** | لوگو، رنگ، عنوان پنل، لینک پشتیبانی |
+| **نود با IP+پسورد** | نماینده سرور خودش را می‌دهد؛ پنل agent را نصب می‌کند |
+| **تخفیف BYO** | ترافیک روی نود خود نماینده ارزان‌تر حساب می‌شود |
+| **داشبورد Reseller** | منوی White-label در سایدبار |
+
+---
+
+## تونل ایران ↔ خارج
+
+برای پروتکل‌هایی که **مستقیم** از ایران به سرور خارج پایدار نیستند:
+
+```text
+کلاینت  →  نود relay (ایران)  →  تونل Reality/WS/gRPC  →  نود exit (خارج)  →  اینترنت
+```
+
+تعریف تونل در پنل → ساخت خودکار قطعات Xray برای relay و exit.
 
 ---
 
 ## پیش‌نیاز
 
-- لینوکس (پیشنهادی)
-- Python 3.10+
-- [Xray-core](https://github.com/XTLS/Xray-core)
-- اختیاری: PostgreSQL 14+، Redis 7+ (تولید / HA)
-- اختیاری: Docker و Docker Compose
+| محیط | نیازمندی |
+|--------|-----------|
+| **VPS نصب** | لینوکس، root، پورت 8000 باز، 2GB+ RAM پیشنهادی |
+| **توسعه** | Python 3.10+، Xray (یا stub در تست) |
+| **تولید** | PostgreSQL 14+، Redis 7+ (برای HA) |
 
 ---
 
-## راه‌اندازی سریع (توسعه)
+## توسعه محلی
 
 ```bash
 git clone https://github.com/KhaJehAmiri/nexuspanel.git
 cd nexuspanel
-
-python3 -m venv .venv
-source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-
 cp .env.example .env
-# ویرایش .env
-
 alembic upgrade head
 python3 main.py
 ```
 
-داشبورد: `http://127.0.0.1:8000/dashboard/`
-
-ساخت ادمین سودو:
-
 ```bash
 python3 nexuspanel-cli.py admin create --sudo
+python3 -m pytest -q
 ```
 
 ---
 
-## استقرار با Docker
+## Docker تولید
 
 ```bash
 docker compose -f docker-compose.postgres.yml up -d --build
 docker compose -f docker-compose.monitoring.yml up -d
 ```
 
-مسیر داده پیش‌فرض: `/var/lib/nexuspanel`
+داده: `/var/lib/nexuspanel`
 
 ---
 
 ## تنظیمات
 
-فایل `.env.example` را کپی کنید. متغیرهای مهم:
-
 | متغیر | کاربرد |
 |--------|--------|
-| `SQLALCHEMY_DATABASE_URL` | SQLite (توسعه) یا PostgreSQL (تولید) |
-| `REDIS_URL` | Event Bus و انتخاب Leader در HA |
-| `HA_ENABLED` | چند نمونه پنل روی یک DB |
-| `METRICS_TOKEN` | احراز Prometheus |
-| `BACKUP_DIR` | مسیر بکاپ |
-| `NEXUSPANEL_ADMIN_PASSWORD` | رمز CLI بدون تعامل |
+| `SQLALCHEMY_DATABASE_URL` | SQLite (dev) / PostgreSQL (prod) |
+| `REDIS_URL` | Event Bus + HA |
+| `NODE_BOOTSTRAP_TOKEN` | ثبت خودکار نود |
+| `NODE_AGENT_IMAGE` | ایمیج نود (`nexuspanel/node:latest`) |
+| `PANEL_PUBLIC_ADDRESS` | آدرس عمومی برای نودهای نماینده |
+| `HA_ENABLED` | چند instance پنل |
 
-Feature Flagها: `billing`, `api_v2`, `smart_routing`, `workflows`, `traffic_intelligence`, `plugin_marketplace` و غیره.
-
----
-
-## CLI
-
-```bash
-python3 nexuspanel-cli.py admin create --sudo
-python3 nexuspanel-cli.py user list
-python3 nexuspanel-cli.py backup create
-```
-
-نصب سراسری:
-
-```bash
-sudo ln -sf $(pwd)/nexuspanel-cli.py /usr/local/bin/nexuspanel-cli
-nexuspanel-cli completion install
-```
+جزئیات: [`.env.example`](.env.example)
 
 ---
 
-## API
+## امنیت و پوشه `tests` روی گیت‌هاب
 
-- **v1**: مسیرهای `/api/*` با توکن ادمین.
-- **v2**: `/api/v2/*` با صفحه‌بندی؛ هدر `X-API-Key` یا Bearer (نیاز به flag `api_v2`).
+### آیا `tests/` باید روی گیت باشد؟
 
-با `DOCS=True`: مستندات در `/docs`.
+**بله — نه تنها مشکلی ندارد، بلکه توصیه می‌شود.**
 
----
+| سوال | پاسخ |
+|------|------|
+| آیا رمز یا `.env` داخل tests است؟ | **خیر** — فقط دیتابیس موقت و xray ساختگی |
+| آیا با نصب پنل، tests اجرا می‌شود؟ | **خیر** — فقط برای توسعه‌دهنده و CI |
+| آیا حذف tests امن‌تر است؟ | **خیر** — کیفیت و regression بدون تست پایین می‌آید |
 
-## سرویس systemd
+فایل `tests/conftest.py` یک SQLite موقت در `/tmp` می‌سازد و هیچ اطلاعات production را لمس نمی‌کند.
 
-```bash
-sudo bash install_service.sh
-sudo systemctl enable nexuspanel
-sudo systemctl start nexuspanel
-```
+جزئیات: [SECURITY.md](SECURITY.md) · [tests/README.md](tests/README.md)
 
----
-
-## تست
-
-```bash
-python3 -m pytest -q
-```
-
----
-
-## ساختار پروژه
-
-```
-app/           بک‌اند FastAPI
-app/dashboard/ رابط React (تم NexusPanel)
-cli/           ابزار خط فرمان
-monitoring/    Prometheus و Grafana
-tests/         تست‌ها
-```
+**هرگز commit نکنید:** `.env` واقعی، dump دیتابیس، کلید TLS خصوصی (همه در `.gitignore` هستند).
 
 ---
 
 ## لایسنس
 
-MIT — فایل [LICENSE](LICENSE).
+این پروژه تحت **[AGPL-3.0](LICENSE)** منتشر شده است (مشتق از اکوسیستم Xray/Marzban-class panels). استفاده شبکه‌ای (SaaS) نیازمند رعایت شرایط AGPL برای کاربران نهایی است.
 
 ---
 
 ## مشارکت
 
-[CONTRIBUTING.md](CONTRIBUTING.md) — مخزن: [github.com/KhaJehAmiri/nexuspanel](https://github.com/KhaJehAmiri/nexuspanel).
+[CONTRIBUTING.md](CONTRIBUTING.md) — Issues و PR: [github.com/KhaJehAmiri/nexuspanel](https://github.com/KhaJehAmiri/nexuspanel)

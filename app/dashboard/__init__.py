@@ -8,7 +8,11 @@ from config import DEBUG, VITE_BASE_API, DASHBOARD_PATH
 from fastapi.staticfiles import StaticFiles
 
 base_dir = Path(__file__).parent
-build_dir = base_dir / 'build'
+
+# Phase 7: prefer the new NexusPanel dashboard (dashboard-v2) when it has been
+# built. Falls back to the legacy build so the panel keeps working either way.
+_v2_build = base_dir.parent / 'dashboard-v2' / 'build'
+build_dir = _v2_build if (_v2_build / 'index.html').is_file() else base_dir / 'build'
 statics_dir = build_dir / 'statics'
 
 
@@ -46,6 +50,15 @@ def run_build():
         )
         return
 
+    # SPA fallback for deep links (Starlette serves 404.html in html mode).
+    fallback = build_dir / '404.html'
+    if not fallback.is_file():
+        try:
+            fallback.write_text((build_dir / 'index.html').read_text())
+        except OSError:
+            pass
+
+    log.info("Serving NexusPanel dashboard from %s", build_dir)
     app.mount(
         DASHBOARD_PATH,
         StaticFiles(directory=build_dir, html=True),

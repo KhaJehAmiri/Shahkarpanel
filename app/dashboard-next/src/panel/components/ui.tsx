@@ -1,5 +1,5 @@
 import {
-  createContext, FC, ReactNode, useCallback, useContext, useState,
+  createContext, FC, InputHTMLAttributes, ReactNode, useCallback, useContext, useState,
 } from "react";
 import { copyToClipboard } from "../lib/clipboard";
 import { IcCheck, IcClose } from "./icons";
@@ -77,7 +77,9 @@ export const Field: FC<{ label?: string; hint?: string; children: ReactNode }> =
   </div>
 );
 
-export const Input: FC<any> = (props) => <input className="nx-input" {...props} />;
+export const Input: FC<InputHTMLAttributes<HTMLInputElement>> = (props) => (
+  <input className="nx-input" {...props} />
+);
 export const Textarea: FC<any> = (props) => <textarea className="nx-textarea" {...props} />;
 export const Select: FC<any> = ({ children, ...rest }) => (
   <select className="nx-select" {...rest}>{children}</select>

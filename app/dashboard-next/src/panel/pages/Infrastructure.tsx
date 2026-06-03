@@ -10,6 +10,7 @@ import {
   Button, Callout, Card, EmptyState, Field, Input, Modal, Pill, Select, SkeletonRows, Tabs, useToast,
 } from "../components/ui";
 import { IcPlus, IcRefresh, IcTrash, IcLink } from "../components/icons";
+import { XrayConfigsHub } from "../components/xray/XrayConfigsHub";
 
 export const Infrastructure: FC = () => {
   const { t } = useTranslation();
@@ -17,7 +18,7 @@ export const Infrastructure: FC = () => {
   const [tab, setTab] = useState("nodes");
   const tabs = [
     { id: "nodes", label: t("infra.tabNodes") },
-    ...(admin?.is_sudo ? [{ id: "inbounds", label: t("infra.tabInbounds") }, { id: "hosts", label: t("infra.tabHosts") }] : []),
+    ...(admin?.is_sudo ? [{ id: "xray", label: t("xray.tabHub") }, { id: "hosts", label: t("infra.tabHosts") }] : []),
     { id: "tunnels", label: t("infra.tabTunnels") },
   ];
   return (
@@ -25,7 +26,7 @@ export const Infrastructure: FC = () => {
       <PageHeader title={t("infra.title")} subtitle={t("infra.subtitle")} description={t("infra.description")} />
       <Tabs active={tab} onChange={setTab} tabs={tabs} />
       {tab === "nodes" && <NodesTab />}
-      {tab === "inbounds" && <InboundsTab />}
+      {tab === "xray" && <XrayConfigsHub />}
       {tab === "hosts" && <HostsTab />}
       {tab === "tunnels" && <TunnelsTab />}
     </div>
@@ -187,130 +188,6 @@ const TunnelsTab: FC = () => {
       </Card>
       {show && <AddTunnel nodes={nodes.data || []} onClose={() => setShow(false)} onDone={() => { setShow(false); reload(); }} />}
     </>
-  );
-};
-
-/* ------------------------------ Inbounds -------------------------------- */
-const PROTOCOLS = ["vless", "vmess", "trojan", "shadowsocks"];
-const NETWORKS = ["tcp", "ws", "grpc"];
-const SS_METHODS = ["chacha20-ietf-poly1305", "aes-256-gcm", "aes-128-gcm"];
-
-function buildInbound(f: any) {
-  const stream: any = { network: f.network, security: "none" };
-  if (f.network === "ws") stream.wsSettings = { path: f.path || "/" };
-  if (f.network === "grpc") stream.grpcSettings = { serviceName: f.path || "" };
-  const settings: any = { clients: [] };
-  if (f.protocol === "vless") settings.decryption = "none";
-  if (f.protocol === "shadowsocks") { settings.network = "tcp,udp"; settings.method = f.method; }
-  const inbound: any = {
-    tag: f.tag.trim(),
-    listen: "0.0.0.0",
-    port: parseInt(f.port),
-    protocol: f.protocol,
-    settings,
-  };
-  if (f.protocol !== "shadowsocks") inbound.streamSettings = stream;
-  return inbound;
-}
-
-const isUserInbound = (i: any) => PROTOCOLS.includes(i?.protocol);
-
-const InboundsTab: FC = () => {
-  const { t } = useTranslation();
-  const toast = useToast();
-  const [show, setShow] = useState(false);
-  const { data, loading, error, reload } = useFetch<any>(() => api.get("/core/config"), []);
-  const inbounds = (data?.inbounds || []).filter(isUserInbound);
-
-  const save = async (config: any) => {
-    await api.put("/core/config", config);
-  };
-
-  const remove = async (tag: string) => {
-    if (!confirm(t("common.confirmDelete"))) return;
-    try {
-      const cfg = { ...data, inbounds: data.inbounds.filter((i: any) => i.tag !== tag) };
-      await save(cfg);
-      toast.push(t("common.deleted"), "success");
-      reload();
-    } catch (e: any) { toast.push(e.message, "error"); }
-  };
-
-  return (
-    <>
-      <Callout tone="info" title={t("infra.tabInbounds")}>{t("infra.inboundsDesc")}</Callout>
-      <div className="nx-row" style={{ justifyContent: "flex-end", margin: "14px 0", gap: 8 }}>
-        <Button variant="ghost" onClick={reload}><IcRefresh className="nx-ico" /></Button>
-        <Button variant="primary" onClick={() => setShow(true)}><IcPlus className="nx-ico" /> {t("infra.addInbound")}</Button>
-      </div>
-      <Card pad0>
-        {loading ? <div style={{ padding: 20 }}><SkeletonRows rows={4} cols={4} /></div>
-          : error ? <EmptyState title={t("common.error")} desc={error} />
-          : !inbounds.length ? <EmptyState title={t("common.noData")} action={<Button variant="primary" onClick={() => setShow(true)}><IcPlus className="nx-ico" /> {t("infra.addInbound")}</Button>} />
-          : (
-            <div className="nx-table-wrap"><table className="nx-table">
-              <thead><tr><th>{t("common.name")}</th><th>Protocol</th><th>{t("infra.port")}</th><th>{t("infra.transport")}</th><th style={{ textAlign: "end" }}>{t("common.actions")}</th></tr></thead>
-              <tbody>
-                {inbounds.map((i: any) => (
-                  <tr key={i.tag}>
-                    <td style={{ fontWeight: 600 }}>{i.tag}</td>
-                    <td><Pill tone="accent">{i.protocol}</Pill></td>
-                    <td className="nx-mono">{i.port}</td>
-                    <td>{i.streamSettings?.network || "tcp"}{i.streamSettings?.wsSettings?.path ? ` ${i.streamSettings.wsSettings.path}` : ""}</td>
-                    <td><div className="nx-row" style={{ justifyContent: "flex-end" }}><Button variant="danger" size="sm" onClick={() => remove(i.tag)}><IcTrash className="nx-ico" /></Button></div></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table></div>
-          )}
-      </Card>
-      {show && <AddInbound config={data} onClose={() => setShow(false)} onDone={() => { setShow(false); reload(); }} />}
-    </>
-  );
-};
-
-const AddInbound: FC<{ config: any; onClose: () => void; onDone: () => void }> = ({ config, onClose, onDone }) => {
-  const { t } = useTranslation();
-  const toast = useToast();
-  const [f, setF] = useState({ tag: "", protocol: "vless", port: "443", network: "tcp", path: "/", method: SS_METHODS[0] });
-  const [busy, setBusy] = useState(false);
-  const upd = (k: string) => (e: any) => setF({ ...f, [k]: e.target.value });
-
-  const submit = async () => {
-    setBusy(true);
-    try {
-      const exists = (config.inbounds || []).some((i: any) => i.tag === f.tag.trim() || String(i.port) === f.port);
-      if (exists) { toast.push("Tag or port already in use", "error"); setBusy(false); return; }
-      const cfg = { ...config, inbounds: [...(config.inbounds || []), buildInbound(f)] };
-      await api.put("/core/config", cfg);
-      toast.push(t("common.created"), "success");
-      onDone();
-    } catch (e: any) { toast.push(e.message, "error"); } finally { setBusy(false); }
-  };
-
-  return (
-    <Modal open title={t("infra.addInbound")} onClose={onClose}
-      footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
-        <Button variant="primary" disabled={busy || !f.tag || !f.port} onClick={submit}>{t("common.create")}</Button></>}>
-      <div className="nx-stack">
-        <Callout tone="warn">{t("infra.inboundRestart")}</Callout>
-        <Field label={`${t("common.name")} (tag)`}><Input value={f.tag} onChange={upd("tag")} placeholder="VLESS WS 2" autoFocus /></Field>
-        <div className="nx-row" style={{ gap: 12 }}>
-          <Field label="Protocol"><Select value={f.protocol} onChange={upd("protocol")}>{PROTOCOLS.map((p) => <option key={p}>{p}</option>)}</Select></Field>
-          <Field label={t("infra.port")}><Input type="number" value={f.port} onChange={upd("port")} /></Field>
-        </div>
-        {f.protocol !== "shadowsocks" ? (
-          <div className="nx-row" style={{ gap: 12 }}>
-            <Field label={t("infra.transport")}><Select value={f.network} onChange={upd("network")}>{NETWORKS.map((n) => <option key={n}>{n}</option>)}</Select></Field>
-            {(f.network === "ws" || f.network === "grpc") && (
-              <Field label={f.network === "ws" ? "path" : "serviceName"}><Input value={f.path} onChange={upd("path")} /></Field>
-            )}
-          </div>
-        ) : (
-          <Field label="method"><Select value={f.method} onChange={upd("method")}>{SS_METHODS.map((m) => <option key={m}>{m}</option>)}</Select></Field>
-        )}
-      </div>
-    </Modal>
   );
 };
 

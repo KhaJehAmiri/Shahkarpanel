@@ -118,6 +118,28 @@ def test_endpoint_returns_conf_for_active_user():
         assert "Endpoint = vpn.example.com:51820" in body
 
 
+def test_endpoint_lazily_allocates_address_when_missing():
+    from app.db.models import Proxy
+    from app.wireguard import generate_keypair
+    with GetDB() as db:
+        # user with a WG proxy but NO address
+        priv, pub = generate_keypair()
+        u = User(username=f"wg-{uuid.uuid4().hex[:8]}", status=UserStatus.active)
+        db.add(u)
+        db.commit()
+        db.add(Proxy(type=ProxyTypes.WireGuard.value,
+                     settings={"private_key": priv, "public_key": pub},
+                     user_id=u.id))
+        db.commit()
+        node = _mk_wg_node(db)
+        resp = user_subscription_wireguard(dbuser=u, node_id=node.id, db=db)
+        assert resp.status_code == 200
+        assert "Address = " in resp.body.decode()
+        # address persisted on the proxy
+        proxy = db.query(Proxy).filter(Proxy.user_id == u.id).first()
+        assert proxy.settings.get("address")
+
+
 def test_endpoint_403_for_disabled_user():
     with GetDB() as db:
         user = _mk_user_with_wg(db, UserStatus.disabled)

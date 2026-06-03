@@ -16,6 +16,7 @@ from app.db.models import Proxy
 from app.models.proxy import ProxyTypes
 from app.models.user import UserStatus
 from app.utils.concurrency import threaded_function
+from app.wireguard.pool import WireGuardPeerIPAllocator
 from app.wireguard.sync import WGUserPeer, build_node_spec
 from app.wireguard.transport import client_for_node
 
@@ -25,6 +26,57 @@ logger = logging.getLogger("nexus-wg")
 # else (disabled / limited / expired / on_hold) is pushed as inactive so the
 # node drops the peer and traffic stops immediately.
 SERVED_STATUSES = (UserStatus.active,)
+
+
+def _all_wg_proxies(db) -> List[Proxy]:
+    return db.query(Proxy).filter(Proxy.type == ProxyTypes.WireGuard).all()
+
+
+def ensure_user_address(db, proxy: Proxy, subnet: str) -> Optional[str]:
+    """Allocate (and persist) a unique peer IP for a single WG proxy from
+    ``subnet`` if it doesn't already have one. Returns the address or ``None``
+    when the subnet is exhausted."""
+    settings = dict(proxy.settings or {})
+    if settings.get("address"):
+        return settings["address"]
+
+    used = [
+        p.settings.get("address")
+        for p in _all_wg_proxies(db)
+        if p.settings and p.settings.get("address")
+    ]
+    allocator = WireGuardPeerIPAllocator(subnet, used=used)
+    address = allocator.allocate()
+    if not address:
+        logger.warning("WireGuard subnet %s exhausted; cannot allocate peer IP", subnet)
+        return None
+
+    settings["address"] = address
+    proxy.settings = settings
+    db.commit()
+    return address
+
+
+def ensure_addresses_for_subnet(db, subnet: str) -> None:
+    """Allocate peer IPs for every WG user that is missing one, from ``subnet``.
+
+    Single-subnet model: one address per user, shared across WG nodes. Persists
+    each new assignment so peer mapping stays stable across syncs.
+    """
+    proxies = _all_wg_proxies(db)
+    used = [p.settings.get("address") for p in proxies if p.settings and p.settings.get("address")]
+    allocator = WireGuardPeerIPAllocator(subnet, used=used)
+    for proxy in proxies:
+        settings = dict(proxy.settings or {})
+        if settings.get("address"):
+            continue
+        address = allocator.allocate()
+        if not address:
+            logger.warning("WireGuard subnet %s exhausted while assigning peers", subnet)
+            break
+        settings["address"] = address
+        proxy.settings = settings
+    db.commit()
 
 
 def collect_wg_peers(db) -> List[WGUserPeer]:
@@ -77,6 +129,7 @@ def sync_node(db, dbnode, *, peers: Optional[List[WGUserPeer]] = None, node_obje
         return False
 
     if peers is None:
+        ensure_addresses_for_subnet(db, cfg.subnet)
         peers = collect_wg_peers(db)
 
     spec = build_node_spec(
@@ -101,6 +154,12 @@ def sync_all_nodes(db=None) -> int:
         wg_nodes = crud.get_wireguard_nodes(session)
         if not wg_nodes:
             return 0
+        # Single-subnet model: allocate any missing peer IPs from the first
+        # configured node's subnet before computing the shared peer set.
+        for n in wg_nodes:
+            if n.wireguard is not None:
+                ensure_addresses_for_subnet(session, n.wireguard.subnet)
+                break
         peers = collect_wg_peers(session)
         return sum(1 for n in wg_nodes if sync_node(session, n, peers=peers))
 

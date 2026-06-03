@@ -1,6 +1,7 @@
 """Phase 11.3 — node core_kind, node_wireguard config, peer-sync planner."""
 import importlib.util
 import os
+import uuid
 
 from app.db import GetDB, crud
 from app.models.node import CoreKind, NodeCreate, NodeModify
@@ -154,6 +155,33 @@ def test_build_node_spec_is_consumable_by_node_agent():
     assert parsed.address == ["10.10.0.1/24"]
     assert parsed.peers[0].public_key == pk
     assert parsed.peers[0].allowed_ips == ["10.10.0.9/32"]
+
+
+def test_ensure_addresses_allocates_unique_ips():
+    from app.db.models import Proxy, User
+    from app.models.proxy import ProxyTypes
+    from app.models.user import UserStatus
+    from app.wireguard.operations import ensure_addresses_for_subnet
+    subnet = "10.77.0.0/24"
+    with GetDB() as db:
+        ids = []
+        for _ in range(3):
+            priv, pub = generate_keypair()
+            u = User(username=f"wga-{uuid.uuid4().hex[:8]}", status=UserStatus.active)
+            db.add(u)
+            db.commit()
+            db.add(Proxy(type=ProxyTypes.WireGuard.value,
+                         settings={"private_key": priv, "public_key": pub},
+                         user_id=u.id))
+            db.commit()
+            ids.append(u.id)
+        ensure_addresses_for_subnet(db, subnet)
+        addrs = [
+            db.query(Proxy).filter(Proxy.user_id == i).first().settings.get("address")
+            for i in ids
+        ]
+        assert all(a and a.startswith("10.77.0.") for a in addrs)
+        assert len(set(addrs)) == len(addrs)  # unique
 
 
 def test_pubkey_user_map_includes_inactive_for_trailing_usage():

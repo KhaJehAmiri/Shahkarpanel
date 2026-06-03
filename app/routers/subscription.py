@@ -209,6 +209,17 @@ def user_subscription_wireguard(
         raise HTTPException(status_code=404, detail="No WireGuard node available")
 
     dbnode = nodes[0]
+
+    # Lazily allocate a peer IP from the node subnet if the user has none yet,
+    # so the .conf is usable even before the node has synced.
+    if not settings.get("address"):
+        from app.wireguard.operations import ensure_user_address
+        for proxy in dbuser.proxies:
+            if proxy.type is ProxyTypes.WireGuard:
+                ensure_user_address(db, proxy, dbnode.wireguard.subnet)
+                settings = proxy.settings or {}
+                break
+
     conf = build_wireguard_user_config(settings, dbnode)
     if conf is None:
         raise HTTPException(status_code=404, detail="No WireGuard configuration available")

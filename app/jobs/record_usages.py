@@ -14,6 +14,7 @@ from sqlalchemy.sql.dml import Insert
 from app import scheduler, xray
 from app.db import GetDB
 from app.db.models import Admin, NodeUsage, NodeUserUsage, System, User
+from app.models.user import UserStatus
 from config import (
     DISABLE_RECORDING_NODE_USAGE,
     JOB_RECORD_NODE_USAGES_INTERVAL,
@@ -174,8 +175,25 @@ def record_user_usages():
     if not users_usage:
         return
 
+    billable_statuses = (UserStatus.active, UserStatus.on_hold)
+
     with GetDB() as db:
-        user_admin_map = dict(db.query(User.id, User.admin_id).all())
+        uids = [int(u["uid"]) for u in users_usage]
+        billable_ids = {
+            row[0]
+            for row in db.query(User.id)
+            .filter(User.id.in_(uids), User.status.in_(billable_statuses))
+            .all()
+        }
+        user_admin_map = dict(
+            db.query(User.id, User.admin_id)
+            .filter(User.id.in_(billable_ids))
+            .all()
+        )
+
+    users_usage = [u for u in users_usage if int(u["uid"]) in billable_ids]
+    if not users_usage:
+        return
 
     admin_usage = defaultdict(int)
     for user_usage in users_usage:
@@ -183,7 +201,7 @@ def record_user_usages():
         if admin_id:
             admin_usage[admin_id] += user_usage["value"]
 
-    # record users usage
+    # record users usage (only active / on_hold — disabled users must not accrue traffic or online_at)
     with GetDB() as db:
         stmt = update(User). \
             where(User.id == bindparam('uid')). \
@@ -205,7 +223,9 @@ def record_user_usages():
         return
 
     for node_id, params in api_params.items():
-        record_user_stats(params, node_id, usage_coefficient[node_id])
+        if params:
+            filtered = [p for p in params if int(p["uid"]) in billable_ids]
+            record_user_stats(filtered, node_id, usage_coefficient[node_id])
 
 
 def record_node_usages():

@@ -115,7 +115,7 @@ def modify_user(
     if user.status in [UserStatus.active, UserStatus.on_hold]:
         bg.add_task(xray.operations.update_user, dbuser=dbuser)
     else:
-        bg.add_task(xray.operations.remove_user, dbuser=dbuser)
+        xray.operations.remove_user_immediate(dbuser)
 
     bg.add_task(report.user_updated, user=user, user_admin=dbuser.admin, by=admin)
 

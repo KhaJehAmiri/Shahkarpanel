@@ -90,6 +90,23 @@ def add_user(dbuser: "DBUser"):
                     _add_user_to_inbound(node.api, inbound_tag, account)
 
 
+def _remove_user_from_inbound_sync(api: XRayAPI, inbound_tag: str, email: str):
+    try:
+        api.remove_inbound_user(tag=inbound_tag, email=email, timeout=30)
+    except (xray.exc.EmailNotFoundError, xray.exc.ConnectionError):
+        pass
+
+
+def remove_user_immediate(dbuser: "DBUser"):
+    """Synchronous removal — used when disabling so Xray stops billing immediately."""
+    email = f"{dbuser.id}.{dbuser.username}"
+    for inbound_tag in xray.config.inbounds_by_tag:
+        _remove_user_from_inbound_sync(xray.api, inbound_tag, email)
+        for node in list(xray.nodes.values()):
+            if node.connected and node.started:
+                _remove_user_from_inbound_sync(node.api, inbound_tag, email)
+
+
 def remove_user(dbuser: "DBUser"):
     email = f"{dbuser.id}.{dbuser.username}"
 
@@ -284,6 +301,7 @@ def restart_node(node_id, config=None):
 __all__ = [
     "add_user",
     "remove_user",
+    "remove_user_immediate",
     "add_node",
     "remove_node",
     "connect_node",

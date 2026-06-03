@@ -1,6 +1,7 @@
 import {
   createContext, FC, ReactNode, useCallback, useContext, useState,
 } from "react";
+import { copyToClipboard } from "../lib/clipboard";
 import { IcCheck, IcClose } from "./icons";
 
 /* ------------------------------- Button -------------------------------- */
@@ -154,24 +155,53 @@ export const Checkbox: FC<{ checked: boolean; onChange?: () => void }> = ({ chec
 );
 
 /* ------------------------------ CopyField ------------------------------ */
-export const CopyField: FC<{ value: string; label?: string }> = ({ value, label }) => {
+export const CopyField: FC<{ value: string; label?: string; mono?: boolean; multiline?: boolean }> = ({ value, label, mono = true, multiline }) => {
   const { push } = useToast();
+  const [copied, setCopied] = useState(false);
   const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(value);
-      push("Copied", "success");
-    } catch {
-      push("Copy failed", "error");
+    const ok = await copyToClipboard(value);
+    if (ok) {
+      setCopied(true);
+      push("Copied to clipboard", "success");
+      window.setTimeout(() => setCopied(false), 1400);
+    } else {
+      push("Copy failed — select the text and use Ctrl/Cmd+C", "error");
     }
   };
   return (
-    <div className="nx-field">
+    <div className="nx-copy-field">
       {label && <label className="nx-label">{label}</label>}
-      <div className="nx-row" style={{ gap: 8, flexWrap: "nowrap" }}>
-        <input className="nx-input nx-mono" style={{ fontSize: 12 }} readOnly value={value} onFocus={(e) => e.target.select()} />
-        <Button size="sm" onClick={copy}>⧉</Button>
+      <div className="nx-copy-row">
+        {multiline ? (
+          <textarea className={`nx-input ${mono ? "nx-mono" : ""}`} readOnly value={value} rows={3} onFocus={(e) => e.target.select()} />
+        ) : (
+          <input className={`nx-input ${mono ? "nx-mono" : ""}`} readOnly value={value} onFocus={(e) => e.target.select()} />
+        )}
+        <button type="button" className={`nx-copy-btn ${copied ? "ok" : ""}`} onClick={copy} aria-label="Copy">
+          {copied ? <IcCheck size={14} /> : <span aria-hidden style={{ fontSize: 14 }}>⧉</span>}
+          <span className="nx-copy-btn-label">{copied ? "Copied" : "Copy"}</span>
+        </button>
       </div>
     </div>
+  );
+};
+
+export const CopyButton: FC<{ value: string; size?: "sm" | "md"; label?: string; className?: string }> = ({ value, size = "sm", label, className = "" }) => {
+  const { push } = useToast();
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    const ok = await copyToClipboard(value);
+    if (ok) {
+      setCopied(true);
+      push("Copied", "success");
+      window.setTimeout(() => setCopied(false), 1400);
+    } else push("Copy failed", "error");
+  };
+  return (
+    <button type="button" onClick={copy} className={`nx-btn ${size === "sm" ? "sm" : ""} ${className}`} aria-label={label || "Copy"} title={label || "Copy"}>
+      {copied ? <IcCheck size={14} /> : <span aria-hidden style={{ fontSize: 14 }}>⧉</span>}
+      {label ? <span>{copied ? "Copied" : label}</span> : null}
+    </button>
   );
 };
 
@@ -208,19 +238,26 @@ type Toast = { id: number; msg: string; kind: "info" | "success" | "error" };
 const ToastCtx = createContext<{ push: (msg: string, kind?: Toast["kind"]) => void }>({ push: () => {} });
 export const useToast = () => useContext(ToastCtx);
 
+const TOAST_ICON: Record<Toast["kind"], string> = { success: "✓", error: "!", info: "i" };
+
 export const ToastProvider: FC<{ children: ReactNode }> = ({ children }) => {
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const dismiss = useCallback((id: number) => setToasts((t) => t.filter((x) => x.id !== id)), []);
   const push = useCallback((msg: string, kind: Toast["kind"] = "info") => {
     const id = Date.now() + Math.random();
-    setToasts((t) => [...t, { id, msg, kind }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 4200);
-  }, []);
+    setToasts((t) => [...t.slice(-3), { id, msg, kind }]);
+    window.setTimeout(() => dismiss(id), 3800);
+  }, [dismiss]);
   return (
     <ToastCtx.Provider value={{ push }}>
       {children}
-      <div className="nx-toasts">
+      <div className="nx-toasts" role="region" aria-live="polite">
         {toasts.map((t) => (
-          <div key={t.id} className={`nx-toast ${t.kind}`}>{t.msg}</div>
+          <div key={t.id} className={`nx-toast ${t.kind}`} role="status">
+            <span className="nx-toast-icon" aria-hidden>{TOAST_ICON[t.kind]}</span>
+            <span className="nx-toast-msg">{t.msg}</span>
+            <button className="nx-toast-x" onClick={() => dismiss(t.id)} aria-label="Dismiss">×</button>
+          </div>
         ))}
       </div>
     </ToastCtx.Provider>

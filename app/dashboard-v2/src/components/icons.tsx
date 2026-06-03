@@ -58,6 +58,11 @@ export const IcBrush: FC<P> = (p) => (<S {...p}><path d="M9.06 11.9l8.07-8.06a2.
 export const IcDownload: FC<P> = (p) => (<S {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="M7 10l5 5 5-5" /><path d="M12 15V3" /></S>);
 export const IcAlert: FC<P> = (p) => (<S {...p}><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /><path d="M12 9v4M12 17h.01" /></S>);
 export const IcFlag: FC<P> = (p) => (<S {...p}><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" /><path d="M4 22v-7" /></S>);
+export const IcShare: FC<P> = (p) => (<S {...p}><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="M8.6 13.5L15.4 17.5M15.4 6.5L8.6 10.5" /></S>);
+export const IcSearch: FC<P> = (p) => (<S {...p}><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></S>);
+export const IcEdit: FC<P> = (p) => (<S {...p}><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.4 2.6a2 2 0 0 1 2.8 2.8L12 14.6 8 16l1.4-4z" /></S>);
+export const IcEye: FC<P> = (p) => (<S {...p}><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></S>);
+export const IcExternal: FC<P> = (p) => (<S {...p}><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><path d="M15 3h6v6" /><path d="M10 14L21 3" /></S>);
 
 export const navIcon = (key: string, cls = "nx-ico"): any => {
   const m: Record<string, FC<P>> = {

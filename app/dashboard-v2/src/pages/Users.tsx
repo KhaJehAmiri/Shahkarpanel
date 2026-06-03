@@ -10,7 +10,9 @@ import {
   SkeletonRows, Toggle, UsageBar, useToast,
 } from "../components/ui";
 import { QR } from "../components/QR";
-import { IcPlus, IcRefresh, IcTrash } from "../components/icons";
+import { absoluteUrl } from "../lib/url";
+import { copyToClipboard } from "../lib/clipboard";
+import { IcEdit, IcExternal, IcEye, IcPlus, IcRefresh, IcShare, IcTrash } from "../components/icons";
 
 const PAGE = 12;
 const STATUSES = ["active", "disabled", "expired", "limited", "on_hold"];
@@ -104,10 +106,11 @@ export const Users: FC = () => {
                         </td>
                         <td>{u.expire ? formatDate(u.expire, i18n.language) : <span className="nx-faint">{t("users.never")}</span>}</td>
                         <td onClick={(e) => e.stopPropagation()}>
-                          <div className="nx-row" style={{ justifyContent: "flex-end", gap: 8 }}>
-                            <Button size="sm" onClick={() => setEditUser(u)}>{t("common.edit")}</Button>
+                          <div className="nx-row" style={{ justifyContent: "flex-end", gap: 6, flexWrap: "nowrap" }}>
+                            <Button size="sm" variant="ghost" title={t("common.view")} onClick={() => setViewUser(u)}><IcEye className="nx-ico" /></Button>
+                            <Button size="sm" variant="ghost" title={t("common.edit")} onClick={() => setEditUser(u)}><IcEdit className="nx-ico" /></Button>
                             <Toggle on={u.status !== "disabled"} onChange={() => toggleUser(u)} />
-                            <Button variant="danger" size="sm" onClick={() => removeUser(u)}><IcTrash className="nx-ico" /></Button>
+                            <Button variant="danger" size="sm" title={t("common.delete")} onClick={() => removeUser(u)}><IcTrash className="nx-ico" /></Button>
                           </div>
                         </td>
                       </tr>
@@ -344,56 +347,112 @@ const UserFormModal: FC<{ mode: "create" | "edit"; user?: UserItem; onClose: () 
 };
 
 /* ----------------------------- user detail ----------------------------- */
+const proxyKind = (link: string): string => {
+  const i = link.indexOf("://");
+  return i === -1 ? "link" : link.slice(0, i).toUpperCase();
+};
+
+const remainingPct = (used: number, limit: number | null | undefined) => {
+  if (!limit || limit <= 0) return null;
+  return Math.max(0, Math.min(100, 100 - (used / limit) * 100));
+};
+
 const UserDetail: FC<{ username: string; onClose: () => void; onEdit: () => void }> = ({ username, onClose, onEdit }) => {
   const { t, i18n } = useTranslation();
+  const toast = useToast();
   const { data, loading } = useFetch<UserItem>(() => api.get(`/user/${encodeURIComponent(username)}`), [username]);
+  const [tab, setTab] = useState<"subscription" | "configs">("subscription");
   const [activeLink, setActiveLink] = useState(0);
+
   const pct = data ? usagePct(data.used_traffic, data.data_limit) : 0;
-  const links = data?.links || [];
+  const remaining = data ? remainingPct(data.used_traffic, data.data_limit) : null;
+  const subUrl = absoluteUrl(data?.subscription_url);
+  const rawLinks = data?.links || [];
+  const links = rawLinks.map((l) => absoluteUrl(l));
+
+  const initials = username.slice(0, 2).toUpperCase();
+
+  const share = async (url: string) => {
+    if (navigator.share) {
+      try { await navigator.share({ title: `NexusPanel — ${username}`, url }); return; } catch { /* user cancelled */ }
+    }
+    const ok = await copyToClipboard(url);
+    toast.push(ok ? "Link copied — share it" : "Copy failed", ok ? "success" : "error");
+  };
 
   return (
-    <Drawer open title={username} onClose={onClose}>
-      {loading || !data ? <SkeletonRows rows={5} cols={1} /> : (
-        <div className="nx-stack" style={{ gap: 18 }}>
-          <div className="nx-row" style={{ justifyContent: "space-between" }}>
-            <Pill tone={statusTone(data.status)} dot>{t(`users.status.${data.status}`, data.status)}</Pill>
-            <Button size="sm" onClick={onEdit}>{t("common.edit")}</Button>
-          </div>
-
-          <div>
-            <div className="nx-row" style={{ justifyContent: "space-between", fontSize: 13 }}>
-              <span className="nx-muted">{t("users.used")}</span>
-              <span>{formatBytes(data.used_traffic)} / {data.data_limit ? formatBytes(data.data_limit) : t("users.unlimited")}</span>
-            </div>
-            {data.data_limit ? <div style={{ marginTop: 6 }}><UsageBar pct={pct} /></div> : null}
-            <div className="nx-row" style={{ justifyContent: "space-between", fontSize: 13, marginTop: 10 }}>
-              <span className="nx-muted">{t("users.expire")}</span>
-              <span>{data.expire ? formatDate(data.expire, i18n.language) : t("users.never")}</span>
-            </div>
-          </div>
-
-          {data.subscription_url && (
-            <div className="nx-stack" style={{ alignItems: "center", gap: 10 }}>
-              <QR value={data.subscription_url} />
-              <CopyField label="Subscription URL" value={data.subscription_url} />
-            </div>
-          )}
-
-          {links.length > 0 && (
-            <div className="nx-field">
-              <label className="nx-label">Configs ({links.length})</label>
-              <div className="nx-row" style={{ gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
-                {links.map((_, i) => (
-                  <button key={i} type="button" className={`nx-btn sm ${activeLink === i ? "primary" : ""}`} onClick={() => setActiveLink(i)}>#{i + 1}</button>
-                ))}
-              </div>
-              <div className="nx-stack" style={{ alignItems: "center", gap: 10 }}>
-                <QR value={links[activeLink]} size={150} />
-                <CopyField value={links[activeLink]} />
+    <Drawer open title={t("users.title")} onClose={onClose}>
+      {loading || !data ? <SkeletonRows rows={6} cols={1} /> : (
+        <>
+          {/* Hero */}
+          <div className="nx-user-hero">
+            <div className="nx-avatar">{initials}</div>
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div className="nx-user-hero-name nx-truncate">{data.username}</div>
+              <div className="nx-user-hero-meta">
+                <Pill tone={statusTone(data.status)} dot>{t(`users.status.${data.status}`, data.status)}</Pill>
+                {data.admin ? <span style={{ marginInlineStart: 8 }}>by {data.admin.username}</span> : null}
               </div>
             </div>
+            <Button size="sm" onClick={onEdit}><IcEdit className="nx-ico" /> {t("common.edit")}</Button>
+          </div>
+
+          {/* Stat grid */}
+          <div className="nx-statgrid" style={{ marginBottom: 18 }}>
+            <div className="nx-statbox">
+              <div className="nx-statbox-k">{t("users.used")}</div>
+              <div className="nx-statbox-v">{formatBytes(data.used_traffic)}</div>
+              {data.data_limit ? <div className="nx-faint" style={{ fontSize: 11, marginTop: 4 }}>{t("users.of")} {formatBytes(data.data_limit)}</div> : <div className="nx-faint" style={{ fontSize: 11, marginTop: 4 }}>{t("users.unlimited")}</div>}
+            </div>
+            <div className="nx-statbox">
+              <div className="nx-statbox-k">{t("users.remaining")}</div>
+              <div className="nx-statbox-v">{remaining !== null ? `${remaining.toFixed(0)}%` : "∞"}</div>
+              {data.data_limit ? <div style={{ marginTop: 8 }}><UsageBar pct={pct} /></div> : null}
+            </div>
+            <div className="nx-statbox">
+              <div className="nx-statbox-k">{t("users.expire")}</div>
+              <div className="nx-statbox-v">{data.expire ? formatDate(data.expire, i18n.language) : t("users.never")}</div>
+              {data.expire ? <div className="nx-faint" style={{ fontSize: 11, marginTop: 4 }}>{(() => { const r = relativeExpiry(data.expire); return r.days !== null && r.days < 0 ? t("users.expired") : r.text; })()}</div> : null}
+            </div>
+            <div className="nx-statbox">
+              <div className="nx-statbox-k">{t("users.online")}</div>
+              <div className="nx-statbox-v">{data.online_at ? formatDate(new Date(data.online_at).getTime() / 1000, i18n.language) : "—"}</div>
+            </div>
+          </div>
+
+          {/* Tabs */}
+          {(subUrl || links.length > 0) && (
+            <>
+              <div className="nx-tabs">
+                {subUrl && <button className={`nx-tab ${tab === "subscription" ? "active" : ""}`} onClick={() => setTab("subscription")}>{t("users.subscription")}</button>}
+                {links.length > 0 && <button className={`nx-tab ${tab === "configs" ? "active" : ""}`} onClick={() => setTab("configs")}>{t("users.configs")} · {links.length}</button>}
+              </div>
+
+              {tab === "subscription" && subUrl && (
+                <div className="nx-stack" style={{ alignItems: "stretch", gap: 14 }}>
+                  <div className="nx-center"><div className="nx-qr-frame"><QR value={subUrl} size={200} /></div></div>
+                  <CopyField label={t("users.subUrl")} value={subUrl} />
+                  <div className="nx-share-row">
+                    <a className="nx-btn" href={subUrl} target="_blank" rel="noreferrer"><IcExternal className="nx-ico" /> {t("users.open")}</a>
+                    <Button onClick={() => share(subUrl)}><IcShare className="nx-ico" /> {t("users.share")}</Button>
+                  </div>
+                </div>
+              )}
+
+              {tab === "configs" && links.length > 0 && (
+                <div className="nx-stack" style={{ gap: 12 }}>
+                  <div className="nx-pager">
+                    {links.map((l, i) => (
+                      <button key={i} type="button" className={`nx-chip ${activeLink === i ? "active" : ""}`} onClick={() => setActiveLink(i)}>{proxyKind(l)} · #{i + 1}</button>
+                    ))}
+                  </div>
+                  <div className="nx-center"><div className="nx-qr-frame"><QR value={links[activeLink]} size={170} /></div></div>
+                  <CopyField label={proxyKind(links[activeLink])} value={links[activeLink]} multiline />
+                </div>
+              )}
+            </>
           )}
-        </div>
+        </>
       )}
     </Drawer>
   );

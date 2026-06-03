@@ -28,6 +28,7 @@ RUN python3 -m pip install --upgrade pip setuptools \
 
 FROM python:$PYTHON_VERSION-slim
 
+ARG PYTHON_VERSION=3.12
 ENV PYTHON_LIB_PATH=/usr/local/lib/python${PYTHON_VERSION%.*}/site-packages
 WORKDIR /code
 
@@ -39,7 +40,9 @@ COPY --from=build /usr/local/share/xray /usr/local/share/xray
 
 COPY . /code
 
-RUN ln -s /code/nexuspanel-cli.py /usr/bin/nexuspanel-cli \
+# setuptools provides pkg_resources (required by APScheduler during CLI import)
+RUN python3 -m pip install --no-cache-dir 'setuptools>=65,<82' \
+    && ln -sf /code/nexuspanel-cli.py /usr/bin/nexuspanel-cli \
     && chmod +x /usr/bin/nexuspanel-cli \
     && nexuspanel-cli completion install --shell bash
 

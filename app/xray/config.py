@@ -145,6 +145,14 @@ class XRayConfig(dict):
             if not inbound['protocol'] in ProxyTypes._value2member_map_:
                 continue
 
+            # WireGuard is a product protocol served by a native node interface,
+            # not by Xray. A `wireguard` inbound in the Xray config is server
+            # configuration (Phase 10 editor) and must never be exposed as a
+            # per-user product inbound, otherwise add_user would try to build a
+            # (non-existent) Xray WireGuard account. See accounting-contract.md.
+            if inbound['protocol'] == ProxyTypes.WireGuard.value:
+                continue
+
             if inbound['tag'] in XRAY_EXCLUDE_INBOUND_TAGS:
                 continue
 

@@ -12,6 +12,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from config import XRAY_ASSETS_PATH, XRAY_EXECUTABLE_PATH
 from logger import logger
+from wireguard import WireGuardManager, WireGuardSpec
 from xray import XRayConfig, XRayCore
 
 app = FastAPI()
@@ -41,6 +42,7 @@ class Service(object):
         )
         self.core_version = self.core.get_version()
         self.config = None
+        self.wg = WireGuardManager()
 
         self.router.add_api_route("/", self.base, methods=["POST"])
         self.router.add_api_route("/ping", self.ping, methods=["POST"])
@@ -49,6 +51,12 @@ class Service(object):
         self.router.add_api_route("/start", self.start, methods=["POST"])
         self.router.add_api_route("/stop", self.stop, methods=["POST"])
         self.router.add_api_route("/restart", self.restart, methods=["POST"])
+
+        # WireGuard product endpoints (Phase 11). The panel pushes a declarative
+        # spec and reads back per-peer transfer counters for central accounting.
+        self.router.add_api_route("/wg/apply", self.wg_apply, methods=["POST"])
+        self.router.add_api_route("/wg/transfer", self.wg_transfer, methods=["POST"])
+        self.router.add_api_route("/wg/down", self.wg_down, methods=["POST"])
 
         self.router.add_websocket_route("/logs", self.logs)
 
@@ -209,6 +217,36 @@ class Service(object):
             )
 
         return self.response()
+
+    def wg_apply(self, session_id: UUID = Body(embed=True), spec: dict = Body(embed=True)):
+        self.match_session_id(session_id)
+        try:
+            wg_spec = WireGuardSpec.from_dict(spec)
+        except (KeyError, ValueError, TypeError) as exc:
+            raise HTTPException(status_code=422, detail={"spec": f"Invalid WireGuard spec: {exc}"})
+        try:
+            self.wg.apply(wg_spec)
+        except Exception as exc:
+            logger.error(f"Failed to apply WireGuard spec: {exc}")
+            raise HTTPException(status_code=503, detail=str(exc))
+        return {"interface": wg_spec.interface, "peers": len(wg_spec.peers)}
+
+    def wg_transfer(self, session_id: UUID = Body(embed=True), interface: str = Body(embed=True)):
+        self.match_session_id(session_id)
+        try:
+            return {"transfer": self.wg.get_transfer(interface)}
+        except Exception as exc:
+            logger.error(f"Failed to read WireGuard transfer: {exc}")
+            raise HTTPException(status_code=503, detail=str(exc))
+
+    def wg_down(self, session_id: UUID = Body(embed=True), interface: str = Body(embed=True)):
+        self.match_session_id(session_id)
+        try:
+            self.wg.teardown(interface)
+        except Exception as exc:
+            logger.error(f"Failed to tear down WireGuard interface: {exc}")
+            raise HTTPException(status_code=503, detail=str(exc))
+        return {"interface": interface, "down": True}
 
     async def logs(self, websocket: WebSocket):
         session_id = websocket.query_params.get('session_id')

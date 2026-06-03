@@ -21,7 +21,7 @@ const FLOWS = [
   { v: "", label: "none (recommended)" },
   { v: "xtls-rprx-vision", label: "xtls-rprx-vision" },
 ];
-const PROTO_LABEL: Record<string, string> = { vless: "VLESS", vmess: "VMess", trojan: "Trojan", shadowsocks: "Shadowsocks" };
+const PROTO_LABEL: Record<string, string> = { vless: "VLESS", vmess: "VMess", trojan: "Trojan", shadowsocks: "Shadowsocks", wireguard: "WireGuard" };
 
 export const Users: FC = () => {
   const { t, i18n } = useTranslation();
@@ -372,6 +372,8 @@ const UserDetail: FC<{ username: string; onClose: () => void; onEdit: () => void
   const subUrl = absoluteUrl(data?.subscription_url);
   const rawLinks = data?.links || [];
   const links = rawLinks.map((l) => absoluteUrl(l));
+  const hasWireguard = !!data?.proxies && "wireguard" in data.proxies;
+  const wgUrl = subUrl ? `${subUrl.replace(/\/$/, "")}/wireguard` : "";
 
   const initials = username.slice(0, 2).toUpperCase();
 
@@ -439,6 +441,11 @@ const UserDetail: FC<{ username: string; onClose: () => void; onEdit: () => void
                     <a className="nx-btn" href={subUrl} target="_blank" rel="noreferrer"><IcExternal className="nx-ico" /> {t("users.open")}</a>
                     <Button onClick={() => share(subUrl)}><IcShare className="nx-ico" /> {t("users.share")}</Button>
                   </div>
+                  {hasWireguard && wgUrl && (
+                    <a className="nx-btn" href={wgUrl} download={`${data.username}.conf`}>
+                      <IcExternal className="nx-ico" /> {t("users.downloadWireguard")}
+                    </a>
+                  )}
                 </div>
               )}
 

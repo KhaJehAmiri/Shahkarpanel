@@ -69,6 +69,7 @@ export interface NodeItem {
   region?: string | null;
   capacity?: number | null;
   latency_ms?: number | null;
+  core_kind?: string;
 }
 
 export interface Tenant {

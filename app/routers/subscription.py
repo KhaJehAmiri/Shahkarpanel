@@ -2,13 +2,15 @@ import re
 from distutils.version import LooseVersion
 from pathlib import Path as _Path
 
-from fastapi import APIRouter, Depends, Header, Path, Request, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Path, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app.db import Session, crud, get_db
 from app.dependencies import get_validated_sub, validate_dates
-from app.models.user import SubscriptionUserResponse, UserResponse
+from app.models.proxy import ProxyTypes
+from app.models.user import SubscriptionUserResponse, UserResponse, UserStatus
 from app.subscription.share import encode_title, generate_subscription
+from app.subscription.wireguard import user_config as build_wireguard_user_config
 from app.templates import render_template
 from config import (
     SUB_PROFILE_TITLE,
@@ -171,6 +173,52 @@ def user_get_usage(
     usages = crud.get_user_usages(db, dbuser, start, end)
 
     return {"usages": usages, "username": dbuser.username}
+
+
+def _wireguard_user_settings(dbuser) -> dict:
+    """Return the user's WireGuard proxy settings dict, or ``None``."""
+    for proxy in dbuser.proxies:
+        if proxy.type is ProxyTypes.WireGuard:
+            return proxy.settings or {}
+    return None
+
+
+@router.get("/{token}/wireguard")
+@router.get("/{token}/wireguard/{node_id}", include_in_schema=False)
+def user_subscription_wireguard(
+    dbuser=Depends(get_validated_sub),
+    node_id: int = None,
+    db: Session = Depends(get_db),
+):
+    """Return a wg-quick ``.conf`` for the user, tied to the same token and
+    central quota. Issuance is gated on billable status / quota so a
+    disabled / limited / expired user does not receive a working config."""
+    if dbuser.status not in (UserStatus.active, UserStatus.on_hold):
+        raise HTTPException(status_code=403, detail="Subscription is not active")
+    if dbuser.data_limit and dbuser.used_traffic >= dbuser.data_limit:
+        raise HTTPException(status_code=403, detail="Data limit reached")
+
+    settings = _wireguard_user_settings(dbuser)
+    if not settings:
+        raise HTTPException(status_code=404, detail="No WireGuard configuration for this user")
+
+    nodes = [n for n in crud.get_wireguard_nodes(db) if n.wireguard is not None]
+    if node_id is not None:
+        nodes = [n for n in nodes if n.id == node_id]
+    if not nodes:
+        raise HTTPException(status_code=404, detail="No WireGuard node available")
+
+    dbnode = nodes[0]
+    conf = build_wireguard_user_config(settings, dbnode)
+    if conf is None:
+        raise HTTPException(status_code=404, detail="No WireGuard configuration available")
+
+    filename = f"{dbuser.username}-{dbnode.name}.conf"
+    return Response(
+        content=conf,
+        media_type="text/plain",
+        headers={"content-disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/{token}/{client_type}")

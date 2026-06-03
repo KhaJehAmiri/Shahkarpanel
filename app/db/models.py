@@ -343,6 +343,17 @@ class Node(Base):
     usages = relationship("NodeUsage", back_populates="node", cascade="all, delete-orphan")
     usage_coefficient = Column(Float, nullable=False, server_default=text("1.0"), default=1)
 
+    # Which traffic core this node runs: 'xray' (default) or 'wireguard'.
+    # Both feed the single central User.used_traffic; the value only selects
+    # which agent transport (rpyc Xray vs /wg endpoints) the panel drives.
+    core_kind = Column(String(16), nullable=False, server_default=text("'xray'"), default="xray")
+    wireguard = relationship(
+        "NodeWireGuard",
+        back_populates="node",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+
     # Clustering / reliability (phase 2)
     region = Column(String(64), nullable=True, index=True)
     capacity = Column(Integer, nullable=True)
@@ -361,6 +372,28 @@ class Node(Base):
     provision_host = Column(String(256), nullable=True)
     provision_status = Column(String(32), nullable=True)
     provision_message = Column(String(1024), nullable=True)
+
+
+class NodeWireGuard(Base):
+    """Per-node native WireGuard server config (one-to-one with Node).
+
+    Only nodes whose ``core_kind == 'wireguard'`` carry a row here. Keeping it
+    in a dedicated table keeps the ``nodes`` table lean and lets non-WG nodes
+    have no WG state at all.
+    """
+
+    __tablename__ = "node_wireguard"
+
+    node_id = Column(Integer, ForeignKey("nodes.id"), primary_key=True)
+    node = relationship("Node", back_populates="wireguard")
+    interface = Column(String(32), nullable=False, server_default=text("'wg0'"), default="wg0")
+    listen_port = Column(Integer, nullable=False, server_default=text("51820"), default=51820)
+    subnet = Column(String(64), nullable=False, server_default=text("'10.10.0.0/24'"), default="10.10.0.0/24")
+    private_key = Column(String(64), nullable=False)
+    public_key = Column(String(64), nullable=False)
+    endpoint = Column(String(256), nullable=True)
+    mtu = Column(Integer, nullable=False, server_default=text("1420"), default=1420)
+    dns = Column(String(256), nullable=True)
 
 
 class NodeUserUsage(Base):

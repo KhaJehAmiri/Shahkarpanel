@@ -153,36 +153,49 @@ def get_outbounds_stats(api: XRayAPI):
         return []
 
 
-def record_user_usages():
-    api_instances = {None: xray.api}
-    usage_coefficient = {None: 1}  # default usage coefficient for the main api instance
+# Statuses whose traffic is billed against ``User.used_traffic``.  Disabled /
+# limited / expired users must never accrue traffic or have ``online_at`` bumped.
+BILLABLE_STATUSES = (UserStatus.active, UserStatus.on_hold)
 
-    for node_id, node in list(xray.nodes.items()):
-        if node.connected and node.started:
-            api_instances[node_id] = node.api
-            usage_coefficient[node_id] = node.usage_coefficient  # fetch the usage coefficient
 
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = {node_id: executor.submit(get_users_stats, api) for node_id, api in api_instances.items()}
-    api_params = {node_id: future.result() for node_id, future in futures.items()}
+def aggregate_user_usage(api_params: dict, usage_coefficient: dict) -> list:
+    """Sum per-user stats across every source (Xray cores, nodes, WireGuard)
+    applying each source's usage coefficient.
 
+    ``api_params`` maps ``node_id -> [{"uid": <User.id>, "value": <bytes>}, ...]``
+    and is the single shape every collector (Xray ``get_users_stats`` and the
+    WireGuard transfer collector) must emit so that one ``User.used_traffic``
+    stays authoritative across all protocols.  ``uid`` must resolve to an
+    integer ``User.id``.
+    """
     users_usage = defaultdict(int)
     for node_id, params in api_params.items():
-        coefficient = usage_coefficient.get(node_id, 1)  # get the usage coefficient for the node
+        coefficient = usage_coefficient.get(node_id, 1)
         for param in params:
-            users_usage[param['uid']] += int(param['value'] * coefficient)  # apply the usage coefficient
-    users_usage = list({"uid": uid, "value": value} for uid, value in users_usage.items())
+            users_usage[param['uid']] += int(param['value'] * coefficient)
+    return [{"uid": uid, "value": value} for uid, value in users_usage.items()]
+
+
+def record_aggregated_user_usages(api_params: dict, usage_coefficient: dict):
+    """Apply aggregated per-user usage to the central counters.
+
+    Single source of truth for billing: every protocol feeds the same
+    ``api_params`` shape, gets merged here, filtered to billable statuses, and
+    written once to ``User.used_traffic`` (plus ``Admin.users_usage`` and the
+    hourly ``NodeUserUsage`` breakdown).  Extracted from ``record_user_usages``
+    so it is unit-testable and so WireGuard usage can be injected without a
+    second DB write path.
+    """
+    users_usage = aggregate_user_usage(api_params, usage_coefficient)
     if not users_usage:
         return
-
-    billable_statuses = (UserStatus.active, UserStatus.on_hold)
 
     with GetDB() as db:
         uids = [int(u["uid"]) for u in users_usage]
         billable_ids = {
             row[0]
             for row in db.query(User.id)
-            .filter(User.id.in_(uids), User.status.in_(billable_statuses))
+            .filter(User.id.in_(uids), User.status.in_(BILLABLE_STATUSES))
             .all()
         }
         user_admin_map = dict(
@@ -225,7 +238,47 @@ def record_user_usages():
     for node_id, params in api_params.items():
         if params:
             filtered = [p for p in params if int(p["uid"]) in billable_ids]
-            record_user_stats(filtered, node_id, usage_coefficient[node_id])
+            record_user_stats(filtered, node_id, usage_coefficient.get(node_id, 1))
+
+
+def collect_user_usage_params() -> tuple:
+    """Gather raw per-user stats from the local Xray core and every connected
+    node.  Returns ``(api_params, usage_coefficient)`` in the shape expected by
+    :func:`record_aggregated_user_usages`.
+
+    This is the hook point for additional usage sources: a WireGuard collector
+    appends ``node_id -> [{"uid", "value"}]`` entries here so its bytes merge
+    into the same central ``User.used_traffic``.
+    """
+    api_instances = {None: xray.api}
+    usage_coefficient = {None: 1}  # default usage coefficient for the main api instance
+
+    for node_id, node in list(xray.nodes.items()):
+        if node.connected and node.started:
+            api_instances[node_id] = node.api
+            usage_coefficient[node_id] = node.usage_coefficient  # fetch the usage coefficient
+
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {node_id: executor.submit(get_users_stats, api) for node_id, api in api_instances.items()}
+    api_params = {node_id: future.result() for node_id, future in futures.items()}
+
+    # Fold native WireGuard usage into the same dicts so it merges into the one
+    # central User.used_traffic (no second DB write path). Best-effort: a WG
+    # failure must never drop Xray accounting.
+    try:
+        from app.wireguard.usage import collect_wg_usage_params, merge_wg_usage
+
+        wg_params, wg_coefficient = collect_wg_usage_params()
+        merge_wg_usage(api_params, usage_coefficient, wg_params, wg_coefficient)
+    except Exception:
+        pass
+
+    return api_params, usage_coefficient
+
+
+def record_user_usages():
+    api_params, usage_coefficient = collect_user_usage_params()
+    record_aggregated_user_usages(api_params, usage_coefficient)
 
 
 def record_node_usages():

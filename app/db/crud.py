@@ -20,6 +20,7 @@ from app.db.models import (
     NodeGroup,
     NodeUsage,
     NodeUserUsage,
+    NodeWireGuard,
     NotificationReminder,
     Plan,
     Proxy,
@@ -32,7 +33,7 @@ from app.db.models import (
     UserUsageResetLogs,
 )
 from app.models.admin import AdminCreate, AdminModify, AdminPartialModify
-from app.models.node import NodeCreate, NodeModify, NodeStatus, NodeUsageResponse
+from app.models.node import CoreKind, NodeCreate, NodeModify, NodeStatus, NodeUsageResponse
 from app.models.proxy import ProxyHost as ProxyHostModify
 from app.models.user import (
     ReminderType,
@@ -1331,7 +1332,8 @@ def create_node(db: Session, node: NodeCreate) -> Node:
                   api_port=node.api_port,
                   region=node.region,
                   capacity=node.capacity,
-                  group_id=node.group_id)
+                  group_id=node.group_id,
+                  core_kind=node.core_kind.value)
 
     db.add(dbnode)
     db.commit()
@@ -1398,9 +1400,43 @@ def update_node(db: Session, dbnode: Node, modify: NodeModify) -> Node:
     if modify.group_id is not None:
         dbnode.group_id = modify.group_id
 
+    if modify.core_kind is not None:
+        dbnode.core_kind = modify.core_kind.value
+
     db.commit()
     db.refresh(dbnode)
     return dbnode
+
+
+def set_node_wireguard(db: Session, dbnode: Node, *, interface: str = "wg0",
+                       listen_port: int = 51820, subnet: str = "10.10.0.0/24",
+                       private_key: str, public_key: str,
+                       endpoint: Optional[str] = None, mtu: int = 1420,
+                       dns: Optional[str] = None) -> "NodeWireGuard":
+    """Create or replace the per-node WireGuard server config (one-to-one)."""
+    cfg = dbnode.wireguard
+    if cfg is None:
+        cfg = NodeWireGuard(node_id=dbnode.id)
+        db.add(cfg)
+    cfg.interface = interface
+    cfg.listen_port = listen_port
+    cfg.subnet = subnet
+    cfg.private_key = private_key
+    cfg.public_key = public_key
+    cfg.endpoint = endpoint
+    cfg.mtu = mtu
+    cfg.dns = dns
+    db.commit()
+    db.refresh(cfg)
+    return cfg
+
+
+def get_wireguard_nodes(db: Session, enabled_only: bool = True) -> List[Node]:
+    """Return nodes whose core_kind is 'wireguard'."""
+    query = db.query(Node).filter(Node.core_kind == CoreKind.wireguard.value)
+    if enabled_only:
+        query = query.filter(Node.status != NodeStatus.disabled)
+    return query.all()
 
 
 def update_node_health(db: Session, dbnode: Node, latency_ms: Optional[float]) -> Node:

@@ -70,7 +70,7 @@ const NodesTab: FC = () => {
                 <tbody>
                   {data.map((n) => (
                     <tr key={n.id}>
-                      <td style={{ fontWeight: 600 }}>{n.name}</td>
+                      <td style={{ fontWeight: 600 }}>{n.name}{n.core_kind === "wireguard" ? <span style={{ marginInlineStart: 8 }}><Pill tone="info">WG</Pill></span> : null}</td>
                       <td className="nx-mono" style={{ fontSize: 12 }}>{n.address}:{n.port}</td>
                       <td><Pill tone={statusTone(n.status)} dot>{n.status}</Pill>{n.message ? <div className="nx-faint" style={{ fontSize: 11 }}>{n.message}</div> : null}</td>
                       <td>{n.region || "—"}</td>
@@ -97,7 +97,7 @@ const NodesTab: FC = () => {
 const AddNode: FC<{ onClose: () => void; onDone: () => void }> = ({ onClose, onDone }) => {
   const { t } = useTranslation();
   const toast = useToast();
-  const [f, setF] = useState({ name: "", address: "", port: "62050", api_port: "62051", region: "" });
+  const [f, setF] = useState({ name: "", address: "", port: "62050", api_port: "62051", region: "", core_kind: "xray" });
   const [busy, setBusy] = useState(false);
   const upd = (k: string) => (e: any) => setF({ ...f, [k]: e.target.value });
 
@@ -108,6 +108,7 @@ const AddNode: FC<{ onClose: () => void; onDone: () => void }> = ({ onClose, onD
         name: f.name.trim(), address: f.address.trim(),
         port: parseInt(f.port), api_port: parseInt(f.api_port),
         region: f.region.trim() || null, add_as_new_host: true, usage_coefficient: 1,
+        core_kind: f.core_kind,
       });
       toast.push(t("common.created"), "success"); onDone();
     } catch (e: any) { toast.push(e.message, "error"); } finally { setBusy(false); }
@@ -125,6 +126,12 @@ const AddNode: FC<{ onClose: () => void; onDone: () => void }> = ({ onClose, onD
           <Field label={t("infra.apiPort")}><Input type="number" value={f.api_port} onChange={upd("api_port")} /></Field>
         </div>
         <Field label={`${t("infra.region")} (${t("common.optional")})`}><Input value={f.region} onChange={upd("region")} /></Field>
+        <Field label={t("infra.coreKind")}>
+          <Select value={f.core_kind} onChange={upd("core_kind")}>
+            <option value="xray">Xray</option>
+            <option value="wireguard">WireGuard</option>
+          </Select>
+        </Field>
       </div>
     </Modal>
   );

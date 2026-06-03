@@ -1,0 +1,94 @@
+"""Panel-side WireGuard peer-sync planner (Phase 11.3).
+
+Pure functions that turn the panel's view of a WireGuard node (its server
+config plus the users that hold a WireGuard proxy) into the declarative spec
+consumed by the node agent's ``/wg/apply`` endpoint, and into the
+``public_key -> User.id`` map that lets transfer counters fold into the single
+central ``User.used_traffic`` (see ``docs/accounting-contract.md``).
+
+No I/O, no DB, no transport here — callers gather the inputs and ship the
+result. This keeps the accounting-critical mapping deterministic and unit
+testable.
+"""
+import ipaddress
+from dataclasses import dataclass
+from typing import Dict, List, Optional
+
+
+@dataclass
+class WGUserPeer:
+    """A single user's WireGuard identity on a node."""
+
+    user_id: int
+    public_key: str
+    address: str                      # "<ip>/<prefix>" allocated from the node subnet
+    preshared_key: Optional[str] = None
+    active: bool = True
+
+
+def server_interface_address(subnet: str) -> str:
+    """The node interface address: first usable host carrying the subnet prefix.
+
+    e.g. ``"10.10.0.0/24" -> "10.10.0.1/24"``.
+    """
+    network = ipaddress.ip_network(subnet, strict=False)
+    server = next(network.hosts(), None)
+    if server is None:
+        raise ValueError(f"subnet {subnet!r} has no usable host address")
+    return f"{server}/{network.prefixlen}"
+
+
+def _normalize_allowed(address: str) -> str:
+    """Coerce a stored peer address to a host route (``/32`` or ``/128``)."""
+    raw = address.split("/")[0]
+    ip = ipaddress.ip_address(raw)
+    prefix = 32 if ip.version == 4 else 128
+    return f"{ip}/{prefix}"
+
+
+def build_node_spec(
+    *,
+    interface: str,
+    listen_port: int,
+    private_key: str,
+    subnet: str,
+    peers: List[WGUserPeer],
+    mtu: Optional[int] = None,
+) -> dict:
+    """Build the declarative spec dict for the node agent's ``/wg/apply``.
+
+    Only ``active`` peers with a public key are included — disabled/limited/
+    expired users are dropped so they stop carrying traffic immediately.
+    """
+    peer_payload = []
+    seen = set()
+    for p in peers:
+        if not p.active or not p.public_key or p.public_key in seen:
+            continue
+        seen.add(p.public_key)
+        peer_payload.append(
+            {
+                "public_key": p.public_key,
+                "allowed_ips": [_normalize_allowed(p.address)] if p.address else [],
+                "preshared_key": p.preshared_key or None,
+            }
+        )
+    return {
+        "interface": interface,
+        "listen_port": int(listen_port),
+        "private_key": private_key,
+        "address": server_interface_address(subnet),
+        "peers": peer_payload,
+        "mtu": int(mtu) if mtu else None,
+    }
+
+
+def build_pubkey_user_map(peers: List[WGUserPeer]) -> Dict[str, int]:
+    """Map ``public_key -> User.id`` for folding transfer counters into the
+    central ``used_traffic``. Includes every peer with a key (even inactive
+    ones) so trailing usage is still attributed to the right user."""
+    mapping: Dict[str, int] = {}
+    for p in peers:
+        if p.public_key:
+            mapping[p.public_key] = p.user_id
+    return mapping

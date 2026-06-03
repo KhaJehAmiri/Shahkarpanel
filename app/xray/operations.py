@@ -56,6 +56,33 @@ def _alter_inbound_user(api: XRayAPI, inbound_tag: str, account: Account):
         pass
 
 
+def _sync_wireguard():
+    """Best-effort: converge native WireGuard nodes after a user change.
+
+    No-op (one cheap query) when no WG node exists; runs off-thread so it never
+    blocks the Xray path and never raises into the caller.
+    """
+    try:
+        from app.wireguard.operations import sync_user_change
+        sync_user_change()
+    except Exception:
+        pass
+
+
+def _sync_wireguard_node(node_id: int, node_object):
+    """Best-effort: push the current peer set to a node that just connected."""
+    try:
+        from app.models.node import CoreKind
+        from app.wireguard.operations import sync_node
+
+        with GetDB() as db:
+            dbnode = crud.get_node_by_id(db, node_id)
+            if dbnode and dbnode.core_kind == CoreKind.wireguard.value:
+                sync_node(db, dbnode, node_object=node_object)
+    except Exception:
+        pass
+
+
 def add_user(dbuser: "DBUser"):
     user = UserResponse.model_validate(dbuser)
     email = f"{dbuser.id}.{dbuser.username}"
@@ -89,6 +116,8 @@ def add_user(dbuser: "DBUser"):
                 if node.connected and node.started:
                     _add_user_to_inbound(node.api, inbound_tag, account)
 
+    _sync_wireguard()
+
 
 def _remove_user_from_inbound_sync(api: XRayAPI, inbound_tag: str, email: str):
     try:
@@ -106,6 +135,8 @@ def remove_user_immediate(dbuser: "DBUser"):
             if node.connected and node.started:
                 _remove_user_from_inbound_sync(node.api, inbound_tag, email)
 
+    _sync_wireguard()
+
 
 def remove_user(dbuser: "DBUser"):
     email = f"{dbuser.id}.{dbuser.username}"
@@ -115,6 +146,8 @@ def remove_user(dbuser: "DBUser"):
         for node in list(xray.nodes.values()):
             if node.connected and node.started:
                 _remove_user_from_inbound(node.api, inbound_tag, email)
+
+    _sync_wireguard()
 
 
 def update_user(dbuser: "DBUser"):
@@ -160,6 +193,8 @@ def update_user(dbuser: "DBUser"):
         for node in list(xray.nodes.values()):
             if node.connected and node.started:
                 _remove_user_from_inbound(node.api, inbound_tag, email)
+
+    _sync_wireguard()
 
 
 def remove_node(node_id: int):
@@ -253,6 +288,8 @@ def connect_node(node_id, config=None):
         version = node.get_version()
         _change_node_status(node_id, NodeStatus.connected, version=version)
         logger.info(f"Connected to \"{dbnode.name}\" node, xray run on v{version}")
+
+        _sync_wireguard_node(node_id, node)
 
     except Exception as e:
         _change_node_status(node_id, NodeStatus.error, message=str(e))

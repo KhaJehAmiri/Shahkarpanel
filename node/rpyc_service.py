@@ -6,6 +6,7 @@ import rpyc
 
 from config import XRAY_ASSETS_PATH, XRAY_EXECUTABLE_PATH
 from logger import logger
+from wireguard import WireGuardManager, WireGuardSpec
 from xray import XRayConfig, XRayCore
 
 
@@ -45,6 +46,7 @@ class XrayService(rpyc.Service):
     def __init__(self):
         self.core = None
         self.connection = None
+        self.wg = WireGuardManager()
 
     def on_connect(self, conn):
         if self.connection:
@@ -126,6 +128,18 @@ class XrayService(rpyc.Service):
     def restart(self, config: str):
         config = XRayConfig(config, self.connection.peer)
         self.core.restart(config)
+
+    @rpyc.exposed
+    def wg_apply(self, spec: dict):
+        self.wg.apply(WireGuardSpec.from_dict(spec))
+
+    @rpyc.exposed
+    def wg_transfer(self, interface: str) -> dict:
+        return self.wg.get_transfer(interface)
+
+    @rpyc.exposed
+    def wg_down(self, interface: str):
+        self.wg.teardown(interface)
 
     @rpyc.exposed
     def fetch_xray_version(self):

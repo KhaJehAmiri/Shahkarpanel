@@ -32,6 +32,13 @@ FROM python:$PYTHON_VERSION-slim
 
 WORKDIR /code
 
+# wireguard-tools (`wg`) + iproute2 (`ip`) are required for the WireGuard
+# product protocol (Phase 11). The container must also run with the NET_ADMIN
+# capability to create/manage the interface (see docker-compose / install docs).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends wireguard-tools iproute2 \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN SITE="$(python3 -c 'import site; print(site.getsitepackages()[0])')" \
     && rm -rf "${SITE:?}"/* \
     && mkdir -p /var/lib/nexuspanel-node "${SITE}"

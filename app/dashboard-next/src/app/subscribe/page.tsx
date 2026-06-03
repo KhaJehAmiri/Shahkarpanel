@@ -73,6 +73,13 @@ function SubscribeBody() {
     return `${window.location.origin}/sub/${token}/`;
   }, [token]);
 
+  const wgUrl = useMemo(() => {
+    if (!token) return "";
+    return `${window.location.origin}/sub/${token}/wireguard`;
+  }, [token]);
+
+  const hasWireguard = !!info?.proxies && "wireguard" in info.proxies;
+
   const used = info?.used_traffic ?? 0;
   const total = info?.data_limit || 0;
   const pct = total ? Math.min(100, Math.round((used / total) * 100)) : 0;
@@ -217,6 +224,44 @@ function SubscribeBody() {
           </div>
         </div>
       </section>
+
+      {/* ===== WIREGUARD .CONF ===== */}
+      {hasWireguard && (
+        <section className="mt-5 rounded-lg border border-border bg-surface p-5 shadow-card">
+          <div className="mb-3 text-[11px] font-bold uppercase tracking-widest text-text-faint">WireGuard</div>
+          <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm leading-relaxed text-text-dim">
+              فایل پیکربندی WireGuard را دانلود کنید و در اپ WireGuard ایمپورت نمایید (یا محتوای آن را به‌صورت تونل جدید بچسبانید).
+            </p>
+            <a
+              href={wgUrl}
+              download={`${info.username}.conf`}
+              className="inline-flex flex-shrink-0 items-center gap-2 rounded-md border border-accent bg-accent-soft px-4 py-2 text-sm font-bold text-accent transition hover:bg-accent/20"
+            >
+              ⬇ دانلود فایل .conf
+            </a>
+          </div>
+          <div className="mt-3 flex items-stretch overflow-hidden rounded-md border border-border-strong bg-surface-2">
+            <input
+              readOnly
+              dir="ltr"
+              value={wgUrl}
+              className="min-w-0 flex-1 bg-transparent px-3 py-2 font-mono text-xs text-text outline-none"
+              onClick={(e) => (e.target as HTMLInputElement).select()}
+            />
+            <button
+              type="button"
+              onClick={async () => {
+                const ok = await copyToClipboard(wgUrl);
+                showToast(ok ? "لینک کپی شد" : "کپی ناموفق", ok ? "ok" : "error");
+              }}
+              className="border-s border-border bg-surface-3 px-4 text-xs font-bold transition hover:bg-border-strong"
+            >
+              کپی
+            </button>
+          </div>
+        </section>
+      )}
 
       {/* ===== PLATFORM TABS ===== */}
       <section className="mt-5">

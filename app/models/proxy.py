@@ -4,7 +4,7 @@ from enum import Enum
 from typing import Optional, Union
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.utils.system import random_password
 from xray_api.types.account import (
@@ -29,6 +29,10 @@ class ProxyTypes(str, Enum):
     VLESS = "vless"
     Trojan = "trojan"
     Shadowsocks = "shadowsocks"
+    # WireGuard is a *product* protocol served by a native WireGuard interface
+    # on the node (not an Xray account). It shares the user's central
+    # used_traffic; see docs/accounting-contract.md.
+    WireGuard = "wireguard"
 
     @property
     def account_model(self):
@@ -40,6 +44,9 @@ class ProxyTypes(str, Enum):
             return TrojanAccount
         if self == self.Shadowsocks:
             return ShadowsocksAccount
+        # WireGuard has no Xray account; it is provisioned as a node peer.
+        if self == self.WireGuard:
+            return None
 
     @property
     def settings_model(self):
@@ -51,6 +58,14 @@ class ProxyTypes(str, Enum):
             return TrojanSettings
         if self == self.Shadowsocks:
             return ShadowsocksSettings
+        if self == self.WireGuard:
+            return WireGuardSettings
+
+    @property
+    def is_xray_account(self) -> bool:
+        """True when this protocol is provisioned through the Xray handler
+        (and therefore reports usage via the Xray Stats API)."""
+        return self != self.WireGuard
 
 
 class ProxySettings(BaseModel, use_enum_values=True):
@@ -93,6 +108,41 @@ class ShadowsocksSettings(ProxySettings):
 
     def revoke(self):
         self.password = random_password()
+
+
+class WireGuardSettings(ProxySettings):
+    """Per-user WireGuard credentials.
+
+    ``private_key`` is the user's secret (used only to render their .conf);
+    ``public_key`` is what the node peers on. ``address`` is the peer IP
+    (e.g. ``10.10.0.5/32``) allocated from the WireGuard node's subnet when the
+    user is assigned to a node — it stays ``None`` until then. Keys are
+    auto-generated when absent so an empty ``{}`` from the API yields a valid
+    peer.
+    """
+    private_key: str = ""
+    public_key: str = ""
+    address: Optional[str] = None
+    preshared_key: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _ensure_keys(self):
+        from app.wireguard.keys import generate_keypair, public_key_from_private
+
+        if not self.private_key:
+            priv, pub = generate_keypair()
+            self.private_key = priv
+            self.public_key = pub
+        elif not self.public_key:
+            self.public_key = public_key_from_private(self.private_key)
+        return self
+
+    def revoke(self):
+        from app.wireguard.keys import generate_keypair
+
+        priv, pub = generate_keypair()
+        self.private_key = priv
+        self.public_key = pub
 
 
 class ProxyHostSecurity(str, Enum):

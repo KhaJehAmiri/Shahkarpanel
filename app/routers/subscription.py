@@ -1,8 +1,9 @@
 import re
 from distutils.version import LooseVersion
+from pathlib import Path as _Path
 
 from fastapi import APIRouter, Depends, Header, Path, Request, Response
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app.db import Session, crud, get_db
 from app.dependencies import get_validated_sub, validate_dates
@@ -58,6 +59,16 @@ def user_subscription(
 
     accept_header = request.headers.get("Accept", "")
     if "text/html" in accept_header:
+        # Phase 9: prefer the new Next.js subscription page (graphical, with
+        # platform tabs) when its static build is present. The page reads the
+        # token from the URL and fetches /sub/<token>/info itself.
+        next_index = _Path(__file__).parent.parent / 'dashboard-next' / 'out' / 'subscribe' / 'index.html'
+        if next_index.is_file():
+            token = request.path_params.get('token', '')
+            return RedirectResponse(
+                url=f"/subscribe/?token={token}",
+                status_code=302,
+            )
         return HTMLResponse(
             render_template(
                 SUBSCRIPTION_PAGE_TEMPLATE,

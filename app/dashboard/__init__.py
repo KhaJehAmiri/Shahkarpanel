@@ -59,6 +59,7 @@ def run_build():
             pass
 
     log.info("Serving NexusPanel dashboard from %s", build_dir)
+
     # Subscription page assets (graphical sub page, phase 8). Must be mounted
     # before the dashboard catch-all so the path is reachable.
     sub_static = base_dir.parent / 'templates' / 'subscription' / 'static'
@@ -68,6 +69,33 @@ def run_build():
             StaticFiles(directory=sub_static),
             name="subscription-assets",
         )
+
+    # Phase 9: serve the Next.js static export. When the build is present,
+    # /subscribe/ becomes the canonical subscription page; /sub/<token>/ HTML
+    # responses redirect into it. The Next.js bundle is fully static (no Node).
+    next_build = base_dir.parent / 'dashboard-next' / 'out'
+    if (next_build / 'index.html').is_file():
+        log.info("Serving NexusPanel Next.js bundle from %s", next_build)
+        app.mount(
+            '/subscribe',
+            StaticFiles(directory=next_build / 'subscribe', html=True),
+            name="next-subscribe",
+        )
+        next_chunks = next_build / '_next'
+        if next_chunks.is_dir():
+            app.mount(
+                '/_next',
+                StaticFiles(directory=next_chunks),
+                name="next-chunks",
+            )
+        next_fonts = next_build / 'fonts'
+        if next_fonts.is_dir():
+            app.mount(
+                '/next-fonts',
+                StaticFiles(directory=next_fonts),
+                name="next-fonts",
+            )
+
     app.mount(
         DASHBOARD_PATH,
         StaticFiles(directory=build_dir, html=True),

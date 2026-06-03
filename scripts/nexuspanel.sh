@@ -173,7 +173,11 @@ cmd_install() {
   install_cli
   log "Building and starting panel (first run may take a few minutes)..."
   compose up -d --build
-  build_node_image
+  if [ "${SKIP_NODE_BUILD:-0}" = "1" ]; then
+    warn "SKIP_NODE_BUILD=1 — node image skipped (build later: docker build -t nexuspanel/node:latest ${APP_DIR}/node)"
+  else
+    build_node_image
+  fi
   wait_for_panel
   ok "NexusPanel is up."
   print_access

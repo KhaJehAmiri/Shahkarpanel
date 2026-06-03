@@ -60,6 +60,16 @@
 bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/nexuspanel/master/scripts/nexuspanel.sh) install
 ```
 
+سرور **۲GB RAM** (پیشنهاد قبل از نصب — swap برای build اول):
+
+```bash
+fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+echo '/swapfile none swap sw 0 0' >> /etc/fstab
+SKIP_NODE_BUILD=1 bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/nexuspanel/master/scripts/nexuspanel.sh) install
+```
+
+بعد از بالا آمدن پنل، در صورت نیاز: `docker build -t nexuspanel/node:latest /opt/nexuspanel/node`
+
 <details>
 <summary><strong>اسکریپت نصب چه کار می‌کند؟</strong></summary>
 

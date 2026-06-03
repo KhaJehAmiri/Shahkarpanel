@@ -154,7 +154,9 @@ const UserFormModal: FC<{ mode: "create" | "edit"; user?: UserItem; onClose: () 
   const [unlimited, setUnlimited] = useState(!user?.data_limit);
   const [expireDate, setExpireDate] = useState(user?.expire ? new Date(user.expire * 1000).toISOString().slice(0, 10) : "");
   const [noExpire, setNoExpire] = useState(!user?.expire);
-  const [status, setStatus] = useState(user && ["active", "on_hold", "disabled"].includes(user.status) ? user.status : "active");
+  const [status, setStatus] = useState(
+    user && ["active", "on_hold", "disabled", "limited", "expired"].includes(user.status) ? user.status : "active"
+  );
   const [reset, setReset] = useState(user?.data_limit_reset_strategy || "no_reset");
   const [note, setNote] = useState(user?.note || "");
   const [protos, setProtos] = useState<Record<string, ProtoState>>({});

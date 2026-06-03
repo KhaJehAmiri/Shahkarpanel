@@ -470,14 +470,16 @@ def update_user(db: Session, dbuser: User, modify: UserModify) -> User:
             if dbproxy:
                 dbproxy.excluded_inbounds = [get_or_create_inbound(db, tag) for tag in tags]
 
-    if modify.status is not None:
-        dbuser.status = modify.status
-        if modify.status in (UserStatus.disabled, UserStatus.expired, UserStatus.limited):
+    explicit_status = modify.status
+    if explicit_status is not None:
+        dbuser.status = explicit_status
+        if explicit_status in (UserStatus.disabled, UserStatus.expired, UserStatus.limited):
             dbuser.online_at = None
+        dbuser.last_status_change = datetime.utcnow()
 
     if modify.data_limit is not None:
         dbuser.data_limit = (modify.data_limit or None)
-        if dbuser.status not in (UserStatus.expired, UserStatus.disabled):
+        if explicit_status is None and dbuser.status not in (UserStatus.expired, UserStatus.disabled):
             if not dbuser.data_limit or dbuser.used_traffic < dbuser.data_limit:
                 if dbuser.status != UserStatus.on_hold:
                     dbuser.status = UserStatus.active
@@ -489,12 +491,12 @@ def update_user(db: Session, dbuser: User, modify: UserModify) -> User:
                         if reminder:
                             delete_notification_reminder(db, reminder)
 
-            else:
+            elif explicit_status is None:
                 dbuser.status = UserStatus.limited
 
     if modify.expire is not None:
         dbuser.expire = (modify.expire or None)
-        if dbuser.status in (UserStatus.active, UserStatus.expired):
+        if explicit_status is None and dbuser.status in (UserStatus.active, UserStatus.expired):
             if not dbuser.expire or dbuser.expire > datetime.utcnow().timestamp():
                 dbuser.status = UserStatus.active
                 for days_left in sorted(NOTIFY_DAYS_LEFT):
@@ -506,6 +508,11 @@ def update_user(db: Session, dbuser: User, modify: UserModify) -> User:
                             delete_notification_reminder(db, reminder)
             else:
                 dbuser.status = UserStatus.expired
+
+    if explicit_status is not None:
+        dbuser.status = explicit_status
+        if explicit_status in (UserStatus.disabled, UserStatus.expired, UserStatus.limited):
+            dbuser.online_at = None
 
     if modify.note is not None:
         dbuser.note = modify.note or None
@@ -1582,7 +1589,11 @@ def delete_notification_reminder(db: Session, dbreminder: NotificationReminder) 
 
 
 def count_online_users(db: Session, hours: int = 24):
+    """Users seen on VPN recently; only billable statuses (active / on_hold)."""
     twenty_four_hours_ago = datetime.utcnow() - timedelta(hours=hours)
-    query = db.query(func.count(User.id)).filter(User.online_at.isnot(
-        None), User.online_at >= twenty_four_hours_ago)
+    query = db.query(func.count(User.id)).filter(
+        User.online_at.isnot(None),
+        User.online_at >= twenty_four_hours_ago,
+        User.status.in_((UserStatus.active, UserStatus.on_hold)),
+    )
     return query.scalar()

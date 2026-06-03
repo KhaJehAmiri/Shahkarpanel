@@ -33,6 +33,8 @@ class UserStatusModify(str, Enum):
     active = "active"
     disabled = "disabled"
     on_hold = "on_hold"
+    limited = "limited"
+    expired = "expired"
 
 
 class UserStatusCreate(str, Enum):

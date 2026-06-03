@@ -22,7 +22,7 @@ export const Automation: FC = () => {
   const [tab, setTab] = useState("rules");
   return (
     <div>
-      <PageHeader title={t("automation.title")} subtitle={t("automation.subtitle")} />
+      <PageHeader title={t("automation.title")} subtitle={t("automation.subtitle")} description={t("automation.description")} />
       <Tabs active={tab} onChange={setTab} tabs={[
         { id: "rules", label: t("automation.tabRules") },
         { id: "workflows", label: t("automation.tabWorkflows") },

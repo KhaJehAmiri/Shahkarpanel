@@ -22,7 +22,7 @@ export const System: FC = () => {
   ];
   return (
     <div>
-      <PageHeader title={t("system.title")} subtitle={t("system.subtitle")} />
+      <PageHeader title={t("system.title")} subtitle={t("system.subtitle")} description={t("system.description")} />
       <Tabs active={tab} onChange={setTab} tabs={tabs} />
       {tab === "flags" && <FlagsTab />}
       {tab === "backup" && <BackupTab />}

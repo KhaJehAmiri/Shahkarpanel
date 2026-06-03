@@ -62,6 +62,7 @@ export const Users: FC = () => {
       <PageHeader
         title={t("users.title")}
         subtitle={t("users.subtitle")}
+        description={t("users.description")}
         actions={<>
           <Button variant="ghost" onClick={reload}><IcRefresh className="nx-ico" /></Button>
           <Button variant="primary" onClick={() => setShowCreate(true)}><IcPlus className="nx-ico" /> {t("common.create")}</Button>

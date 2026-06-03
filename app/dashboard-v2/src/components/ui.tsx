@@ -105,11 +105,17 @@ export const Callout: FC<{ tone?: "info" | "warn" | "danger" | "ok"; title?: str
 );
 
 /* ------------------------------ EmptyState ----------------------------- */
-export const EmptyState: FC<{ title: string; desc?: string; action?: ReactNode }> = ({ title, desc, action }) => (
+export const EmptyState: FC<{ title: string; desc?: string; steps?: string[]; action?: ReactNode }> = ({ title, desc, steps, action }) => (
   <div className="nx-empty">
+    <div className="nx-empty-icon" aria-hidden>·</div>
     <div className="nx-empty-title">{title}</div>
     {desc && <div className="nx-empty-desc">{desc}</div>}
-    {action}
+    {steps && steps.length > 0 && (
+      <ol className="nx-empty-steps">
+        {steps.map((s, i) => <li key={i}>{s}</li>)}
+      </ol>
+    )}
+    {action && <div className="nx-empty-action">{action}</div>}
   </div>
 );
 
@@ -147,7 +153,26 @@ export const Drawer: FC<{ open: boolean; title: ReactNode; onClose: () => void; 
   );
 };
 
-/* ------------------------------ Checkbox ------------------------------- */
+/* ------------------------------ SectionHelp ----------------------------- */
+export const SectionHelp: FC<{ title: ReactNode; children: ReactNode; tone?: "info" | "warn" | "ok" }> = ({ title, children, tone = "info" }) => (
+  <div className={`nx-help ${tone}`}>
+    <div className="nx-help-mark" aria-hidden>?</div>
+    <div className="nx-help-body">
+      <div className="nx-help-title">{title}</div>
+      <div className="nx-help-text">{children}</div>
+    </div>
+  </div>
+);
+
+/* ------------------------------- HelpTip -------------------------------- */
+export const HelpTip: FC<{ text: ReactNode; placement?: "top" | "bottom" }> = ({ text, placement = "top" }) => (
+  <span className={`nx-tip nx-tip-${placement}`} tabIndex={0} aria-label="Help">
+    <span className="nx-tip-mark" aria-hidden>?</span>
+    <span className="nx-tip-bubble" role="tooltip">{text}</span>
+  </span>
+);
+
+/* ----------------------------- Checkbox -------------------------------- */
 export const Checkbox: FC<{ checked: boolean; onChange?: () => void }> = ({ checked, onChange }) => (
   <span className={`nx-checkbox ${checked ? "on" : ""}`} onClick={onChange}>
     <IcCheck size={13} />

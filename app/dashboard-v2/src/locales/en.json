@@ -62,6 +62,7 @@
   "overview": {
     "title": "Overview",
     "subtitle": "Live snapshot of your platform",
+    "description": "This is your home page. Watch real-time CPU, memory, online users and traffic across all nodes. Use it as your daily health check — if anything turns red here, jump to the relevant module to fix it.",
     "totalUsers": "Total users",
     "activeUsers": "Active users",
     "onlineUsers": "Online (24h)",
@@ -82,6 +83,7 @@
   "users": {
     "title": "Users",
     "subtitle": "Manage subscriptions and access",
+    "description": "Create and manage everyone who uses your VPN. Each user picks one or more protocols (VLESS, VMess, Trojan, Shadowsocks), gets a data limit and an expiry date, and receives a subscription URL. Click a row for a deep-dive with QR codes and one-tap import.",
     "searchPlaceholder": "Search by username…",
     "used": "Used",
     "dataLimit": "Data limit",
@@ -114,6 +116,7 @@
   "infra": {
     "title": "Infrastructure",
     "subtitle": "Nodes, regions and secure tunnels",
+    "description": "The physical and logical layer of your network. Nodes are the servers running Xray. Inbounds are the protocols those servers expose. Hosts control the address and TLS your users see. Tunnels relay traffic from an in-country node to a foreign exit.",
     "tabNodes": "Nodes",
     "tabInbounds": "Inbounds",
     "tabHosts": "Hosts",
@@ -147,6 +150,7 @@
   "resellers": {
     "title": "Resellers & Brand",
     "subtitle": "White-label tenants and branding",
+    "description": "Sell access under your own brand. Each tenant is an isolated reseller with their own users, nodes and quotas. Branding controls the logo, colors and panel title customers see on their subscription page.",
     "tabTenants": "Tenants",
     "tabBranding": "My branding",
     "addTenant": "Add tenant",
@@ -169,6 +173,7 @@
   "automation": {
     "title": "Automation",
     "subtitle": "Rules, workflows and plugins",
+    "description": "Make the panel do things on its own. Rules react to events (e.g. notify when a user runs out of data). Workflows chain multiple actions. Plugins extend the panel with integrations like Telegram or webhooks.",
     "tabRules": "Rules",
     "tabWorkflows": "Workflows",
     "tabPlugins": "Plugins",
@@ -187,6 +192,7 @@
   "analytics": {
     "title": "Analytics",
     "subtitle": "Usage trends and traffic intelligence",
+    "description": "Understand who is using your network and how. Top users by traffic, heavy hitters that may need a bigger plan, and exhaustion risk for users about to hit their limit — everything you need to grow revenue and spot abuse.",
     "topUsers": "Top users",
     "intelligence": "Traffic intelligence",
     "intelligenceDisabled": "Traffic intelligence is disabled.",
@@ -199,6 +205,7 @@
   "billing": {
     "title": "Billing",
     "subtitle": "Plans, invoices and wallet",
+    "description": "The commercial layer. Define the plans you sell (data + duration + price), generate invoices, track wallet balances, and review every transaction. Plans link to user templates so a subscription is automatically provisioned on payment.",
     "tabPlans": "Plans",
     "tabInvoices": "Invoices",
     "tabTransactions": "Transactions",
@@ -220,6 +227,7 @@
   "system": {
     "title": "System",
     "subtitle": "Configuration, security and maintenance",
+    "description": "Owner-only controls. Toggle feature flags to enable or disable whole modules, take backups before risky operations, issue API keys for automation, and tweak appearance settings that affect every admin.",
     "tabFlags": "Feature flags",
     "tabBackup": "Backup",
     "tabApiKeys": "API keys",

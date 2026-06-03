@@ -22,7 +22,7 @@ export const Infrastructure: FC = () => {
   ];
   return (
     <div>
-      <PageHeader title={t("infra.title")} subtitle={t("infra.subtitle")} />
+      <PageHeader title={t("infra.title")} subtitle={t("infra.subtitle")} description={t("infra.description")} />
       <Tabs active={tab} onChange={setTab} tabs={tabs} />
       {tab === "nodes" && <NodesTab />}
       {tab === "inbounds" && <InboundsTab />}

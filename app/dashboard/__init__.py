@@ -59,6 +59,15 @@ def run_build():
             pass
 
     log.info("Serving NexusPanel dashboard from %s", build_dir)
+    # Subscription page assets (graphical sub page, phase 8). Must be mounted
+    # before the dashboard catch-all so the path is reachable.
+    sub_static = base_dir.parent / 'templates' / 'subscription' / 'static'
+    if sub_static.is_dir():
+        app.mount(
+            '/sub-assets',
+            StaticFiles(directory=sub_static),
+            name="subscription-assets",
+        )
     app.mount(
         DASHBOARD_PATH,
         StaticFiles(directory=build_dir, html=True),

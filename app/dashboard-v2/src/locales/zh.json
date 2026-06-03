@@ -62,6 +62,7 @@
   "overview": {
     "title": "概览",
     "subtitle": "平台实时快照",
+    "description": "首页。实时查看 CPU、内存、在线用户与所有节点的流量。若有红色告警，前往对应模块处理。",
     "totalUsers": "用户总数",
     "activeUsers": "活跃用户",
     "onlineUsers": "在线（24小时）",
@@ -82,6 +83,7 @@
   "users": {
     "title": "用户",
     "subtitle": "管理订阅与访问",
+    "description": "在此创建并管理所有 VPN 用户。每位用户选择协议、设置流量与到期时间，并获得订阅链接。点击行查看 QR 与一键导入。",
     "searchPlaceholder": "按用户名搜索…",
     "used": "已用",
     "dataLimit": "流量限制",
@@ -114,6 +116,7 @@
   "infra": {
     "title": "基础设施",
     "subtitle": "节点、区域与安全隧道",
+    "description": "网络的物理与逻辑层。节点是运行 Xray 的服务器；Inbound 是协议；Hosts 决定用户看到的地址与 TLS；Tunnel 将流量从国内节点中继到海外出口。",
     "tabNodes": "节点",
     "tabInbounds": "入站",
     "tabHosts": "主机",
@@ -147,6 +150,7 @@
   "resellers": {
     "title": "代理与品牌",
     "subtitle": "白标租户与品牌定制",
+    "description": "以您的品牌销售访问权限。每个租户是独立代理，拥有自己的用户、节点与额度。品牌定制控制订阅页面上的徽标、颜色与标题。",
     "tabTenants": "租户",
     "tabBranding": "我的品牌",
     "addTenant": "添加租户",
@@ -169,6 +173,7 @@
   "automation": {
     "title": "自动化",
     "subtitle": "规则、工作流与插件",
+    "description": "规则响应事件（例如用户流量耗尽时通知）。工作流串联多个动作。插件添加 Telegram、Webhook 等集成。",
     "tabRules": "规则",
     "tabWorkflows": "工作流",
     "tabPlugins": "插件",
@@ -187,6 +192,7 @@
   "analytics": {
     "title": "分析",
     "subtitle": "使用趋势与流量智能",
+    "description": "了解谁在如何使用您的网络。按流量排名的用户、重度用户、即将耗尽流量的风险用户——一切助力增收与发现滥用所需。",
     "topUsers": "顶级用户",
     "intelligence": "流量智能",
     "intelligenceDisabled": "流量智能已禁用。",
@@ -199,6 +205,7 @@
   "billing": {
     "title": "账单",
     "subtitle": "套餐、发票与钱包",
+    "description": "商业层。定义销售套餐（流量+时长+价格）、生成发票、跟踪钱包余额与交易。套餐关联用户模板，付款后自动发放订阅。",
     "tabPlans": "套餐",
     "tabInvoices": "发票",
     "tabTransactions": "交易",
@@ -220,6 +227,7 @@
   "system": {
     "title": "系统",
     "subtitle": "配置、安全与维护",
+    "description": "仅限所有者操作。通过 Feature Flag 启停模块、做备份、发放 API 密钥、调整面板外观。",
     "tabFlags": "功能开关",
     "tabBackup": "备份",
     "tabApiKeys": "API 密钥",

@@ -141,12 +141,13 @@ export const Shell: FC = () => {
   );
 };
 
-export const PageHeader: FC<{ title: string; subtitle?: string; actions?: any }> = ({ title, subtitle, actions }) => (
-  <div className="nx-card-head" style={{ marginBottom: 20 }}>
-    <div>
-      <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: "-0.02em" }}>{title}</div>
-      {subtitle && <div className="nx-muted" style={{ marginTop: 2 }}>{subtitle}</div>}
+export const PageHeader: FC<{ title: string; subtitle?: string; description?: any; actions?: any }> = ({ title, subtitle, description, actions }) => (
+  <div className="nx-page-head">
+    <div style={{ minWidth: 0, flex: 1 }}>
+      <div className="nx-page-title">{title}</div>
+      {subtitle && <div className="nx-page-subtitle">{subtitle}</div>}
+      {description && <div className="nx-page-desc">{description}</div>}
     </div>
-    {actions && <div className="nx-row">{actions}</div>}
+    {actions && <div className="nx-row" style={{ flexShrink: 0 }}>{actions}</div>}
   </div>
 );

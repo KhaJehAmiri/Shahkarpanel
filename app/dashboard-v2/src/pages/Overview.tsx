@@ -24,7 +24,7 @@ export const Overview: FC = () => {
 
   return (
     <div>
-      <PageHeader title={t("overview.title")} subtitle={t("overview.subtitle")} />
+      <PageHeader title={t("overview.title")} subtitle={t("overview.subtitle")} description={t("overview.description")} />
 
       {sys.loading && !s ? (
         <Card><SkeletonRows rows={2} cols={4} /></Card>

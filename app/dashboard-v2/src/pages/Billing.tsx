@@ -22,7 +22,7 @@ export const Billing: FC = () => {
 
   return (
     <div>
-      <PageHeader title={t("billing.title")} subtitle={t("billing.subtitle")} />
+      <PageHeader title={t("billing.title")} subtitle={t("billing.subtitle")} description={t("billing.description")} />
       {wallet.data && (
         <div style={{ marginBottom: 16, maxWidth: 280 }}>
           <Stat label={t("billing.wallet")} value={wallet.data.balance.toLocaleString()} icon={<IcWallet className="nx-stat-ico" />} />

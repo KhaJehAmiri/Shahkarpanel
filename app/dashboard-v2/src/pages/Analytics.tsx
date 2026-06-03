@@ -16,7 +16,7 @@ export const Analytics: FC = () => {
 
   return (
     <div>
-      <PageHeader title={t("analytics.title")} subtitle={t("analytics.subtitle")} />
+      <PageHeader title={t("analytics.title")} subtitle={t("analytics.subtitle")} description={t("analytics.description")} />
 
       <Card style={{ marginBottom: 16 }}>
         <CardHead title={t("analytics.topUsers")} />

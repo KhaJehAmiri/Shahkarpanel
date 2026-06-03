@@ -21,7 +21,7 @@ export const Resellers: FC = () => {
   ];
   return (
     <div>
-      <PageHeader title={t("resellers.title")} subtitle={t("resellers.subtitle")} />
+      <PageHeader title={t("resellers.title")} subtitle={t("resellers.subtitle")} description={t("resellers.description")} />
       <Tabs active={tab} onChange={setTab} tabs={tabs} />
       {tab === "tenants" && <TenantsTab />}
       {tab === "branding" && <BrandingTab />}

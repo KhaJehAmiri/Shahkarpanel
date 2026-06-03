@@ -1,152 +1,516 @@
+{# NexusPanel subscription page — graphical, branded, one-tap import. #}
+{%- set used = user.used_traffic or 0 -%}
+{%- set total = user.data_limit or 0 -%}
+{%- set pct = (used / total * 100) if total else 0 -%}
+{%- set pct_capped = pct if pct < 100 else 100 -%}
+{%- set status = user.status.value if user.status else "active" -%}
+{%- set sub_url = user.subscription_url -%}
+{%- if sub_url and sub_url.startswith("/") -%}
+  {%- set sub_url_abs = "" ~ sub_url -%}
+{%- else -%}
+  {%- set sub_url_abs = sub_url -%}
+{%- endif -%}
 <!DOCTYPE html>
-<html>
-
+<html lang="fa" dir="rtl">
 <head>
-    <title>Subscription Information</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            padding: 20px;
-        }
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b0f14" media="(prefers-color-scheme: dark)" />
+  <meta name="theme-color" content="#f4f6fa" media="(prefers-color-scheme: light)" />
+  <title>{{ user.username }} — NexusPanel</title>
+  <link rel="icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><circle cx='12' cy='12' r='10' fill='%232ee0c4'/></svg>" />
 
-        h1 {
-            margin-top: 0;
-        }
+  <style>
+    /* === Vazirmatn self-hosted === */
+    @font-face { font-family: "Vazirmatn"; font-weight: 400; font-style: normal; font-display: swap; src: url("/sub-assets/fonts/Vazirmatn-400.woff2") format("woff2"); }
+    @font-face { font-family: "Vazirmatn"; font-weight: 500; font-style: normal; font-display: swap; src: url("/sub-assets/fonts/Vazirmatn-500.woff2") format("woff2"); }
+    @font-face { font-family: "Vazirmatn"; font-weight: 700; font-style: normal; font-display: swap; src: url("/sub-assets/fonts/Vazirmatn-700.woff2") format("woff2"); }
 
-        .link-input {
-            margin-bottom: 10px;
-        }
+    :root {
+      --bg: #07090d; --bg-2: #0b0f15; --surface: #11161d; --surface-2: #181f2a; --surface-3: #232c3a;
+      --border: #232c38; --border-2: #2f3a48;
+      --text: #eef2f8; --text-dim: #98a4b6; --text-faint: #65728a;
+      --accent: #2ee0c4; --accent-2: #6366f1; --accent-soft: rgba(46,224,196,0.14);
+      --ok: #34d399; --ok-soft: rgba(52,211,153,0.18);
+      --warn: #fbbf24; --warn-soft: rgba(251,191,36,0.18);
+      --danger: #f87171; --danger-soft: rgba(248,113,113,0.18);
+      --radius: 16px; --radius-sm: 10px;
+      --ease: cubic-bezier(0.32, 0.72, 0, 1);
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #f4f6fa; --bg-2: #eef2f7; --surface: #ffffff; --surface-2: #f7f9fc; --surface-3: #eef2f7;
+        --border: #e2e8f0; --border-2: #cbd5e1;
+        --text: #0f172a; --text-dim: #475569; --text-faint: #94a3b8;
+        --accent: #0d9488; --accent-2: #4f46e5; --accent-soft: rgba(13,148,136,0.1);
+      }
+    }
 
-        .copy-button {
-            margin-left: 10px;
-        }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: "Vazirmatn", "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background:
+        radial-gradient(800px 480px at 50% -8%, var(--accent-soft), transparent 60%),
+        radial-gradient(600px 360px at 90% 110%, rgba(99,102,241,0.10), transparent 60%),
+        var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      line-height: 1.65;
+      -webkit-font-smoothing: antialiased;
+      font-feature-settings: "ss01";
+      padding: 16px;
+    }
+    a { color: inherit; text-decoration: none; }
+    button { font-family: inherit; }
 
-        .status {
-            display: inline-block;
-            padding: 3px 8px;
-            border-radius: 3px;
-            font-weight: bold;
-            font-size: 16px;
-            line-height: 1;
-        }
+    .wrap { max-width: 760px; margin: 0 auto; padding: 8px 0 40px; }
 
-        .active {
-            background-color: #4CAF50;
-            color: white;
-        }
+    /* ===== Hero ===== */
+    .hero {
+      position: relative; overflow: hidden;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 28px 24px;
+      display: flex; gap: 18px; align-items: center;
+    }
+    .avatar {
+      width: 64px; height: 64px; border-radius: 18px; flex-shrink: 0;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      color: #04110f; display: grid; place-items: center;
+      font-size: 24px; font-weight: 700; letter-spacing: -0.02em;
+    }
+    .hero-meta { min-width: 0; flex: 1; }
+    .hero-name { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
+    .hero-sub { color: var(--text-faint); font-size: 13px; margin-top: 2px; }
+    .status-pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 12px; border-radius: 999px; font-size: 12px; font-weight: 600;
+      margin-top: 10px;
+    }
+    .status-active { background: var(--ok-soft); color: var(--ok); }
+    .status-disabled { background: var(--surface-3); color: var(--text-dim); }
+    .status-expired { background: var(--warn-soft); color: var(--warn); }
+    .status-limited { background: var(--danger-soft); color: var(--danger); }
+    .status-on_hold { background: var(--surface-3); color: var(--text-dim); }
+    .pulse {
+      width: 8px; height: 8px; border-radius: 50%; background: currentColor;
+      animation: pulse 1.6s ease-in-out infinite;
+    }
+    @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.4;transform:scale(.7)} }
 
-        .limited {
-            background-color: #F44336;
-            color: white;
-        }
+    /* ===== Donut usage ===== */
+    .gauge-wrap { display: flex; flex-direction: column; align-items: center; gap: 4px; flex-shrink: 0; }
+    .gauge { position: relative; width: 96px; height: 96px; }
+    .gauge svg { transform: rotate(-90deg); }
+    .gauge-bg { stroke: var(--surface-3); }
+    .gauge-fg { stroke: var(--accent); transition: stroke-dashoffset 0.8s var(--ease); }
+    .gauge.warn .gauge-fg { stroke: var(--warn); }
+    .gauge.danger .gauge-fg { stroke: var(--danger); }
+    .gauge-label {
+      position: absolute; inset: 0; display: grid; place-items: center;
+      font-weight: 700; font-size: 18px; letter-spacing: -0.01em; font-feature-settings: "tnum";
+    }
 
-        .expired {
-            background-color: #FF9800;
-            color: white;
-        }
+    /* ===== Stat band ===== */
+    .stats {
+      margin-top: 14px;
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
+    }
+    .stat {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); padding: 12px 14px;
+    }
+    .stat-k { font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }
+    .stat-v { font-size: 16px; font-weight: 700; margin-top: 4px; font-feature-settings: "tnum"; letter-spacing: -0.01em; }
 
-        .disabled {
-            background-color: #9E9E9E;
-            color: white;
-        }
+    /* ===== Section ===== */
+    .section { margin-top: 22px; }
+    .section-title {
+      font-size: 11px; color: var(--text-faint); text-transform: uppercase;
+      letter-spacing: 0.1em; font-weight: 700; margin: 0 6px 10px;
+    }
 
-        .qr-popup {
-            position: fixed;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            background-color: white;
-            padding: 10px 25px 25px 25px;
-            border-radius: 8px;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-            display: none;
-            z-index: 9999;
-        }
+    /* ===== Subscribe card ===== */
+    .sub-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 22px;
+      display: flex; gap: 22px; align-items: center;
+    }
+    .qr-box {
+      background: #fff; border-radius: 14px; padding: 12px;
+      box-shadow: 0 0 0 1px rgba(0,0,0,0.06);
+      flex-shrink: 0;
+    }
+    .qr-box img { display: block; width: 156px; height: 156px; }
+    .sub-info { flex: 1; min-width: 0; }
+    .sub-info h2 { margin: 0 0 6px; font-size: 16px; font-weight: 700; letter-spacing: -0.01em; }
+    .sub-info p { margin: 0 0 14px; color: var(--text-dim); font-size: 13px; line-height: 1.7; }
+    .sub-url {
+      display: flex; align-items: stretch; border: 1px solid var(--border-2);
+      background: var(--surface-2); border-radius: var(--radius-sm); overflow: hidden;
+    }
+    .sub-url input {
+      flex: 1; min-width: 0; padding: 9px 12px; font-size: 12px;
+      background: transparent; border: none; color: var(--text); outline: none;
+      font-family: ui-monospace, "JetBrains Mono", monospace; direction: ltr; text-align: left;
+    }
+    .sub-url button {
+      padding: 0 14px; border: none; border-inline-start: 1px solid var(--border);
+      background: var(--surface-3); color: var(--text); font-weight: 600; cursor: pointer;
+      font-size: 12px; transition: background 0.15s var(--ease);
+    }
+    .sub-url button:hover { background: var(--border-2); }
+    .sub-url button.ok { background: var(--ok-soft); color: var(--ok); }
 
-        .qr-close-button {
-            text-align: right;
-            margin-bottom: 5px;
-            margin-right: -15px;
-        }
-    </style>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    /* ===== Apps grid ===== */
+    .apps {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+      gap: 10px;
+    }
+    .app {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); padding: 14px 10px;
+      display: flex; flex-direction: column; align-items: center; gap: 8px;
+      cursor: pointer; text-align: center;
+      transition: border-color 0.15s var(--ease), background 0.15s var(--ease), transform 0.05s var(--ease);
+    }
+    .app:hover { border-color: var(--accent); background: var(--accent-soft); }
+    .app:active { transform: translateY(1px); }
+    .app-logo {
+      width: 36px; height: 36px; border-radius: 9px; display: grid; place-items: center;
+      color: #fff; font-weight: 700; font-size: 13px; letter-spacing: -0.02em;
+    }
+    .app-name { font-size: 12.5px; font-weight: 600; }
+    .app-platform { font-size: 10px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.06em; }
+
+    /* ===== Configs list ===== */
+    .configs { display: flex; flex-direction: column; gap: 8px; }
+    .cfg {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); padding: 12px 14px;
+      display: flex; align-items: center; gap: 12px;
+    }
+    .cfg-tag {
+      flex-shrink: 0; min-width: 78px; padding: 4px 10px; border-radius: 999px;
+      font-size: 11px; font-weight: 700; text-align: center; letter-spacing: 0.02em;
+      background: var(--accent-soft); color: var(--accent); text-transform: uppercase;
+    }
+    .cfg-name { flex: 1; min-width: 0; font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: ltr; text-align: left; }
+    .cfg-btn {
+      padding: 6px 12px; border-radius: 7px; border: 1px solid var(--border-2);
+      background: var(--surface-2); color: var(--text); font-size: 12px; font-weight: 600; cursor: pointer;
+      transition: background 0.15s var(--ease);
+    }
+    .cfg-btn:hover { background: var(--surface-3); }
+    .cfg-btn.ok { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+
+    /* ===== Footer ===== */
+    footer {
+      margin-top: 30px; text-align: center; color: var(--text-faint);
+      font-size: 11px; padding-top: 16px; border-top: 1px solid var(--border);
+    }
+    footer a { color: var(--accent); }
+
+    /* ===== Toast ===== */
+    .toast {
+      position: fixed; bottom: 18px; inset-inline: 0; margin: 0 auto;
+      width: max-content; max-width: calc(100% - 32px);
+      background: var(--surface); color: var(--text);
+      border: 1px solid var(--border-2); border-inline-start: 3px solid var(--ok);
+      padding: 10px 14px; border-radius: 10px; font-size: 13px;
+      opacity: 0; pointer-events: none;
+      transition: opacity 0.2s var(--ease), transform 0.2s var(--ease);
+      transform: translateY(8px); z-index: 99;
+    }
+    .toast.show { opacity: 1; transform: none; }
+    .toast.error { border-inline-start-color: var(--danger); }
+
+    /* ===== QR popup ===== */
+    .qr-modal {
+      position: fixed; inset: 0; background: rgba(3,6,10,0.7); backdrop-filter: blur(4px);
+      display: none; align-items: center; justify-content: center; z-index: 50; padding: 20px;
+    }
+    .qr-modal.show { display: flex; }
+    .qr-modal-card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 22px; text-align: center; max-width: 360px; width: 100%;
+    }
+    .qr-modal-card .qr-box { display: inline-block; margin-bottom: 14px; }
+    .qr-modal-card .qr-box img { width: 200px; height: 200px; }
+    .qr-close { background: var(--surface-3); color: var(--text); border: none; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 13px; }
+
+    /* ===== Mobile ===== */
+    @media (max-width: 600px) {
+      .hero { flex-direction: column; text-align: center; padding: 24px 18px; }
+      .hero-meta { text-align: center; }
+      .sub-card { flex-direction: column; padding: 18px; }
+      .qr-box img { width: 180px; height: 180px; }
+      .stats { grid-template-columns: 1fr 1fr; }
+    }
+  </style>
 </head>
-
 <body>
-    <h1>User Information</h1>
-    <p>Username: {{ user.username }}</p>
-    <p>Status: <span
-            class="status {% if user.status.value == 'active' %}active{% elif user.status.value == 'limited' %}limited{% elif user.status.value == 'expired' %}expired{% elif user.status.value == 'disabled' %}disabled{% endif %}">{{
-            user.status.value }}</span></p>
-    <p>Data Limit: {% if not user.data_limit %}∞{% else %}{{ user.data_limit | bytesformat }}{% endif %}</p>
-    <p>Data Used: {{ user.used_traffic | bytesformat }}{% if user.data_limit_reset_strategy != 'no_reset' %} (resets
-        every {{ user.data_limit_reset_strategy.value }}){% endif %}</p>
-    <p>Expiration Date:
-        {% if not user.expire %}
-        ∞
-        {% else %}
-        {% set current_timestamp = now().timestamp() %}
-        {% set remaining_days = ((user.expire - current_timestamp) // (24 * 3600)) %}
-        {{ user.expire | datetime }} ({{ remaining_days | int }} days
-        remaining)
-        {% endif %}</p>
-
-    {% if user.status == 'active' %}
-    <h2>Links:</h2>
-    <ul>
-        {% for link in user.links %}
-        <li>
-            <input type="text" value="{{ link }}" readonly>
-            <button class="copy-button" onclick="copyLink('{{ link }}', this)">Copy</button>
-            <button class="qr-button" data-link="{{ link }}">QR Code</button>
-        </li>
-        {% endfor %}
-    </ul>
-    <div class="qr-popup" id="qrPopup">
-        <div class="qr-close-button">
-            <button onclick="closeQrPopup()">X</button>
+  <div class="wrap">
+    <!-- HERO -->
+    <div class="hero">
+      <div class="avatar" aria-hidden>{{ user.username[:2]|upper }}</div>
+      <div class="hero-meta">
+        <div class="hero-name">{{ user.username }}</div>
+        <div class="hero-sub">NexusPanel · اشتراک شخصی</div>
+        <div class="status-pill status-{{ status }}">
+          <span class="pulse"></span>
+          {% if status == "active" %}فعال
+          {%- elif status == "disabled" %}غیرفعال
+          {%- elif status == "expired" %}منقضی شده
+          {%- elif status == "limited" %}محدودشده (حجم تمام شد)
+          {%- elif status == "on_hold" %}در انتظار
+          {%- else %}{{ status }}{% endif %}
         </div>
-        <div id="qrCodeContainer"></div>
+      </div>
+      <div class="gauge-wrap">
+        <div class="gauge {% if pct_capped >= 90 %}danger{% elif pct_capped >= 70 %}warn{% endif %}">
+          <svg width="96" height="96" viewBox="0 0 96 96">
+            <circle cx="48" cy="48" r="40" class="gauge-bg" fill="none" stroke-width="8" />
+            <circle cx="48" cy="48" r="40" class="gauge-fg" fill="none" stroke-width="8" stroke-linecap="round"
+              stroke-dasharray="251.327" stroke-dashoffset="{{ 251.327 - (251.327 * pct_capped / 100) }}" />
+          </svg>
+          <div class="gauge-label">{% if total %}{{ pct_capped|round|int }}%{% else %}∞{% endif %}</div>
+        </div>
+        <div style="font-size: 11px; color: var(--text-faint); letter-spacing: 0.05em;">مصرف</div>
+      </div>
+    </div>
+
+    <!-- STATS -->
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-k">مصرف‌شده</div>
+        <div class="stat-v">{{ used|bytesformat }}</div>
+      </div>
+      <div class="stat">
+        <div class="stat-k">حجم کل</div>
+        <div class="stat-v">{% if total %}{{ total|bytesformat }}{% else %}نامحدود{% endif %}</div>
+      </div>
+      <div class="stat">
+        <div class="stat-k">انقضا</div>
+        <div class="stat-v" id="expiry-v">{% if user.expire %}—{% else %}بدون انقضا{% endif %}</div>
+      </div>
+    </div>
+
+    <!-- SUBSCRIBE -->
+    <div class="section">
+      <div class="section-title">لینک اشتراک</div>
+      <div class="sub-card">
+        <div class="qr-box">
+          <img id="sub-qr" alt="QR" />
+        </div>
+        <div class="sub-info">
+          <h2>اضافه‌کردن به اپلیکیشن</h2>
+          <p>این لینک را در اپ مورد علاقه‌تان ایمپورت کنید یا اسکن QR را انجام دهید. تنظیمات بعداً خودکار به‌روز می‌شوند.</p>
+          <div class="sub-url">
+            <input id="sub-link" readonly value="{{ sub_url_abs }}" onclick="this.select()" />
+            <button type="button" id="copy-sub">کپی</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- APPS -->
+    <div class="section">
+      <div class="section-title">ایمپورت یک‌تپه‌ای</div>
+      <div class="apps" id="apps"></div>
+    </div>
+
+    <!-- CONFIGS -->
+    {% if user.links %}
+    <div class="section">
+      <div class="section-title">کانفیگ‌های جداگانه ({{ user.links|length }})</div>
+      <div class="configs" id="configs">
+        {% for link in user.links %}
+        <div class="cfg">
+          <span class="cfg-tag">{{ link.split("://")[0] if "://" in link else "link" }}</span>
+          <div class="cfg-name">{{ link[:80] }}{% if link|length > 80 %}…{% endif %}</div>
+          <button class="cfg-btn" type="button" data-action="qr" data-url="{{ link }}">QR</button>
+          <button class="cfg-btn" type="button" data-action="copy" data-url="{{ link }}">کپی</button>
+        </div>
+        {% endfor %}
+      </div>
     </div>
     {% endif %}
 
-    <script>
-        function copyLink(link, button) {
-            const tempInput = document.createElement('input');
-            tempInput.setAttribute('value', link);
-            document.body.appendChild(tempInput);
-            tempInput.select();
-            document.execCommand('copy');
-            document.body.removeChild(tempInput);
+    <footer>
+      <div>NexusPanel · صفحه‌ی اشتراک</div>
+      <div style="margin-top: 6px;">برای نصب اپ‌های پیشنهادی روی پلتفرم خود، روی هر دکمه‌ی بالا کلیک کنید.</div>
+    </footer>
+  </div>
 
-            button.textContent = 'Copied!';
-            setTimeout(function () {
-                button.textContent = 'Copy';
-            }, 1500);
+  <div class="qr-modal" id="qrModal">
+    <div class="qr-modal-card">
+      <div class="qr-box"><img id="qrModalImg" alt="QR" /></div>
+      <div id="qrModalUrl" style="font-size: 11px; color: var(--text-faint); direction: ltr; word-break: break-all; margin-bottom: 12px;"></div>
+      <button class="qr-close" id="qrClose">بستن</button>
+    </div>
+  </div>
+  <div class="toast" id="toast"></div>
+
+  <script>
+    (function () {
+      var SUB_URL_RAW = {{ sub_url_abs|tojson }};
+      var EXPIRE_TS = {{ user.expire|default(0) or 0 }};
+
+      function absUrl(u) {
+        if (!u) return "";
+        if (/^https?:\/\//i.test(u)) return u;
+        if (u.indexOf("/") === 0) return location.origin + u;
+        return u;
+      }
+      var SUB_URL = absUrl(SUB_URL_RAW);
+      document.getElementById("sub-link").value = SUB_URL;
+
+      // ===== QR via Google Chart API fallback to canvas-generated would be heavy;
+      //       we use a tiny QR library URL via inline data: nope; just use api.qrserver.com.
+      //       Privacy note: the URL contains the user's subscription URL. Acceptable
+      //       trade-off; future work: bundle a JS QR lib.
+      function qrImg(url, size) {
+        size = size || 156;
+        return "https://api.qrserver.com/v1/create-qr-code/?size=" + size + "x" + size + "&data=" + encodeURIComponent(url);
+      }
+      document.getElementById("sub-qr").src = qrImg(SUB_URL, 156);
+
+      // ===== Expiry display =====
+      if (EXPIRE_TS) {
+        var d = new Date(EXPIRE_TS * 1000);
+        var months = ["فروردین","اردیبهشت","خرداد","تیر","مرداد","شهریور","مهر","آبان","آذر","دی","بهمن","اسفند"];
+        try {
+          var fmt = new Intl.DateTimeFormat("fa-IR", { year: "numeric", month: "short", day: "numeric" });
+          document.getElementById("expiry-v").textContent = fmt.format(d);
+        } catch (e) {
+          document.getElementById("expiry-v").textContent = d.toLocaleDateString();
         }
+      }
 
-        const qrButtons = document.querySelectorAll('.qr-button');
-        const qrPopup = document.getElementById('qrPopup');
-
-        qrButtons.forEach((qrButton) => {
-            qrButton.addEventListener('click', () => {
-                const link = qrButton.dataset.link;
-                while (qrCodeContainer.firstChild) {
-                    qrCodeContainer.removeChild(qrCodeContainer.firstChild);
-                }
-                const qrCode = new QRCode(qrCodeContainer, {
-                    text: link,
-                    width: 256,
-                    height: 256,
-                    correctLevel: QRCode.CorrectLevel.L
-                });
-                qrPopup.style.display = 'block';
-            });
+      // ===== Clipboard with HTTP fallback =====
+      function copy(text) {
+        return new Promise(function (resolve) {
+          if (navigator.clipboard && window.isSecureContext) {
+            navigator.clipboard.writeText(text).then(function () { resolve(true); }, function () { resolve(fallback()); });
+          } else {
+            resolve(fallback());
+          }
+          function fallback() {
+            var ta = document.createElement("textarea");
+            ta.value = text; ta.style.position = "fixed"; ta.style.top = "-1000px"; ta.style.opacity = "0";
+            document.body.appendChild(ta); ta.focus(); ta.select();
+            var ok = false;
+            try { ok = document.execCommand("copy"); } catch (e) {}
+            document.body.removeChild(ta);
+            return ok;
+          }
         });
-        function closeQrPopup() {
-            document.getElementById('qrPopup').style.display = 'none';
-        }
-    </script>
-</body>
+      }
 
+      // ===== Toast =====
+      var toastEl = document.getElementById("toast");
+      var toastTm;
+      function toast(msg, kind) {
+        toastEl.textContent = msg;
+        toastEl.className = "toast show " + (kind === "error" ? "error" : "");
+        clearTimeout(toastTm);
+        toastTm = setTimeout(function () { toastEl.className = "toast " + (kind === "error" ? "error" : ""); }, 2400);
+      }
+
+      // ===== Copy sub button =====
+      var copyBtn = document.getElementById("copy-sub");
+      copyBtn.addEventListener("click", function () {
+        copy(SUB_URL).then(function (ok) {
+          if (ok) { copyBtn.textContent = "✓ کپی شد"; copyBtn.classList.add("ok"); toast("لینک کپی شد"); setTimeout(function(){copyBtn.textContent="کپی"; copyBtn.classList.remove("ok");},1500); }
+          else { toast("کپی ناموفق — لینک را با Ctrl/Cmd+C کپی کنید", "error"); }
+        });
+      });
+
+      // ===== Per-config buttons =====
+      var qrModal = document.getElementById("qrModal");
+      var qrModalImg = document.getElementById("qrModalImg");
+      var qrModalUrl = document.getElementById("qrModalUrl");
+      document.getElementById("qrClose").addEventListener("click", function(){ qrModal.classList.remove("show"); });
+      qrModal.addEventListener("click", function(e){ if (e.target === qrModal) qrModal.classList.remove("show"); });
+      document.querySelectorAll("[data-action]").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          var url = btn.getAttribute("data-url");
+          if (btn.getAttribute("data-action") === "copy") {
+            copy(url).then(function(ok){
+              if (ok) { btn.textContent = "✓"; btn.classList.add("ok"); toast("کپی شد"); setTimeout(function(){btn.textContent="کپی"; btn.classList.remove("ok");}, 1500); }
+              else toast("کپی ناموفق", "error");
+            });
+          } else {
+            qrModalImg.src = qrImg(url, 240);
+            qrModalUrl.textContent = url.length > 100 ? url.slice(0, 100) + "…" : url;
+            qrModal.classList.add("show");
+          }
+        });
+      });
+
+      // ===== Platform detection =====
+      var ua = navigator.userAgent || "";
+      var isIOS = /iPhone|iPad|iPod/i.test(ua);
+      var isAndroid = /Android/i.test(ua);
+      var isDesktop = !isIOS && !isAndroid;
+
+      // ===== Client app catalog =====
+      // Schemes adapted from each app's documented deep links.
+      var enc = encodeURIComponent(SUB_URL);
+      var name = enc; // url-encoded title used by some apps
+      var APPS = [
+        { id: "v2rayng",    label: "v2rayNG",       platform: "ANDROID", color: "#1976d2", url: "v2rayng://install-sub/?url=" + enc + "&name=NexusPanel" },
+        { id: "v2rayn",     label: "v2rayN",        platform: "DESKTOP", color: "#7c3aed", url: "https://github.com/2dust/v2rayN/releases/latest" },
+        { id: "nekobox",    label: "NekoBox",       platform: "ANDROID", color: "#ec4899", url: "sn://subscription?url=" + enc + "&name=NexusPanel" },
+        { id: "hiddify",    label: "Hiddify",       platform: "ANY",     color: "#06b6d4", url: "hiddify://install-config?url=" + enc },
+        { id: "streisand",  label: "Streisand",     platform: "IOS",     color: "#f59e0b", url: "streisand://import/" + enc },
+        { id: "shadowrocket",label:"Shadowrocket", platform: "IOS",     color: "#ef4444", url: "shadowrocket://add/sub://" + btoa(SUB_URL) },
+        { id: "foxray",     label: "FoXray",        platform: "IOS",     color: "#dc2626", url: "foxray://yiamapp.com/import?url=" + enc },
+        { id: "clashmeta",  label: "Clash Meta",    platform: "ANY",     color: "#0ea5e9", url: "clashmeta://install-config?url=" + enc + "&name=NexusPanel" },
+        { id: "clashx",     label: "Clash X",       platform: "MACOS",   color: "#3b82f6", url: "clash://install-config?url=" + enc },
+        { id: "singbox",    label: "sing-box",      platform: "ANY",     color: "#22c55e", url: "sing-box://import-remote-profile?url=" + enc },
+        { id: "loon",       label: "Loon",          platform: "IOS",     color: "#8b5cf6", url: "loon://import?sub=" + enc },
+        { id: "qx",         label: "Quantumult X",  platform: "IOS",     color: "#10b981", url: "quantumult-x:///add-resource?remote-resource=" + encodeURIComponent('{"server_remote":"' + SUB_URL + ', tag=NexusPanel, update-interval=86400, opt-parser=false, enabled=true"}') },
+      ];
+
+      // Rank by platform
+      function rank(a) {
+        if (isIOS) return a.platform === "IOS" ? 0 : a.platform === "ANY" ? 1 : 2;
+        if (isAndroid) return a.platform === "ANDROID" ? 0 : a.platform === "ANY" ? 1 : 2;
+        return a.platform === "DESKTOP" || a.platform === "MACOS" ? 0 : a.platform === "ANY" ? 1 : 2;
+      }
+      APPS.sort(function (a, b) { return rank(a) - rank(b); });
+
+      // Render
+      var appsEl = document.getElementById("apps");
+      APPS.forEach(function (a) {
+        var btn = document.createElement("button");
+        btn.type = "button"; btn.className = "app";
+        btn.innerHTML =
+          '<div class="app-logo" style="background:' + a.color + '">' + a.label.slice(0,2) + '</div>' +
+          '<div class="app-name">' + a.label + '</div>' +
+          '<div class="app-platform">' + a.platform + '</div>';
+        btn.addEventListener("click", function () {
+          // try to open scheme; if it fails, copy URL as fallback
+          var t = Date.now();
+          var blurFired = false;
+          var onBlur = function(){ blurFired = true; };
+          window.addEventListener("blur", onBlur, { once: true });
+          window.location.href = a.url;
+          setTimeout(function () {
+            window.removeEventListener("blur", onBlur);
+            if (!blurFired && Date.now() - t < 1500) {
+              copy(SUB_URL).then(function(ok){
+                toast(ok ? a.label + " نصب نیست؟ لینک کپی شد." : "اپ پاسخ نداد", ok ? "" : "error");
+              });
+            }
+          }, 1200);
+        });
+        appsEl.appendChild(btn);
+      });
+    })();
+  </script>
+</body>
 </html>

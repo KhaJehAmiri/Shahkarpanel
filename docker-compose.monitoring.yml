@@ -1,0 +1,36 @@
+# Optional monitoring stack: Prometheus + Grafana.
+# Usage: docker compose -f docker-compose.monitoring.yml up -d
+#
+# 1) Set METRICS_TOKEN in NexusPanel's .env and enable the `prometheus_metrics`
+#    feature flag (PUT /api/feature-flags/prometheus_metrics {"enabled": true}).
+# 2) Put the same token in monitoring/prometheus.yml.
+
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    restart: always
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  grafana:
+    image: grafana/grafana:latest
+    restart: always
+    depends_on:
+      - prometheus
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+
+volumes:
+  prometheus_data:
+  grafana_data:

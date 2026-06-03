@@ -1,0 +1,8 @@
+services:
+  nexuspanel:
+    build: .
+    restart: always
+    env_file: .env
+    network_mode: host
+    volumes:
+      - /var/lib/nexuspanel:/var/lib/nexuspanel

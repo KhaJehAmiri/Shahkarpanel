@@ -1,0 +1,11 @@
+line-length = 120
+target-version = "py310"
+
+[lint]
+# Pyflakes (F) + a subset of pycodestyle (E) + isort (I). Kept lean so it can be
+# adopted incrementally across the existing codebase.
+select = ["F", "E9", "I"]
+ignore = ["E501"]
+
+[lint.isort]
+known-first-party = ["app", "cli", "config", "xray_api"]

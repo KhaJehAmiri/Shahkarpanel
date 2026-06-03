@@ -1,0 +1,51 @@
+# Production-oriented stack: NexusPanel + PostgreSQL + Redis.
+# Use with: docker compose -f docker-compose.postgres.yml up -d
+#
+# Set the matching values in your .env file, e.g.:
+#   SQLALCHEMY_DATABASE_URL=postgresql://nexuspanel:change-me@127.0.0.1:5432/nexuspanel
+#   REDIS_URL=redis://127.0.0.1:6379/0
+#
+# Build the panel image from this repo (recommended) instead of the upstream image.
+
+services:
+  nexuspanel:
+    build: .
+    restart: always
+    env_file: .env
+    network_mode: host
+    volumes:
+      - /var/lib/nexuspanel:/var/lib/nexuspanel
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    restart: always
+    network_mode: host
+    environment:
+      POSTGRES_USER: nexuspanel
+      POSTGRES_PASSWORD: change-me
+      POSTGRES_DB: nexuspanel
+    volumes:
+      - /var/lib/nexuspanel/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexuspanel -d nexuspanel"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    network_mode: host
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - /var/lib/nexuspanel/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10

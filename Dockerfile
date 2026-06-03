@@ -40,10 +40,7 @@ COPY --from=build /usr/local/share/xray /usr/local/share/xray
 
 COPY . /code
 
-# setuptools provides pkg_resources (required by APScheduler during CLI import)
-RUN python3 -m pip install --no-cache-dir 'setuptools>=65,<82' \
-    && ln -sf /code/nexuspanel-cli.py /usr/bin/nexuspanel-cli \
-    && chmod +x /usr/bin/nexuspanel-cli \
-    && nexuspanel-cli completion install --shell bash
+RUN ln -sf /code/nexuspanel-cli.py /usr/bin/nexuspanel-cli \
+    && chmod +x /usr/bin/nexuspanel-cli
 
 CMD ["bash", "-c", "alembic upgrade head; python main.py"]

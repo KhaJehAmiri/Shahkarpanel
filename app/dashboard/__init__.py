@@ -36,8 +36,11 @@ def run_dev():
 
 
 def run_build():
-    if not build_dir.is_dir():
-        build()
+    if not (build_dir / 'index.html').is_file():
+        raise RuntimeError(
+            f"Dashboard build missing at {build_dir}. "
+            "Rebuild the image or run ./build_dashboard.sh before starting the panel."
+        )
 
     app.mount(
         DASHBOARD_PATH,

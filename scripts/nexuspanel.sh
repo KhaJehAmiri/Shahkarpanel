@@ -272,6 +272,48 @@ cmd_info() {
   print_access
 }
 
+cmd_doctor() {
+  need_root
+  [ -d "${APP_DIR}" ] || die "NexusPanel not installed in ${APP_DIR}"
+  load_env_creds
+  local url="http://127.0.0.1:${PANEL_PORT}"
+  echo "${BOLD}NexusPanel diagnostics${NC}"
+  echo
+  compose ps 2>/dev/null || true
+  echo
+  if [ -f "${APP_DIR}/app/dashboard/build/index.html" ]; then
+    ok "Host: dashboard build present"
+  else
+    err "Host: missing ${APP_DIR}/app/dashboard/build/index.html — run: cd ${APP_DIR} && ./build_dashboard.sh"
+  fi
+  if compose exec -T "${APP_NAME}" test -f /code/app/dashboard/build/index.html 2>/dev/null; then
+    ok "Container: dashboard build present"
+  else
+    err "Container: dashboard build missing — rebuild: docker compose up -d --build"
+  fi
+  local code api_code
+  code="$(curl -sf -o /dev/null -w '%{http_code}' "${url}/dashboard/" 2>/dev/null || echo '000')"
+  api_code="$(curl -sf -o /dev/null -w '%{http_code}' "${url}/api/setup/status" 2>/dev/null || echo '000')"
+  if [ "$code" = "200" ]; then ok "Local ${url}/dashboard/ → HTTP $code"; else
+    err "Local ${url}/dashboard/ → HTTP $code (expected 200). Check: nexuspanel logs"
+  fi
+  if [ "$api_code" = "200" ]; then ok "Local ${url}/api/setup/status → HTTP $api_code"; else
+    warn "API ${url}/api/setup/status → HTTP $api_code"
+  fi
+  if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+    if ufw status | grep -q "${PANEL_PORT}/tcp.*ALLOW"; then
+      ok "UFW: port ${PANEL_PORT} allowed"
+    else
+      warn "UFW is active but port ${PANEL_PORT} may be blocked. Run: ufw allow ${PANEL_PORT}/tcp"
+    fi
+  fi
+  local ip; ip="$(curl -fsSL --max-time 5 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')"
+  echo
+  echo "  Open in browser: ${BOLD}http://${ip}:${PANEL_PORT}/dashboard/${NC} (use http, not https)"
+  echo "  If local tests pass but browser fails → open port ${PANEL_PORT} in your VPS/cloud firewall."
+  echo
+}
+
 cmd_update()  { need_root; fetch_repo; install_cli; compose up -d --build; ok "Updated."; print_access; }
 cmd_up()      { need_root; compose up -d; ok "Started."; }
 cmd_down()    { need_root; compose down; ok "Stopped."; }
@@ -326,6 +368,7 @@ Usage: ${APP_NAME} <command>
   up | down | restart
   status             Show container status
   info               Show panel URL, admin login, and paths
+  doctor             Check dashboard/API locally and firewall hints
   logs               Tail logs
   backup             Create a backup archive
   restore <file>     Restore from a backup archive

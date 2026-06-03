@@ -68,6 +68,15 @@ compose() {
   fi
 }
 
+panel_http_code() {
+  local path="${1:-/api/setup/status}"
+  curl -sf -o /dev/null -w '%{http_code}' --max-time 3 "http://127.0.0.1:${PANEL_PORT}${path}" 2>/dev/null || echo "000"
+}
+
+panel_is_listening() {
+  [ "$(panel_http_code /api/setup/status)" = "200" ]
+}
+
 # --------------------------------------------------------------------------- #
 # Dependencies
 # --------------------------------------------------------------------------- #
@@ -227,8 +236,10 @@ print_access() {
   if [ -d "${APP_DIR}/.git" ]; then
     ver="$(git -C "${APP_DIR}" rev-parse --short HEAD 2>/dev/null || echo unknown)"
   fi
-  if compose ps --status running 2>/dev/null | grep -q nexuspanel; then
-    panel_state="${GREEN}running${NC}"
+  if panel_is_listening; then
+    panel_state="${GREEN}listening on :${PANEL_PORT}${NC}"
+  elif compose ps --status running 2>/dev/null | grep -q nexuspanel; then
+    panel_state="${YELLOW}container up but API down${NC} (run: nexuspanel logs)"
   else
     panel_state="${RED}not running${NC} (run: nexuspanel up)"
   fi
@@ -261,7 +272,7 @@ print_access() {
     echo "  ${YELLOW}Admin credentials: see ${APP_DIR}/.env (SUDO_USERNAME / SUDO_PASSWORD)${NC}"
   fi
   echo
-  echo "  ${BOLD}Commands${NC}   nexuspanel info | status | logs | update | backup"
+  echo "  ${BOLD}Commands${NC}   nexuspanel check | info | status | logs | update | backup"
   echo "  ${YELLOW}First login → Setup wizard (tenants, branding, provisioning, tunnels).${NC}"
   echo
 }
@@ -368,7 +379,7 @@ Usage: ${APP_NAME} <command>
   up | down | restart
   status             Show container status
   info               Show panel URL, admin login, and paths
-  doctor             Check dashboard/API locally and firewall hints
+  check | doctor     Check dashboard/API locally and firewall hints
   logs               Tail logs
   backup             Create a backup archive
   restore <file>     Restore from a backup archive
@@ -387,6 +398,7 @@ main() {
     restart)   cmd_restart "$@";;
     status)    cmd_status "$@";;
     info)      cmd_info "$@";;
+    check|doctor) cmd_doctor "$@";;
     logs)      cmd_logs "$@";;
     backup)    cmd_backup "$@";;
     restore)   cmd_restore "$@";;

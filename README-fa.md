@@ -67,12 +67,14 @@ bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/nexuspanel/maste
 
 | مرحله | عملیات |
 |--------|--------|
-| 1 | نصب Docker و git |
+| 1 | نصب Docker و git؛ در صورت کم‌بود RAM، swap خودکار |
 | 2 | Clone از `KhaJehAmiri/nexuspanel` → `/opt/nexuspanel` |
-| 3 | ساخت `.env` (رمز ادمین، JWT، `NODE_BOOTSTRAP_TOKEN`) |
-| 4 | Build و اجرای پنل با Docker Compose |
-| 5 | Build ایمیج `nexuspanel/node` برای افزودن نود با SSH |
-| 6 | چاپ آدرس داشبورد و مشخصات ورود |
+| 3 | کپی `xray_config.json` به `/var/lib/nexuspanel` |
+| 4 | ساخت `.env` (`UVICORN_HOST=0.0.0.0`، رمز ادمین، JWT) |
+| 5 | باز کردن پورت پنل در UFW (در صورت نصب بودن) |
+| 6 | Build و اجرای پنل؛ انتظار برای API (migration اول) |
+| 7 | Build ایمیج `nexuspanel/node` (روی VPS کم‌رم اختیاری/بعداً) |
+| 8 | چاپ آدرس داشبورد، یوزر و پسورد ادمین |
 
 </details>
 

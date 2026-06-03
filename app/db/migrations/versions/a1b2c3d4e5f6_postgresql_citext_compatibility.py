@@ -1,9 +1,8 @@
 """postgresql citext compatibility
 
-Makes the case-insensitive identifier columns (users.username, nodes.name)
-behave like SQLite's NOCASE collation on PostgreSQL by switching them to the
-CITEXT type. No-op on SQLite and MySQL, which handle case-insensitivity through
-their own collations.
+Makes users.username case-insensitive on PostgreSQL (CITEXT), matching SQLite
+NOCASE. nodes.name is migrated in f7a8b9c0d1e2 after the nodes table exists.
+No-op on SQLite and MySQL.
 
 Revision ID: a1b2c3d4e5f6
 Revises: 2b231de97dc3
@@ -28,17 +27,12 @@ def upgrade() -> None:
         return
 
     op.execute('CREATE EXTENSION IF NOT EXISTS citext')
+    # users exists here; nodes is created later (37692c1c9715) — see f7a8b9c0d1e2
     op.alter_column(
         'users', 'username',
         type_=CITEXT(),
         existing_type=sa.String(length=34),
         postgresql_using='username::citext',
-    )
-    op.alter_column(
-        'nodes', 'name',
-        type_=CITEXT(),
-        existing_type=sa.String(length=256),
-        postgresql_using='name::citext',
     )
 
 
@@ -47,12 +41,6 @@ def downgrade() -> None:
     if bind.engine.name != 'postgresql':
         return
 
-    op.alter_column(
-        'nodes', 'name',
-        type_=sa.String(length=256),
-        existing_type=CITEXT(),
-        postgresql_using='name::varchar',
-    )
     op.alter_column(
         'users', 'username',
         type_=sa.String(length=34),

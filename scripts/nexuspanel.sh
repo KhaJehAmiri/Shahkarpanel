@@ -38,6 +38,28 @@ need_root() {
 
 rand() { head -c "${1:-32}" /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c "${1:-32}"; }
 
+# On small VPS (e.g. 2GB RAM) auto-add swap and skip heavy node-image build.
+prepare_low_memory() {
+  local ram_mb=4096 swap_mb=0
+  if [ -r /proc/meminfo ]; then
+    ram_mb=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
+    swap_mb=$(awk '/SwapTotal/ {print int($2/1024)}' /proc/meminfo)
+  fi
+  if [ "$ram_mb" -lt 3500 ] && [ "$swap_mb" -lt 512 ] && [ ! -f /swapfile ]; then
+    log "Low memory (${ram_mb}MB) — creating 2GB swap (one-time)..."
+    fallocate -l 2G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none
+    chmod 600 /swapfile
+    mkswap /swapfile >/dev/null
+    swapon /swapfile
+    grep -q '^/swapfile ' /etc/fstab 2>/dev/null || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+    ok "Swap enabled."
+  fi
+  if [ "$ram_mb" -lt 3500 ] && [ "${SKIP_NODE_BUILD:-}" != "0" ]; then
+    SKIP_NODE_BUILD=1
+    log "Low RAM: skipping node-agent build now (optional later)."
+  fi
+}
+
 compose() {
   if docker compose version >/dev/null 2>&1; then
     docker compose -f "${APP_DIR}/docker-compose.yml" "$@"
@@ -166,6 +188,7 @@ wait_for_panel() {
 cmd_install() {
   need_root
   echo "${BOLD}Installing NexusPanel...${NC}"
+  prepare_low_memory
   install_deps
   fetch_repo
   mkdir -p "${DATA_DIR}" "${DATA_DIR}/backups"

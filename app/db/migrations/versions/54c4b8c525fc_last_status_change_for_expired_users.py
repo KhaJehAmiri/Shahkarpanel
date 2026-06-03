@@ -32,29 +32,23 @@ def upgrade() -> None:
 
     # MySQL and SQLite handle datetime conversion differently
     if connection.engine.name == "mysql":
-        # For MySQL: Use FROM_UNIXTIME
-        update_stmt = (
-            sa.update(users_table)
-            .where(
-                sa.and_(
-                    users_table.c.status == 'expired',
-                    users_table.c.expire.isnot(None)
-                )
-            )
-            .values(last_status_change=func.from_unixtime(users_table.c.expire))
-        )
+        last_change = func.from_unixtime(users_table.c.expire)
+    elif connection.engine.name == "postgresql":
+        last_change = func.to_timestamp(users_table.c.expire)
     else:
-        # For SQLite: Use DATETIME with 'unixepoch'
-        update_stmt = (
-            sa.update(users_table)
-            .where(
-                sa.and_(
-                    users_table.c.status == 'expired',
-                    users_table.c.expire.isnot(None)
-                )
+        # SQLite: DATETIME with 'unixepoch'
+        last_change = func.datetime(users_table.c.expire, 'unixepoch')
+
+    update_stmt = (
+        sa.update(users_table)
+        .where(
+            sa.and_(
+                users_table.c.status == 'expired',
+                users_table.c.expire.isnot(None),
             )
-            .values(last_status_change=func.datetime(users_table.c.expire, 'unixepoch'))
         )
+        .values(last_status_change=last_change)
+    )
 
     # Execute the update statement
     connection.execute(update_stmt)

@@ -52,4 +52,4 @@ RUN test -f /code/app/dashboard/build/index.html \
 RUN ln -sf /code/nexuspanel-cli.py /usr/bin/nexuspanel-cli \
     && chmod +x /usr/bin/nexuspanel-cli
 
-CMD ["bash", "-c", "alembic upgrade head; python main.py"]
+CMD ["bash", "-c", "alembic upgrade head && exec python main.py"]

@@ -36,11 +36,15 @@ def run_dev():
 
 
 def run_build():
+    import logging
+    log = logging.getLogger("uvicorn.error")
     if not (build_dir / 'index.html').is_file():
-        raise RuntimeError(
-            f"Dashboard build missing at {build_dir}. "
-            "Rebuild the image or run ./build_dashboard.sh before starting the panel."
+        log.error(
+            "Dashboard build missing at %s — API will start but /dashboard/ will not work. "
+            "Fix: ./build_dashboard.sh && docker compose up -d --build",
+            build_dir,
         )
+        return
 
     app.mount(
         DASHBOARD_PATH,

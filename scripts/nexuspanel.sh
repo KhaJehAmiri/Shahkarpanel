@@ -92,10 +92,22 @@ install_deps() {
 # --------------------------------------------------------------------------- #
 # .env generation (interactive but with sane non-interactive defaults)
 # --------------------------------------------------------------------------- #
+load_env_creds() {
+  local env_file="${APP_DIR}/.env"
+  [ -f "$env_file" ] || return 0
+  # shellcheck disable=SC1090
+  set -a && source "$env_file" && set +a
+  ADMIN_USERNAME="${SUDO_USERNAME:-${ADMIN_USERNAME:-}}"
+  ADMIN_PASSWORD="${SUDO_PASSWORD:-${ADMIN_PASSWORD:-}}"
+  PANEL_PORT="${UVICORN_PORT:-${PANEL_PORT:-8000}}"
+  export ADMIN_USERNAME ADMIN_PASSWORD PANEL_PORT
+}
+
 write_env() {
   local env_file="${APP_DIR}/.env"
   if [ -f "$env_file" ]; then
     warn ".env already exists; keeping it."
+    load_env_creds
     return
   fi
 
@@ -207,19 +219,57 @@ cmd_install() {
 }
 
 print_access() {
-  local ip; ip="$(curl -fsSL https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')"
-  echo
-  echo "${BOLD}${GREEN}==== NexusPanel ready ====${NC}"
-  echo "  Dashboard : ${BOLD}http://${ip}:${PANEL_PORT}/dashboard/${NC}"
-  if [ -n "${ADMIN_USERNAME:-}" ]; then
-    echo "  Username  : ${BOLD}${ADMIN_USERNAME}${NC}"
-    echo "  Password  : ${BOLD}${ADMIN_PASSWORD}${NC}"
-    echo "  ${YELLOW}Save these credentials now.${NC}"
+  load_env_creds
+  local ip ver panel_state node_state
+  ip="$(curl -fsSL --max-time 5 https://api.ipify.org 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}')"
+  [ -n "$ip" ] || ip="YOUR_SERVER_IP"
+  ver="unknown"
+  if [ -d "${APP_DIR}/.git" ]; then
+    ver="$(git -C "${APP_DIR}" rev-parse --short HEAD 2>/dev/null || echo unknown)"
   fi
-  echo "  Manage    : ${BOLD}nexuspanel status | logs | update | backup${NC}"
-  echo "  White-label: ${BOLD}http://${ip}:${PANEL_PORT}/dashboard/#/manage/${NC}"
-  echo "  ${YELLOW}First login → Setup wizard (enable tenants, provisioning, tunnels).${NC}"
+  if compose ps --status running 2>/dev/null | grep -q nexuspanel; then
+    panel_state="${GREEN}running${NC}"
+  else
+    panel_state="${RED}not running${NC} (run: nexuspanel up)"
+  fi
+  if docker image inspect nexuspanel/node:latest >/dev/null 2>&1; then
+    node_state="${GREEN}built${NC}"
+  else
+    node_state="${YELLOW}missing${NC} (run: docker build -t nexuspanel/node:latest ${APP_DIR}/node)"
+  fi
   echo
+  echo "${BOLD}${GREEN}╔══════════════════════════════════════════════════════╗${NC}"
+  echo "${BOLD}${GREEN}║              NexusPanel — install complete           ║${NC}"
+  echo "${BOLD}${GREEN}╚══════════════════════════════════════════════════════╝${NC}"
+  echo
+  echo "  ${BOLD}Panel${NC}      Multi-tenant VPN panel (Xray) + white-label + node provisioning"
+  echo "  ${BOLD}Version${NC}    git ${ver}  |  API port ${PANEL_PORT}"
+  echo "  ${BOLD}Status${NC}     panel: ${panel_state}   |   node image: ${node_state}"
+  echo "  ${BOLD}Data${NC}       ${DATA_DIR}"
+  echo
+  echo "  ${BOLD}Dashboard${NC}  http://${ip}:${PANEL_PORT}/dashboard/"
+  echo "  ${BOLD}Manage${NC}     http://${ip}:${PANEL_PORT}/dashboard/#/manage/"
+  echo "  ${BOLD}API docs${NC}   http://${ip}:${PANEL_PORT}/docs"
+  if [ -n "${ADMIN_USERNAME:-}" ] && [ -n "${ADMIN_PASSWORD:-}" ]; then
+    echo
+    echo "  ${BOLD}Admin login${NC}"
+    echo "    Username : ${BOLD}${ADMIN_USERNAME}${NC}"
+    echo "    Password : ${BOLD}${ADMIN_PASSWORD}${NC}"
+    echo "  ${YELLOW}↳ Save now. Also in: ${APP_DIR}/.env (SUDO_USERNAME / SUDO_PASSWORD)${NC}"
+  else
+    echo
+    echo "  ${YELLOW}Admin credentials: see ${APP_DIR}/.env (SUDO_USERNAME / SUDO_PASSWORD)${NC}"
+  fi
+  echo
+  echo "  ${BOLD}Commands${NC}   nexuspanel info | status | logs | update | backup"
+  echo "  ${YELLOW}First login → Setup wizard (tenants, branding, provisioning, tunnels).${NC}"
+  echo
+}
+
+cmd_info() {
+  need_root
+  [ -d "${APP_DIR}" ] || die "NexusPanel not installed in ${APP_DIR}"
+  print_access
 }
 
 cmd_update()  { need_root; fetch_repo; compose up -d --build; ok "Updated."; }
@@ -275,6 +325,7 @@ Usage: ${APP_NAME} <command>
   update             Pull latest and rebuild
   up | down | restart
   status             Show container status
+  info               Show panel URL, admin login, and paths
   logs               Tail logs
   backup             Create a backup archive
   restore <file>     Restore from a backup archive
@@ -292,6 +343,7 @@ main() {
     down)      cmd_down "$@";;
     restart)   cmd_restart "$@";;
     status)    cmd_status "$@";;
+    info)      cmd_info "$@";;
     logs)      cmd_logs "$@";;
     backup)    cmd_backup "$@";;
     restore)   cmd_restore "$@";;

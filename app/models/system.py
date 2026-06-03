@@ -18,3 +18,4 @@ class SystemStats(BaseModel):
     outgoing_bandwidth: int
     incoming_bandwidth_speed: int
     outgoing_bandwidth_speed: int
+    bandwidth_source: str = "nic"

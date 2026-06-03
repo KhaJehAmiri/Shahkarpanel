@@ -22,6 +22,7 @@ export interface SystemStats {
   outgoing_bandwidth: number;
   incoming_bandwidth_speed: number;
   outgoing_bandwidth_speed: number;
+  bandwidth_source?: string;
 }
 
 export interface UserItem {
@@ -184,6 +185,7 @@ export interface RealtimeStats {
   nodes_connected: number;
   incoming_bandwidth_speed: number;
   outgoing_bandwidth_speed: number;
+  bandwidth_source?: string;
 }
 
 export interface PluginsStatus {

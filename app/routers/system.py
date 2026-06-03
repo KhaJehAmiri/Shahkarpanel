@@ -9,7 +9,7 @@ from app.models.proxy import ProxyHost, ProxyInbound, ProxyTypes
 from app.models.system import SystemStats
 from app.models.user import UserStatus
 from app.utils import responses
-from app.utils.system import cpu_usage, memory_usage, realtime_bandwidth
+from app.utils.system import cpu_usage, memory_usage, realtime_bandwidth, realtime_bandwidth_source
 
 router = APIRouter(tags=["System"], prefix="/api", responses={401: responses._401})
 
@@ -60,6 +60,7 @@ def get_system_stats(
         outgoing_bandwidth=system.downlink,
         incoming_bandwidth_speed=realtime_bandwidth_stats.incoming_bytes,
         outgoing_bandwidth_speed=realtime_bandwidth_stats.outgoing_bytes,
+        bandwidth_source=realtime_bandwidth_source(),
     )
 
 

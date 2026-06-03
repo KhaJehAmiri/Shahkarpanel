@@ -10,7 +10,7 @@ from app.models.admin import Admin
 from app.models.node import NodesUsageResponse
 from app.models.user import UserStatus
 from app.utils import responses
-from app.utils.system import realtime_bandwidth
+from app.utils.system import realtime_bandwidth, realtime_bandwidth_source
 
 router = APIRouter(
     tags=["Analytics"], prefix="/api/analytics", responses={401: responses._401}
@@ -29,6 +29,7 @@ class RealtimeStats(BaseModel):
     nodes_connected: int
     incoming_bandwidth_speed: int
     outgoing_bandwidth_speed: int
+    bandwidth_source: str = "nic"
 
 
 @router.get("/top-users", response_model=List[TopUser])
@@ -80,4 +81,5 @@ def realtime(
         nodes_connected=len(nodes),
         incoming_bandwidth_speed=bandwidth.incoming_bytes,
         outgoing_bandwidth_speed=bandwidth.outgoing_bytes,
+        bandwidth_source=realtime_bandwidth_source(),
     )

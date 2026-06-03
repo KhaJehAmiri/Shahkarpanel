@@ -69,6 +69,40 @@ class RealtimeBandwidthStat:
 rt_bw = RealtimeBandwidth(
     incoming_bytes=0, outgoing_bytes=0, incoming_packets=0, outgoing_packets=0)
 
+# Xray inbound throughput (proxy only — not whole-NIC psutil noise)
+xr_bw = RealtimeBandwidth(
+    incoming_bytes=0, outgoing_bytes=0, incoming_packets=0, outgoing_packets=0)
+xr_bw_ready = False
+
+
+def _sample_xray_inbound_rates() -> None:
+    """Sum all inbound uplink/downlink counters and derive bytes/s."""
+    global xr_bw, xr_bw_ready
+    try:
+        from app import xray
+
+        up = down = 0
+        for stat in xray.api.get_inbounds_stats(reset=False, timeout=5):
+            if stat.link == "uplink":
+                up += stat.value
+            else:
+                down += stat.value
+
+        last_t = xr_bw.last_perf_counter
+        now = time.perf_counter()
+        if last_t is not None:
+            dt = now - last_t
+            if dt > 0:
+                # downlink = traffic to clients (دانلود کاربر), uplink = آپلود کاربر
+                xr_bw.incoming_bytes = max(0, round((down - (xr_bw.bytes_recv or 0)) / dt))
+                xr_bw.outgoing_bytes = max(0, round((up - (xr_bw.bytes_sent or 0)) / dt))
+        xr_bw.bytes_recv = down
+        xr_bw.bytes_sent = up
+        xr_bw.last_perf_counter = now
+        xr_bw_ready = True
+    except Exception:
+        xr_bw_ready = False
+
 
 # sample time is 2 seconds, values lower than this may not produce good results
 @scheduler.scheduled_job("interval", seconds=2, coalesce=True, max_instances=1)
@@ -82,15 +116,28 @@ def record_realtime_bandwidth() -> None:
     rt_bw.outgoing_bytes, rt_bw.bytes_sent = round((io.bytes_sent - rt_bw.bytes_sent) / sample_time), io.bytes_sent
     rt_bw.incoming_packets, rt_bw.packets_recv = round((io.packets_recv - rt_bw.packets_recv) / sample_time), io.packets_recv
     rt_bw.outgoing_packets, rt_bw.packets_sent = round((io.packets_sent - rt_bw.packets_sent) / sample_time), io.packets_sent
+    _sample_xray_inbound_rates()
 
 
 def realtime_bandwidth() -> RealtimeBandwidthStat:
+    """Prefer Xray inbound rates (proxy). Fall back to whole-server NIC via psutil."""
+    if xr_bw_ready:
+        return RealtimeBandwidthStat(
+            incoming_bytes=xr_bw.incoming_bytes,
+            outgoing_bytes=xr_bw.outgoing_bytes,
+            incoming_packets=xr_bw.incoming_packets,
+            outgoing_packets=xr_bw.outgoing_packets,
+        )
     return RealtimeBandwidthStat(
         incoming_bytes=rt_bw.incoming_bytes,
         outgoing_bytes=rt_bw.outgoing_bytes,
         incoming_packets=rt_bw.incoming_packets,
         outgoing_packets=rt_bw.outgoing_packets,
     )
+
+
+def realtime_bandwidth_source() -> str:
+    return "xray" if xr_bw_ready else "nic"
 
 
 def random_password() -> str:

@@ -5,7 +5,7 @@ import { RealtimeStats, SystemStats, TopUser } from "../api/types";
 import { useFetch, usePolling } from "../lib/useFetch";
 import { formatBytes, formatSpeed } from "../lib/format";
 import { PageHeader } from "../components/Shell";
-import { Card, CardHead, Stat, UsageBar, SkeletonRows, Pill } from "../components/ui";
+import { Card, CardHead, Stat, UsageBar, SkeletonRows, Pill, Callout } from "../components/ui";
 import { BarChart, Donut } from "../components/charts";
 import { IcUsers, IcServer, IcBolt, IcChart, IcDownload } from "../components/icons";
 
@@ -21,6 +21,8 @@ export const Overview: FC = () => {
 
   const s = sys.data;
   const memPct = s ? (s.mem_used / s.mem_total) * 100 : 0;
+  const noVpnUsers = (s?.users_active ?? 0) === 0 && (rt?.online_users ?? s?.online_users ?? 0) === 0;
+  const bwSource = rt?.bandwidth_source ?? s?.bandwidth_source ?? "nic";
 
   return (
     <div>
@@ -43,7 +45,19 @@ export const Overview: FC = () => {
 
       <div className="nx-grid" style={{ gridTemplateColumns: "1fr 1fr", marginTop: 16 }}>
         <Card>
-          <CardHead title={t("overview.liveThroughput")} actions={<Pill tone="accent" dot>live</Pill>} />
+          <CardHead
+            title={t("overview.liveThroughput")}
+            actions={
+              <Pill tone="default">
+                {bwSource === "xray" ? t("overview.bwXray") : t("overview.bwNic")}
+              </Pill>
+            }
+          />
+          {noVpnUsers && (rt?.incoming_bandwidth_speed || rt?.outgoing_bandwidth_speed) ? (
+            <Callout tone="info" title={t("overview.noActiveUsersTitle")}>
+              {t("overview.noActiveUsersBwHint")}
+            </Callout>
+          ) : null}
           <div className="nx-row" style={{ gap: 28 }}>
             <Stat label={`↓ ${t("overview.download")}`} value={formatSpeed(rt?.incoming_bandwidth_speed ?? 0)} />
             <Stat label={`↑ ${t("overview.upload")}`} value={formatSpeed(rt?.outgoing_bandwidth_speed ?? 0)} />

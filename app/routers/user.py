@@ -8,6 +8,7 @@ from app import logger, xray
 from app.db import Session, crud, get_db
 from app.dependencies import get_expired_users_list, get_validated_user, validate_dates
 from app.models.admin import Admin
+from app.models.proxy import ProxyTypes
 from app.models.user import (
     UserCreate,
     UserModify,
@@ -20,6 +21,23 @@ from app.models.user import (
 from app.utils import report, responses
 
 router = APIRouter(tags=["User"], prefix="/api", responses={401: responses._401})
+
+
+def _ensure_protocol_enabled(proxy_type, db: Session) -> None:
+    """A protocol is usable when it has at least one inbound (Xray) or, for
+    WireGuard (which is not an Xray inbound), at least one configured WG node."""
+    if proxy_type == ProxyTypes.WireGuard:
+        if not crud.get_wireguard_nodes(db):
+            raise HTTPException(
+                status_code=400,
+                detail="WireGuard has no configured node on your server",
+            )
+        return
+    if not xray.config.inbounds_by_protocol.get(proxy_type):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Protocol {proxy_type} is disabled on your server",
+        )
 
 
 @router.post("/user", response_model=UserResponse, responses={400: responses._400, 409: responses._409})
@@ -48,11 +66,7 @@ def add_user(
     # TODO expire should be datetime instead of timestamp
 
     for proxy_type in new_user.proxies:
-        if not xray.config.inbounds_by_protocol.get(proxy_type):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Protocol {proxy_type} is disabled on your server",
-            )
+        _ensure_protocol_enabled(proxy_type, db)
 
     try:
         dbuser = crud.create_user(
@@ -102,11 +116,7 @@ def modify_user(
     """
 
     for proxy_type in modified_user.proxies:
-        if not xray.config.inbounds_by_protocol.get(proxy_type):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Protocol {proxy_type} is disabled on your server",
-            )
+        _ensure_protocol_enabled(proxy_type, db)
 
     old_status = dbuser.status
     dbuser = crud.update_user(db, dbuser, modified_user)

@@ -34,7 +34,21 @@ export interface UserItem {
   data_limit_reset_strategy?: string;
   note?: string;
   admin?: { username: string } | null;
+  proxies?: Record<string, any>;
+  inbounds?: Record<string, string[]>;
+  links?: string[];
+  subscription_url?: string;
 }
+
+export interface InboundInfo {
+  tag: string;
+  protocol: string;
+  network: string;
+  tls: string;
+  port: number | string;
+}
+
+export type InboundsByProtocol = Record<string, InboundInfo[]>;
 
 export interface UsersResponse {
   users: UserItem[];

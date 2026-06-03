@@ -1,7 +1,7 @@
 import {
   createContext, FC, ReactNode, useCallback, useContext, useState,
 } from "react";
-import { IcClose } from "./icons";
+import { IcCheck, IcClose } from "./icons";
 
 /* ------------------------------- Button -------------------------------- */
 export const Button: FC<{
@@ -124,6 +124,52 @@ export const Modal: FC<{ open: boolean; title: string; onClose: () => void; chil
         </div>
         <div className="nx-modal-body">{children}</div>
         {footer && <div className="nx-modal-foot">{footer}</div>}
+      </div>
+    </div>
+  );
+};
+
+/* ------------------------------- Drawer -------------------------------- */
+export const Drawer: FC<{ open: boolean; title: ReactNode; onClose: () => void; children: ReactNode }> = ({ open, title, onClose, children }) => {
+  if (!open) return null;
+  return (
+    <>
+      <div className="nx-drawer-overlay" onClick={onClose} />
+      <div className="nx-drawer">
+        <div className="nx-drawer-head">
+          <div className="nx-card-title">{title}</div>
+          <button className="nx-btn icon ghost" onClick={onClose}><IcClose /></button>
+        </div>
+        <div className="nx-drawer-body">{children}</div>
+      </div>
+    </>
+  );
+};
+
+/* ------------------------------ Checkbox ------------------------------- */
+export const Checkbox: FC<{ checked: boolean; onChange?: () => void }> = ({ checked, onChange }) => (
+  <span className={`nx-checkbox ${checked ? "on" : ""}`} onClick={onChange}>
+    <IcCheck size={13} />
+  </span>
+);
+
+/* ------------------------------ CopyField ------------------------------ */
+export const CopyField: FC<{ value: string; label?: string }> = ({ value, label }) => {
+  const { push } = useToast();
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+      push("Copied", "success");
+    } catch {
+      push("Copy failed", "error");
+    }
+  };
+  return (
+    <div className="nx-field">
+      {label && <label className="nx-label">{label}</label>}
+      <div className="nx-row" style={{ gap: 8, flexWrap: "nowrap" }}>
+        <input className="nx-input nx-mono" style={{ fontSize: 12 }} readOnly value={value} onFocus={(e) => e.target.select()} />
+        <Button size="sm" onClick={copy}>⧉</Button>
       </div>
     </div>
   );

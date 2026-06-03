@@ -77,23 +77,41 @@ panel_is_listening() {
   [ "$(panel_http_code /api/setup/status)" = "200" ]
 }
 
+# Default Xray inbound ports shipped in xray_config.json (kept in sync with it).
+XRAY_INBOUND_PORTS="8443 2095 2096 2097 1080"
+
 # Ensure data dir has required files (safe to run on install and update).
 seed_data_dir() {
   mkdir -p "${DATA_DIR}" "${DATA_DIR}/backups"
-  if [ ! -f "${DATA_DIR}/xray_config.json" ] && [ -f "${APP_DIR}/xray_config.json" ]; then
-    cp "${APP_DIR}/xray_config.json" "${DATA_DIR}/xray_config.json"
-    ok "Created ${DATA_DIR}/xray_config.json"
+  local target="${DATA_DIR}/xray_config.json"
+  local source="${APP_DIR}/xray_config.json"
+  [ -f "${source}" ] || return 0
+  if [ ! -f "${target}" ]; then
+    cp "${source}" "${target}"
+    ok "Created ${target}"
+    return 0
+  fi
+  # Upgrade the legacy single-protocol (Shadowsocks-only) default to the rich
+  # multi-protocol template so users get VLESS/VMess/Trojan out of the box.
+  if ! grep -q '"vless"' "${target}" && ! grep -q '"vmess"' "${target}"; then
+    cp "${target}" "${target}.bak.$(date +%s)"
+    cp "${source}" "${target}"
+    ok "Upgraded ${target} to multi-protocol (VLESS/VMess/Trojan/Shadowsocks); old config backed up."
   fi
 }
 
-# Open panel port in UFW when present (never enables inactive UFW — avoids SSH lockout).
+# Open panel + Xray inbound ports in UFW when present (never enables inactive
+# UFW — avoids SSH lockout).
 configure_firewall() {
   command -v ufw >/dev/null 2>&1 || return 0
-  log "Configuring firewall (UFW) for port ${PANEL_PORT}..."
+  log "Configuring firewall (UFW) for panel + inbound ports..."
   ufw allow 22/tcp comment 'SSH' >/dev/null 2>&1 || true
   ufw allow "${PANEL_PORT}/tcp" comment 'NexusPanel' >/dev/null 2>&1 || true
+  for p in ${XRAY_INBOUND_PORTS}; do
+    ufw allow "${p}" comment 'NexusPanel Xray inbound' >/dev/null 2>&1 || true
+  done
   if ufw status 2>/dev/null | grep -qi "Status: active"; then
-    ok "UFW: SSH (22) and NexusPanel (${PANEL_PORT}) allowed."
+    ok "UFW: SSH, panel (${PANEL_PORT}) and inbound ports (${XRAY_INBOUND_PORTS}) allowed."
   else
     ok "UFW rules added (firewall not enabled — enable manually if you use UFW)."
   fi

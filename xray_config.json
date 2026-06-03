@@ -15,6 +15,69 @@
   },
   "inbounds": [
     {
+      "tag": "VLESS TCP",
+      "listen": "0.0.0.0",
+      "port": 8443,
+      "protocol": "vless",
+      "settings": {
+        "clients": [],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "none"
+      }
+    },
+    {
+      "tag": "VLESS WS",
+      "listen": "0.0.0.0",
+      "port": 2095,
+      "protocol": "vless",
+      "settings": {
+        "clients": [],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "ws",
+        "security": "none",
+        "wsSettings": {
+          "path": "/vless"
+        }
+      }
+    },
+    {
+      "tag": "VMess WS",
+      "listen": "0.0.0.0",
+      "port": 2096,
+      "protocol": "vmess",
+      "settings": {
+        "clients": []
+      },
+      "streamSettings": {
+        "network": "ws",
+        "security": "none",
+        "wsSettings": {
+          "path": "/vmess"
+        }
+      }
+    },
+    {
+      "tag": "Trojan WS",
+      "listen": "0.0.0.0",
+      "port": 2097,
+      "protocol": "trojan",
+      "settings": {
+        "clients": []
+      },
+      "streamSettings": {
+        "network": "ws",
+        "security": "none",
+        "wsSettings": {
+          "path": "/trojan"
+        }
+      }
+    },
+    {
       "tag": "Shadowsocks TCP",
       "listen": "0.0.0.0",
       "port": 1080,

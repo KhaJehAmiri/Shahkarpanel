@@ -27,6 +27,9 @@ export const IcUsers: FC<P> = (p) => (
 export const IcServer: FC<P> = (p) => (
   <S {...p}><rect x="2" y="3" width="20" height="7" rx="2" /><rect x="2" y="14" width="20" height="7" rx="2" /><path d="M6 6.5h.01M6 17.5h.01" /></S>
 );
+export const IcInbound: FC<P> = (p) => (
+  <S {...p}><path d="M12 3v6M8.5 6.5 12 3l3.5 3.5" /><rect x="3" y="11" width="18" height="10" rx="2" /><path d="M8 15h8M8 18h5" /></S>
+);
 export const IcStore: FC<P> = (p) => (
   <S {...p}><path d="M3 9l1-5h16l1 5" /><path d="M4 9v10a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V9" /><path d="M9 20v-6h6v6" /></S>
 );
@@ -67,7 +70,7 @@ export const IcExternal: FC<P> = (p) => (<S {...p}><path d="M18 13v6a2 2 0 0 1-2
 
 export const navIcon = (key: string, cls = "nx-ico"): any => {
   const m: Record<string, FC<P>> = {
-    overview: IcDashboard, users: IcUsers, infra: IcServer, resellers: IcStore,
+    overview: IcDashboard, inbounds: IcInbound, users: IcUsers, infra: IcServer, resellers: IcStore,
     automation: IcBolt, analytics: IcChart, billing: IcWallet, system: IcCog,
   };
   const C = m[key] || IcDashboard;

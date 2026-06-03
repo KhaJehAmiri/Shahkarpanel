@@ -1,18 +1,19 @@
-import { FC, useState } from "react";
+import { FC, useMemo, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useApp } from "../context/AppContext";
 import { LANGUAGES, setLanguage } from "../i18n";
 import { IcGlobe, IcLogout, IcMenu, IcMoon, IcSun, navIcon } from "./icons";
 
-const NAV = [
-  { group: "main", items: ["overview", "users"] },
+const NAV_BASE = [
+  { group: "main", items: ["overview", "inbounds", "users"] as string[] },
   { group: "platform", items: ["infrastructure", "automation", "analytics"] },
   { group: "business", items: ["resellers", "billing"] },
 ];
 
 const PATHS: Record<string, string> = {
   overview: "/overview",
+  inbounds: "/inbounds",
   users: "/users",
   infrastructure: "/infrastructure",
   automation: "/automation",
@@ -24,9 +25,10 @@ const PATHS: Record<string, string> = {
 
 const NavItem: FC<{ id: string; onNav: () => void }> = ({ id, onNav }) => {
   const { t } = useTranslation();
+  const iconKey = id === "infrastructure" ? "infra" : id;
   return (
     <NavLink to={PATHS[id]} onClick={onNav} className={({ isActive }) => `nx-nav-item ${isActive ? "active" : ""}`}>
-      {navIcon(id === "infrastructure" ? "infra" : id)}
+      {navIcon(iconKey)}
       <span>{t(`nav.${id}`)}</span>
     </NavLink>
   );
@@ -38,6 +40,14 @@ export const Shell: FC = () => {
   const [open, setOpen] = useState(false);
   const [langOpen, setLangOpen] = useState(false);
   const loc = useLocation();
+
+  const nav = useMemo(() => {
+    if (admin?.is_sudo) return NAV_BASE;
+    return NAV_BASE.map((s) => ({
+      ...s,
+      items: s.items.filter((id) => id !== "inbounds"),
+    }));
+  }, [admin?.is_sudo]);
 
   const currentId =
     Object.keys(PATHS).find((k) => loc.pathname.startsWith(PATHS[k])) || "overview";
@@ -56,7 +66,7 @@ export const Shell: FC = () => {
           </div>
         </div>
 
-        {NAV.map((section) => (
+        {nav.map((section) => (
           <div key={section.group}>
             <div className="nx-nav-group-label">{t(`nav.${section.group}`)}</div>
             {section.items.map((id) => (

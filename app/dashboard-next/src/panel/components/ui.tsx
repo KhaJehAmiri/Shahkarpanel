@@ -122,11 +122,13 @@ export const EmptyState: FC<{ title: string; desc?: string; steps?: string[]; ac
 );
 
 /* -------------------------------- Modal -------------------------------- */
-export const Modal: FC<{ open: boolean; title: string; onClose: () => void; children: ReactNode; footer?: ReactNode }> = ({ open, title, onClose, children, footer }) => {
+export const Modal: FC<{
+  open: boolean; title: string; onClose: () => void; children: ReactNode; footer?: ReactNode; wide?: boolean;
+}> = ({ open, title, onClose, children, footer, wide }) => {
   if (!open) return null;
   return (
     <div className="nx-overlay" onClick={onClose}>
-      <div className="nx-modal" onClick={(e) => e.stopPropagation()}>
+      <div className={`nx-modal${wide ? " wide" : ""}`} onClick={(e) => e.stopPropagation()}>
         <div className="nx-modal-head">
           <div className="nx-card-title">{title}</div>
           <button className="nx-btn icon ghost" onClick={onClose}><IcClose /></button>

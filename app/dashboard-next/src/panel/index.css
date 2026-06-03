@@ -384,6 +384,7 @@ button { font-family: inherit; }
 /* ===================== Modal ===================== */
 .nx-overlay { position: fixed; inset: 0; background: rgba(3, 6, 10, 0.65); backdrop-filter: blur(6px); display: grid; place-items: center; z-index: 100; padding: 20px; animation: nx-fade 0.18s var(--nx-ease); }
 .nx-modal { background: var(--nx-surface); border: 1px solid var(--nx-border); border-radius: var(--nx-radius-lg); width: 100%; max-width: 600px; max-height: 92vh; overflow-y: auto; animation: nx-modal-in 0.22s var(--nx-ease); }
+.nx-modal.wide { max-width: 760px; }
 .nx-modal-head { display: flex; align-items: center; justify-content: space-between; padding: 20px 22px; border-bottom: 1px solid var(--nx-border); }
 .nx-modal-head .nx-card-title { font-size: 16px; }
 .nx-modal-body { padding: 22px; }

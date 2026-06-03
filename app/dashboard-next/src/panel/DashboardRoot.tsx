@@ -7,6 +7,7 @@ import { Shell } from "./components/Shell";
 import { Login } from "./pages/Login";
 import { Overview } from "./pages/Overview";
 import { Users } from "./pages/Users";
+import { Inbounds } from "./pages/Inbounds";
 import { Infrastructure } from "./pages/Infrastructure";
 import { Resellers } from "./pages/Resellers";
 import { Automation } from "./pages/Automation";
@@ -38,6 +39,7 @@ export default function DashboardRoot() {
         <Route element={<Shell />}>
           <Route index element={<Navigate to="/overview" replace />} />
           <Route path="/overview" element={<Overview />} />
+          <Route path="/inbounds" element={<Inbounds />} />
           <Route path="/users" element={<Users />} />
           <Route path="/infrastructure" element={<Infrastructure />} />
           <Route path="/resellers" element={<Resellers />} />

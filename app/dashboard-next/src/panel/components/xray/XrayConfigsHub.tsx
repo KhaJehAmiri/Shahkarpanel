@@ -2,7 +2,6 @@ import { FC, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useXrayConfig } from "./useXrayConfig";
 import { BasicsSection } from "./BasicsSection";
-import { InboundsSection } from "./InboundsSection";
 import { OutboundsSection } from "./OutboundsSection";
 import { RoutingSection } from "./RoutingSection";
 import { DnsSection } from "./DnsSection";
@@ -14,14 +13,13 @@ export const XrayConfigsHub: FC = () => {
   const { t } = useTranslation();
   const toast = useToast();
   const { config, setConfig, loading, error, saving, reload, save } = useXrayConfig();
-  const [tab, setTab] = useState("inbounds");
+  const [tab, setTab] = useState("outbounds");
 
   useEffect(() => {
     reload();
   }, [reload]);
 
   const tabs = [
-    { id: "inbounds", label: t("xray.tabInbounds") },
     { id: "outbounds", label: t("xray.tabOutbounds") },
     { id: "routing", label: t("xray.tabRouting") },
     { id: "dns", label: t("xray.tabDns") },
@@ -62,9 +60,6 @@ export const XrayConfigsHub: FC = () => {
         </Button>
       </div>
       <Tabs active={tab} onChange={setTab} tabs={tabs} />
-      {tab === "inbounds" && (
-        <InboundsSection config={config} onChange={onChange} onSave={() => persist()} saving={saving} />
-      )}
       {tab === "outbounds" && (
         <OutboundsSection config={config} onChange={onChange} onSave={() => persist()} saving={saving} />
       )}

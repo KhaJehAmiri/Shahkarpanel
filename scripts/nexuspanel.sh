@@ -70,7 +70,7 @@ compose() {
 
 panel_http_code() {
   local path="${1:-/api/setup/status}"
-  curl -sf -o /dev/null -w '%{http_code}' --max-time 3 "http://127.0.0.1:${PANEL_PORT}${path}" 2>/dev/null || echo "000"
+  curl -sf -o /dev/null -w '%{http_code}' --max-time 3 -X GET "http://127.0.0.1:${PANEL_PORT}${path}" 2>/dev/null || echo "000"
 }
 
 panel_is_listening() {
@@ -213,6 +213,10 @@ cmd_install() {
   install_deps
   fetch_repo
   mkdir -p "${DATA_DIR}" "${DATA_DIR}/backups"
+  if [ ! -f "${DATA_DIR}/xray_config.json" ] && [ -f "${APP_DIR}/xray_config.json" ]; then
+    cp "${APP_DIR}/xray_config.json" "${DATA_DIR}/xray_config.json"
+    ok "Created ${DATA_DIR}/xray_config.json"
+  fi
   write_env
   install_cli
   log "Building and starting panel (first run may take a few minutes)..."

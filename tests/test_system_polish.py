@@ -105,6 +105,31 @@ def test_count_by_conflict():
     assert c["invalid"] == 1
 
 
+def test_check_updates_uses_versions(monkeypatch):
+    from app.system import update_jobs
+
+    monkeypatch.setattr(update_jobs, "_local_version", lambda: "0.9.3")
+    monkeypatch.setattr(update_jobs, "_version_at_git_ref", lambda ref: "0.9.4")
+    def fake_output(*args, **kwargs):
+        cmd = args[0]
+        if "rev-parse" in cmd and "origin/master" in cmd:
+            return "def5678"
+        if "rev-parse" in cmd:
+            return "abc1234"
+        if "rev-list" in cmd:
+            return "2"
+        return "1"
+
+    monkeypatch.setattr(update_jobs.subprocess, "check_output", fake_output)
+    monkeypatch.setattr(update_jobs.subprocess, "check_call", lambda *a, **k: 0)
+    monkeypatch.setattr(update_jobs, "_release_notes_for", lambda v: "- Better updates UI")
+    out = update_jobs.check_updates()
+    assert out["current_version"] == "0.9.3"
+    assert out["remote_version"] == "0.9.4"
+    assert out["commits_behind"] >= 1
+    assert "Better updates" in out["release_notes"]
+
+
 def test_deployment_snapshot_keys():
     from app.utils.panel_region import deployment_snapshot
 

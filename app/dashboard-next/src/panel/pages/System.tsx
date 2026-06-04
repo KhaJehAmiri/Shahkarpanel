@@ -1,7 +1,7 @@
 import { FC, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
-import { ApiKey, DeploymentInfo, FeatureFlag, SystemStats, UpdateCheck } from "../api/types";
+import { ApiKey, DeploymentInfo, FeatureFlag, SystemStats, UpdateCheck, UpdateJobInfo } from "../api/types";
 import { useApp } from "../context/AppContext";
 import { useFetch } from "../lib/useFetch";
 import { PageHeader } from "../components/Shell";
@@ -187,13 +187,14 @@ const XrayCoreTab: FC = () => {
   );
 };
 
+const UPDATE_STEP_IDS = ["backup", "pull", "migrate", "build", "restart"] as const;
+
 const UpdatesTab: FC = () => {
   const { t } = useTranslation();
   const toast = useToast();
   const [check, setCheck] = useState<UpdateCheck | null>(null);
   const [busy, setBusy] = useState(false);
-  const [jobId, setJobId] = useState<string | null>(null);
-  const [log, setLog] = useState<string[]>([]);
+  const [job, setJob] = useState<UpdateJobInfo | null>(null);
 
   const runCheck = async () => {
     setBusy(true);
@@ -204,29 +205,38 @@ const UpdatesTab: FC = () => {
   };
 
   const runApply = async () => {
-    if (!confirm(t("system.updateConfirm"))) return;
+    if (!check) return;
+    if (!confirm(t("system.updateConfirm", { from: check.current_version, to: check.remote_version }))) return;
     setBusy(true);
+    setJob(null);
     try {
       const res = await api.post<{ job_id: string }>("/system/updates/apply");
-      setJobId(res.job_id);
+      setJob({ id: res.job_id, status: "running", finished: false, steps: UPDATE_STEP_IDS.map((id) => ({ id, status: "pending" })) });
       toast.push(t("system.updateJobRunning"), "info");
     } catch (e: any) { toast.push(e.message, "error"); } finally { setBusy(false); }
   };
 
   useEffect(() => {
-    if (!jobId) return;
+    if (!job || job.finished) return;
     const id = setInterval(async () => {
       try {
-        const j = await api.get<{ status: string; log: string[]; finished: boolean }>(`/system/updates/jobs/${jobId}`);
-        setLog(j.log);
+        const j = await api.get<UpdateJobInfo>(`/system/updates/jobs/${job.id}`);
+        setJob(j);
         if (j.finished) {
           clearInterval(id);
-          toast.push(j.status === "success" ? t("common.saved") : t("common.error"), j.status === "success" ? "success" : "error");
+          if (j.status === "success") {
+            toast.push(t("system.updateDone", { version: check?.remote_version || "" }), "success");
+            runCheck();
+          } else {
+            toast.push(j.error_message || t("common.error"), "error");
+          }
         }
       } catch { /* ignore poll errors */ }
     }, 2000);
     return () => clearInterval(id);
-  }, [jobId, toast, t]);
+  }, [job?.id, job?.finished]);
+
+  const hasUpdate = (check?.commits_behind ?? 0) > 0;
 
   return (
     <Card>
@@ -234,26 +244,61 @@ const UpdatesTab: FC = () => {
         title={t("system.tabUpdates")}
         actions={<>
           <Button variant="ghost" disabled={busy} onClick={runCheck}>{t("system.checkUpdates")}</Button>
-          <Button variant="primary" disabled={busy || !check?.commits_behind} onClick={runApply}>{t("system.applyUpdates")}</Button>
+          <Button variant="primary" disabled={busy || !hasUpdate} onClick={runApply}>{t("system.applyUpdates")}</Button>
         </>}
       />
       {check && (
-        <div className="nx-stack" style={{ marginTop: 12, gap: 8 }}>
-          <div className="nx-row" style={{ gap: 8 }}>
-            <span className="nx-muted">local</span><span className="nx-code">{check.current_sha || "—"}</span>
-            <span className="nx-muted">remote</span><span className="nx-code">{check.remote_sha || "—"}</span>
+        <div className="nx-stack" style={{ marginTop: 12, gap: 10 }}>
+          <div className="nx-row" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+            <div>
+              <div className="nx-muted" style={{ fontSize: 12 }}>{t("system.updateCurrent")}</div>
+              <div className="nx-code" style={{ fontSize: 18, fontWeight: 600 }}>v{check.current_version}</div>
+            </div>
+            {hasUpdate ? (
+              <div style={{ textAlign: "end" }}>
+                <div className="nx-muted" style={{ fontSize: 12 }}>{t("system.updateAvailable")}</div>
+                <div className="nx-code" style={{ fontSize: 18, fontWeight: 600, color: "var(--nx-accent)" }}>v{check.remote_version}</div>
+              </div>
+            ) : null}
           </div>
           {check.breaking && <Callout tone="warn">{t("system.updatesBreaking")}</Callout>}
-          {check.commits_behind > 0
-            ? <Callout tone="warn">{t("system.updatesBehind", { n: check.commits_behind })}</Callout>
-            : <Callout tone="ok">{t("system.updatesUpToDate")}</Callout>}
-          {check.changelog_md && (
-            <pre className="nx-code" style={{ fontSize: 11, maxHeight: 200, overflow: "auto", whiteSpace: "pre-wrap" }}>{check.changelog_md}</pre>
+          {hasUpdate ? (
+            <Callout tone="info">{t("system.updatesBehind", { from: check.current_version, to: check.remote_version })}</Callout>
+          ) : (
+            <Callout tone="ok">{t("system.updatesUpToDate", { version: check.current_version })}</Callout>
+          )}
+          {hasUpdate && (check.release_notes || check.changelog_md) && (
+            <div>
+              <div className="nx-muted" style={{ fontSize: 12, marginBottom: 6 }}>{t("system.updateReleaseNotes")}</div>
+              <ul style={{ margin: 0, paddingInlineStart: 18, fontSize: 13, lineHeight: 1.5 }}>
+                {(check.release_notes || check.changelog_md).split("\n").filter(Boolean).map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+            </div>
           )}
         </div>
       )}
-      {log.length > 0 && (
-        <pre className="nx-code" style={{ marginTop: 14, fontSize: 11, maxHeight: 240, overflow: "auto" }}>{log.join("\n")}</pre>
+      {job && job.steps.length > 0 && (
+        <div className="nx-stack" style={{ marginTop: 16, gap: 6 }}>
+          <div className="nx-muted" style={{ fontSize: 12 }}>{t("system.updateProgress")}</div>
+          {UPDATE_STEP_IDS.map((stepId) => {
+            const s = job.steps.find((x) => x.id === stepId);
+            const st = s?.status || "pending";
+            const tone = st === "done" ? "ok" : st === "failed" ? "danger" : st === "running" ? "accent" : "default";
+            return (
+              <div key={stepId} className="nx-row" style={{ gap: 8, fontSize: 13 }}>
+                <Pill tone={tone} dot>{t(`system.updateStep.${stepId}`)}</Pill>
+                {s?.detail && st === "done" && stepId === "backup" && (
+                  <span className="nx-faint">{s.detail}</span>
+                )}
+              </div>
+            );
+          })}
+          {job.error_message && job.status === "failed" && (
+            <Callout tone="danger">{t("system.updateFailed")}</Callout>
+          )}
+        </div>
       )}
     </Card>
   );

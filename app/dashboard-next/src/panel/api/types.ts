@@ -123,11 +123,28 @@ export interface DeploymentInfo {
 }
 
 export interface UpdateCheck {
+  current_version: string;
+  remote_version: string;
   current_sha?: string | null;
   remote_sha?: string | null;
   commits_behind: number;
   changelog_md: string;
+  release_notes?: string;
   breaking?: boolean;
+}
+
+export interface UpdateStepInfo {
+  id: string;
+  status: "pending" | "running" | "done" | "failed";
+  detail?: string | null;
+}
+
+export interface UpdateJobInfo {
+  id: string;
+  status: string;
+  finished: boolean;
+  error_message?: string | null;
+  steps: UpdateStepInfo[];
 }
 
 export interface ImportPreviewRow {

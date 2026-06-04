@@ -37,11 +37,20 @@ class DeploymentInfo(BaseModel):
 
 
 class UpdateCheckResponse(BaseModel):
+    current_version: str = "0.0.0"
+    remote_version: str = "0.0.0"
     current_sha: Optional[str] = None
     remote_sha: Optional[str] = None
     commits_behind: int = 0
     changelog_md: str = ""
+    release_notes: str = ""
     breaking: bool = False
+
+
+class UpdateStepInfo(BaseModel):
+    id: str
+    status: str
+    detail: Optional[str] = None
 
 
 class UpdateApplyResponse(BaseModel):
@@ -51,8 +60,9 @@ class UpdateApplyResponse(BaseModel):
 class UpdateJobResponse(BaseModel):
     id: str
     status: str
-    log: List[str]
     finished: bool
+    error_message: Optional[str] = None
+    steps: List[UpdateStepInfo] = []
 
 
 class XrayReleaseInfo(BaseModel):
@@ -107,12 +117,8 @@ def get_update_job(job_id: str, _: Admin = Depends(Admin.check_sudo_admin)):
     job = update_jobs.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    return UpdateJobResponse(
-        id=job.id,
-        status=job.status,
-        log=job.log[-200:],
-        finished=job.status in ("success", "failed"),
-    )
+    payload = update_jobs.job_to_api(job)
+    return UpdateJobResponse(**payload)
 
 
 @router.get("/xray/releases", response_model=List[XrayReleaseInfo])

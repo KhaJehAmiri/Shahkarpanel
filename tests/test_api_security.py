@@ -6,9 +6,9 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 from app import api_keys as api_keys_mod
-from app import feature_flags as ff
 from app.db import GetDB, crud
-from app.db.models import Admin as DBAdmin, ApiKey, JWT
+from app.db.models import JWT, ApiKey
+from app.db.models import Admin as DBAdmin
 from app.routers import metrics as metrics_router
 from app.utils import jwt as jwt_util
 
@@ -60,8 +60,8 @@ def test_reseller_max_users_enforced():
         db.add(owner)
         db.commit()
         db.refresh(owner)
-        from app.models.user import UserCreate, UserStatus
         from app.models.proxy import ProxyTypes
+        from app.models.user import UserCreate, UserStatus
 
         body = UserCreate(
             username="usr1",

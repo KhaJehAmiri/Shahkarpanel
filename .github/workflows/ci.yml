@@ -32,7 +32,7 @@ jobs:
           sudo chmod +x /usr/local/bin/xray
 
       - name: Lint (new modules)
-        run: ruff check app/events app/backup.py app/feature_flags.py app/utils/logging.py tests
+        run: ruff check app/events app/backup.py app/bootstrap_limit.py app/feature_flags.py app/utils/logging.py tests
 
       - name: Run tests
         run: pytest -q

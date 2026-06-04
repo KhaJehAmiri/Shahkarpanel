@@ -118,6 +118,22 @@ def test_core_logs_ws_uses_header_auth():
     assert "query_params.get(\"token\")" not in src
 
 
+def test_env_sudo_hash_admin_resolves_from_jwt():
+    """SUDO_PASSWORD_HASH login must pass GET /admin (not only SUDOERS plaintext)."""
+    from config import SUDO_USERNAME
+    from app.models.admin import Admin
+
+    if not SUDO_USERNAME:
+        pytest.skip("SUDO_USERNAME not configured")
+    _ensure_jwt_row()
+    token = jwt_util.create_admin_token(SUDO_USERNAME, True)
+    with GetDB() as db:
+        admin = Admin.get_admin(token, db)
+    assert admin is not None
+    assert admin.username == SUDO_USERNAME
+    assert admin.is_sudo is True
+
+
 def test_bootstrap_rate_limit_blocks_after_max():
     from app.bootstrap_limit import enforce_bootstrap_rate_limit
 

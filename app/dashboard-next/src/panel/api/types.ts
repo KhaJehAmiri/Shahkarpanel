@@ -110,7 +110,34 @@ export interface FeatureFlag {
   name: string;
   enabled: boolean;
   default: boolean;
-  description: string;
+  label_key: string;
+  description?: string | null;
+}
+
+export interface DeploymentInfo {
+  panel_region: "iran" | "foreign";
+  detected_by: string;
+  public_ip?: string | null;
+  git_sha?: string | null;
+  xray_local_version?: string | null;
+}
+
+export interface UpdateCheck {
+  current_sha?: string | null;
+  remote_sha?: string | null;
+  commits_behind: number;
+  changelog_md: string;
+  breaking?: boolean;
+}
+
+export interface ImportPreviewRow {
+  username: string;
+  data_limit: number;
+  expire: number;
+  note: string;
+  status: string;
+  conflict?: string | null;
+  unmapped_inbounds: string[];
 }
 
 export interface Rule {

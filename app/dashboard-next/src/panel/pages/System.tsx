@@ -1,13 +1,13 @@
-import { FC, useState } from "react";
+import { FC, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
-import { ApiKey, FeatureFlag, SystemStats } from "../api/types";
+import { ApiKey, DeploymentInfo, FeatureFlag, SystemStats, UpdateCheck } from "../api/types";
 import { useApp } from "../context/AppContext";
 import { useFetch } from "../lib/useFetch";
 import { PageHeader } from "../components/Shell";
 import { LANGUAGES, setLanguage } from "../i18n";
 import {
-  Button, Callout, Card, CardHead, EmptyState, Field, Input, Modal, Pill, SkeletonRows, Tabs, Toggle, useToast,
+  Button, Callout, Card, CardHead, EmptyState, Field, Input, Modal, Pill, Select, SkeletonRows, Tabs, Toggle, useToast,
 } from "../components/ui";
 import { IcPlus, IcDownload, IcTrash, IcKey, IcSun, IcMoon, IcEdit } from "../components/icons";
 
@@ -18,6 +18,9 @@ export const System: FC = () => {
   const tabs = [
     ...(admin?.is_sudo ? [
       { id: "flags", label: t("system.tabFlags") },
+      { id: "updates", label: t("system.tabUpdates") },
+      { id: "deployment", label: t("system.tabDeployment") },
+      { id: "xray", label: t("system.tabXray") },
       { id: "backup", label: t("system.tabBackup") },
       { id: "admins", label: t("system.tabAdmins") },
     ] : []),
@@ -29,6 +32,9 @@ export const System: FC = () => {
       <PageHeader title={t("system.title")} subtitle={t("system.subtitle")} description={t("system.description")} />
       <Tabs active={tab} onChange={setTab} tabs={tabs} />
       {tab === "flags" && <FlagsTab />}
+      {tab === "updates" && <UpdatesTab />}
+      {tab === "deployment" && <DeploymentTab />}
+      {tab === "xray" && <XrayCoreTab />}
       {tab === "backup" && <BackupTab />}
       {tab === "admins" && <AdminsTab />}
       {tab === "apikeys" && <ApiKeysTab />}
@@ -66,7 +72,9 @@ const FlagsTab: FC = () => {
                 <span className="nx-code">{flag.name}</span>
                 {flag.enabled !== flag.default && <Pill tone="accent">override</Pill>}
               </div>
-              <div className="nx-muted" style={{ fontSize: 12.5, marginTop: 8 }}>{flag.description}</div>
+              <div className="nx-muted" style={{ fontSize: 12.5, marginTop: 8 }}>
+                {t(flag.label_key, { defaultValue: flag.description || flag.name })}
+              </div>
               <div className="nx-faint" style={{ fontSize: 11, marginTop: 6 }}>{t("system.flagDefault", { v: flag.default ? "on" : "off" })}</div>
             </div>
             <Toggle on={flag.enabled} onChange={() => toggle(flag)} />
@@ -74,6 +82,180 @@ const FlagsTab: FC = () => {
         </Card>
       ))}
     </div>
+  );
+};
+
+const DeploymentTab: FC = () => {
+  const { t } = useTranslation();
+  const { data, loading, error } = useFetch<DeploymentInfo>(() => api.get("/system/deployment"), []);
+  if (loading) return <Card><SkeletonRows rows={4} cols={2} /></Card>;
+  if (error) return <EmptyState title={t("common.error")} desc={error} />;
+  return (
+    <Card>
+      <div className="nx-stack" style={{ gap: 10 }}>
+        <div className="nx-row" style={{ justifyContent: "space-between" }}>
+          <span className="nx-muted">{t("system.panelRegion")}</span>
+          <Pill tone="accent">{data?.panel_region}</Pill>
+        </div>
+        <div className="nx-row" style={{ justifyContent: "space-between" }}>
+          <span className="nx-muted">{t("system.detectedBy")}</span>
+          <span className="nx-code">{data?.detected_by}</span>
+        </div>
+        <div className="nx-row" style={{ justifyContent: "space-between" }}>
+          <span className="nx-muted">IP</span>
+          <span className="nx-code">{data?.public_ip || "—"}</span>
+        </div>
+        <div className="nx-row" style={{ justifyContent: "space-between" }}>
+          <span className="nx-muted">{t("system.gitSha")}</span>
+          <span className="nx-code">{data?.git_sha || "—"}</span>
+        </div>
+        <div className="nx-row" style={{ justifyContent: "space-between" }}>
+          <span className="nx-muted">{t("system.xrayLocal")}</span>
+          <span className="nx-faint" style={{ fontSize: 12 }}>{data?.xray_local_version || "—"}</span>
+        </div>
+      </div>
+    </Card>
+  );
+};
+
+const XrayCoreTab: FC = () => {
+  const { t } = useTranslation();
+  const toast = useToast();
+  const deploy = useFetch<DeploymentInfo>(() => api.get("/system/deployment"), []);
+  const releases = useFetch<{ tag: string }[]>(() => api.get("/xray/releases"), []);
+  const [tag, setTag] = useState("");
+  const [scope, setScope] = useState<"panel" | "node">("panel");
+  const [nodeId, setNodeId] = useState("");
+  const nodes = useFetch<{ id: number; name: string; core_kind?: string }[]>(() => api.get("/nodes"), []);
+  const [busy, setBusy] = useState(false);
+
+  const apply = async () => {
+    if (!tag) return;
+    if (!confirm(t("infra.xrayUpgradeConfirm"))) return;
+    setBusy(true);
+    try {
+      if (scope === "panel") {
+        const res = await api.post<{ version: string }>("/system/xray/upgrade", { tag });
+        toast.push(res.version, "success");
+      } else {
+        const id = parseInt(nodeId, 10);
+        const res = await api.post<{ version: string }>(`/nodes/${id}/xray/version`, { version: tag });
+        toast.push(res.version, "success");
+      }
+      deploy.reload();
+    } catch (e: any) { toast.push(e.message, "error"); } finally { setBusy(false); }
+  };
+
+  return (
+    <Card>
+      <CardHead title={t("system.tabXray")} desc={t("system.xrayTabDesc")} />
+      <div className="nx-stack" style={{ gap: 14 }}>
+        <div className="nx-row" style={{ justifyContent: "space-between" }}>
+          <span className="nx-muted">{t("system.xrayPanelLocal")}</span>
+          <span className="nx-code" style={{ fontSize: 12 }}>{deploy.data?.xray_local_version || "—"}</span>
+        </div>
+        <Field label={t("system.xrayUpgradeScope")}>
+          <Select value={scope} onChange={(e: any) => setScope(e.target.value)}>
+            <option value="panel">{t("system.xrayScopePanel")}</option>
+            <option value="node">{t("system.xrayScopeNode")}</option>
+          </Select>
+        </Field>
+        {scope === "node" && (
+          <Field label={t("infra.relayNode")}>
+            <Select value={nodeId} onChange={(e: any) => setNodeId(e.target.value)}>
+              <option value="">—</option>
+              {(nodes.data || []).filter((n) => n.core_kind !== "wireguard").map((n) => (
+                <option key={n.id} value={n.id}>{n.name} (#{n.id})</option>
+              ))}
+            </Select>
+          </Field>
+        )}
+        <Field label={t("infra.xrayPickRelease")}>
+          <Select value={tag} onChange={(e: any) => setTag(e.target.value)} disabled={releases.loading}>
+            <option value="">—</option>
+            {(releases.data || []).map((r) => <option key={r.tag} value={r.tag}>{r.tag}</option>)}
+          </Select>
+        </Field>
+        <div className="nx-row" style={{ justifyContent: "flex-end" }}>
+          <Button variant="primary" disabled={busy || !tag || (scope === "node" && !nodeId)} onClick={apply}>
+            {t("infra.xraySetVersion")}
+          </Button>
+        </div>
+        <Callout tone="info">{t("system.xrayAlsoInInfra")}</Callout>
+      </div>
+    </Card>
+  );
+};
+
+const UpdatesTab: FC = () => {
+  const { t } = useTranslation();
+  const toast = useToast();
+  const [check, setCheck] = useState<UpdateCheck | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [log, setLog] = useState<string[]>([]);
+
+  const runCheck = async () => {
+    setBusy(true);
+    try {
+      const res = await api.get<UpdateCheck>("/system/updates/check");
+      setCheck(res);
+    } catch (e: any) { toast.push(e.message, "error"); } finally { setBusy(false); }
+  };
+
+  const runApply = async () => {
+    if (!confirm(t("system.updateConfirm"))) return;
+    setBusy(true);
+    try {
+      const res = await api.post<{ job_id: string }>("/system/updates/apply");
+      setJobId(res.job_id);
+      toast.push(t("system.updateJobRunning"), "info");
+    } catch (e: any) { toast.push(e.message, "error"); } finally { setBusy(false); }
+  };
+
+  useEffect(() => {
+    if (!jobId) return;
+    const id = setInterval(async () => {
+      try {
+        const j = await api.get<{ status: string; log: string[]; finished: boolean }>(`/system/updates/jobs/${jobId}`);
+        setLog(j.log);
+        if (j.finished) {
+          clearInterval(id);
+          toast.push(j.status === "success" ? t("common.saved") : t("common.error"), j.status === "success" ? "success" : "error");
+        }
+      } catch { /* ignore poll errors */ }
+    }, 2000);
+    return () => clearInterval(id);
+  }, [jobId, toast, t]);
+
+  return (
+    <Card>
+      <CardHead
+        title={t("system.tabUpdates")}
+        actions={<>
+          <Button variant="ghost" disabled={busy} onClick={runCheck}>{t("system.checkUpdates")}</Button>
+          <Button variant="primary" disabled={busy || !check?.commits_behind} onClick={runApply}>{t("system.applyUpdates")}</Button>
+        </>}
+      />
+      {check && (
+        <div className="nx-stack" style={{ marginTop: 12, gap: 8 }}>
+          <div className="nx-row" style={{ gap: 8 }}>
+            <span className="nx-muted">local</span><span className="nx-code">{check.current_sha || "—"}</span>
+            <span className="nx-muted">remote</span><span className="nx-code">{check.remote_sha || "—"}</span>
+          </div>
+          {check.breaking && <Callout tone="warn">{t("system.updatesBreaking")}</Callout>}
+          {check.commits_behind > 0
+            ? <Callout tone="warn">{t("system.updatesBehind", { n: check.commits_behind })}</Callout>
+            : <Callout tone="ok">{t("system.updatesUpToDate")}</Callout>}
+          {check.changelog_md && (
+            <pre className="nx-code" style={{ fontSize: 11, maxHeight: 200, overflow: "auto", whiteSpace: "pre-wrap" }}>{check.changelog_md}</pre>
+          )}
+        </div>
+      )}
+      {log.length > 0 && (
+        <pre className="nx-code" style={{ marginTop: 14, fontSize: 11, maxHeight: 240, overflow: "auto" }}>{log.join("\n")}</pre>
+      )}
+    </Card>
   );
 };
 
@@ -222,7 +404,7 @@ const AboutTab: FC = () => {
         <CardHead title={t("system.tabAbout")} />
         <div className="nx-muted" style={{ fontSize: 13, marginBottom: 14 }}>{t("system.aboutText")}</div>
         <div className="nx-row" style={{ justifyContent: "space-between" }}>
-          <span className="nx-muted">{t("overview.version")}</span>
+          <span className="nx-muted">{t("system.panelVersion")}</span>
           <span className="nx-code">{sys.data?.version || "…"}</span>
         </div>
       </Card>

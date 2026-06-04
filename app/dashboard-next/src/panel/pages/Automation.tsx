@@ -263,7 +263,9 @@ const MarketplaceTab: FC = () => {
                 <div className="nx-row" style={{ justifyContent: "space-between" }}>
                   <div>
                     <div style={{ fontWeight: 600 }}>{p.name}</div>
-                    <div className="nx-muted" style={{ fontSize: 13 }}>{p.description || "—"}</div>
+                    <div className="nx-muted" style={{ fontSize: 13 }}>
+                      {t(`marketplace.${p.name}.desc`, { defaultValue: p.description || "—" })}
+                    </div>
                     <div className="nx-faint" style={{ fontSize: 11, marginTop: 4 }}>
                       ★ {p.rating.toFixed(1)} ({p.rating_count}) · v{p.version || "?"}
                     </div>
@@ -303,7 +305,9 @@ const PluginsTab: FC = () => {
           {data.plugins.map((p) => (
             <div key={p.name} className="nx-card" style={{ background: "var(--nx-surface-2)", padding: 14 }}>
               <div style={{ fontWeight: 600 }}>{p.name}</div>
-              <div className="nx-muted" style={{ fontSize: 13 }}>{p.description}</div>
+              <div className="nx-muted" style={{ fontSize: 13 }}>
+                {t(`marketplace.${p.name}.desc`, { defaultValue: p.description })}
+              </div>
             </div>
           ))}
         </div>

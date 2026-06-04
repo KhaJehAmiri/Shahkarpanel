@@ -58,6 +58,7 @@ class Service(object):
         self.router.add_api_route("/wg/apply", self.wg_apply, methods=["POST"])
         self.router.add_api_route("/wg/transfer", self.wg_transfer, methods=["POST"])
         self.router.add_api_route("/wg/down", self.wg_down, methods=["POST"])
+        self.router.add_api_route("/xray/upgrade", self.xray_upgrade, methods=["POST"])
 
         self.router.add_websocket_route("/logs", self.logs)
 
@@ -218,6 +219,29 @@ class Service(object):
             )
 
         return self.response()
+
+    def xray_upgrade(self, session_id: UUID = Body(embed=True), tag: str = Body(embed=True)):
+        self.match_session_id(session_id)
+        from xray_upgrade import install_xray_release
+
+        if self.core.started:
+            try:
+                self.core.stop()
+            except RuntimeError:
+                pass
+
+        try:
+            version = install_xray_release(tag)
+        except Exception as exc:
+            logger.error("Xray upgrade failed: %s", exc)
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+        self.core = XRayCore(
+            executable_path=XRAY_EXECUTABLE_PATH,
+            assets_path=XRAY_ASSETS_PATH,
+        )
+        self.core_version = self.core.get_version()
+        return self.response(version=version)
 
     def wg_apply(self, session_id: UUID = Body(embed=True), spec: dict = Body(embed=True)):
         self.match_session_id(session_id)

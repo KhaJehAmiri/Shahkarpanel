@@ -48,6 +48,7 @@ const NodesTab: FC = () => {
   const toast = useToast();
   const { consumeIntent } = useCopilot();
   const [show, setShow] = useState(false);
+  const [xrayNode, setXrayNode] = useState<NodeItem | null>(null);
   const [preset, setPreset] = useState<{ mode?: "manual" | "ssh"; coreKind?: string }>({});
   const { data, loading, error, reload } = useFetch<NodeItem[]>(() => api.get("/nodes"), []);
 
@@ -73,7 +74,10 @@ const NodesTab: FC = () => {
 
   return (
     <>
-      <div className="nx-row" style={{ justifyContent: "flex-end", marginBottom: 14, gap: 8 }}>
+      <Callout tone="info" title={t("infra.xrayVersionHintTitle")}>
+        {t("infra.xrayVersionHint")}
+      </Callout>
+      <div className="nx-row" style={{ justifyContent: "flex-end", margin: "14px 0", gap: 8 }}>
         <Button variant="ghost" onClick={reload}><IcRefresh className="nx-ico" /></Button>
         <Button variant="primary" onClick={openAdd}><IcPlus className="nx-ico" /> {t("infra.addNode")}</Button>
       </div>
@@ -86,7 +90,9 @@ const NodesTab: FC = () => {
               <table className="nx-table">
                 <thead><tr>
                   <th>{t("common.name")}</th><th>{t("infra.address")}</th><th>{t("common.status")}</th>
-                  <th>{t("infra.region")}</th><th>{t("infra.xrayVersion")}</th><th>{t("infra.latency")}</th>
+                  <th>{t("infra.region")}</th>
+                  <th title={t("infra.xrayVersionHint")}>{t("infra.xrayVersionCol")}</th>
+                  <th>{t("infra.latency")}</th>
                   <th style={{ textAlign: "end" }}>{t("common.actions")}</th>
                 </tr></thead>
                 <tbody>
@@ -96,10 +102,15 @@ const NodesTab: FC = () => {
                       <td className="nx-mono" style={{ fontSize: 12 }}>{n.address}:{n.port}</td>
                       <td><Pill tone={statusTone(n.status)} dot>{n.status}</Pill>{n.message ? <div className="nx-faint" style={{ fontSize: 11 }}>{n.message}</div> : null}</td>
                       <td>{n.region || "—"}</td>
-                      <td className="nx-faint">{n.xray_version || "—"}</td>
+                      <td className="nx-mono" style={{ fontSize: 12 }}>{n.xray_version || "—"}</td>
                       <td>{n.latency_ms != null ? `${n.latency_ms.toFixed(0)} ms` : "—"}</td>
                       <td>
-                        <div className="nx-row" style={{ justifyContent: "flex-end", gap: 8 }}>
+                        <div className="nx-row" style={{ justifyContent: "flex-end", gap: 6, flexWrap: "wrap" }}>
+                          {n.core_kind !== "wireguard" && (
+                            <Button size="sm" variant="primary" onClick={() => setXrayNode(n)} title={t("infra.xraySetVersion")}>
+                              {t("infra.xraySetVersion")}
+                            </Button>
+                          )}
                           <Button size="sm" onClick={() => reconnect(n)}><IcRefresh className="nx-ico" /> {t("infra.reconnect")}</Button>
                           <Button variant="danger" size="sm" onClick={() => remove(n)}><IcTrash className="nx-ico" /></Button>
                         </div>
@@ -119,7 +130,45 @@ const NodesTab: FC = () => {
           initialCoreKind={preset.coreKind}
         />
       )}
+      {xrayNode && (
+        <XrayVersionModal node={xrayNode} onClose={() => setXrayNode(null)} onDone={() => { setXrayNode(null); reload(); }} />
+      )}
     </>
+  );
+};
+
+const XrayVersionModal: FC<{ node: NodeItem; onClose: () => void; onDone: () => void }> = ({ node, onClose, onDone }) => {
+  const { t } = useTranslation();
+  const toast = useToast();
+  const releases = useFetch<{ tag: string }[]>(() => api.get("/xray/releases"), []);
+  const [tag, setTag] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const apply = async () => {
+    if (!tag) return;
+    if (!confirm(t("infra.xrayUpgradeConfirm"))) return;
+    setBusy(true);
+    try {
+      const res = await api.post<{ version: string }>(`/nodes/${node.id}/xray/version`, { version: tag });
+      toast.push(res.version || t("common.saved"), "success");
+      onDone();
+    } catch (e: any) { toast.push(e.message, "error"); } finally { setBusy(false); }
+  };
+
+  return (
+    <Modal open title={`${t("infra.xraySetVersion")} — ${node.name}`} onClose={onClose}
+      footer={<>
+        <Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
+        <Button variant="primary" disabled={busy || !tag} onClick={apply}>{t("common.save")}</Button>
+      </>}>
+      <Field label={t("infra.xrayPickRelease")}>
+        <Select value={tag} onChange={(e: any) => setTag(e.target.value)} disabled={releases.loading}>
+          <option value="">—</option>
+          {(releases.data || []).map((r) => <option key={r.tag} value={r.tag}>{r.tag}</option>)}
+        </Select>
+      </Field>
+      <div className="nx-faint" style={{ fontSize: 12, marginTop: 8 }}>{t("infra.xrayVersion")}: {node.xray_version || "—"}</div>
+    </Modal>
   );
 };
 
@@ -214,7 +263,13 @@ const AddNode: FC<{
               <Field label={t("infra.port")}><Input type="number" value={f.port} onChange={upd("port")} /></Field>
               <Field label={t("infra.apiPort")}><Input type="number" value={f.api_port} onChange={upd("api_port")} /></Field>
             </div>
-            <Field label={`${t("infra.region")} (${t("common.optional")})`}><Input value={f.region} onChange={upd("region")} /></Field>
+            <Field label={t("infra.regionPreset")}>
+              <Select value={f.region} onChange={upd("region")}>
+                <option value="">—</option>
+                {["ir", "eu", "us", "ae", "tr"].map((r) => <option key={r} value={r}>{r}</option>)}
+                <option value="custom">custom</option>
+              </Select>
+            </Field>
             <Field label={t("infra.coreKind")}>
               <Select value={f.core_kind} onChange={upd("core_kind")}>
                 <option value="xray">Xray (v2ray)</option>
@@ -479,12 +534,33 @@ const TunnelConfigModal: FC<{ tunnelId: number; onClose: () => void }> = ({ tunn
   );
 };
 
+const isIranNode = (region?: string | null) => {
+  const r = (region || "").toLowerCase();
+  return r === "ir" || r === "iran" || r === "domestic";
+};
+
 const AddTunnel: FC<{ nodes: NodeItem[]; onClose: () => void; onDone: () => void }> = ({ nodes, onClose, onDone }) => {
   const { t } = useTranslation();
   const toast = useToast();
-  const [f, setF] = useState({ name: "", relay: "", exit: "", transport: "reality", listen: "443", target: "443" });
+  const deploy = useFetch<{ panel_region: string }>(() => api.get("/system/deployment"), []);
+  const irNodes = nodes.filter((n) => isIranNode(n.region));
+  const foreignNodes = nodes.filter((n) => !isIranNode(n.region));
+  const panelForeign = deploy.data?.panel_region === "foreign";
+
+  const defaultRelay = irNodes[0]?.id ?? "";
+  const defaultExit = foreignNodes[0]?.id ?? "";
+
+  const [f, setF] = useState({
+    name: "", relay: String(defaultRelay || ""), exit: String(defaultExit || ""),
+    transport: "reality", listen: "443", target: "443",
+  });
   const [busy, setBusy] = useState(false);
   const upd = (k: string) => (e: any) => setF({ ...f, [k]: e.target.value });
+
+  useEffect(() => {
+    if (!f.relay && defaultRelay) setF((s) => ({ ...s, relay: String(defaultRelay) }));
+    if (!f.exit && defaultExit) setF((s) => ({ ...s, exit: String(defaultExit) }));
+  }, [defaultRelay, defaultExit, f.relay, f.exit]);
 
   const submit = async () => {
     setBusy(true);
@@ -502,13 +578,24 @@ const AddTunnel: FC<{ nodes: NodeItem[]; onClose: () => void; onDone: () => void
       footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
         <Button variant="primary" disabled={busy || !f.name || !f.relay || !f.exit} onClick={submit}>{t("common.create")}</Button></>}>
       <div className="nx-stack">
+        {deploy.data && (
+          <Callout tone="info">
+            {panelForeign ? t("infra.tunnelHintAddIranFirst") : t("infra.tunnelHintAddForeignFirst")}
+          </Callout>
+        )}
         <Field label={t("common.name")}><Input value={f.name} onChange={upd("name")} autoFocus /></Field>
         <div className="nx-row" style={{ gap: 12 }}>
           <Field label={t("infra.relayNode")}>
-            <Select value={f.relay} onChange={upd("relay")}><option value="">—</option>{nodes.map((n) => <option key={n.id} value={n.id}>{n.name}</option>)}</Select>
+            <Select value={f.relay} onChange={upd("relay")}>
+              <option value="">—</option>
+              {(irNodes.length ? irNodes : nodes).map((n) => <option key={n.id} value={n.id}>{n.name} ({n.region || "?"})</option>)}
+            </Select>
           </Field>
           <Field label={t("infra.exitNode")}>
-            <Select value={f.exit} onChange={upd("exit")}><option value="">—</option>{nodes.map((n) => <option key={n.id} value={n.id}>{n.name}</option>)}</Select>
+            <Select value={f.exit} onChange={upd("exit")}>
+              <option value="">—</option>
+              {(foreignNodes.length ? foreignNodes : nodes).map((n) => <option key={n.id} value={n.id}>{n.name} ({n.region || "?"})</option>)}
+            </Select>
           </Field>
         </div>
         <Field label={t("infra.transport")}>

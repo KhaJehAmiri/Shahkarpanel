@@ -1,7 +1,7 @@
 import { FC, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
-import { InboundsByProtocol, UserItem, UsersResponse } from "../api/types";
+import { ImportPreviewRow, InboundsByProtocol, UserItem, UsersResponse } from "../api/types";
 import { useFetch } from "../lib/useFetch";
 import { formatBytes, formatDate, relativeExpiry, statusTone, usagePct } from "../lib/format";
 import { PageHeader } from "../components/Shell";
@@ -12,7 +12,7 @@ import {
 import { QR } from "../components/QR";
 import { absoluteUrl } from "../lib/url";
 import { copyToClipboard } from "../lib/clipboard";
-import { IcEdit, IcExternal, IcEye, IcPlus, IcRefresh, IcShare, IcTrash } from "../components/icons";
+import { IcClose, IcEdit, IcExternal, IcEye, IcPlus, IcRefresh, IcShare, IcTrash } from "../components/icons";
 import { UserTemplatesPanel } from "../components/UserTemplates";
 import { useApp } from "../context/AppContext";
 import { useCopilot } from "../copilot/CopilotContext";
@@ -38,6 +38,7 @@ export const Users: FC = () => {
   const [createWg, setCreateWg] = useState(false);
   const [editUser, setEditUser] = useState<UserItem | null>(null);
   const [viewUser, setViewUser] = useState<UserItem | null>(null);
+  const [showImport, setShowImport] = useState(false);
 
   // The Copilot can deep-link straight into "create user" (optionally WireGuard).
   useEffect(() => {
@@ -78,6 +79,9 @@ export const Users: FC = () => {
         description={t("users.description")}
         actions={<>
           <Button variant="ghost" onClick={reload}><IcRefresh className="nx-ico" /></Button>
+          {admin?.is_sudo && (
+            <Button variant="ghost" onClick={() => setShowImport(true)}>{t("users.import")}</Button>
+          )}
           <Button variant="primary" onClick={() => setShowCreate(true)}><IcPlus className="nx-ico" /> {t("common.create")}</Button>
         </>}
       />
@@ -149,8 +153,9 @@ export const Users: FC = () => {
         </div>
       )}
 
-      {showCreate && <UserFormModal mode="create" presetWireguard={createWg} onClose={() => setShowCreate(false)} onDone={() => { setShowCreate(false); reload(); }} />}
-      {editUser && <UserFormModal mode="edit" user={editUser} onClose={() => setEditUser(null)} onDone={() => { setEditUser(null); reload(); }} />}
+      {showCreate && <UserFormDrawer mode="create" presetWireguard={createWg} onClose={() => setShowCreate(false)} onDone={() => { setShowCreate(false); reload(); }} />}
+      {editUser && <UserFormDrawer mode="edit" user={editUser} onClose={() => setEditUser(null)} onDone={() => { setEditUser(null); reload(); }} />}
+      {showImport && <UserImportWizard onClose={() => setShowImport(false)} onDone={() => { setShowImport(false); reload(); }} />}
       {viewUser && <UserDetail username={viewUser.username} onClose={() => setViewUser(null)} onEdit={() => { setEditUser(viewUser); setViewUser(null); }} />}
     </div>
   );
@@ -159,7 +164,7 @@ export const Users: FC = () => {
 /* --------------------------- shared user form --------------------------- */
 type ProtoState = { enabled: boolean; tags: string[]; flow: string; method: string };
 
-const UserFormModal: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireguard?: boolean; onClose: () => void; onDone: () => void }> = ({ mode, user, presetWireguard, onClose, onDone }) => {
+const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireguard?: boolean; onClose: () => void; onDone: () => void }> = ({ mode, user, presetWireguard, onClose, onDone }) => {
   const { t } = useTranslation();
   const { admin } = useApp();
   const toast = useToast();
@@ -181,6 +186,7 @@ const UserFormModal: FC<{ mode: "create" | "edit"; user?: UserItem; presetWiregu
   const [reset, setReset] = useState(user?.data_limit_reset_strategy || "no_reset");
   const [note, setNote] = useState(user?.note || "");
   const [protos, setProtos] = useState<Record<string, ProtoState>>({});
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState(false);
 
   // Initialize protocol state once inbounds + user are known.
@@ -209,10 +215,17 @@ const UserFormModal: FC<{ mode: "create" | "edit"; user?: UserItem; presetWiregu
       method: "",
     };
     setProtos(next);
+    const exp: Record<string, boolean> = {};
+    Object.entries(next).forEach(([p, v]) => { exp[p] = v.enabled; });
+    setExpanded(exp);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inbounds.data]);
 
-  const setProto = (p: string, patch: Partial<ProtoState>) => setProtos((s) => ({ ...s, [p]: { ...s[p], ...patch } }));
+  const setProto = (p: string, patch: Partial<ProtoState>) => {
+    setProtos((s) => ({ ...s, [p]: { ...s[p], ...patch } }));
+    if (patch.enabled === true) setExpanded((e) => ({ ...e, [p]: true }));
+    if (patch.enabled === false) setExpanded((e) => ({ ...e, [p]: false }));
+  };
   const toggleTag = (p: string, tag: string) => setProtos((s) => {
     const cur = s[p];
     const tags = cur.tags.includes(tag) ? cur.tags.filter((x) => x !== tag) : [...cur.tags, tag];
@@ -281,18 +294,14 @@ const UserFormModal: FC<{ mode: "create" | "edit"; user?: UserItem; presetWiregu
   const preset = (days: number) => { setNoExpire(false); setExpireDate(new Date(Date.now() + days * 86400000).toISOString().slice(0, 10)); };
 
   return (
-    <Modal
-      open
-      title={mode === "create" ? t("common.create") : `${t("common.edit")} — ${user?.username}`}
-      onClose={onClose}
-      footer={<>
-        <Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
-        <Button variant="primary" disabled={busy || (mode === "create" && !username.trim()) || (mode === "create" && !!templateId && !username.trim())} onClick={submit}>
-          {mode === "create" ? t("common.create") : t("common.save")}
-        </Button>
-      </>}
-    >
-      <div className="nx-stack">
+    <div className="nx-drawer-overlay" onClick={onClose}>
+      <div className="nx-drawer wide" onClick={(e) => e.stopPropagation()}>
+        <div className="nx-drawer-head">
+          <div className="nx-card-title">{mode === "create" ? t("common.create") : `${t("common.edit")} — ${user?.username}`}</div>
+          <button type="button" className="nx-btn icon ghost" onClick={onClose}><IcClose /></button>
+        </div>
+        <div className="nx-drawer-body">
+      <div className="nx-stack nx-user-form">
         {mode === "create" && templateId ? (
           <Callout tone="info">{t("users.templateHint")}</Callout>
         ) : null}
@@ -323,14 +332,17 @@ const UserFormModal: FC<{ mode: "create" | "edit"; user?: UserItem; presetWiregu
               <div className="nx-stack" style={{ gap: 8 }}>
                 {Object.entries(protos).map(([p, v]) => (
                   <div key={p} className={`nx-proto ${v.enabled ? "on" : ""}`}>
-                    <div className="nx-proto-head" onClick={() => setProto(p, { enabled: !v.enabled })}>
+                    <div className="nx-proto-head" onClick={() => v.enabled && setExpanded((e) => ({ ...e, [p]: !e[p] }))}>
                       <div className="nx-row" style={{ gap: 10 }}>
-                        <Checkbox checked={v.enabled} />
+                        <span onClick={(e) => e.stopPropagation()}>
+                          <Checkbox checked={v.enabled} onChange={() => setProto(p, { enabled: !v.enabled })} />
+                        </span>
                         <b>{PROTO_LABEL[p] || p}</b>
                         <span className="nx-faint" style={{ fontSize: 11 }}>{p === "wireguard" ? t("users.wgNativePeer") : `${inbounds.data?.[p]?.length || 0} inbound(s)`}</span>
+                        {v.enabled && <span className="nx-faint" style={{ fontSize: 10 }}>{expanded[p] ? "▾" : "▸"}</span>}
                       </div>
                     </div>
-                    {v.enabled && (
+                    {v.enabled && expanded[p] && (
                       <div style={{ marginTop: 10, paddingInlineStart: 28 }}>
                         {p === "wireguard" ? (
                           <div className="nx-faint" style={{ fontSize: 12, marginBottom: 8 }}>{t("users.wgHint")}</div>
@@ -367,8 +379,7 @@ const UserFormModal: FC<{ mode: "create" | "edit"; user?: UserItem; presetWiregu
             )}
         </div>
 
-        {/* Limits */}
-        <div className="nx-row" style={{ gap: 12 }}>
+        <div className="nx-user-form-grid">
           <Field label={`${t("users.dataLimit")} (GB)`}>
             <div className="nx-row" style={{ gap: 8 }}>
               <Input type="number" min="0" step="0.1" value={unlimited ? "" : dataGb} disabled={unlimited} placeholder="∞" onChange={(e: any) => setDataGb(e.target.value)} />
@@ -384,22 +395,19 @@ const UserFormModal: FC<{ mode: "create" | "edit"; user?: UserItem; presetWiregu
               {mode === "edit" && <option value="disabled">{t("users.status.disabled")}</option>}
             </Select>
           </Field>
-        </div>
-
-        {/* Expiry */}
-        <Field label={t("users.expire")}>
-          <div className="nx-row" style={{ gap: 8 }}>
-            <Input type="date" value={noExpire ? "" : expireDate} disabled={noExpire} onChange={(e: any) => setExpireDate(e.target.value)} style={{ maxWidth: 200 }} />
-            <label className="nx-row" style={{ gap: 6, fontSize: 12, whiteSpace: "nowrap" }}>
-              <Checkbox checked={noExpire} onChange={() => setNoExpire((u) => !u)} /> {t("users.never")}
-            </label>
-            <div className="nx-row" style={{ gap: 4 }}>
-              {[30, 60, 90].map((d) => <Button key={d} size="sm" variant="ghost" onClick={() => preset(d)}>{d}d</Button>)}
+          <div style={{ gridColumn: "1 / -1" }}>
+          <Field label={t("users.expire")}>
+            <div className="nx-row" style={{ gap: 8, flexWrap: "wrap" }}>
+              <Input type="date" value={noExpire ? "" : expireDate} disabled={noExpire} onChange={(e: any) => setExpireDate(e.target.value)} style={{ maxWidth: 200 }} />
+              <label className="nx-row" style={{ gap: 6, fontSize: 12, whiteSpace: "nowrap" }}>
+                <Checkbox checked={noExpire} onChange={() => setNoExpire((u) => !u)} /> {t("users.never")}
+              </label>
+              <div className="nx-row" style={{ gap: 4 }}>
+                {[30, 60, 90].map((d) => <Button key={d} size="sm" variant="ghost" onClick={() => preset(d)}>{d}d</Button>)}
+              </div>
             </div>
+          </Field>
           </div>
-        </Field>
-
-        <div className="nx-row" style={{ gap: 12 }}>
           <Field label="Reset">
             <Select value={reset} onChange={(e: any) => setReset(e.target.value)}>
               {["no_reset", "day", "week", "month", "year"].map((r) => <option key={r} value={r}>{r}</option>)}
@@ -407,7 +415,104 @@ const UserFormModal: FC<{ mode: "create" | "edit"; user?: UserItem; presetWiregu
           </Field>
           <Field label={`Note (${t("common.optional")})`}><Input value={note} onChange={(e: any) => setNote(e.target.value)} /></Field>
         </div>
+        <div className="nx-row" style={{ justifyContent: "flex-end", gap: 10, marginTop: 8, paddingTop: 14, borderTop: "1px solid var(--nx-border)" }}>
+          <Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
+          <Button variant="primary" disabled={busy || (mode === "create" && !username.trim())} onClick={submit}>
+            {mode === "create" ? t("common.create") : t("common.save")}
+          </Button>
+        </div>
       </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const UserImportWizard: FC<{ onClose: () => void; onDone: () => void }> = ({ onClose, onDone }) => {
+  const { t } = useTranslation();
+  const toast = useToast();
+  const [file, setFile] = useState<File | null>(null);
+  const [rows, setRows] = useState<ImportPreviewRow[]>([]);
+  const [panelTags, setPanelTags] = useState<string[]>([]);
+  const [mapping, setMapping] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+
+  const unmapped = Array.from(new Set(rows.flatMap((r) => r.unmapped_inbounds || [])));
+
+  const preview = async () => {
+    if (!file) return;
+    setBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await api.upload<{ rows: ImportPreviewRow[]; panel_inbound_tags?: string[] }>(
+        "/users/import/preview", fd,
+      );
+      setRows(res.rows);
+      setPanelTags(res.panel_inbound_tags || []);
+      setMapping({});
+    } catch (e: any) { toast.push(e.message, "error"); } finally { setBusy(false); }
+  };
+
+  const apply = async () => {
+    const ok = rows.filter((r) => !r.conflict);
+    if (!ok.length) { toast.push(t("common.noData"), "error"); return; }
+    setBusy(true);
+    try {
+      const res = await api.post<{ created: number; skipped: number; errors: string[] }>("/users/import/apply", {
+        rows: ok,
+        skip_existing: true,
+        inbound_mapping: mapping,
+      });
+      toast.push(`${res.created} created, ${res.skipped} skipped`, "success");
+      if (res.errors.length) toast.push(res.errors.slice(0, 3).join("; "), "error");
+      onDone();
+    } catch (e: any) { toast.push(e.message, "error"); } finally { setBusy(false); }
+  };
+
+  return (
+    <Modal open title={t("users.import")} onClose={onClose} wide
+      footer={<>
+        <Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
+        <Button variant="ghost" disabled={busy || !file} onClick={preview}>{t("users.importPreview")}</Button>
+        <Button variant="primary" disabled={busy || !rows.length} onClick={apply}>{t("users.importApply")}</Button>
+      </>}>
+      <Field label={t("users.importFile")}>
+        <input type="file" accept=".json,.csv" onChange={(e) => { setFile(e.target.files?.[0] || null); setRows([]); setMapping({}); }} />
+      </Field>
+      {unmapped.length > 0 && (
+        <Callout tone="warn" title={t("users.importMapTitle")}>
+          <div className="nx-stack" style={{ gap: 8, marginTop: 8 }}>
+            {unmapped.map((tag) => (
+              <div key={tag} className="nx-row" style={{ gap: 8, flexWrap: "wrap" }}>
+                <span className="nx-code">{tag}</span>
+                <span>→</span>
+                <Select value={mapping[tag] || ""} onChange={(e: any) => setMapping({ ...mapping, [tag]: e.target.value })} style={{ minWidth: 160 }}>
+                  <option value="">{t("users.importSkipInbound")}</option>
+                  {panelTags.map((pt) => <option key={pt} value={pt}>{pt}</option>)}
+                </Select>
+              </div>
+            ))}
+          </div>
+        </Callout>
+      )}
+      {rows.length > 0 && (
+        <div className="nx-table-wrap" style={{ marginTop: 12, maxHeight: 280, overflow: "auto" }}>
+          <table className="nx-table">
+            <thead><tr><th>{t("common.username")}</th><th>{t("common.status")}</th><th>conflict</th><th>unmapped</th></tr></thead>
+            <tbody>
+              {rows.slice(0, 20).map((r) => (
+                <tr key={r.username}>
+                  <td>{r.username}</td>
+                  <td>{r.status}</td>
+                  <td className="nx-faint">{r.conflict || "—"}</td>
+                  <td className="nx-faint">{(r.unmapped_inbounds || []).join(", ") || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </Modal>
   );
 };

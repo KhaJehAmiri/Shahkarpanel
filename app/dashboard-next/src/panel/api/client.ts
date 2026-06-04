@@ -81,6 +81,24 @@ export const api = {
   del: <T = any>(path: string, body?: any) => request<T>("DELETE", path, body),
   postForm: <T = any>(path: string, body: Record<string, string>) =>
     request<T>("POST", path, body, { form: true }),
+  upload: async <T = any>(path: string, form: FormData): Promise<T> => {
+    const headers: Record<string, string> = {};
+    const token = getToken();
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const res = await fetch(joinUrl(path), { method: "POST", headers, body: form });
+    if (res.status === 401) {
+      if (onUnauthorized) onUnauthorized();
+      throw new ApiError("Unauthorized", 401);
+    }
+    const text = await res.text();
+    let data: any = null;
+    try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+    if (!res.ok) {
+      const detail = (data && (data.detail || data.message)) || `Request failed (${res.status})`;
+      throw new ApiError(String(detail), res.status);
+    }
+    return data as T;
+  },
 };
 
 export async function login(username: string, password: string): Promise<string> {

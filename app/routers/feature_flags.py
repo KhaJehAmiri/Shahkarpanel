@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -18,7 +18,8 @@ class FeatureFlagInfo(BaseModel):
     name: str
     enabled: bool
     default: bool
-    description: str
+    label_key: str
+    description: Optional[str] = None
 
 
 class FeatureFlagModify(BaseModel):
@@ -31,7 +32,8 @@ def _info(name: str) -> FeatureFlagInfo:
         name=name,
         enabled=feature_flags.is_enabled(name),
         default=spec.default,
-        description=spec.description,
+        label_key=spec.label_key,
+        description=spec.description or None,
     )
 
 

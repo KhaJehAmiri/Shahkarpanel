@@ -149,6 +149,24 @@ class XrayService(rpyc.Service):
         return self.core.version
 
     @rpyc.exposed
+    def upgrade_xray(self, tag: str) -> str:
+        """Download and install Xray release tag. Panel should restart the node after."""
+        from xray_upgrade import install_xray_release
+
+        if self.core is not None and self.core.started:
+            try:
+                self.core.stop()
+            except Exception:
+                pass
+
+        version = install_xray_release(tag)
+        self.core = XRayCore(
+            executable_path=XRAY_EXECUTABLE_PATH,
+            assets_path=XRAY_ASSETS_PATH,
+        )
+        return version
+
+    @rpyc.exposed
     def fetch_logs(self, callback: callable) -> XrayCoreLogsHandler:
         if self.core:
             logs = XrayCoreLogsHandler(self.core, callback)

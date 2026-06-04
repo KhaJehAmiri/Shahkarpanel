@@ -19,29 +19,53 @@ from app.db import GetDB
 class FlagSpec:
     name: str
     default: bool
-    description: str
+    label_key: str
+    description: str = ""
 
 
-# Known flags. Upcoming roadmap features register here so they can be rolled
-# out gradually behind a switch instead of shipping on by default.
 KNOWN_FLAGS: Dict[str, FlagSpec] = {
     f.name: f
     for f in [
-        FlagSpec("prometheus_metrics", False, "Expose the Prometheus /metrics endpoint (phase 1)."),
-        FlagSpec("plugins", False, "Enable the plugin system (phase 1)."),
-        FlagSpec("rule_engine", False, "Enable the rule engine (phase 1)."),
-        FlagSpec("auto_healing", False, "Auto-restart nodes on error/down (phase 2)."),
-        FlagSpec("billing", False, "Enable billing features (phase 3)."),
-        FlagSpec("api_v2", False, "Expose the v2 API (phase 3)."),
-        FlagSpec("smart_routing", False, "Latency/geo/load node routing (phase 4)."),
-        FlagSpec("workflows", False, "Multi-step workflow automation (phase 4)."),
-        FlagSpec("traffic_intelligence", False, "Heavy/abnormal detection & prediction (phase 5)."),
-        FlagSpec("plugin_marketplace", False, "Plugin marketplace & ratings (phase 5)."),
-        FlagSpec("tenants", False, "White-label reseller tenants (phase 6)."),
-        FlagSpec("white_label", False, "Per-tenant branding (logo/colour/title) (phase 6)."),
-        FlagSpec("node_provisioning", False, "Add nodes over SSH by IP+password (phase 6)."),
-        FlagSpec("tunneling", False, "In-country relay -> foreign exit tunnels (phase 6)."),
-        FlagSpec("setup_wizard", True, "First-run setup wizard (phase 6)."),
+        FlagSpec(
+            "prometheus_metrics",
+            False,
+            "flags.prometheus_metrics.desc",
+            "Expose Prometheus metrics endpoint.",
+        ),
+        FlagSpec("plugins", False, "flags.plugins.desc", "Enable the plugin system."),
+        FlagSpec("rule_engine", False, "flags.rule_engine.desc", "Enable the rule engine."),
+        FlagSpec("auto_healing", False, "flags.auto_healing.desc", "Auto-restart nodes on error or down."),
+        FlagSpec("billing", False, "flags.billing.desc", "Enable billing features."),
+        FlagSpec("api_v2", False, "flags.api_v2.desc", "Expose the v2 API."),
+        FlagSpec("smart_routing", False, "flags.smart_routing.desc", "Latency, geo, and load-based node routing."),
+        FlagSpec("workflows", False, "flags.workflows.desc", "Multi-step workflow automation."),
+        FlagSpec(
+            "traffic_intelligence",
+            False,
+            "flags.traffic_intelligence.desc",
+            "Heavy usage and exhaustion prediction.",
+        ),
+        FlagSpec(
+            "plugin_marketplace",
+            False,
+            "flags.plugin_marketplace.desc",
+            "Plugin marketplace and ratings.",
+        ),
+        FlagSpec("tenants", False, "flags.tenants.desc", "White-label reseller tenants."),
+        FlagSpec("white_label", False, "flags.white_label.desc", "Per-tenant branding."),
+        FlagSpec(
+            "node_provisioning",
+            False,
+            "flags.node_provisioning.desc",
+            "Add nodes over SSH by IP and password.",
+        ),
+        FlagSpec(
+            "tunneling",
+            False,
+            "flags.tunneling.desc",
+            "Relay traffic from in-country node to foreign exit.",
+        ),
+        FlagSpec("setup_wizard", True, "flags.setup_wizard.desc", "First-run setup wizard."),
     ]
 }
 

@@ -76,6 +76,9 @@ INTELLIGENCE_EXHAUSTION_WINDOW_HOURS = config(
 # Node latency (ms) above which a node is flagged as at-risk.
 INTELLIGENCE_NODE_LATENCY_MS = config("INTELLIGENCE_NODE_LATENCY_MS", cast=float, default=500.0)
 
+# Panel hosting region for tunnel UX: iran | foreign (empty = auto-detect via GeoIP).
+PANEL_REGION = config("PANEL_REGION", default="")
+
 # White-label / reseller / provisioning / tunnels (phase 6)
 # Publicly reachable address resellers' provisioned nodes use to reach this
 # panel (host or host:port). Falls back to UVICORN_HOST:UVICORN_PORT.

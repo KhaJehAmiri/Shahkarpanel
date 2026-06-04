@@ -181,6 +181,12 @@ class ReSTXRayNode:
         res = self.make_request("/", timeout=3)
         return res.get('core_version')
 
+    def upgrade_xray(self, tag: str) -> str:
+        if not self.connected:
+            self.connect()
+        res = self.make_request("/xray/upgrade", timeout=300, tag=tag)
+        return res.get("version") or tag
+
     def start(self, config: XRayConfig):
         if not self.connected:
             self.connect()
@@ -398,6 +404,11 @@ class RPyCXRayNode:
 
     def get_version(self):
         return self.remote.fetch_xray_version()
+
+    def upgrade_xray(self, tag: str) -> str:
+        if not self.connected:
+            self.connect()
+        return self.remote.upgrade_xray(tag)
 
     def _prepare_config(self, config: XRayConfig):
         for inbound in config.get("inbounds", []):

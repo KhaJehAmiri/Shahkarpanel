@@ -11,7 +11,16 @@ from fastapi.routing import APIRoute
 from config import ALLOWED_ORIGINS, CORS_ALLOW_CREDENTIALS, DOCS, LOG_JSON, XRAY_SUBSCRIPTION_PATH
 from app.utils.logging import RequestContextMiddleware, setup_structured_logging
 
-__version__ = "0.8.4"
+def _read_version() -> str:
+    from pathlib import Path
+
+    vf = Path(__file__).resolve().parents[1] / "VERSION"
+    if vf.is_file():
+        return vf.read_text(encoding="utf-8").strip()
+    return "0.9.0"
+
+
+__version__ = _read_version()
 PRODUCT_NAME = "NexusPanel"
 
 app = FastAPI(

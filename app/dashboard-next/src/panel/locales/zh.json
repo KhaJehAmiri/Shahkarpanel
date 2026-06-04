@@ -155,7 +155,9 @@
     "transport": "传输方式",
     "listenPort": "监听端口",
     "targetPort": "目标端口",
-    "tunnelDesc": "将流量从境内节点中继到境外出口节点。"
+    "tunnelDesc": "将流量从境内节点中继到境外出口节点。",
+    "viewConfig": "查看 Xray 配置",
+    "tunnelConfig": "隧道配置"
   },
   "inbounds": {
     "title": "入站",

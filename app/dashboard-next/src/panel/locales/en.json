@@ -159,7 +159,9 @@
     "transport": "Transport",
     "listenPort": "Listen port",
     "targetPort": "Target port",
-    "tunnelDesc": "Relay traffic from an in-country node to a foreign exit node."
+    "tunnelDesc": "Relay traffic from an in-country node to a foreign exit node.",
+    "viewConfig": "View Xray config",
+    "tunnelConfig": "Tunnel config"
   },
   "inbounds": {
     "title": "Inbounds",

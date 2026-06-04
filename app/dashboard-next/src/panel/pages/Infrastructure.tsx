@@ -9,7 +9,7 @@ import { PageHeader } from "../components/Shell";
 import {
   Button, Callout, Card, EmptyState, Field, Input, Modal, Pill, Select, SkeletonRows, Tabs, useToast,
 } from "../components/ui";
-import { IcPlus, IcRefresh, IcTrash, IcLink } from "../components/icons";
+import { IcPlus, IcRefresh, IcTrash, IcLink, IcEdit, IcEye } from "../components/icons";
 import { XrayConfigsHub } from "../components/xray/XrayConfigsHub";
 
 export const Infrastructure: FC = () => {
@@ -151,6 +151,8 @@ const TunnelsTab: FC = () => {
   const toast = useToast();
   const { isEnabled } = useApp();
   const [show, setShow] = useState(false);
+  const [edit, setEdit] = useState<Tunnel | null>(null);
+  const [configId, setConfigId] = useState<number | null>(null);
   const enabled = isEnabled("tunneling");
   const { data, loading, error, status, reload } = useFetch<Tunnel[]>(() => api.get("/tunnels"), []);
   const nodes = useFetch<NodeItem[]>(() => api.get("/nodes"), []);
@@ -194,7 +196,13 @@ const TunnelsTab: FC = () => {
                       <td>{nodeName(tn.exit_node_id)}</td>
                       <td><Pill tone="accent">{tn.transport}</Pill></td>
                       <td className="nx-mono">{tn.listen_port} → {tn.target_port}</td>
-                      <td><div className="nx-row" style={{ justifyContent: "flex-end" }}><Button variant="danger" size="sm" onClick={() => remove(tn.id)}><IcTrash className="nx-ico" /></Button></div></td>
+                      <td>
+                        <div className="nx-row" style={{ justifyContent: "flex-end", gap: 6 }}>
+                          <Button size="sm" variant="ghost" title={t("infra.viewConfig")} onClick={() => setConfigId(tn.id)}><IcEye className="nx-ico" /></Button>
+                          <Button size="sm" variant="ghost" onClick={() => setEdit(tn)}><IcEdit className="nx-ico" /></Button>
+                          <Button variant="danger" size="sm" onClick={() => remove(tn.id)}><IcTrash className="nx-ico" /></Button>
+                        </div>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -203,6 +211,8 @@ const TunnelsTab: FC = () => {
           )}
       </Card>
       {show && <AddTunnel nodes={nodes.data || []} onClose={() => setShow(false)} onDone={() => { setShow(false); reload(); }} />}
+      {edit && <EditTunnel tunnel={edit} onClose={() => setEdit(null)} onDone={() => { setEdit(null); reload(); }} />}
+      {configId != null && <TunnelConfigModal tunnelId={configId} onClose={() => setConfigId(null)} />}
     </>
   );
 };
@@ -223,7 +233,12 @@ const HostsTab: FC = () => {
   };
   const addHost = (tag: string) => {
     const copy: Record<string, any[]> = JSON.parse(JSON.stringify(hosts));
-    copy[tag] = [...(copy[tag] || []), { remark: "{USERNAME}", address: "", port: null, sni: "", host: "", path: "", security: "inbound_default" }];
+    copy[tag] = [...(copy[tag] || []), {
+      remark: "{USERNAME}", address: "", port: null, sni: "", host: "", path: "",
+      security: "inbound_default", alpn: "", fingerprint: "", allowinsecure: false,
+      is_disabled: false, mux_enable: false, fragment_setting: "", noise_setting: "",
+      random_user_agent: false, use_sni_as_host: false,
+    }];
     setDraft(copy);
   };
   const delHost = (tag: string, idx: number) => {
@@ -268,6 +283,14 @@ const HostsTab: FC = () => {
                         <Field label="TLS"><Select value={h.security || "inbound_default"} onChange={(e: any) => setHost(tag, idx, "security", e.target.value)}>
                           {["inbound_default", "none", "tls"].map((s) => <option key={s}>{s}</option>)}
                         </Select></Field>
+                        <Field label="ALPN"><Input value={h.alpn || ""} onChange={(e: any) => setHost(tag, idx, "alpn", e.target.value)} style={{ maxWidth: 120 }} /></Field>
+                        <Field label="FP"><Input value={h.fingerprint || ""} onChange={(e: any) => setHost(tag, idx, "fingerprint", e.target.value)} style={{ maxWidth: 100 }} /></Field>
+                        <label className="nx-row" style={{ gap: 6, fontSize: 12 }}><input type="checkbox" checked={!!h.allowinsecure} onChange={(e) => setHost(tag, idx, "allowinsecure", e.target.checked)} /> insecure</label>
+                        <label className="nx-row" style={{ gap: 6, fontSize: 12 }}><input type="checkbox" checked={!!h.is_disabled} onChange={(e) => setHost(tag, idx, "is_disabled", e.target.checked)} /> disabled</label>
+                        <label className="nx-row" style={{ gap: 6, fontSize: 12 }}><input type="checkbox" checked={!!h.mux_enable} onChange={(e) => setHost(tag, idx, "mux_enable", e.target.checked)} /> mux</label>
+                        <label className="nx-row" style={{ gap: 6, fontSize: 12 }}><input type="checkbox" checked={!!h.use_sni_as_host} onChange={(e) => setHost(tag, idx, "use_sni_as_host", e.target.checked)} /> sni→host</label>
+                        <Field label="Fragment"><Input value={h.fragment_setting || ""} onChange={(e: any) => setHost(tag, idx, "fragment_setting", e.target.value)} style={{ maxWidth: 140 }} /></Field>
+                        <Field label="Noise"><Input value={h.noise_setting || ""} onChange={(e: any) => setHost(tag, idx, "noise_setting", e.target.value)} style={{ maxWidth: 140 }} /></Field>
                         <div style={{ alignSelf: "flex-end" }}><Button variant="danger" size="sm" onClick={() => delHost(tag, idx)}><IcTrash className="nx-ico" /></Button></div>
                       </div>
                     </div>
@@ -277,6 +300,71 @@ const HostsTab: FC = () => {
         ))}
       </div>
     </>
+  );
+};
+
+const EditTunnel: FC<{ tunnel: Tunnel; onClose: () => void; onDone: () => void }> = ({ tunnel, onClose, onDone }) => {
+  const { t } = useTranslation();
+  const toast = useToast();
+  const [f, setF] = useState({
+    name: tunnel.name,
+    enabled: tunnel.enabled,
+    transport: tunnel.transport,
+    listen: String(tunnel.listen_port),
+    target: String(tunnel.target_port),
+  });
+  const [busy, setBusy] = useState(false);
+  const upd = (k: string) => (e: any) => setF({ ...f, [k]: e.target.type === "checkbox" ? e.target.checked : e.target.value });
+
+  const submit = async () => {
+    setBusy(true);
+    try {
+      await api.patch(`/tunnels/${tunnel.id}`, {
+        name: f.name.trim(),
+        enabled: f.enabled,
+        transport: f.transport,
+        listen_port: parseInt(f.listen, 10),
+        target_port: parseInt(f.target, 10),
+      });
+      toast.push(t("common.saved"), "success");
+      onDone();
+    } catch (e: any) { toast.push(e.message, "error"); } finally { setBusy(false); }
+  };
+
+  return (
+    <Modal open title={`${t("common.edit")} — ${tunnel.name}`} onClose={onClose}
+      footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
+        <Button variant="primary" disabled={busy} onClick={submit}>{t("common.save")}</Button></>}>
+      <div className="nx-stack">
+        <Field label={t("common.name")}><Input value={f.name} onChange={upd("name")} /></Field>
+        <label className="nx-row" style={{ gap: 8 }}><input type="checkbox" checked={f.enabled} onChange={upd("enabled")} /> {t("common.enabled")}</label>
+        <Field label={t("infra.transport")}>
+          <Select value={f.transport} onChange={upd("transport")}>
+            {["reality", "ws", "grpc", "tcp"].map((x) => <option key={x} value={x}>{x}</option>)}
+          </Select>
+        </Field>
+        <div className="nx-row" style={{ gap: 12 }}>
+          <Field label={t("infra.listenPort")}><Input type="number" value={f.listen} onChange={upd("listen")} /></Field>
+          <Field label={t("infra.targetPort")}><Input type="number" value={f.target} onChange={upd("target")} /></Field>
+        </div>
+      </div>
+    </Modal>
+  );
+};
+
+const TunnelConfigModal: FC<{ tunnelId: number; onClose: () => void }> = ({ tunnelId, onClose }) => {
+  const { t } = useTranslation();
+  const { data, loading, error } = useFetch<Record<string, unknown>>(() => api.get(`/tunnels/${tunnelId}/config`), [tunnelId]);
+
+  return (
+    <Modal open title={t("infra.tunnelConfig")} onClose={onClose} wide
+      footer={<Button variant="ghost" onClick={onClose}>{t("common.close")}</Button>}>
+      {loading ? <div className="nx-faint">{t("common.loading")}</div>
+        : error ? <div className="nx-callout danger">{error}</div>
+        : <pre className="nx-code" style={{ fontSize: 11, maxHeight: 400, overflow: "auto", whiteSpace: "pre-wrap" }}>
+            {JSON.stringify(data, null, 2)}
+          </pre>}
+    </Modal>
   );
 };
 

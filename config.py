@@ -30,6 +30,8 @@ METRICS_TOKEN = config("METRICS_TOKEN", default="")
 NODE_BOOTSTRAP_TOKEN = config("NODE_BOOTSTRAP_TOKEN", default="")
 # Shared secret for REST node control API (header X-Nexus-Control-Secret). Empty = disabled.
 NODE_CONTROL_SECRET = config("NODE_CONTROL_SECRET", default="")
+# When True, panel verifies node agent TLS certificates (requires valid certs on nodes).
+NODE_SSL_VERIFY = config("NODE_SSL_VERIFY", cast=bool, default=False)
 NODE_BOOTSTRAP_MAX_ATTEMPTS = config("NODE_BOOTSTRAP_MAX_ATTEMPTS", cast=int, default=20)
 NODE_BOOTSTRAP_WINDOW_SECONDS = config("NODE_BOOTSTRAP_WINDOW_SECONDS", cast=int, default=3600)
 # Interval (seconds) for the cluster failover detector. 0 disables it.

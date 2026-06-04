@@ -59,16 +59,26 @@ class ReSTXRayNode:
         self._keyfile = string_to_temp_file(ssl_key)
         self._certfile = string_to_temp_file(ssl_cert)
 
+        from config import NODE_SSL_VERIFY
+
         self.session = requests.Session()
-        self.session.mount('https://', SANIgnoringAdaptor())
+        if NODE_SSL_VERIFY:
+            self.session.verify = True
+        else:
+            self.session.mount('https://', SANIgnoringAdaptor())
+            self.session.verify = False
         self.session.cert = (self._certfile.name, self._keyfile.name)
 
         self._session_id = None
         self._rest_api_url = f"https://{self.address.strip('/')}:{self.port}"
 
         self._ssl_context = ssl.create_default_context()
-        self._ssl_context.check_hostname = False
-        self._ssl_context.verify_mode = ssl.CERT_NONE
+        if NODE_SSL_VERIFY:
+            self._ssl_context.check_hostname = True
+            self._ssl_context.verify_mode = ssl.CERT_REQUIRED
+        else:
+            self._ssl_context.check_hostname = False
+            self._ssl_context.verify_mode = ssl.CERT_NONE
         self._ssl_context.load_cert_chain(certfile=self.session.cert[0], keyfile=self.session.cert[1])
         self._logs_ws_url = f"wss://{self.address.strip('/')}:{self.port}/logs"
         self._logs_queues = []

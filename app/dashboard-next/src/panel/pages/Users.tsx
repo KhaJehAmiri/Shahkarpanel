@@ -6,7 +6,7 @@ import { useFetch } from "../lib/useFetch";
 import { formatBytes, formatDate, relativeExpiry, statusTone, usagePct } from "../lib/format";
 import { PageHeader } from "../components/Shell";
 import {
-  Button, Card, Checkbox, CopyField, Drawer, EmptyState, Field, Input, Modal, Pill, Select,
+  Button, Callout, Card, Checkbox, CopyField, Drawer, EmptyState, Field, Input, Modal, Pill, Select,
   SkeletonRows, Toggle, UsageBar, useToast,
 } from "../components/ui";
 import { QR } from "../components/QR";
@@ -151,8 +151,14 @@ type ProtoState = { enabled: boolean; tags: string[]; flow: string; method: stri
 
 const UserFormModal: FC<{ mode: "create" | "edit"; user?: UserItem; onClose: () => void; onDone: () => void }> = ({ mode, user, onClose, onDone }) => {
   const { t } = useTranslation();
+  const { admin } = useApp();
   const toast = useToast();
   const inbounds = useFetch<InboundsByProtocol>(() => api.get("/inbounds"), []);
+  const templates = useFetch<{ id: number; name?: string }[]>(
+    () => (admin?.is_sudo ? api.get("/user_template") : Promise.resolve([])),
+    [admin?.is_sudo],
+  );
+  const [templateId, setTemplateId] = useState("");
 
   const [username, setUsername] = useState(user?.username || "");
   const [dataGb, setDataGb] = useState(user?.data_limit ? (user.data_limit / 1024 ** 3).toString() : "");
@@ -206,6 +212,20 @@ const UserFormModal: FC<{ mode: "create" | "edit"; user?: UserItem; onClose: () 
   const enabledProtos = Object.entries(protos).filter(([, v]) => v.enabled);
 
   const submit = async () => {
+    if (mode === "create" && templateId) {
+      if (!username.trim()) { toast.push(t("common.username"), "error"); return; }
+      setBusy(true);
+      try {
+        await api.post("/user/from-template", {
+          username: username.trim(),
+          template_id: parseInt(templateId, 10),
+          status: status === "on_hold" ? "on_hold" : "active",
+        });
+        toast.push(t("common.created"), "success");
+        onDone();
+      } catch (e: any) { toast.push(e.message, "error"); } finally { setBusy(false); }
+      return;
+    }
     if (!enabledProtos.length) { toast.push("Select at least one protocol", "error"); return; }
     setBusy(true);
     try {
@@ -257,16 +277,31 @@ const UserFormModal: FC<{ mode: "create" | "edit"; user?: UserItem; onClose: () 
       onClose={onClose}
       footer={<>
         <Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
-        <Button variant="primary" disabled={busy || (mode === "create" && !username.trim())} onClick={submit}>
+        <Button variant="primary" disabled={busy || (mode === "create" && !username.trim()) || (mode === "create" && !!templateId && !username.trim())} onClick={submit}>
           {mode === "create" ? t("common.create") : t("common.save")}
         </Button>
       </>}
     >
       <div className="nx-stack">
+        {mode === "create" && templateId ? (
+          <Callout tone="info">{t("users.templateHint")}</Callout>
+        ) : null}
         {mode === "create" && (
-          <Field label={t("common.username")} hint="a-z, 0-9, _ (3–32)">
-            <Input value={username} onChange={(e: any) => setUsername(e.target.value)} autoFocus />
-          </Field>
+          <>
+            <Field label={t("common.username")} hint="a-z, 0-9, _ (3–32)">
+              <Input value={username} onChange={(e: any) => setUsername(e.target.value)} autoFocus />
+            </Field>
+            {templates.data && templates.data.length > 0 && (
+              <Field label={t("users.template")}>
+                <select className="nx-input" value={templateId} onChange={(e) => setTemplateId(e.target.value)}>
+                  <option value="">{t("users.noTemplate")}</option>
+                  {templates.data.map((tpl) => (
+                    <option key={tpl.id} value={tpl.id}>{tpl.name || `#${tpl.id}`}</option>
+                  ))}
+                </select>
+              </Field>
+            )}
+          </>
         )}
 
         {/* Protocols (x-ui style) */}

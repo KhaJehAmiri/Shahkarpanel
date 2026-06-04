@@ -8,7 +8,7 @@ import { PageHeader } from "../components/Shell";
 import {
   Button, Callout, Card, CardHead, EmptyState, Field, Input, Modal, Pill, SkeletonRows, Tabs, Textarea, useToast,
 } from "../components/ui";
-import { IcPlus, IcTrash, IcServer } from "../components/icons";
+import { IcPlus, IcTrash, IcServer, IcEdit } from "../components/icons";
 
 export const Resellers: FC = () => {
   const { t } = useTranslation();
@@ -35,6 +35,7 @@ const TenantsTab: FC = () => {
   const { isEnabled } = useApp();
   const toast = useToast();
   const [show, setShow] = useState(false);
+  const [edit, setEdit] = useState<Tenant | null>(null);
   const { data, loading, error, status, reload } = useFetch<Tenant[]>(() => api.get("/tenants"), []);
 
   if (!isEnabled("tenants") || status === 404)
@@ -73,7 +74,10 @@ const TenantsTab: FC = () => {
                       <td>{tn.max_users ?? "∞"}</td>
                       <td>{tn.max_nodes ?? "∞"}</td>
                       <td>{tn.byo_node_discount_percent}%</td>
-                      <td><div className="nx-row" style={{ justifyContent: "flex-end" }}><Button variant="danger" size="sm" onClick={() => remove(tn.id)}><IcTrash className="nx-ico" /></Button></div></td>
+                      <td><div className="nx-row" style={{ justifyContent: "flex-end", gap: 6 }}>
+                        <Button size="sm" variant="ghost" onClick={() => setEdit(tn)}><IcEdit className="nx-ico" /></Button>
+                        <Button variant="danger" size="sm" onClick={() => remove(tn.id)}><IcTrash className="nx-ico" /></Button>
+                      </div></td>
                     </tr>
                   ))}
                 </tbody>
@@ -82,7 +86,51 @@ const TenantsTab: FC = () => {
           )}
       </Card>
       {show && <AddTenant onClose={() => setShow(false)} onDone={() => { setShow(false); reload(); }} />}
+      {edit && <EditTenant tenant={edit} onClose={() => setEdit(null)} onDone={() => { setEdit(null); reload(); }} />}
     </>
+  );
+};
+
+const EditTenant: FC<{ tenant: Tenant; onClose: () => void; onDone: () => void }> = ({ tenant, onClose, onDone }) => {
+  const { t } = useTranslation();
+  const toast = useToast();
+  const [f, setF] = useState({
+    name: tenant.name,
+    enabled: tenant.enabled,
+    maxUsers: tenant.max_users != null ? String(tenant.max_users) : "",
+    maxNodes: tenant.max_nodes != null ? String(tenant.max_nodes) : "",
+    discount: String(tenant.byo_node_discount_percent ?? 0),
+  });
+  const [busy, setBusy] = useState(false);
+  const upd = (k: string) => (e: any) => setF({ ...f, [k]: e.target.type === "checkbox" ? e.target.checked : e.target.value });
+  const submit = async () => {
+    setBusy(true);
+    try {
+      await api.patch(`/tenants/${tenant.id}`, {
+        name: f.name.trim(),
+        enabled: f.enabled,
+        max_users: f.maxUsers ? parseInt(f.maxUsers) : null,
+        max_nodes: f.maxNodes ? parseInt(f.maxNodes) : null,
+        byo_node_discount_percent: parseInt(f.discount) || 0,
+      });
+      toast.push(t("common.saved"), "success");
+      onDone();
+    } catch (e: any) { toast.push(e.message, "error"); } finally { setBusy(false); }
+  };
+  return (
+    <Modal open title={`${t("common.edit")} — ${tenant.name}`} onClose={onClose}
+      footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
+        <Button variant="primary" disabled={busy} onClick={submit}>{t("common.save")}</Button></>}>
+      <div className="nx-stack">
+        <Field label={t("common.name")}><Input value={f.name} onChange={upd("name")} /></Field>
+        <label className="nx-row" style={{ gap: 8 }}><input type="checkbox" checked={f.enabled} onChange={upd("enabled")} /> {t("common.enabled")}</label>
+        <div className="nx-row" style={{ gap: 12 }}>
+          <Field label={t("resellers.maxUsers")}><Input type="number" value={f.maxUsers} onChange={upd("maxUsers")} /></Field>
+          <Field label={t("resellers.maxNodes")}><Input type="number" value={f.maxNodes} onChange={upd("maxNodes")} /></Field>
+          <Field label={t("resellers.byoDiscount")}><Input type="number" value={f.discount} onChange={upd("discount")} /></Field>
+        </div>
+      </div>
+    </Modal>
   );
 };
 

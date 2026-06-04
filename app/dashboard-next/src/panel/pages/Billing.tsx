@@ -9,12 +9,14 @@ import { PageHeader } from "../components/Shell";
 import {
   Button, Callout, Card, EmptyState, Field, Input, Modal, Pill, SkeletonRows, Stat, Tabs, useToast,
 } from "../components/ui";
-import { IcPlus, IcTrash, IcWallet } from "../components/icons";
+import { IcPlus, IcTrash, IcWallet, IcEdit } from "../components/icons";
 
 export const Billing: FC = () => {
   const { t } = useTranslation();
-  const { isEnabled } = useApp();
+  const { admin, isEnabled } = useApp();
+  const toast = useToast();
   const [tab, setTab] = useState("plans");
+  const [creditOpen, setCreditOpen] = useState(false);
   const wallet = useFetch<Wallet>(() => api.get("/billing/wallet"), []);
 
   if (!isEnabled("billing"))
@@ -24,10 +26,16 @@ export const Billing: FC = () => {
     <div>
       <PageHeader title={t("billing.title")} subtitle={t("billing.subtitle")} description={t("billing.description")} />
       {wallet.data && (
-        <div style={{ marginBottom: 16, maxWidth: 280 }}>
-          <Stat label={t("billing.wallet")} value={wallet.data.balance.toLocaleString()} icon={<IcWallet className="nx-stat-ico" />} />
+        <div className="nx-row" style={{ marginBottom: 16, gap: 12, alignItems: "flex-end" }}>
+          <div style={{ maxWidth: 280, flex: 1 }}>
+            <Stat label={t("billing.wallet")} value={wallet.data.balance.toLocaleString()} icon={<IcWallet className="nx-stat-ico" />} />
+          </div>
+          {admin?.is_sudo && (
+            <Button variant="primary" size="sm" onClick={() => setCreditOpen(true)}>{t("billing.addCredit")}</Button>
+          )}
         </div>
       )}
+      {creditOpen && <CreditModal onClose={() => setCreditOpen(false)} onDone={() => { setCreditOpen(false); wallet.reload(); }} />}
       <Tabs active={tab} onChange={setTab} tabs={[
         { id: "plans", label: t("billing.tabPlans") },
         { id: "invoices", label: t("billing.tabInvoices") },
@@ -44,6 +52,7 @@ const PlansTab: FC = () => {
   const { t } = useTranslation();
   const toast = useToast();
   const [show, setShow] = useState(false);
+  const [edit, setEdit] = useState<Plan | null>(null);
   const { data, loading, error, reload } = useFetch<Plan[]>(() => api.get("/plans"), []);
 
   const remove = async (id: number) => {
@@ -72,7 +81,10 @@ const PlansTab: FC = () => {
                     <td>{p.data_limit ? formatBytes(p.data_limit) : "∞"}</td>
                     <td>{p.duration_days ? `${p.duration_days}d` : "∞"}</td>
                     <td><Pill tone={p.enabled ? "ok" : "default"} dot>{p.enabled ? t("common.enabled") : t("common.disabled")}</Pill></td>
-                    <td><div className="nx-row" style={{ justifyContent: "flex-end" }}><Button variant="danger" size="sm" onClick={() => remove(p.id)}><IcTrash className="nx-ico" /></Button></div></td>
+                    <td><div className="nx-row" style={{ justifyContent: "flex-end", gap: 6 }}>
+                      <Button size="sm" variant="ghost" onClick={() => setEdit(p)}><IcEdit className="nx-ico" /></Button>
+                      <Button variant="danger" size="sm" onClick={() => remove(p.id)}><IcTrash className="nx-ico" /></Button>
+                    </div></td>
                   </tr>
                 ))}
               </tbody>
@@ -80,7 +92,73 @@ const PlansTab: FC = () => {
           )}
       </Card>
       {show && <AddPlan onClose={() => setShow(false)} onDone={() => { setShow(false); reload(); }} />}
+      {edit && <EditPlan plan={edit} onClose={() => setEdit(null)} onDone={() => { setEdit(null); reload(); }} />}
     </>
+  );
+};
+
+const CreditModal: FC<{ onClose: () => void; onDone: () => void }> = ({ onClose, onDone }) => {
+  const { t } = useTranslation();
+  const toast = useToast();
+  const [username, setUsername] = useState("");
+  const [amount, setAmount] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    setBusy(true);
+    try {
+      await api.post("/billing/credit", { username: username.trim(), amount: parseInt(amount, 10) || 0 });
+      toast.push(t("common.saved"), "success");
+      onDone();
+    } catch (e: any) { toast.push(e.message, "error"); } finally { setBusy(false); }
+  };
+  return (
+    <Modal open title={t("billing.addCredit")} onClose={onClose}
+      footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
+        <Button variant="primary" disabled={busy || !username || !amount} onClick={submit}>{t("common.save")}</Button></>}>
+      <div className="nx-stack">
+        <Field label={t("common.username")}><Input value={username} onChange={(e: any) => setUsername(e.target.value)} /></Field>
+        <Field label={t("billing.creditAmount")}><Input type="number" value={amount} onChange={(e: any) => setAmount(e.target.value)} /></Field>
+      </div>
+    </Modal>
+  );
+};
+
+const EditPlan: FC<{ plan: Plan; onClose: () => void; onDone: () => void }> = ({ plan, onClose, onDone }) => {
+  const { t } = useTranslation();
+  const toast = useToast();
+  const [f, setF] = useState({
+    name: plan.name,
+    price: String(plan.price),
+    dataGb: plan.data_limit ? String(plan.data_limit / 1024 ** 3) : "",
+    days: plan.duration_days ? String(plan.duration_days) : "",
+    enabled: plan.enabled,
+  });
+  const [busy, setBusy] = useState(false);
+  const upd = (k: string) => (e: any) => setF({ ...f, [k]: e.target.type === "checkbox" ? e.target.checked : e.target.value });
+  const submit = async () => {
+    setBusy(true);
+    try {
+      await api.put(`/plans/${plan.id}`, {
+        name: f.name.trim(),
+        price: parseInt(f.price) || 0,
+        data_limit: f.dataGb ? Math.round(parseFloat(f.dataGb) * 1024 ** 3) : null,
+        duration_days: f.days ? parseInt(f.days) : null,
+        enabled: f.enabled,
+      });
+      toast.push(t("common.saved"), "success");
+      onDone();
+    } catch (e: any) { toast.push(e.message, "error"); } finally { setBusy(false); }
+  };
+  return (
+    <Modal open title={`${t("common.edit")} — ${plan.name}`} onClose={onClose}
+      footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
+        <Button variant="primary" disabled={busy} onClick={submit}>{t("common.save")}</Button></>}>
+      <div className="nx-stack">
+        <Field label={t("common.name")}><Input value={f.name} onChange={upd("name")} /></Field>
+        <Field label={t("billing.price")}><Input type="number" value={f.price} onChange={upd("price")} /></Field>
+        <label className="nx-row" style={{ gap: 8 }}><input type="checkbox" checked={f.enabled} onChange={upd("enabled")} /> {t("common.enabled")}</label>
+      </div>
+    </Modal>
   );
 };
 

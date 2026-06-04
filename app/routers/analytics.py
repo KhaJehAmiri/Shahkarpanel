@@ -30,6 +30,7 @@ class RealtimeStats(BaseModel):
     incoming_bandwidth_speed: int
     outgoing_bandwidth_speed: int
     bandwidth_source: str = "nic"
+    bandwidth_scope: str = "host"
 
 
 @router.get("/top-users", response_model=List[TopUser])
@@ -84,4 +85,5 @@ def realtime(
         incoming_bandwidth_speed=bandwidth.incoming_bytes,
         outgoing_bandwidth_speed=bandwidth.outgoing_bytes,
         bandwidth_source=realtime_bandwidth_source(),
+        bandwidth_scope="host" if admin.is_sudo else "scoped_users",
     )

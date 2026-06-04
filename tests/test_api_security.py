@@ -83,6 +83,22 @@ def test_reseller_max_users_enforced():
             )
 
 
+def test_login_rate_limit_blocks_after_max():
+    from app.login_limit import enforce_login_rate_limit
+
+    class FakeReq:
+        client = type("C", (), {"host": "9.9.9.9"})()
+
+    req = FakeReq()
+    for _ in range(2):
+        enforce_login_rate_limit(req, max_attempts=2, window_seconds=3600)
+    import pytest
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as exc:
+        enforce_login_rate_limit(req, max_attempts=2, window_seconds=3600)
+    assert exc.value.status_code == 429
+
+
 def test_ws_bearer_token_from_header_only():
     from app.utils.ws_auth import ws_bearer_token
 

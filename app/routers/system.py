@@ -40,7 +40,9 @@ def get_system_stats(
     users_limited = crud.get_users_count(
         db, status=UserStatus.limited, admin=dbadmin if not admin.is_sudo else None
     )
-    online_users = crud.count_online_users(db, 24)
+    online_users = crud.count_online_users(
+        db, 24, admin=dbadmin if not admin.is_sudo else None
+    )
     realtime_bandwidth_stats = realtime_bandwidth()
 
     return SystemStats(
@@ -102,3 +104,25 @@ def modify_hosts(
     xray.hosts.update()
 
     return {tag: crud.get_hosts(db, tag) for tag in xray.config.inbounds_by_tag}
+
+
+@router.post("/system/jwt/rotate")
+def rotate_jwt_secret(
+    db: Session = Depends(get_db),
+    _: Admin = Depends(Admin.check_sudo_admin),
+):
+    """Rotate subscription JWT signing secret (invalidates existing sub links)."""
+    import secrets
+
+    from app.db.models import JWT
+    from app.utils.jwt import clear_secret_key_cache
+
+    row = db.query(JWT).first()
+    key = secrets.token_urlsafe(32)
+    if row is None:
+        db.add(JWT(secret_key=key))
+    else:
+        row.secret_key = key
+    db.commit()
+    clear_secret_key_cache()
+    return {"detail": "JWT secret rotated; users must refresh subscription links"}

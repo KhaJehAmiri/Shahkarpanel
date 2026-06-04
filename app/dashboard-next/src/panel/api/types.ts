@@ -188,6 +188,7 @@ export interface RealtimeStats {
   incoming_bandwidth_speed: number;
   outgoing_bandwidth_speed: number;
   bandwidth_source?: string;
+  bandwidth_scope?: string;
 }
 
 export interface PluginsStatus {

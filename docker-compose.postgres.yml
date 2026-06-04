@@ -55,7 +55,10 @@ services:
     volumes:
       - /var/lib/nexuspanel/redis:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test:
+        - CMD-SHELL
+        - |
+          if [ -n "$$REDIS_PASSWORD" ]; then redis-cli -a "$$REDIS_PASSWORD" ping | grep -q PONG; else redis-cli ping | grep -q PONG; fi
       interval: 5s
       timeout: 5s
       retries: 10

@@ -50,6 +50,11 @@ RUN test -f /code/app/dashboard-next/out/dashboard/index.html \
     || (echo "ERROR: dashboard-next not built. Run: ./build_dashboard.sh" && exit 1)
 
 RUN ln -sf /code/nexuspanel-cli.py /usr/bin/nexuspanel-cli \
-    && chmod +x /usr/bin/nexuspanel-cli
+    && chmod +x /usr/bin/nexuspanel-cli \
+    && groupadd --gid 1000 nexuspanel 2>/dev/null || true \
+    && useradd --uid 1000 --gid 1000 --create-home --home-dir /home/nexuspanel nexuspanel 2>/dev/null || true \
+    && chown -R nexuspanel:nexuspanel /code
+
+USER nexuspanel
 
 CMD ["bash", "-c", "alembic upgrade head && exec python main.py"]

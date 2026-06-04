@@ -99,6 +99,13 @@ const BackupTab: FC = () => {
             {data.map((b) => (
               <div key={b} className="nx-row" style={{ justifyContent: "space-between", background: "var(--nx-surface-2)", padding: "10px 14px", borderRadius: 8 }}>
                 <span className="nx-mono" style={{ fontSize: 12 }}>{b}</span>
+                <Button size="sm" variant="danger" onClick={async () => {
+                  if (!confirm(t("system.restoreConfirm"))) return;
+                  try {
+                    await api.post(`/backups/${encodeURIComponent(b)}/restore`);
+                    toast.push(t("system.restoreDone"), "success");
+                  } catch (e: any) { toast.push(e.message, "error"); }
+                }}>{t("system.restore")}</Button>
               </div>
             ))}
           </div>}

@@ -34,6 +34,9 @@ NODE_CONTROL_SECRET = config("NODE_CONTROL_SECRET", default="")
 NODE_SSL_VERIFY = config("NODE_SSL_VERIFY", cast=bool, default=False)
 NODE_BOOTSTRAP_MAX_ATTEMPTS = config("NODE_BOOTSTRAP_MAX_ATTEMPTS", cast=int, default=20)
 NODE_BOOTSTRAP_WINDOW_SECONDS = config("NODE_BOOTSTRAP_WINDOW_SECONDS", cast=int, default=3600)
+LOGIN_MAX_ATTEMPTS = config("LOGIN_MAX_ATTEMPTS", cast=int, default=10)
+LOGIN_MAX_WINDOW_SECONDS = config("LOGIN_MAX_WINDOW_SECONDS", cast=int, default=900)
+PROVISIONING_SSH_STRICT_HOST_KEY = config("PROVISIONING_SSH_STRICT_HOST_KEY", cast=bool, default=True)
 # Interval (seconds) for the cluster failover detector. 0 disables it.
 CLUSTER_FAILOVER_CHECK_INTERVAL = config("CLUSTER_FAILOVER_CHECK_INTERVAL", cast=int, default=0)
 # A node must stay in error for this many seconds before being considered down.

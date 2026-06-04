@@ -7,10 +7,11 @@ from sqlalchemy.exc import IntegrityError
 from app import xray
 from app.db import Session, crud, get_db
 from app.dependencies import get_admin_by_username, validate_admin
+from app.login_limit import enforce_login_rate_limit
 from app.models.admin import Admin, AdminCreate, AdminModify, Token
 from app.utils import report, responses
 from app.utils.jwt import create_admin_token
-from config import LOGIN_NOTIFY_WHITE_LIST
+from config import LOGIN_MAX_ATTEMPTS, LOGIN_MAX_WINDOW_SECONDS, LOGIN_NOTIFY_WHITE_LIST
 
 router = APIRouter(tags=["Admin"], prefix="/api", responses={401: responses._401})
 
@@ -32,6 +33,11 @@ def admin_token(
     db: Session = Depends(get_db),
 ):
     """Authenticate an admin and issue a token."""
+    enforce_login_rate_limit(
+        request,
+        max_attempts=LOGIN_MAX_ATTEMPTS,
+        window_seconds=LOGIN_MAX_WINDOW_SECONDS,
+    )
     client_ip = get_client_ip(request)
 
     dbadmin = validate_admin(db, form_data.username, form_data.password)

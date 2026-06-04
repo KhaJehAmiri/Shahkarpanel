@@ -2,13 +2,13 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Union
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 
 from app import logger, xray
 from app.db import Session, crud, get_db
 from app.dependencies import get_expired_users_list, get_validated_user, validate_dates
 from app.models.admin import Admin
-from app.rbac import require_permission
 from app.models.proxy import ProxyTypes
 from app.models.user import (
     UserCreate,
@@ -16,12 +16,20 @@ from app.models.user import (
     UserResponse,
     UsersResponse,
     UserStatus,
+    UserStatusCreate,
     UsersUsagesResponse,
     UserUsagesResponse,
 )
+from app.rbac import require_permission
 from app.utils import report, responses
 
 router = APIRouter(tags=["User"], prefix="/api", responses={401: responses._401})
+
+
+class UserFromTemplateCreate(BaseModel):
+    username: str
+    template_id: int
+    status: UserStatusCreate = UserStatusCreate.active  # noqa: F821
 
 
 def _ensure_protocol_enabled(proxy_type, db: Session) -> None:
@@ -87,6 +95,66 @@ def add_user(
     user = UserResponse.model_validate(dbuser)
     report.user_created(user=user, user_id=dbuser.id, by=admin, user_admin=dbuser.admin)
     logger.info(f'New user "{dbuser.username}" added')
+    return user
+
+
+@router.post(
+    "/user/from-template",
+    response_model=UserResponse,
+    responses={400: responses._400, 403: responses._403, 404: responses._404, 409: responses._409},
+)
+def add_user_from_template(
+    body: UserFromTemplateCreate,
+    bg: BackgroundTasks,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(require_permission("users:write")),
+):
+    """Create a user from a saved template (prefix/suffix, limits, inbounds)."""
+    from app.models.user_template import UserTemplateResponse
+
+    db_tpl = crud.get_user_template(db, body.template_id)
+    if db_tpl is None:
+        raise HTTPException(status_code=404, detail="Template not found")
+    tpl = UserTemplateResponse.model_validate(db_tpl)
+
+    username = body.username.strip()
+    if db_tpl.username_prefix:
+        username = f"{db_tpl.username_prefix}{username}"
+    if db_tpl.username_suffix:
+        username = f"{db_tpl.username_suffix}{username}"
+
+    proxies = {ptype: {} for ptype in tpl.inbounds}
+    for ptype in proxies:
+        _ensure_protocol_enabled(ptype, db)
+
+    expire = 0
+    if tpl.expire_duration:
+        expire = int(
+            (datetime.now(timezone.utc) + timedelta(seconds=tpl.expire_duration)).timestamp()
+        )
+
+    new_user = UserCreate(
+        username=username,
+        proxies=proxies,
+        inbounds=tpl.inbounds,
+        data_limit=tpl.data_limit if tpl.data_limit is not None else 0,
+        expire=expire,
+        status=body.status,
+    )
+    try:
+        dbuser = crud.create_user(db, new_user, admin=crud.get_admin(db, admin.username))
+    except ValueError as exc:
+        if "user limit" in str(exc).lower():
+            raise HTTPException(status_code=403, detail=str(exc))
+        raise
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="User already exists")
+
+    bg.add_task(xray.operations.add_user, dbuser=dbuser)
+    user = UserResponse.model_validate(dbuser)
+    report.user_created(user=user, user_id=dbuser.id, by=admin, user_admin=dbuser.admin)
+    logger.info(f'New user "{dbuser.username}" added from template {body.template_id}')
     return user
 
 
@@ -298,7 +366,7 @@ def active_next_plan(
     if (dbuser is None or dbuser.next_plan is None):
         raise HTTPException(
             status_code=404,
-            detail=f"User doesn't have next plan",
+            detail="User doesn't have next plan",
         )
 
     if dbuser.status in [UserStatus.active, UserStatus.on_hold]:

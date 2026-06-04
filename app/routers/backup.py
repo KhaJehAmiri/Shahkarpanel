@@ -1,7 +1,7 @@
 import os
 from typing import List
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app import backup as backup_module
@@ -30,3 +30,26 @@ def create_backup(_: Admin = Depends(Admin.check_sudo_admin)):
 def list_backups(_: Admin = Depends(Admin.check_sudo_admin)):
     """List available backup archives. Accessible only to sudo admins."""
     return [os.path.basename(p) for p in backup_module.list_backups()]
+
+
+@router.post("/backups/{filename}/restore")
+def restore_backup_archive(
+    filename: str,
+    _: Admin = Depends(Admin.check_sudo_admin),
+):
+    """Restore a named backup archive (SQLite: automatic; PG: extracts SQL dump)."""
+    if not filename or "/" in filename or ".." in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid backup filename")
+    backups = backup_module.list_backups()
+    match = next((p for p in backups if os.path.basename(p) == filename), None)
+    if match is None:
+        raise HTTPException(status_code=404, detail="Backup not found")
+    try:
+        backup_module.restore_backup(match)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Backup not found")
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"detail": "Backup restored"}

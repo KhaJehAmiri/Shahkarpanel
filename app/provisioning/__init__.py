@@ -124,8 +124,13 @@ def run_remote_command(creds: SSHCredentials, command: str, timeout: int = 20) -
             "command to provision the server manually."
         ) from exc
 
+    from config import PROVISIONING_SSH_STRICT_HOST_KEY
+
     client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    if PROVISIONING_SSH_STRICT_HOST_KEY:
+        client.set_missing_host_key_policy(paramiko.RejectPolicy())
+    else:
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
         connect_kwargs = dict(
             hostname=creds.host,

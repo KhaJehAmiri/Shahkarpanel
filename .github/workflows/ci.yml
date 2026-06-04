@@ -31,8 +31,12 @@ jobs:
           printf '#!/usr/bin/env bash\ncase "$1" in\n  version) echo "Xray 1.8.4 (stub)";;\n  x25519) printf "Private key: k\\nPublic key: p\\n";;\n  *) echo stub;;\nesac\n' | sudo tee /usr/local/bin/xray > /dev/null
           sudo chmod +x /usr/local/bin/xray
 
-      - name: Lint (new modules)
-        run: ruff check app/events app/backup.py app/bootstrap_limit.py app/feature_flags.py app/utils/logging.py tests
+      - name: Lint
+        run: |
+          ruff check app/login_limit.py app/bootstrap_limit.py app/utils/ws_auth.py \
+            app/routers/admin.py app/routers/backup.py app/routers/user.py app/routers/system.py \
+            app/routers/analytics.py app/routers/user_template.py app/provisioning/__init__.py \
+            app/events app/backup.py app/feature_flags.py app/utils/logging.py tests
 
       - name: Run tests
         run: pytest -q

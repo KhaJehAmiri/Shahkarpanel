@@ -20,4 +20,7 @@ DEBUG = config("DEBUG", cast=bool, default=False)
 
 SERVICE_PROTOCOL = config('SERVICE_PROTOCOL', cast=str, default='rest')
 
+# Must match panel NODE_CONTROL_SECRET when set (sent as X-Nexus-Control-Secret).
+NODE_CONTROL_SECRET = config("NODE_CONTROL_SECRET", default="")
+
 INBOUNDS = config("INBOUNDS", cast=lambda v: [x.strip() for x in v.split(',')] if v else [], default="")

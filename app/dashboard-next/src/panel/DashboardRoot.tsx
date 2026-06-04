@@ -14,6 +14,7 @@ import { Automation } from "./pages/Automation";
 import { Analytics } from "./pages/Analytics";
 import { Billing } from "./pages/Billing";
 import { System } from "./pages/System";
+import { SetupWizard } from "./components/SetupWizard";
 import "./i18n";
 
 const Splash: FC = () => (
@@ -34,7 +35,9 @@ export default function DashboardRoot() {
   if (!admin) return <Login />;
 
   return (
-    <HashRouter>
+    <>
+      <SetupWizard />
+      <HashRouter>
       <Routes>
         <Route element={<Shell />}>
           <Route index element={<Navigate to="/overview" replace />} />
@@ -51,5 +54,6 @@ export default function DashboardRoot() {
         </Route>
       </Routes>
     </HashRouter>
+    </>
   );
 }

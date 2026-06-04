@@ -1,8 +1,9 @@
 import asyncio
+import hmac
 import time
 from typing import List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, WebSocket
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, WebSocket
 from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 from starlette.websockets import WebSocketDisconnect
@@ -24,7 +25,12 @@ from app.models.node import (
 )
 from app.models.proxy import ProxyHost
 from app.utils import responses
-from config import NODE_BOOTSTRAP_TOKEN
+from app.bootstrap_limit import enforce_bootstrap_rate_limit
+from config import (
+    NODE_BOOTSTRAP_MAX_ATTEMPTS,
+    NODE_BOOTSTRAP_TOKEN,
+    NODE_BOOTSTRAP_WINDOW_SECONDS,
+)
 
 
 class NodeBootstrap(BaseModel):
@@ -72,13 +78,23 @@ def get_node_settings(
 
 @router.post("/node/bootstrap", response_model=NodeBootstrapResponse,
              responses={403: responses._403, 409: responses._409})
-def bootstrap_node(body: NodeBootstrap, bg: BackgroundTasks, db: Session = Depends(get_db)):
+def bootstrap_node(
+    request: Request,
+    body: NodeBootstrap,
+    bg: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
     """Self-register a node using a shared bootstrap token (auto-discovery).
 
     Disabled unless NODE_BOOTSTRAP_TOKEN is set. Returns the panel TLS
     certificate the node needs to trust incoming control connections.
     """
-    if not NODE_BOOTSTRAP_TOKEN or body.token != NODE_BOOTSTRAP_TOKEN:
+    enforce_bootstrap_rate_limit(
+        request,
+        max_attempts=NODE_BOOTSTRAP_MAX_ATTEMPTS,
+        window_seconds=NODE_BOOTSTRAP_WINDOW_SECONDS,
+    )
+    if not NODE_BOOTSTRAP_TOKEN or not hmac.compare_digest(body.token, NODE_BOOTSTRAP_TOKEN):
         raise HTTPException(status_code=403, detail="Invalid or disabled bootstrap token")
 
     try:

@@ -28,6 +28,10 @@ METRICS_TOKEN = config("METRICS_TOKEN", default="")
 # Token allowing a node to self-register via POST /api/node/bootstrap.
 # Leave empty to disable auto-discovery.
 NODE_BOOTSTRAP_TOKEN = config("NODE_BOOTSTRAP_TOKEN", default="")
+# Shared secret for REST node control API (header X-Nexus-Control-Secret). Empty = disabled.
+NODE_CONTROL_SECRET = config("NODE_CONTROL_SECRET", default="")
+NODE_BOOTSTRAP_MAX_ATTEMPTS = config("NODE_BOOTSTRAP_MAX_ATTEMPTS", cast=int, default=20)
+NODE_BOOTSTRAP_WINDOW_SECONDS = config("NODE_BOOTSTRAP_WINDOW_SECONDS", cast=int, default=3600)
 # Interval (seconds) for the cluster failover detector. 0 disables it.
 CLUSTER_FAILOVER_CHECK_INTERVAL = config("CLUSTER_FAILOVER_CHECK_INTERVAL", cast=int, default=0)
 # A node must stay in error for this many seconds before being considered down.
@@ -181,10 +185,15 @@ USERS_AUTODELETE_DAYS = config("USERS_AUTODELETE_DAYS", default=-1, cast=int)
 USER_AUTODELETE_INCLUDE_LIMITED_ACCOUNTS = config("USER_AUTODELETE_INCLUDE_LIMITED_ACCOUNTS", default=False, cast=bool)
 
 
-# USERNAME: PASSWORD
-SUDOERS = {config("SUDO_USERNAME"): config("SUDO_PASSWORD")} \
-    if config("SUDO_USERNAME", default='') and config("SUDO_PASSWORD", default='') \
+# Sudo bootstrap: prefer SUDO_PASSWORD_HASH (bcrypt). Plain SUDO_PASSWORD is legacy.
+SUDO_USERNAME = config("SUDO_USERNAME", default="")
+SUDO_PASSWORD = config("SUDO_PASSWORD", default="")
+SUDO_PASSWORD_HASH = config("SUDO_PASSWORD_HASH", default="")
+SUDOERS = (
+    {SUDO_USERNAME: SUDO_PASSWORD}
+    if SUDO_USERNAME and SUDO_PASSWORD and not SUDO_PASSWORD_HASH
     else {}
+)
 
 
 WEBHOOK_ADDRESS = config(

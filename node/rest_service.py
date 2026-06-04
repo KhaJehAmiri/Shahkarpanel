@@ -1,4 +1,5 @@
 import asyncio
+import hmac
 import json
 import time
 from uuid import UUID, uuid4
@@ -305,6 +306,17 @@ class Service(object):
                     break
 
         await websocket.close()
+
+
+@app.middleware("http")
+async def node_control_secret_middleware(request: Request, call_next):
+    from node.config import NODE_CONTROL_SECRET
+
+    if NODE_CONTROL_SECRET and request.method in ("POST", "PUT", "PATCH", "DELETE"):
+        provided = request.headers.get("X-Nexus-Control-Secret", "")
+        if not hmac.compare_digest(provided, NODE_CONTROL_SECRET):
+            return JSONResponse(status_code=403, content={"detail": "Invalid node control secret"})
+    return await call_next(request)
 
 
 service = Service()

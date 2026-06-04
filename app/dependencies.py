@@ -3,7 +3,7 @@ from typing import Optional, Union
 from app.models.admin import AdminInDB, AdminValidationResult, Admin
 from app.models.user import UserResponse, UserStatus
 from app.db import Session, crud, get_db
-from config import SUDOERS
+from config import SUDOERS, SUDO_PASSWORD_HASH, SUDO_USERNAME
 from fastapi import Depends, HTTPException
 from datetime import datetime, timezone, timedelta
 from app.utils.jwt import get_subscription_payload
@@ -12,6 +12,14 @@ from app.rbac import require_permission
 
 def validate_admin(db: Session, username: str, password: str) -> Optional[AdminValidationResult]:
     """Validate admin credentials with environment variables or database."""
+    if SUDO_USERNAME and username == SUDO_USERNAME and SUDO_PASSWORD_HASH:
+        from passlib.hash import bcrypt
+        try:
+            if bcrypt.verify(password or "", SUDO_PASSWORD_HASH):
+                return AdminValidationResult(username=username, is_sudo=True)
+        except ValueError:
+            pass
+
     expected = SUDOERS.get(username)
     if expected is not None and hmac.compare_digest(expected, password or ""):
         return AdminValidationResult(username=username, is_sudo=True)

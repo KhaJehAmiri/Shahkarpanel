@@ -100,9 +100,17 @@ class ReSTXRayNode:
         return config
 
     def make_request(self, path: str, timeout: int, **params):
+        from config import NODE_CONTROL_SECRET
+        headers = {}
+        if NODE_CONTROL_SECRET:
+            headers["X-Nexus-Control-Secret"] = NODE_CONTROL_SECRET
         try:
-            res = self.session.post(self._rest_api_url + path, timeout=timeout,
-                                    json={"session_id": self._session_id, **params})
+            res = self.session.post(
+                self._rest_api_url + path,
+                timeout=timeout,
+                headers=headers,
+                json={"session_id": self._session_id, **params},
+            )
             data = res.json()
         except Exception as e:
             exc = NodeAPIError(0, str(e))

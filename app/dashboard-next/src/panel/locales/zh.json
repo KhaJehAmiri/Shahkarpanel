@@ -343,6 +343,16 @@
     "themeDark": "深色",
     "themeLight": "浅色",
     "language": "语言",
-    "aboutText": "NexusPanel 是一个现代化的多租户代理基础设施控制台。"
+    "aboutText": "NexusPanel 是一个现代化的多租户代理基础设施控制台。",
+    "tabAdmins": "管理员",
+    "addAdmin": "添加管理员"
+  },
+  "setup": {
+    "title": "首次设置",
+    "description": "配置面板标题并启用可选模块。",
+    "panelTitle": "面板标题",
+    "features": "启用功能",
+    "finish": "完成设置",
+    "skip": "稍后"
   }
 }

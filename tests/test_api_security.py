@@ -2,6 +2,8 @@
 import inspect
 
 import pytest
+from fastapi import HTTPException
+from starlette.requests import Request
 
 from app import api_keys as api_keys_mod
 from app import feature_flags as ff
@@ -79,3 +81,16 @@ def test_reseller_max_users_enforced():
                 ),
                 admin=owner,
             )
+
+
+def test_bootstrap_rate_limit_blocks_after_max():
+    from app.bootstrap_limit import enforce_bootstrap_rate_limit
+
+    scope = {"type": "http", "method": "POST", "path": "/", "headers": [], "client": ("1.2.3.4", 0)}
+    req = Request(scope)
+
+    for _ in range(3):
+        enforce_bootstrap_rate_limit(req, max_attempts=3, window_seconds=3600)
+    with pytest.raises(HTTPException) as exc:
+        enforce_bootstrap_rate_limit(req, max_attempts=3, window_seconds=3600)
+    assert exc.value.status_code == 429

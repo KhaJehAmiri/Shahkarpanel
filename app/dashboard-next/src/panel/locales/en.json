@@ -347,6 +347,16 @@
     "themeDark": "Dark",
     "themeLight": "Light",
     "language": "Language",
-    "aboutText": "NexusPanel is a modern, multi-tenant control plane for proxy infrastructure."
+    "aboutText": "NexusPanel is a modern, multi-tenant control plane for proxy infrastructure.",
+    "tabAdmins": "Admins",
+    "addAdmin": "Add admin"
+  },
+  "setup": {
+    "title": "First-time setup",
+    "description": "Configure your panel title and enable optional modules.",
+    "panelTitle": "Panel title",
+    "features": "Enable features",
+    "finish": "Finish setup",
+    "skip": "Skip for now"
   }
 }

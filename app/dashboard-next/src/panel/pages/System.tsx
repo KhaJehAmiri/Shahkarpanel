@@ -16,7 +16,11 @@ export const System: FC = () => {
   const { admin } = useApp();
   const [tab, setTab] = useState(admin?.is_sudo ? "flags" : "apikeys");
   const tabs = [
-    ...(admin?.is_sudo ? [{ id: "flags", label: t("system.tabFlags") }, { id: "backup", label: t("system.tabBackup") }] : []),
+    ...(admin?.is_sudo ? [
+      { id: "flags", label: t("system.tabFlags") },
+      { id: "backup", label: t("system.tabBackup") },
+      { id: "admins", label: t("system.tabAdmins") },
+    ] : []),
     { id: "apikeys", label: t("system.tabApiKeys") },
     { id: "about", label: t("system.tabAbout") },
   ];
@@ -26,6 +30,7 @@ export const System: FC = () => {
       <Tabs active={tab} onChange={setTab} tabs={tabs} />
       {tab === "flags" && <FlagsTab />}
       {tab === "backup" && <BackupTab />}
+      {tab === "admins" && <AdminsTab />}
       {tab === "apikeys" && <ApiKeysTab />}
       {tab === "about" && <AboutTab />}
     </div>
@@ -215,5 +220,73 @@ const AboutTab: FC = () => {
         </div>
       </Card>
     </div>
+  );
+};
+
+const AdminsTab: FC = () => {
+  const { t } = useTranslation();
+  const toast = useToast();
+  const [show, setShow] = useState(false);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [role, setRole] = useState("reseller");
+  const { data, loading, error, reload, status } = useFetch<{ username: string; is_sudo: boolean; role?: string }[]>(
+    () => api.get("/admins"),
+    [],
+  );
+
+  if (status === 403) return <Callout tone="warn">{t("common.sudoOnly")}</Callout>;
+
+  const create = async () => {
+    try {
+      await api.post("/admin", { username, password, is_sudo: false, role });
+      toast.push(t("common.created"), "success");
+      setShow(false);
+      setUsername("");
+      setPassword("");
+      reload();
+    } catch (e: any) {
+      toast.push(e.message, "error");
+    }
+  };
+
+  return (
+    <>
+      <div className="nx-row" style={{ justifyContent: "flex-end", marginBottom: 14 }}>
+        <Button variant="primary" onClick={() => setShow(true)}><IcPlus className="nx-ico" /> {t("system.addAdmin")}</Button>
+      </div>
+      <Card pad0>
+        {loading ? <div style={{ padding: 20 }}><SkeletonRows rows={4} cols={3} /></div>
+          : error ? <EmptyState title={t("common.error")} desc={error} />
+          : (
+            <table className="nx-table">
+              <thead><tr><th>{t("common.username")}</th><th>{t("common.status")}</th><th>Role</th></tr></thead>
+              <tbody>
+                {(data || []).map((a) => (
+                  <tr key={a.username}>
+                    <td><code>{a.username}</code></td>
+                    <td>{a.is_sudo ? "sudo" : "admin"}</td>
+                    <td>{a.role || "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+      </Card>
+      <Modal open={show} title={t("system.addAdmin")} onClose={() => setShow(false)}
+        footer={<><Button variant="ghost" onClick={() => setShow(false)}>{t("common.cancel")}</Button>
+          <Button variant="primary" disabled={!username || !password} onClick={create}>{t("common.create")}</Button></>}>
+        <div className="nx-stack">
+          <Field label={t("common.username")}><Input value={username} onChange={(e: any) => setUsername(e.target.value)} /></Field>
+          <Field label={t("common.password")}><Input type="password" value={password} onChange={(e: any) => setPassword(e.target.value)} /></Field>
+          <Field label="Role">
+            <select className="nx-input" value={role} onChange={(e) => setRole(e.target.value)}>
+              <option value="reseller">reseller</option>
+              <option value="support">support</option>
+            </select>
+          </Field>
+        </div>
+      </Modal>
+    </>
   );
 };

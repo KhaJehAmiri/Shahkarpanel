@@ -8,6 +8,7 @@ from app.models.admin import Admin
 from app.models.user_template import (UserTemplateCreate, UserTemplateModify,
                                       UserTemplateResponse)
 from app.dependencies import get_user_template
+from app.rbac import require_permission
 
 router = APIRouter(tags=['User Template'], prefix='/api')
 
@@ -35,7 +36,7 @@ def add_user_template(
 @router.get("/user_template/{template_id}", response_model=UserTemplateResponse)
 def get_user_template_endpoint(
     dbuser_template: UserTemplateResponse = Depends(get_user_template),
-    admin: Admin = Depends(Admin.get_current)):
+    _: Admin = Depends(require_permission("users:read"))):
     """Get User Template information with id"""
     return dbuser_template
 
@@ -77,7 +78,7 @@ def get_user_templates(
     offset: int = None,
     limit: int = None,
     db: Session = Depends(get_db),
-    admin: Admin = Depends(Admin.get_current)
+    _: Admin = Depends(require_permission("users:read")),
 ):
     """Get a list of User Templates with optional pagination"""
     return crud.get_user_templates(db, offset, limit)

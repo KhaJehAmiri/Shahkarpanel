@@ -25,6 +25,7 @@ from app.models.node import (
 )
 from app.models.proxy import ProxyHost
 from app.utils import responses
+from app.utils.ws_auth import ws_bearer_token
 from app.bootstrap_limit import enforce_bootstrap_rate_limit
 from config import (
     NODE_BOOTSTRAP_MAX_ATTEMPTS,
@@ -207,9 +208,7 @@ def get_node(
 
 @router.websocket("/node/{node_id}/logs")
 async def node_logs(node_id: int, websocket: WebSocket, db: Session = Depends(get_db)):
-    token = websocket.query_params.get("token") or websocket.headers.get(
-        "Authorization", ""
-    ).removeprefix("Bearer ")
+    token = ws_bearer_token(websocket)
     admin = Admin.get_admin(token, db)
     if not admin:
         return await websocket.close(reason="Unauthorized", code=4401)

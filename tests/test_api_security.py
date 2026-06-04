@@ -83,6 +83,25 @@ def test_reseller_max_users_enforced():
             )
 
 
+def test_ws_bearer_token_from_header_only():
+    from app.utils.ws_auth import ws_bearer_token
+
+    class FakeWS:
+        def __init__(self, headers: dict, query: dict | None = None):
+            self.headers = headers
+            self.query_params = query or {}
+
+    assert ws_bearer_token(FakeWS({"Authorization": "Bearer abc123"})) == "abc123"
+    assert ws_bearer_token(FakeWS({}, {"token": "leaked"})) == ""
+
+
+def test_core_logs_ws_uses_header_auth():
+    from app.routers import core as core_router
+    src = inspect.getsource(core_router.core_logs)
+    assert "ws_bearer_token" in src
+    assert "query_params.get(\"token\")" not in src
+
+
 def test_bootstrap_rate_limit_blocks_after_max():
     from app.bootstrap_limit import enforce_bootstrap_rate_limit
 

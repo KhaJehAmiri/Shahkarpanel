@@ -13,6 +13,8 @@ import { QR } from "../components/QR";
 import { absoluteUrl } from "../lib/url";
 import { copyToClipboard } from "../lib/clipboard";
 import { IcEdit, IcExternal, IcEye, IcPlus, IcRefresh, IcShare, IcTrash } from "../components/icons";
+import { UserTemplatesPanel } from "../components/UserTemplates";
+import { useApp } from "../context/AppContext";
 
 const PAGE = 12;
 const STATUSES = ["active", "disabled", "expired", "limited", "on_hold"];
@@ -25,6 +27,7 @@ const PROTO_LABEL: Record<string, string> = { vless: "VLESS", vmess: "VMess", tr
 
 export const Users: FC = () => {
   const { t, i18n } = useTranslation();
+  const { admin } = useApp();
   const toast = useToast();
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState("");
@@ -68,6 +71,8 @@ export const Users: FC = () => {
           <Button variant="primary" onClick={() => setShowCreate(true)}><IcPlus className="nx-ico" /> {t("common.create")}</Button>
         </>}
       />
+
+      {admin?.is_sudo && <UserTemplatesPanel />}
 
       <Card style={{ marginBottom: 16 }}>
         <div className="nx-row">

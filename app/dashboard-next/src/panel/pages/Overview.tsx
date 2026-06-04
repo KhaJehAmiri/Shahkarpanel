@@ -2,6 +2,7 @@ import { FC, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import { RealtimeStats, SystemStats, TopUser } from "../api/types";
+import { useApp } from "../context/AppContext";
 import { useFetch, usePolling } from "../lib/useFetch";
 import { formatBytes, formatSpeed } from "../lib/format";
 import { PageHeader } from "../components/Shell";
@@ -9,10 +10,17 @@ import { Card, CardHead, Stat, UsageBar, SkeletonRows, Pill, Callout } from "../
 import { BarChart, Donut } from "../components/charts";
 import { IcUsers, IcServer, IcBolt, IcChart, IcDownload } from "../components/icons";
 
+type NodeUsageRow = { node_id: number | null; node_name: string; uplink: number; downlink: number };
+
 export const Overview: FC = () => {
   const { t, i18n } = useTranslation();
+  const { admin } = useApp();
   const sys = useFetch<SystemStats>(() => api.get("/system"), []);
   const top = useFetch<TopUser[]>(() => api.get("/analytics/top-users?limit=8"), []);
+  const nodesUsage = useFetch<{ usages: NodeUsageRow[] }>(
+    () => (admin?.is_sudo ? api.get("/analytics/nodes-usage") : Promise.resolve({ usages: [] })),
+    [admin?.is_sudo],
+  );
   const [rt, setRt] = useState<RealtimeStats | null>(null);
 
   usePolling(() => {
@@ -86,6 +94,19 @@ export const Overview: FC = () => {
           )}
         </Card>
       </div>
+
+      {admin?.is_sudo && nodesUsage.data?.usages?.length ? (
+        <Card style={{ marginTop: 16 }}>
+          <CardHead title={t("overview.nodesUsage")} />
+          <BarChart
+            data={nodesUsage.data.usages.map((n) => ({
+              label: n.node_name,
+              value: n.uplink + n.downlink,
+            }))}
+            format={(v) => formatBytes(v, 0)}
+          />
+        </Card>
+      ) : null}
 
       <Card style={{ marginTop: 16 }}>
         <CardHead title={t("overview.topUsers")} />

@@ -41,15 +41,16 @@ def bump(current: str, part: str) -> str:
 def write_version(version: str) -> None:
     VERSION_FILE.write_text(version + "\n", encoding="utf-8")
     init = INIT_FILE.read_text(encoding="utf-8")
-    init_new, n = re.subn(
-        r'(__version__\s*=\s*["\'])[^"\']+(["\'])',
-        rf"\g<1>{version}\g<2>",
-        init,
-        count=1,
-    )
-    if n != 1:
-        raise SystemExit("Failed to update app/__init__.py")
-    INIT_FILE.write_text(init_new, encoding="utf-8")
+    if "_read_version()" not in init:
+        init_new, n = re.subn(
+            r'(__version__\s*=\s*["\'])[^"\']+(["\'])',
+            rf"\g<1>{version}\g<2>",
+            init,
+            count=1,
+        )
+        if n != 1:
+            raise SystemExit("Failed to update app/__init__.py")
+        INIT_FILE.write_text(init_new, encoding="utf-8")
 
     if PKG_FILE.is_file():
         pkg = PKG_FILE.read_text(encoding="utf-8")

@@ -277,6 +277,11 @@
     "tabRules": "قوانین",
     "tabWorkflows": "گردش‌کارها",
     "tabPlugins": "افزونه‌ها",
+    "tabMarketplace": "بازار افزونه",
+    "install": "نصب",
+    "uninstall": "حذف",
+    "installed": "نصب‌شده",
+    "notInstalled": "نصب نشده",
     "addRule": "افزودن قانون",
     "addWorkflow": "افزودن گردش‌کار",
     "trigger": "رویداد محرک",
@@ -300,7 +305,11 @@
     "exhaustionRisk": "ریسک اتمام حجم",
     "nodeRisk": "ریسک نود",
     "run": "اجرای اسکن",
-    "noFindings": "موردی یافت نشد"
+    "noFindings": "موردی یافت نشد",
+    "smartRouting": "مسیریابی هوشمند",
+    "strategy": "استراتژی",
+    "loadNodes": "بارگذاری نودها",
+    "routingHint": "استراتژی را انتخاب کنید و نودهای مرتب‌شده را ببینید."
   },
   "billing": {
     "title": "مالی",
@@ -349,7 +358,11 @@
     "language": "زبان",
     "aboutText": "نکسوس‌پنل یک کنترل‌پنل مدرن و چندمستاجری برای زیرساخت پروکسی است.",
     "tabAdmins": "ادمین‌ها",
-    "addAdmin": "ادمین جدید"
+    "addAdmin": "ادمین جدید",
+    "role": "نقش",
+    "maxUsers": "حداکثر کاربر",
+    "newPassword": "رمز جدید",
+    "cannotDeleteSudo": "حساب sudo فقط با CLI حذف می‌شود"
   },
   "setup": {
     "title": "راه‌اندازی اولیه",

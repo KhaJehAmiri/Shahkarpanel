@@ -33,6 +33,7 @@ export const Automation: FC = () => {
   const tabs = [
     ...(isEnabled("rule_engine") ? [{ id: "rules", label: t("automation.tabRules") }] : []),
     ...(isEnabled("workflows") ? [{ id: "workflows", label: t("automation.tabWorkflows") }] : []),
+    ...(isEnabled("plugin_marketplace") ? [{ id: "marketplace", label: t("automation.tabMarketplace") }] : []),
     { id: "plugins", label: t("automation.tabPlugins") },
   ];
   const activeTab = tabs.some((x) => x.id === tab) ? tab : (tabs[0]?.id ?? "plugins");
@@ -46,6 +47,7 @@ export const Automation: FC = () => {
       )}
       {activeTab === "rules" && <RulesTab />}
       {activeTab === "workflows" && <WorkflowsTab />}
+      {activeTab === "marketplace" && <MarketplaceTab />}
       {activeTab === "plugins" && <PluginsTab />}
     </div>
   );
@@ -219,6 +221,65 @@ const AddWorkflow: FC<{ onClose: () => void; onDone: () => void }> = ({ onClose,
         <Field label={`${t("automation.steps")} (JSON)`}><Textarea rows={6} value={f.steps} onChange={upd("steps")} /></Field>
       </div>
     </Modal>
+  );
+};
+
+type MktPlugin = {
+  name: string; description?: string; version?: string; installed: boolean;
+  enabled: boolean; rating: number; rating_count: number;
+};
+
+const MarketplaceTab: FC = () => {
+  const { t } = useTranslation();
+  const toast = useToast();
+  const { data, loading, error, reload } = useFetch<MktPlugin[]>(() => api.get("/marketplace/plugins"), []);
+
+  const install = async (name: string) => {
+    try {
+      await api.post(`/marketplace/plugins/${encodeURIComponent(name)}/install`);
+      toast.push(t("common.saved"), "success");
+      reload();
+    } catch (e: any) { toast.push(e.message, "error"); }
+  };
+  const uninstall = async (name: string) => {
+    if (!confirm(t("common.confirmDelete"))) return;
+    try {
+      await api.post(`/marketplace/plugins/${encodeURIComponent(name)}/uninstall`);
+      toast.push(t("common.deleted"), "success");
+      reload();
+    } catch (e: any) { toast.push(e.message, "error"); }
+  };
+
+  if (loading) return <Card><SkeletonRows rows={3} cols={2} /></Card>;
+  if (error) return <EmptyState title={t("common.error")} desc={error} />;
+
+  return (
+    <Card>
+      {!data?.length ? <div className="nx-muted">{t("automation.noPlugins")}</div>
+        : (
+          <div className="nx-stack" style={{ gap: 10 }}>
+            {data.map((p) => (
+              <div key={p.name} className="nx-card" style={{ background: "var(--nx-surface-2)", padding: 14 }}>
+                <div className="nx-row" style={{ justifyContent: "space-between" }}>
+                  <div>
+                    <div style={{ fontWeight: 600 }}>{p.name}</div>
+                    <div className="nx-muted" style={{ fontSize: 13 }}>{p.description || "—"}</div>
+                    <div className="nx-faint" style={{ fontSize: 11, marginTop: 4 }}>
+                      ★ {p.rating.toFixed(1)} ({p.rating_count}) · v{p.version || "?"}
+                    </div>
+                  </div>
+                  <div className="nx-row" style={{ gap: 6 }}>
+                    <Pill tone={p.installed ? "ok" : "default"}>{p.installed ? t("automation.installed") : t("automation.notInstalled")}</Pill>
+                    {p.installed
+                      ? <Button size="sm" variant="danger" onClick={() => uninstall(p.name)}>{t("automation.uninstall")}</Button>
+                      : <Button size="sm" variant="primary" onClick={() => install(p.name)}>{t("automation.install")}</Button>}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+    </Card>
   );
 };
 

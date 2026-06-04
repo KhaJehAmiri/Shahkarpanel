@@ -43,11 +43,15 @@ export const Shell: FC = () => {
 
   const nav = useMemo(() => {
     if (admin?.is_sudo) return NAV_BASE;
-    return NAV_BASE.map((s) => ({
-      ...s,
-      items: s.items.filter((id) => id !== "inbounds" && id !== "infrastructure" && id !== "automation"),
-    }));
-  }, [admin?.is_sudo]);
+    const role = admin?.role || "reseller";
+    return NAV_BASE.map((s) => {
+      let items = s.items.filter((id) => id !== "inbounds" && id !== "infrastructure" && id !== "automation");
+      if (role === "support") {
+        items = items.filter((id) => id !== "resellers" && id !== "billing");
+      }
+      return { ...s, items };
+    });
+  }, [admin?.is_sudo, admin?.role]);
 
   const currentId =
     Object.keys(PATHS).find((k) => loc.pathname.startsWith(PATHS[k])) || "overview";

@@ -273,6 +273,11 @@
     "tabRules": "Правила",
     "tabWorkflows": "Сценарии",
     "tabPlugins": "Плагины",
+    "tabMarketplace": "Маркетплейс",
+    "install": "Установить",
+    "uninstall": "Удалить",
+    "installed": "Установлен",
+    "notInstalled": "Не установлен",
     "addRule": "Добавить правило",
     "addWorkflow": "Добавить сценарий",
     "trigger": "Событие-триггер",
@@ -296,7 +301,11 @@
     "exhaustionRisk": "Риск исчерпания",
     "nodeRisk": "Риск узла",
     "run": "Запустить анализ",
-    "noFindings": "Ничего не найдено"
+    "noFindings": "Ничего не найдено",
+    "smartRouting": "Умная маршрутизация",
+    "strategy": "Стратегия",
+    "loadNodes": "Загрузить ноды",
+    "routingHint": "Выберите стратегию и загрузите ноды по приоритету."
   },
   "billing": {
     "title": "Биллинг",
@@ -345,7 +354,11 @@
     "language": "Язык",
     "aboutText": "NexusPanel — современная многоарендная панель управления прокси-инфраструктурой.",
     "tabAdmins": "Админы",
-    "addAdmin": "Добавить админа"
+    "addAdmin": "Добавить админа",
+    "role": "Роль",
+    "maxUsers": "Макс. пользователей",
+    "newPassword": "Новый пароль",
+    "cannotDeleteSudo": "Sudo удаляется только через CLI"
   },
   "setup": {
     "title": "Первоначальная настройка",

@@ -9,7 +9,7 @@ import { LANGUAGES, setLanguage } from "../i18n";
 import {
   Button, Callout, Card, CardHead, EmptyState, Field, Input, Modal, Pill, SkeletonRows, Tabs, Toggle, useToast,
 } from "../components/ui";
-import { IcPlus, IcDownload, IcTrash, IcKey, IcSun, IcMoon } from "../components/icons";
+import { IcPlus, IcDownload, IcTrash, IcKey, IcSun, IcMoon, IcEdit } from "../components/icons";
 
 export const System: FC = () => {
   const { t } = useTranslation();
@@ -223,17 +223,17 @@ const AboutTab: FC = () => {
   );
 };
 
+type AdminRow = { username: string; is_sudo: boolean; role?: string; max_users?: number | null };
+
 const AdminsTab: FC = () => {
   const { t } = useTranslation();
   const toast = useToast();
   const [show, setShow] = useState(false);
+  const [edit, setEdit] = useState<AdminRow | null>(null);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState("reseller");
-  const { data, loading, error, reload, status } = useFetch<{ username: string; is_sudo: boolean; role?: string }[]>(
-    () => api.get("/admins"),
-    [],
-  );
+  const { data, loading, error, reload, status } = useFetch<AdminRow[]>(() => api.get("/admins"), []);
 
   if (status === 403) return <Callout tone="warn">{t("common.sudoOnly")}</Callout>;
 
@@ -250,23 +250,49 @@ const AdminsTab: FC = () => {
     }
   };
 
+  const remove = async (a: AdminRow) => {
+    if (a.is_sudo) { toast.push(t("system.cannotDeleteSudo"), "error"); return; }
+    if (!confirm(t("common.confirmDelete"))) return;
+    try {
+      await api.del(`/admin/${encodeURIComponent(a.username)}`);
+      toast.push(t("common.deleted"), "success");
+      reload();
+    } catch (e: any) {
+      toast.push(e.message, "error");
+    }
+  };
+
   return (
     <>
       <div className="nx-row" style={{ justifyContent: "flex-end", marginBottom: 14 }}>
         <Button variant="primary" onClick={() => setShow(true)}><IcPlus className="nx-ico" /> {t("system.addAdmin")}</Button>
       </div>
       <Card pad0>
-        {loading ? <div style={{ padding: 20 }}><SkeletonRows rows={4} cols={3} /></div>
+        {loading ? <div style={{ padding: 20 }}><SkeletonRows rows={4} cols={4} /></div>
           : error ? <EmptyState title={t("common.error")} desc={error} />
           : (
             <table className="nx-table">
-              <thead><tr><th>{t("common.username")}</th><th>{t("common.status")}</th><th>Role</th></tr></thead>
+              <thead><tr>
+                <th>{t("common.username")}</th><th>{t("common.status")}</th><th>{t("system.role")}</th>
+                <th>{t("system.maxUsers")}</th><th style={{ textAlign: "end" }}>{t("common.actions")}</th>
+              </tr></thead>
               <tbody>
                 {(data || []).map((a) => (
                   <tr key={a.username}>
                     <td><code>{a.username}</code></td>
                     <td>{a.is_sudo ? "sudo" : "admin"}</td>
                     <td>{a.role || "—"}</td>
+                    <td>{a.max_users ?? "—"}</td>
+                    <td>
+                      <div className="nx-row" style={{ justifyContent: "flex-end", gap: 6 }}>
+                        {!a.is_sudo && (
+                          <>
+                            <Button size="sm" variant="ghost" onClick={() => setEdit(a)}><IcEdit className="nx-ico" /></Button>
+                            <Button size="sm" variant="danger" onClick={() => remove(a)}><IcTrash className="nx-ico" /></Button>
+                          </>
+                        )}
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -279,7 +305,7 @@ const AdminsTab: FC = () => {
         <div className="nx-stack">
           <Field label={t("common.username")}><Input value={username} onChange={(e: any) => setUsername(e.target.value)} /></Field>
           <Field label={t("common.password")}><Input type="password" value={password} onChange={(e: any) => setPassword(e.target.value)} /></Field>
-          <Field label="Role">
+          <Field label={t("system.role")}>
             <select className="nx-input" value={role} onChange={(e) => setRole(e.target.value)}>
               <option value="reseller">reseller</option>
               <option value="support">support</option>
@@ -287,6 +313,55 @@ const AdminsTab: FC = () => {
           </Field>
         </div>
       </Modal>
+      {edit && (
+        <EditAdminModal admin={edit} onClose={() => setEdit(null)} onDone={() => { setEdit(null); reload(); }} />
+      )}
     </>
+  );
+};
+
+const EditAdminModal: FC<{ admin: AdminRow; onClose: () => void; onDone: () => void }> = ({ admin, onClose, onDone }) => {
+  const { t } = useTranslation();
+  const toast = useToast();
+  const [role, setRole] = useState(admin.role || "reseller");
+  const [maxUsers, setMaxUsers] = useState(admin.max_users != null ? String(admin.max_users) : "");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      const body: Record<string, unknown> = { is_sudo: false, role };
+      if (maxUsers.trim()) body.max_users = parseInt(maxUsers, 10);
+      if (password.trim()) body.password = password;
+      await api.put(`/admin/${encodeURIComponent(admin.username)}`, body);
+      toast.push(t("common.saved"), "success");
+      onDone();
+    } catch (e: any) {
+      toast.push(e.message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal open title={`${t("common.edit")} — ${admin.username}`} onClose={onClose}
+      footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
+        <Button variant="primary" disabled={busy} onClick={save}>{t("common.save")}</Button></>}>
+      <div className="nx-stack">
+        <Field label={t("system.role")}>
+          <select className="nx-input" value={role} onChange={(e) => setRole(e.target.value)}>
+            <option value="reseller">reseller</option>
+            <option value="support">support</option>
+          </select>
+        </Field>
+        <Field label={t("system.maxUsers")} hint={t("common.optional")}>
+          <Input type="number" min="0" value={maxUsers} onChange={(e: any) => setMaxUsers(e.target.value)} />
+        </Field>
+        <Field label={t("system.newPassword")} hint={t("common.optional")}>
+          <Input type="password" value={password} onChange={(e: any) => setPassword(e.target.value)} />
+        </Field>
+      </div>
+    </Modal>
   );
 };

@@ -277,6 +277,11 @@
     "tabRules": "Rules",
     "tabWorkflows": "Workflows",
     "tabPlugins": "Plugins",
+    "tabMarketplace": "Marketplace",
+    "install": "Install",
+    "uninstall": "Uninstall",
+    "installed": "Installed",
+    "notInstalled": "Not installed",
     "addRule": "Add rule",
     "addWorkflow": "Add workflow",
     "trigger": "Trigger event",
@@ -300,7 +305,11 @@
     "exhaustionRisk": "Exhaustion risk",
     "nodeRisk": "Node risk",
     "run": "Run scan",
-    "noFindings": "No findings"
+    "noFindings": "No findings",
+    "smartRouting": "Smart routing",
+    "strategy": "Strategy",
+    "loadNodes": "Load ranked nodes",
+    "routingHint": "Pick a strategy and load nodes ordered best-first."
   },
   "billing": {
     "title": "Billing",
@@ -349,7 +358,11 @@
     "language": "Language",
     "aboutText": "NexusPanel is a modern, multi-tenant control plane for proxy infrastructure.",
     "tabAdmins": "Admins",
-    "addAdmin": "Add admin"
+    "addAdmin": "Add admin",
+    "role": "Role",
+    "maxUsers": "Max users",
+    "newPassword": "New password",
+    "cannotDeleteSudo": "Sudo accounts can only be removed via CLI"
   },
   "setup": {
     "title": "First-time setup",

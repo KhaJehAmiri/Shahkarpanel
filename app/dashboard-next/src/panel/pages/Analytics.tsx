@@ -1,4 +1,4 @@
-import { FC, useState } from "react";
+import { FC, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import { TopUser } from "../api/types";
@@ -6,7 +6,7 @@ import { useApp } from "../context/AppContext";
 import { useFetch } from "../lib/useFetch";
 import { formatBytes, statusTone } from "../lib/format";
 import { PageHeader } from "../components/Shell";
-import { Button, Callout, Card, CardHead, EmptyState, Pill, SkeletonRows, useToast } from "../components/ui";
+import { Button, Callout, Card, CardHead, EmptyState, Field, Pill, Select, SkeletonRows, useToast } from "../components/ui";
 import { BarChart } from "../components/charts";
 
 export const Analytics: FC = () => {
@@ -44,8 +44,73 @@ export const Analytics: FC = () => {
           )}
       </Card>
 
+      {admin?.is_sudo && isEnabled("smart_routing") && <SmartRoutingCard />}
       {admin?.is_sudo && <IntelligenceCard enabled={isEnabled("traffic_intelligence")} />}
     </div>
+  );
+};
+
+type RoutedNode = { id: number; name: string; region?: string | null; latency_ms?: number | null; status: string };
+
+const SmartRoutingCard: FC = () => {
+  const { t } = useTranslation();
+  const toast = useToast();
+  const [strategies, setStrategies] = useState<string[]>([]);
+  const [strategy, setStrategy] = useState("");
+  const [nodes, setNodes] = useState<RoutedNode[]>([]);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api.get<string[]>("/routing/strategies").then((s) => {
+      setStrategies(s);
+      if (s.length) setStrategy(s[0]);
+    }).catch(() => {});
+  }, []);
+
+  const load = async () => {
+    setBusy(true);
+    try {
+      const q = strategy ? `?strategy=${encodeURIComponent(strategy)}&limit=20` : "?limit=20";
+      setNodes(await api.get(`/routing/nodes${q}`));
+    } catch (e: any) {
+      toast.push(e.message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card style={{ marginBottom: 16 }}>
+      <CardHead title={t("analytics.smartRouting")} actions={
+        <Button variant="primary" size="sm" disabled={busy} onClick={load}>{t("analytics.loadNodes")}</Button>
+      } />
+      <div className="nx-row" style={{ gap: 12, marginBottom: 12 }}>
+        <Field label={t("analytics.strategy")}>
+          <Select value={strategy} onChange={(e: any) => setStrategy(e.target.value)} style={{ minWidth: 180 }}>
+            {strategies.map((s) => <option key={s} value={s}>{s}</option>)}
+          </Select>
+        </Field>
+      </div>
+      {!nodes.length ? <div className="nx-faint" style={{ fontSize: 13 }}>{t("analytics.routingHint")}</div>
+        : (
+          <div className="nx-table-wrap">
+            <table className="nx-table">
+              <thead><tr><th>#</th><th>{t("common.name")}</th><th>{t("infra.region")}</th><th>{t("infra.latency")}</th><th>{t("common.status")}</th></tr></thead>
+              <tbody>
+                {nodes.map((n, i) => (
+                  <tr key={n.id}>
+                    <td className="nx-faint">{i + 1}</td>
+                    <td style={{ fontWeight: 600 }}>{n.name}</td>
+                    <td>{n.region || "—"}</td>
+                    <td>{n.latency_ms != null ? `${n.latency_ms.toFixed(0)} ms` : "—"}</td>
+                    <td><Pill tone={statusTone(n.status)} dot>{n.status}</Pill></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+    </Card>
   );
 };
 

@@ -59,7 +59,7 @@ def _info(plugin) -> PluginInfo:
 
 
 @router.get("/plugins", response_model=List[PluginInfo])
-def list_plugins(db: Session = Depends(get_db), _: Admin = Depends(Admin.get_current)):
+def list_plugins(db: Session = Depends(get_db), _: Admin = Depends(Admin.check_sudo_admin)):
     _require_enabled()
     return [_info(p) for p in marketplace.list_plugins(db)]
 
@@ -92,7 +92,7 @@ def review_plugin(
     name: str,
     body: ReviewCreate,
     db: Session = Depends(get_db),
-    admin: Admin = Depends(Admin.get_current),
+    admin: Admin = Depends(Admin.check_sudo_admin),
 ):
     _require_enabled()
     plugin = marketplace.get_plugin(db, name)
@@ -107,7 +107,7 @@ def review_plugin(
 
 @router.get("/plugins/{name}/reviews", response_model=List[ReviewResponse])
 def list_reviews(
-    name: str, db: Session = Depends(get_db), _: Admin = Depends(Admin.get_current)
+    name: str, db: Session = Depends(get_db), _: Admin = Depends(Admin.check_sudo_admin)
 ):
     _require_enabled()
     plugin = marketplace.get_plugin(db, name)

@@ -195,6 +195,12 @@ SUDOERS = (
     else {}
 )
 
+if SUDO_PASSWORD and not SUDO_PASSWORD_HASH:
+    import logging
+    logging.getLogger("nexuspanel.config").warning(
+        "SUDO_PASSWORD is set without SUDO_PASSWORD_HASH — use bcrypt hash in production"
+    )
+
 
 WEBHOOK_ADDRESS = config(
     'WEBHOOK_ADDRESS',

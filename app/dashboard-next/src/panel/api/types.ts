@@ -1,6 +1,7 @@
 export interface AdminInfo {
   username: string;
   is_sudo: boolean;
+  role?: string | null;
   telegram_id?: number | null;
   discord_webhook?: string | null;
 }

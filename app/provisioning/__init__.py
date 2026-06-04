@@ -55,12 +55,19 @@ def build_install_command(
     image: str = "nexuspanel/node:latest",
     node_port: int = 62050,
     node_api_port: int = 62051,
+    control_secret: Optional[str] = None,
 ) -> str:
     """Build the self-contained bash command that provisions a fresh server.
 
     The command is safe to run repeatedly: it installs Docker if missing, (re)starts
     the node-agent container, then registers the node with the panel. All
     user-controlled values are shell-quoted to avoid injection.
+
+    The node-agent image already bundles both the Xray (v2ray) core and
+    ``wireguard-tools``. To let a single agent serve *both* product families the
+    container is started with ``--cap-add=NET_ADMIN`` and IP forwarding enabled so
+    it can create/manage the WireGuard interface, and ``NODE_CONTROL_SECRET`` is
+    injected (when configured) so the panel's REST control plane is authenticated.
     """
     if not panel_address:
         raise ProvisioningError("panel_address is required")
@@ -85,15 +92,27 @@ def build_install_command(
         json_body += f', "tenant_id": {int(tenant_id)}'
     json_body += "}"
 
+    secret_env = (
+        f"-e NODE_CONTROL_SECRET={q(control_secret)} " if control_secret else ""
+    )
+
     return (
         "set -e; "
         "if ! command -v docker >/dev/null 2>&1; then "
         "curl -fsSL https://get.docker.com | sh; fi; "
-        f"docker rm -f nexusnode >/dev/null 2>&1 || true; "
+        # WireGuard needs IPv4 forwarding on the host kernel.
+        "sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true; "
+        "grep -q '^net.ipv4.ip_forward=1' /etc/sysctl.conf 2>/dev/null "
+        "|| echo 'net.ipv4.ip_forward=1' >> /etc/sysctl.conf; "
+        "docker rm -f nexusnode >/dev/null 2>&1 || true; "
         "mkdir -p /var/lib/nexuspanel-node; "
+        # --cap-add=NET_ADMIN + host net let the agent manage the wg interface;
+        # the bundled Xray core serves v2ray protocols from the same container.
         "docker run -d --name nexusnode --restart=always --network=host "
+        "--cap-add=NET_ADMIN --sysctl net.ipv4.ip_forward=1 "
         "-v /var/lib/nexuspanel-node:/var/lib/nexuspanel-node "
         "-e SERVICE_PROTOCOL=rpyc "
+        f"{secret_env}"
         f"{q(image)}; "
         "PUBLIC_IP=$(curl -fsSL https://api.ipify.org || hostname -I | awk '{print $1}'); "
         f"curl -fsSL -X POST {q(panel_url + '/api/node/bootstrap')} "

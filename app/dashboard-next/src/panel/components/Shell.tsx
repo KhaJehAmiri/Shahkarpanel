@@ -2,6 +2,8 @@ import { FC, useMemo, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useApp } from "../context/AppContext";
+import { useCopilot } from "../copilot/CopilotContext";
+import { Copilot } from "../copilot/Copilot";
 import { LANGUAGES, setLanguage } from "../i18n";
 import { IcGlobe, IcLogout, IcMenu, IcMoon, IcSun, navIcon } from "./icons";
 
@@ -37,6 +39,7 @@ const NavItem: FC<{ id: string; onNav: () => void }> = ({ id, onNav }) => {
 export const Shell: FC = () => {
   const { t, i18n } = useTranslation();
   const { admin, theme, setTheme, logout } = useApp();
+  const { setOpen: setCopilotOpen } = useCopilot();
   const [open, setOpen] = useState(false);
   const [langOpen, setLangOpen] = useState(false);
   const loc = useLocation();
@@ -97,6 +100,10 @@ export const Shell: FC = () => {
           </div>
 
           <div className="nx-row" style={{ gap: 8, position: "relative" }}>
+            <button className="nx-btn ghost sm nx-copilot-topbtn" onClick={() => setCopilotOpen(true)} title={t("copilot.open")}>
+              <span aria-hidden>✦</span>
+              <span className="nx-copilot-topbtn-label">{t("copilot.title")}</span>
+            </button>
             <button
               className="nx-btn icon ghost"
               title="Theme"
@@ -151,6 +158,8 @@ export const Shell: FC = () => {
           <Outlet />
         </main>
       </div>
+
+      <Copilot />
     </div>
   );
 };

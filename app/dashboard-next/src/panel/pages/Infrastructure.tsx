@@ -1,13 +1,14 @@
-import { FC, useState } from "react";
+import { FC, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import { NodeItem, Tunnel } from "../api/types";
 import { useApp } from "../context/AppContext";
+import { useCopilot } from "../copilot/CopilotContext";
 import { useFetch } from "../lib/useFetch";
 import { statusTone } from "../lib/format";
 import { PageHeader } from "../components/Shell";
 import {
-  Button, Callout, Card, EmptyState, Field, Input, Modal, Pill, Select, SkeletonRows, Tabs, useToast,
+  Button, Callout, Card, CopyField, EmptyState, Field, Input, Modal, Pill, Select, SkeletonRows, Tabs, useToast,
 } from "../components/ui";
 import { IcPlus, IcRefresh, IcTrash, IcLink, IcEdit, IcEye } from "../components/icons";
 import { XrayConfigsHub } from "../components/xray/XrayConfigsHub";
@@ -45,8 +46,20 @@ export const Infrastructure: FC = () => {
 const NodesTab: FC = () => {
   const { t } = useTranslation();
   const toast = useToast();
+  const { consumeIntent } = useCopilot();
   const [show, setShow] = useState(false);
+  const [preset, setPreset] = useState<{ mode?: "manual" | "ssh"; coreKind?: string }>({});
   const { data, loading, error, reload } = useFetch<NodeItem[]>(() => api.get("/nodes"), []);
+
+  // The Copilot can deep-link straight into "add server" with a preset.
+  useEffect(() => {
+    if (consumeIntent("add-wg-node")) { setPreset({ mode: "manual", coreKind: "wireguard" }); setShow(true); }
+    else if (consumeIntent("add-node-ssh")) { setPreset({ mode: "ssh" }); setShow(true); }
+    else if (consumeIntent("add-node")) { setPreset({ mode: "manual" }); setShow(true); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const openAdd = () => { setPreset({}); setShow(true); };
 
   const reconnect = async (n: NodeItem) => {
     try { await api.post(`/node/${n.id}/reconnect`); toast.push(t("infra.reconnecting"), "success"); }
@@ -62,12 +75,12 @@ const NodesTab: FC = () => {
     <>
       <div className="nx-row" style={{ justifyContent: "flex-end", marginBottom: 14, gap: 8 }}>
         <Button variant="ghost" onClick={reload}><IcRefresh className="nx-ico" /></Button>
-        <Button variant="primary" onClick={() => setShow(true)}><IcPlus className="nx-ico" /> {t("infra.addNode")}</Button>
+        <Button variant="primary" onClick={openAdd}><IcPlus className="nx-ico" /> {t("infra.addNode")}</Button>
       </div>
       <Card pad0>
         {loading ? <div style={{ padding: 20 }}><SkeletonRows rows={4} cols={5} /></div>
           : error ? <EmptyState title={t("common.error")} desc={error} action={<Button onClick={reload}>{t("common.retry")}</Button>} />
-          : !data?.length ? <EmptyState title={t("common.noData")} action={<Button variant="primary" onClick={() => setShow(true)}><IcPlus className="nx-ico" /> {t("infra.addNode")}</Button>} />
+          : !data?.length ? <EmptyState title={t("common.noData")} action={<Button variant="primary" onClick={openAdd}><IcPlus className="nx-ico" /> {t("infra.addNode")}</Button>} />
           : (
             <div className="nx-table-wrap">
               <table className="nx-table">
@@ -98,19 +111,41 @@ const NodesTab: FC = () => {
             </div>
           )}
       </Card>
-      {show && <AddNode onClose={() => setShow(false)} onDone={() => { setShow(false); reload(); }} />}
+      {show && (
+        <AddNode
+          onClose={() => setShow(false)}
+          onDone={() => { setShow(false); reload(); }}
+          initialMode={preset.mode}
+          initialCoreKind={preset.coreKind}
+        />
+      )}
     </>
   );
 };
 
-const AddNode: FC<{ onClose: () => void; onDone: () => void }> = ({ onClose, onDone }) => {
+type ProvisionResult = { status: string; install_command: string; detail?: string; output?: string };
+
+const AddNode: FC<{
+  onClose: () => void;
+  onDone: () => void;
+  initialMode?: "manual" | "ssh";
+  initialCoreKind?: string;
+}> = ({ onClose, onDone, initialMode, initialCoreKind }) => {
   const { t } = useTranslation();
+  const { isEnabled } = useApp();
   const toast = useToast();
-  const [f, setF] = useState({ name: "", address: "", port: "62050", api_port: "62051", region: "", core_kind: "xray" });
+  const canProvision = isEnabled("node_provisioning");
+  const [mode, setMode] = useState<"manual" | "ssh">(initialMode || (canProvision ? "ssh" : "manual"));
+  const [f, setF] = useState({
+    name: "", address: "", port: "62050", api_port: "62051", region: "",
+    core_kind: initialCoreKind || "xray",
+    ssh_port: "22", username: "root", password: "", role: "direct",
+  });
   const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<ProvisionResult | null>(null);
   const upd = (k: string) => (e: any) => setF({ ...f, [k]: e.target.value });
 
-  const submit = async () => {
+  const submitManual = async () => {
     setBusy(true);
     try {
       await api.post("/node", {
@@ -123,24 +158,100 @@ const AddNode: FC<{ onClose: () => void; onDone: () => void }> = ({ onClose, onD
     } catch (e: any) { toast.push(e.message, "error"); } finally { setBusy(false); }
   };
 
+  const submitSsh = async () => {
+    setBusy(true);
+    setResult(null);
+    try {
+      const res = await api.post<ProvisionResult>("/nodes/provision", {
+        name: f.name.trim(), host: f.address.trim(), ssh_port: parseInt(f.ssh_port),
+        username: f.username.trim() || "root", password: f.password, role: f.role, run: true,
+      });
+      setResult(res);
+      if (res.status === "provisioned") {
+        toast.push(t("infra.provisionStarted"), "success");
+        // Give the agent a moment to self-register, then refresh the list.
+        setTimeout(onDone, 2500);
+      } else {
+        toast.push(t("infra.provisionManual"), "info");
+      }
+    } catch (e: any) { toast.push(e.message, "error"); } finally { setBusy(false); }
+  };
+
+  const valid = mode === "manual"
+    ? !!f.name && !!f.address
+    : !!f.name && !!f.address && !!f.password;
+
   return (
     <Modal open title={t("infra.addNode")} onClose={onClose}
       footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
-        <Button variant="primary" disabled={busy || !f.name || !f.address} onClick={submit}>{t("common.create")}</Button></>}>
+        <Button variant="primary" disabled={busy || !valid} onClick={mode === "manual" ? submitManual : submitSsh}>
+          {mode === "manual" ? t("common.create") : t("infra.provisionInstall")}
+        </Button></>}>
       <div className="nx-stack">
-        <Field label={t("common.name")}><Input value={f.name} onChange={upd("name")} autoFocus /></Field>
-        <Field label={t("infra.address")}><Input value={f.address} onChange={upd("address")} placeholder="1.2.3.4" /></Field>
-        <div className="nx-row" style={{ gap: 12 }}>
-          <Field label={t("infra.port")}><Input type="number" value={f.port} onChange={upd("port")} /></Field>
-          <Field label={t("infra.apiPort")}><Input type="number" value={f.api_port} onChange={upd("api_port")} /></Field>
-        </div>
-        <Field label={`${t("infra.region")} (${t("common.optional")})`}><Input value={f.region} onChange={upd("region")} /></Field>
-        <Field label={t("infra.coreKind")}>
-          <Select value={f.core_kind} onChange={upd("core_kind")}>
-            <option value="xray">Xray</option>
-            <option value="wireguard">WireGuard</option>
-          </Select>
+        {canProvision && (
+          <div className="nx-seg">
+            <button type="button" className={`nx-seg-btn ${mode === "ssh" ? "active" : ""}`} onClick={() => { setMode("ssh"); setResult(null); }}>
+              {t("infra.modeAuto")}
+            </button>
+            <button type="button" className={`nx-seg-btn ${mode === "manual" ? "active" : ""}`} onClick={() => { setMode("manual"); setResult(null); }}>
+              {t("infra.modeManual")}
+            </button>
+          </div>
+        )}
+
+        {mode === "ssh" ? (
+          <Callout tone="info">{t("infra.autoHint")}</Callout>
+        ) : null}
+
+        <Field label={t("common.name")}><Input value={f.name} onChange={upd("name")} autoFocus placeholder="de-node-1" /></Field>
+        <Field label={mode === "ssh" ? t("infra.serverIp") : t("infra.address")}>
+          <Input value={f.address} onChange={upd("address")} placeholder="1.2.3.4" />
         </Field>
+
+        {mode === "manual" ? (
+          <>
+            <div className="nx-row" style={{ gap: 12 }}>
+              <Field label={t("infra.port")}><Input type="number" value={f.port} onChange={upd("port")} /></Field>
+              <Field label={t("infra.apiPort")}><Input type="number" value={f.api_port} onChange={upd("api_port")} /></Field>
+            </div>
+            <Field label={`${t("infra.region")} (${t("common.optional")})`}><Input value={f.region} onChange={upd("region")} /></Field>
+            <Field label={t("infra.coreKind")}>
+              <Select value={f.core_kind} onChange={upd("core_kind")}>
+                <option value="xray">Xray (v2ray)</option>
+                <option value="wireguard">WireGuard</option>
+              </Select>
+            </Field>
+          </>
+        ) : (
+          <>
+            <div className="nx-row" style={{ gap: 12 }}>
+              <Field label={t("infra.sshUser")}><Input value={f.username} onChange={upd("username")} placeholder="root" /></Field>
+              <Field label={t("infra.sshPort")}><Input type="number" value={f.ssh_port} onChange={upd("ssh_port")} /></Field>
+            </div>
+            <Field label={t("infra.sshPassword")} hint={t("infra.sshPasswordHint")}>
+              <Input type="password" value={f.password} onChange={upd("password")} autoComplete="new-password" />
+            </Field>
+            <Field label={t("infra.role")}>
+              <Select value={f.role} onChange={upd("role")}>
+                <option value="direct">direct</option>
+                <option value="relay">relay</option>
+                <option value="exit">exit</option>
+              </Select>
+            </Field>
+            <div className="nx-faint" style={{ fontSize: 12 }}>{t("infra.autoInstallsHint")}</div>
+          </>
+        )}
+
+        {result && (
+          <div className="nx-stack" style={{ gap: 8 }}>
+            <Callout tone={result.status === "provisioned" ? "ok" : "warn"}>
+              {result.detail || result.status}
+            </Callout>
+            {result.status !== "provisioned" && result.install_command && (
+              <CopyField label={t("infra.installCommand")} value={result.install_command} multiline />
+            )}
+          </div>
+        )}
       </div>
     </Modal>
   );

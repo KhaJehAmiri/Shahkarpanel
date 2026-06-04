@@ -165,7 +165,92 @@
     "targetPort": "目标端口",
     "tunnelDesc": "将流量从境内节点中继到境外出口节点。",
     "viewConfig": "查看 Xray 配置",
-    "tunnelConfig": "隧道配置"
+    "tunnelConfig": "隧道配置",
+    "modeAuto": "自动安装 (SSH)",
+    "modeManual": "手动连接",
+    "autoHint": "粘贴服务器 IP 和 SSH 登录信息。面板会连接、安装 Docker 和节点代理（Xray + WireGuard），服务器会自动注册。",
+    "serverIp": "服务器 IP",
+    "sshUser": "SSH 用户",
+    "sshPort": "SSH 端口",
+    "sshPassword": "SSH 密码",
+    "sshPasswordHint": "仅用于安装代理一次；不会被保存。",
+    "role": "角色",
+    "autoInstallsHint": "安装 Docker 和同时支持 Xray (v2ray) 与 WireGuard 的节点代理，启用 NET_ADMIN 和 IP 转发，然后自动注册。",
+    "installCommand": "安装命令（以 root 在服务器上运行）",
+    "provisionInstall": "在服务器上安装",
+    "provisionStarted": "服务器已配置 — 节点稍后出现。",
+    "provisionManual": "无法远程执行 — 请复制命令并在服务器上运行。"
+  },
+  "copilot": {
+    "title": "助手",
+    "open": "打开助手",
+    "greeting": "你好 {{name}} — 我就在你身边。",
+    "lead": "选择你想设置的内容，我会一步步带你完成。",
+    "done": "完成",
+    "dismiss": "不再自动显示",
+    "footnote": "我会关注你的面板，并在你完成时勾选步骤。",
+    "back": "所有指南",
+    "stepsDone": "已完成 {{done}} / {{total}}",
+    "autoDetect": "完成后我会自动检测。",
+    "cta": {
+      "openSystem": "打开设置",
+      "addServer": "添加服务器",
+      "addWgServer": "添加 WireGuard 服务器",
+      "openInbounds": "打开入站",
+      "createUser": "创建用户",
+      "createWgUser": "创建 WireGuard 用户",
+      "openUsers": "打开用户"
+    },
+    "quickstart": {
+      "title": "快速开始",
+      "desc": "从空面板到可用订阅。",
+      "s_configure": "为面板命名",
+      "s_configure_b": "给面板设置标题并启用需要的模块。随时可改。",
+      "s_server": "添加第一台服务器",
+      "s_server_b": "服务器（节点）是流量运行的地方。使用自动安装：粘贴 IP 和 SSH 密码，我来配置一切。",
+      "s_inbound": "创建入站",
+      "s_inbound_b": "入站是服务器暴露的协议 — 443 上的 VLESS + Reality 是很好的默认值。",
+      "s_user": "创建用户",
+      "s_user_b": "用户获得流量限额、到期时间和可分享的订阅链接。",
+      "s_share": "分享订阅",
+      "s_share_b": "打开用户，复制订阅链接或二维码发给客户。完成！"
+    },
+    "wg": {
+      "title": "设置 WireGuard",
+      "desc": "为用户提供快速的原生 WireGuard 配置。",
+      "s_node": "添加 WireGuard 服务器",
+      "s_node_b": "添加使用 WireGuard 核心的服务器。代理会为你管理 wg 接口。",
+      "s_user": "创建 WireGuard 用户",
+      "s_user_b": "创建用户并启用 WireGuard — 密钥和对等 IP 会自动生成。",
+      "s_share": "发送 .conf",
+      "s_share_b": "打开用户并下载 WireGuard .conf（或分享订阅）。在 WireGuard 应用中导入。"
+    },
+    "v2ray": {
+      "title": "设置 v2ray (Xray)",
+      "desc": "经典的 VLESS / VMess / Trojan / Shadowsocks 配置。",
+      "s_node": "添加 Xray 服务器",
+      "s_node_b": "添加使用 Xray 核心的服务器 — 自动安装会处理 Docker 和代理。",
+      "s_inbound": "创建入站",
+      "s_inbound_b": "在 443 上添加 VLESS + Reality 入站 — 当今最稳健的默认选择。",
+      "s_user": "创建用户",
+      "s_user_b": "创建用户，选择入站，设置流量限额和到期时间。",
+      "s_share": "分享订阅",
+      "s_share_b": "从用户复制订阅链接或二维码发送。兼容 v2rayNG、Streisand、Hiddify 等。"
+    },
+    "auto": {
+      "title": "自动添加服务器",
+      "desc": "一次 SSH 登录即可把裸服务器变成节点。",
+      "s_explain": "通过 SSH 配置",
+      "s_explain_b": "粘贴服务器 IP 和 SSH 密码。我会安装 Docker、节点代理（Xray + WireGuard），启用 NET_ADMIN 和 IP 转发，并加入你的服务器列表 — 无需手动操作。"
+    },
+    "firstuser": {
+      "title": "创建第一个用户",
+      "desc": "一分钟内授予访问权限。",
+      "s_user": "创建用户",
+      "s_user_b": "设置用户名、流量限额和到期时间。选择可用协议。",
+      "s_share": "分享订阅",
+      "s_share_b": "打开用户，复制订阅链接或二维码并发送。"
+    }
   },
   "inbounds": {
     "title": "入站",

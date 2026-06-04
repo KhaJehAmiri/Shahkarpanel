@@ -169,7 +169,92 @@
     "targetPort": "Target port",
     "tunnelDesc": "Relay traffic from an in-country node to a foreign exit node.",
     "viewConfig": "View Xray config",
-    "tunnelConfig": "Tunnel config"
+    "tunnelConfig": "Tunnel config",
+    "modeAuto": "Auto install (SSH)",
+    "modeManual": "Manual connect",
+    "autoHint": "Paste the server IP and its SSH login. The panel connects, installs Docker and the node agent (Xray + WireGuard), and the server registers itself automatically.",
+    "serverIp": "Server IP",
+    "sshUser": "SSH user",
+    "sshPort": "SSH port",
+    "sshPassword": "SSH password",
+    "sshPasswordHint": "Used once to install the agent; it is not stored.",
+    "role": "Role",
+    "autoInstallsHint": "Installs Docker + node agent with both Xray (v2ray) and WireGuard, enables NET_ADMIN and IP forwarding, then self-registers.",
+    "installCommand": "Install command (run on the server as root)",
+    "provisionInstall": "Install on server",
+    "provisionStarted": "Server provisioned — the node will appear shortly.",
+    "provisionManual": "Couldn't run remotely — copy the command and run it on the server."
+  },
+  "copilot": {
+    "title": "Copilot",
+    "open": "Open Copilot",
+    "greeting": "Hi {{name}} — I'm right here with you.",
+    "lead": "Pick what you want to set up and I'll walk you through it, step by step.",
+    "done": "Done",
+    "dismiss": "Don't show automatically",
+    "footnote": "I watch your panel and tick steps off as you finish them.",
+    "back": "All guides",
+    "stepsDone": "{{done}} of {{total}} done",
+    "autoDetect": "I'll detect this automatically when it's done.",
+    "cta": {
+      "openSystem": "Open settings",
+      "addServer": "Add a server",
+      "addWgServer": "Add a WireGuard server",
+      "openInbounds": "Open inbounds",
+      "createUser": "Create a user",
+      "createWgUser": "Create a WireGuard user",
+      "openUsers": "Open users"
+    },
+    "quickstart": {
+      "title": "Quick start",
+      "desc": "Go from an empty panel to a working subscription.",
+      "s_configure": "Name your panel",
+      "s_configure_b": "Give your panel a title and turn on the modules you need. You can change this anytime.",
+      "s_server": "Add your first server",
+      "s_server_b": "A server (node) is where traffic runs. Use auto-install: paste the IP and SSH password and I'll set everything up.",
+      "s_inbound": "Create an inbound",
+      "s_inbound_b": "An inbound is the protocol your server exposes — VLESS + Reality on 443 is a great default.",
+      "s_user": "Create a user",
+      "s_user_b": "A user gets a data limit, an expiry and a subscription link to share.",
+      "s_share": "Share the subscription",
+      "s_share_b": "Open the user, copy the subscription URL or QR, and send it to your customer. That's it!"
+    },
+    "wg": {
+      "title": "Set up WireGuard",
+      "desc": "Offer fast, native WireGuard configs to your users.",
+      "s_node": "Add a WireGuard server",
+      "s_node_b": "Add a server with the WireGuard core. The agent manages the wg interface for you.",
+      "s_user": "Create a WireGuard user",
+      "s_user_b": "Create a user and enable the WireGuard protocol — keys and the peer IP are generated automatically.",
+      "s_share": "Send the .conf",
+      "s_share_b": "Open the user and download the WireGuard .conf (or share the subscription). Import it in the WireGuard app."
+    },
+    "v2ray": {
+      "title": "Set up v2ray (Xray)",
+      "desc": "Classic VLESS / VMess / Trojan / Shadowsocks configs.",
+      "s_node": "Add an Xray server",
+      "s_node_b": "Add a server with the Xray core — auto-install handles Docker and the agent.",
+      "s_inbound": "Create an inbound",
+      "s_inbound_b": "Add a VLESS + Reality inbound on 443 — the most resilient default today.",
+      "s_user": "Create a user",
+      "s_user_b": "Create a user, pick the inbound, set a data limit and expiry.",
+      "s_share": "Share the subscription",
+      "s_share_b": "Copy the subscription URL or QR from the user and send it. Works with v2rayNG, Streisand, Hiddify and more."
+    },
+    "auto": {
+      "title": "Auto-add a server",
+      "desc": "Turn a bare server into a node with one SSH login.",
+      "s_explain": "Provision over SSH",
+      "s_explain_b": "Paste the server IP and SSH password. I install Docker, the node agent (Xray + WireGuard), enable NET_ADMIN and IP forwarding, and register it to your server list — no manual steps."
+    },
+    "firstuser": {
+      "title": "Create your first user",
+      "desc": "Give someone access in under a minute.",
+      "s_user": "Create a user",
+      "s_user_b": "Set a username, a data limit and an expiry. Pick the protocols they can use.",
+      "s_share": "Share the subscription",
+      "s_share_b": "Open the user, copy the subscription link or QR, and send it."
+    }
   },
   "inbounds": {
     "title": "Inbounds",

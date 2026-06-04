@@ -125,6 +125,22 @@ def test_build_install_command_basic():
     assert '"role": "exit"' in cmd
 
 
+def test_build_install_command_enables_wireguard_and_v2ray():
+    # The node image bundles xray + wireguard-tools; the run command must grant
+    # NET_ADMIN + ip_forward so the same agent can serve WireGuard and v2ray.
+    cmd = provisioning.build_install_command(
+        "panel.example.com", "tok", "n", control_secret="s3cr3t",
+    )
+    assert "--cap-add=NET_ADMIN" in cmd
+    assert "net.ipv4.ip_forward=1" in cmd
+    assert "NODE_CONTROL_SECRET=s3cr3t" in cmd
+
+
+def test_build_install_command_omits_secret_when_unset():
+    cmd = provisioning.build_install_command("panel.example.com", "tok", "n")
+    assert "NODE_CONTROL_SECRET" not in cmd
+
+
 def test_build_install_command_preserves_explicit_scheme():
     cmd = provisioning.build_install_command("http://1.2.3.4:8000", "t", "n")
     assert "http://1.2.3.4:8000/api/node/bootstrap" in cmd

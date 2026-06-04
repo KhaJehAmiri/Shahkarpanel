@@ -15,6 +15,7 @@ import { copyToClipboard } from "../lib/clipboard";
 import { IcEdit, IcExternal, IcEye, IcPlus, IcRefresh, IcShare, IcTrash } from "../components/icons";
 import { UserTemplatesPanel } from "../components/UserTemplates";
 import { useApp } from "../context/AppContext";
+import { useCopilot } from "../copilot/CopilotContext";
 
 const PAGE = 12;
 const STATUSES = ["active", "disabled", "expired", "limited", "on_hold"];
@@ -28,13 +29,22 @@ const PROTO_LABEL: Record<string, string> = { vless: "VLESS", vmess: "VMess", tr
 export const Users: FC = () => {
   const { t, i18n } = useTranslation();
   const { admin } = useApp();
+  const { consumeIntent } = useCopilot();
   const toast = useToast();
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [showCreate, setShowCreate] = useState(false);
+  const [createWg, setCreateWg] = useState(false);
   const [editUser, setEditUser] = useState<UserItem | null>(null);
   const [viewUser, setViewUser] = useState<UserItem | null>(null);
+
+  // The Copilot can deep-link straight into "create user" (optionally WireGuard).
+  useEffect(() => {
+    if (consumeIntent("create-wg-user")) { setCreateWg(true); setShowCreate(true); }
+    else if (consumeIntent("create-user")) { setCreateWg(false); setShowCreate(true); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const query = useMemo(() => {
     const p = new URLSearchParams();
@@ -139,7 +149,7 @@ export const Users: FC = () => {
         </div>
       )}
 
-      {showCreate && <UserFormModal mode="create" onClose={() => setShowCreate(false)} onDone={() => { setShowCreate(false); reload(); }} />}
+      {showCreate && <UserFormModal mode="create" presetWireguard={createWg} onClose={() => setShowCreate(false)} onDone={() => { setShowCreate(false); reload(); }} />}
       {editUser && <UserFormModal mode="edit" user={editUser} onClose={() => setEditUser(null)} onDone={() => { setEditUser(null); reload(); }} />}
       {viewUser && <UserDetail username={viewUser.username} onClose={() => setViewUser(null)} onEdit={() => { setEditUser(viewUser); setViewUser(null); }} />}
     </div>
@@ -149,7 +159,7 @@ export const Users: FC = () => {
 /* --------------------------- shared user form --------------------------- */
 type ProtoState = { enabled: boolean; tags: string[]; flow: string; method: string };
 
-const UserFormModal: FC<{ mode: "create" | "edit"; user?: UserItem; onClose: () => void; onDone: () => void }> = ({ mode, user, onClose, onDone }) => {
+const UserFormModal: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireguard?: boolean; onClose: () => void; onDone: () => void }> = ({ mode, user, presetWireguard, onClose, onDone }) => {
   const { t } = useTranslation();
   const { admin } = useApp();
   const toast = useToast();
@@ -193,7 +203,7 @@ const UserFormModal: FC<{ mode: "create" | "edit"; user?: UserItem; onClose: () 
     // never comes back from /inbounds. Surface it as a synthetic toggle: the
     // server generates the peer keypair + allocates the IP automatically.
     next["wireguard"] = {
-      enabled: mode === "edit" ? userProtos.includes("wireguard") : false,
+      enabled: mode === "edit" ? userProtos.includes("wireguard") : !!presetWireguard,
       tags: [],
       flow: "",
       method: "",

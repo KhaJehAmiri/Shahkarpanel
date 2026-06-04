@@ -10,8 +10,8 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from app import feature_flags, logger
-from app import provisioning, tenant as tenant_svc
+from app import feature_flags, logger, provisioning
+from app import tenant as tenant_svc
 from app.db import Session, get_db
 from app.models.admin import Admin
 from app.rbac import require_permission
@@ -19,6 +19,7 @@ from app.utils import responses
 from config import (
     NODE_AGENT_IMAGE,
     NODE_BOOTSTRAP_TOKEN,
+    NODE_CONTROL_SECRET,
     NODE_DEFAULT_API_PORT,
     NODE_DEFAULT_PORT,
     NODE_PROVISION_SSH_TIMEOUT,
@@ -82,6 +83,7 @@ def install_command(
             _panel_address(), NODE_BOOTSTRAP_TOKEN, name,
             tenant_id=tenant_id, role=role, image=NODE_AGENT_IMAGE,
             node_port=NODE_DEFAULT_PORT, node_api_port=NODE_DEFAULT_API_PORT,
+            control_secret=NODE_CONTROL_SECRET or None,
         )
     except provisioning.ProvisioningError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
@@ -118,6 +120,7 @@ def provision_node(
             _panel_address(), NODE_BOOTSTRAP_TOKEN, body.name,
             tenant_id=tenant_id, role=body.role, image=NODE_AGENT_IMAGE,
             node_port=NODE_DEFAULT_PORT, node_api_port=NODE_DEFAULT_API_PORT,
+            control_secret=NODE_CONTROL_SECRET or None,
         )
     except provisioning.ProvisioningError as exc:
         raise HTTPException(status_code=422, detail=str(exc))

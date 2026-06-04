@@ -15,6 +15,8 @@ bcrypt_placeholder() {
 }
 
 cp .env.example .env
+# .env.example may end without a newline; avoid gluing the first append to the last comment line.
+printf '\n' >> .env
 HASH=$(bcrypt_placeholder)
 
 append() {
@@ -25,7 +27,9 @@ append "SQLALCHEMY_DATABASE_URL" "sqlite:////var/lib/nexuspanel/db.sqlite3"
 append "NODE_BOOTSTRAP_TOKEN" "$(rand)"
 append "NODE_CONTROL_SECRET" "$(rand)"
 append "METRICS_TOKEN" "$(rand)"
-append "REDIS_PASSWORD" "$(rand)"
+REDIS_PW="$(rand)"
+append "REDIS_PASSWORD" "$REDIS_PW"
+append "REDIS_URL" "redis://:${REDIS_PW}@127.0.0.1:6379/0"
 append "ALLOWED_ORIGINS" "http://127.0.0.1:8000"
 
 if [ -n "$HASH" ]; then

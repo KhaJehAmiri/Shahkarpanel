@@ -47,5 +47,10 @@ All planned audit phases **13–16** and UI parity items are implemented in `mas
 
 1. Set production secrets in `.env` (never commit).
 2. Install panel TLS (reverse proxy).
-3. Configure node `SSL_CLIENT_CERT_FILE` for mTLS.
+3. Configure node mTLS:
+   ```bash
+   sudo ./scripts/generate_node_mtls.sh /var/lib/nexuspanel/certs/mtls
+   # On each node: SSL_CLIENT_CERT_FILE=/var/lib/nexuspanel/certs/mtls/ca.pem
+   ```
 4. PostgreSQL restore: import `restore-db.sql` manually after backup restore API on non-SQLite.
+5. Local run (no Docker): `./scripts/run_local.sh`

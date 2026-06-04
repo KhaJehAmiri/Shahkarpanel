@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/KhaJehAmiri/nexuspanel/master/app/dashboard/src/assets/logo.svg" width="88" alt="NexusPanel" />
+<img src="https://raw.githubusercontent.com/KhaJehAmiri/nexuspanel/master/docs/logo.svg" width="88" alt="NexusPanel" />
 
 # NexusPanel
 
@@ -48,7 +48,7 @@ A full-stack **Xray control plane**: users, nodes, subscriptions, **resellers, b
 | Reseller | White-label brand, wallet, BYO nodes at discount |
 | Engineering | API v2, rules, workflows, plugins |
 
-> Advanced features are **off by default** — enable via **Setup wizard** (`/dashboard/#/manage/`) or feature flags.
+> Advanced features are **off by default** — enable via **System → Feature flags** (`/dashboard/#/system`) or the setup API.
 
 ---
 
@@ -77,7 +77,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/nexuspanel/maste
 | Item | Value |
 |------|--------|
 | Dashboard | `http://SERVER_IP:8000/dashboard/` |
-| White-label / Setup | `http://SERVER_IP:8000/dashboard/#/manage/` |
+| System / Feature flags | `http://SERVER_IP:8000/dashboard/#/system` |
 | Manage | `nexuspanel status` · `logs` · `update` · `backup` |
 
 ---

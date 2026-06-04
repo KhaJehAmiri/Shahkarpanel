@@ -309,7 +309,7 @@ print_access() {
   echo "  ${BOLD}Data${NC}       ${DATA_DIR}"
   echo
   echo "  ${BOLD}Dashboard${NC}  http://${ip}:${PANEL_PORT}/dashboard/"
-  echo "  ${BOLD}Manage${NC}     http://${ip}:${PANEL_PORT}/dashboard/#/manage/"
+  echo "  ${BOLD}System${NC}     http://${ip}:${PANEL_PORT}/dashboard/#/system"
   echo "  ${BOLD}API docs${NC}   http://${ip}:${PANEL_PORT}/docs"
   if [ -n "${ADMIN_USERNAME:-}" ] && [ -n "${ADMIN_PASSWORD:-}" ]; then
     echo
@@ -342,15 +342,15 @@ cmd_doctor() {
   echo
   compose ps 2>/dev/null || true
   echo
-  if [ -f "${APP_DIR}/app/dashboard/build/index.html" ]; then
-    ok "Host: dashboard build present"
+  if [ -f "${APP_DIR}/app/dashboard-next/out/dashboard/index.html" ]; then
+    ok "Host: dashboard-next build present"
   else
-    err "Host: missing ${APP_DIR}/app/dashboard/build/index.html — run: cd ${APP_DIR} && ./build_dashboard.sh"
+    err "Host: missing ${APP_DIR}/app/dashboard-next/out/dashboard/index.html — run: cd ${APP_DIR} && ./build_dashboard.sh"
   fi
-  if compose exec -T "${APP_NAME}" test -f /code/app/dashboard/build/index.html 2>/dev/null; then
-    ok "Container: dashboard build present"
+  if compose exec -T "${APP_NAME}" test -f /code/app/dashboard-next/out/dashboard/index.html 2>/dev/null; then
+    ok "Container: dashboard-next build present"
   else
-    err "Container: dashboard build missing — rebuild: docker compose up -d --build"
+    err "Container: dashboard-next build missing — rebuild: docker compose up -d --build"
   fi
   local code api_code
   code="$(curl -sf -o /dev/null -w '%{http_code}' "${url}/dashboard/" 2>/dev/null || echo '000')"

@@ -47,9 +47,7 @@ COPY --from=build /usr/local/share/xray /usr/local/share/xray
 COPY . /code
 
 RUN test -f /code/app/dashboard-next/out/dashboard/index.html \
-    -o -f /code/app/dashboard-v2/build/index.html \
-    -o -f /code/app/dashboard/build/index.html \
-    || (echo "ERROR: dashboard not built. Run: ./build_dashboard.sh" && exit 1)
+    || (echo "ERROR: dashboard-next not built. Run: ./build_dashboard.sh" && exit 1)
 
 RUN ln -sf /code/nexuspanel-cli.py /usr/bin/nexuspanel-cli \
     && chmod +x /usr/bin/nexuspanel-cli

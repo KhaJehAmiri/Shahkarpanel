@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/KhaJehAmiri/nexuspanel/master/app/dashboard/src/assets/logo.svg" width="88" alt="NexusPanel" />
+<img src="https://raw.githubusercontent.com/KhaJehAmiri/nexuspanel/master/docs/logo.svg" width="88" alt="NexusPanel" />
 
 # NexusPanel
 
@@ -22,7 +22,7 @@
 bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/nexuspanel/master/scripts/nexuspanel.sh) install
 ```
 
-Панель: `http://IP:8000/dashboard/` · White-label: `#/manage/`
+Панель: `http://IP:8000/dashboard/` · Флаги: `#/system`
 
 ---
 

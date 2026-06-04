@@ -160,7 +160,12 @@ def restore_backup(archive_path: str) -> None:
 
     with tempfile.TemporaryDirectory() as workdir:
         with tarfile.open(archive_path, "r:gz") as tar:
-            tar.extractall(workdir)
+            # Reject path traversal in archives (CVE-class tar slip).
+            for member in tar.getmembers():
+                dest = os.path.normpath(os.path.join(workdir, member.name))
+                if not dest.startswith(os.path.abspath(workdir) + os.sep) and dest != os.path.abspath(workdir):
+                    raise ValueError(f"Unsafe path in backup archive: {member.name}")
+            tar.extractall(workdir, filter="data")
 
         name = engine.dialect.name
         if name == "sqlite":

@@ -12,12 +12,15 @@ Thank you for helping improve NexusPanel.
 
 ## Dashboard changes
 
+The UI lives in `app/dashboard-next` (Next.js static export).
+
 ```bash
-cd app/dashboard
-npm install
-npm run dev    # http://localhost:3000
-npm run build  # output → app/dashboard/build/
+./build_dashboard.sh
+# or:
+cd app/dashboard-next && npm install && NEXT_PUBLIC_BASE_API=/api/ npm run dev
 ```
+
+Built assets are served from `app/dashboard-next/out/` (see `app/dashboard/__init__.py`).
 
 ## Pull requests
 
@@ -29,7 +32,7 @@ npm run build  # output → app/dashboard/build/
 ## Code style
 
 - Python: Ruff (see `.ruff.toml`)
-- TypeScript/React: existing Chakra + Vite conventions in `app/dashboard/`
+- TypeScript/React: Next.js + panel components under `app/dashboard-next/src/panel/`
 
 ## Questions
 

@@ -6,6 +6,7 @@ from config import SUDOERS
 from fastapi import Depends, HTTPException
 from datetime import datetime, timezone, timedelta
 from app.utils.jwt import get_subscription_payload
+from app.rbac import require_permission
 
 
 def validate_admin(db: Session, username: str, password: str) -> Optional[AdminValidationResult]:
@@ -84,7 +85,7 @@ def get_validated_sub(
 
 def get_validated_user(
         username: str,
-        admin: Admin = Depends(Admin.get_current),
+        admin: Admin = Depends(require_permission("users:read")),
         db: Session = Depends(get_db)
 ) -> UserResponse:
     dbuser = crud.get_user(db, username)

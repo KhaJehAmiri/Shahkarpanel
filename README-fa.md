@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/KhaJehAmiri/nexuspanel/master/app/dashboard/src/assets/logo.svg" width="88" alt="NexusPanel" />
+<img src="https://raw.githubusercontent.com/KhaJehAmiri/nexuspanel/master/docs/logo.svg" width="88" alt="NexusPanel" />
 
 # NexusPanel
 
@@ -48,7 +48,7 @@
 | فروشنده / ریسلر | وایت‌لیبل، کیف پول، نود اختصاصی با تخفیف |
 | تیم فنی | API v2، Rule Engine، Workflow، پلاگین |
 
-> قابلیت‌های پیشرفته پیش‌فرض **خاموش** هستند و از **Setup wizard** (`/dashboard/#/manage/`) یا Feature Flag روشن می‌شوند.
+> قابلیت‌های پیشرفته پیش‌فرض **خاموش** هستند — از **System → Feature flags** (`/dashboard/#/system`) یا API setup روشن می‌شوند.
 
 ---
 
@@ -83,7 +83,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/nexuspanel/maste
 | مورد | آدرس / دستور |
 |------|----------------|
 | داشبورد | `http://SERVER_IP:8000/dashboard/` |
-| وایت‌لیبل / Setup | `http://SERVER_IP:8000/dashboard/#/manage/` |
+| System / Feature flags | `http://SERVER_IP:8000/dashboard/#/system` |
 | مدیریت | `nexuspanel status` · `logs` · `update` · `backup` |
 
 ---

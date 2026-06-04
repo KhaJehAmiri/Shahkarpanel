@@ -1,29 +1,31 @@
 #!/usr/bin/env bash
-# Build the NexusPanel dashboard. Phase 7 ships dashboard-v2 (Vite/React).
-# Phase 9 adds dashboard-next (Next.js 14 static export) which hosts the new
-# subscription page (/subscribe/). Both bundles coexist; FastAPI prefers the
-# Next.js bundle for the sub page when present.
+# Build the NexusPanel UI (dashboard-next only).
 set -e
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 
-if [ -f "$ROOT/app/dashboard-next/package.json" ]; then
-  echo "==> Building NexusPanel dashboard-next (Next.js 14 static export)…"
-  (cd "$ROOT/app/dashboard-next" && npm install && NEXT_PUBLIC_BASE_API=/api/ npm run build)
-  if [ -f "$ROOT/app/dashboard-next/out/dashboard/index.html" ]; then
-    cp "$ROOT/app/dashboard-next/out/dashboard/index.html" "$ROOT/app/dashboard-next/out/dashboard/404.html"
-  fi
-  if [ -f "$ROOT/app/dashboard-next/out/index.html" ]; then
-    cp "$ROOT/app/dashboard-next/out/index.html" "$ROOT/app/dashboard-next/out/404.html"
-  fi
+if [ ! -f "$ROOT/app/dashboard-next/package.json" ]; then
+  echo "ERROR: app/dashboard-next/package.json not found" >&2
+  exit 1
 fi
 
-# Legacy fallback only when Next.js build is missing
-if [ ! -f "$ROOT/app/dashboard-next/out/dashboard/index.html" ] && [ -f "$ROOT/app/dashboard-v2/package.json" ]; then
-  echo "==> Building NexusPanel dashboard-v2 (fallback)…"
-  (cd "$ROOT/app/dashboard-v2" && npm install && VITE_BASE_API=/api/ npm run build && cp ./build/index.html ./build/404.html)
+echo "==> Building NexusPanel dashboard-next (Next.js static export)…"
+(
+  cd "$ROOT/app/dashboard-next"
+  npm install
+  NEXT_PUBLIC_BASE_API=/api/ npm run build
+)
+
+if [ -f "$ROOT/app/dashboard-next/out/dashboard/index.html" ]; then
+  cp "$ROOT/app/dashboard-next/out/dashboard/index.html" \
+    "$ROOT/app/dashboard-next/out/dashboard/404.html"
+fi
+if [ -f "$ROOT/app/dashboard-next/out/index.html" ]; then
+  cp "$ROOT/app/dashboard-next/out/index.html" "$ROOT/app/dashboard-next/out/404.html"
 fi
 
-if [ ! -f "$ROOT/app/dashboard-next/out/dashboard/index.html" ] && [ ! -f "$ROOT/app/dashboard-v2/build/index.html" ] && [ ! -f "$ROOT/app/dashboard/build/index.html" ]; then
-  echo "==> Building legacy dashboard…"
-  (cd "$ROOT/app/dashboard" && VITE_BASE_API=/api/ npm run build --if-present -- --outDir build --assetsDir statics && cp ./build/index.html ./build/404.html)
+if [ ! -f "$ROOT/app/dashboard-next/out/dashboard/index.html" ]; then
+  echo "ERROR: build failed — missing out/dashboard/index.html" >&2
+  exit 1
 fi
+
+echo "==> Dashboard ready at app/dashboard-next/out/dashboard/"

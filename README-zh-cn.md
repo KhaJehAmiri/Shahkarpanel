@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/KhaJehAmiri/nexuspanel/master/app/dashboard/src/assets/logo.svg" width="88" alt="NexusPanel" />
+<img src="https://raw.githubusercontent.com/KhaJehAmiri/nexuspanel/master/docs/logo.svg" width="88" alt="NexusPanel" />
 
 # NexusPanel
 
@@ -22,7 +22,7 @@
 bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/nexuspanel/master/scripts/nexuspanel.sh) install
 ```
 
-面板：`http://IP:8000/dashboard/` · 白标设置：`#/manage/`
+面板：`http://IP:8000/dashboard/` · 功能开关：`#/system`
 
 ---
 

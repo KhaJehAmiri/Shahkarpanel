@@ -8,6 +8,7 @@ from app import logger, xray
 from app.db import Session, crud, get_db
 from app.dependencies import get_expired_users_list, get_validated_user, validate_dates
 from app.models.admin import Admin
+from app.rbac import require_permission
 from app.models.proxy import ProxyTypes
 from app.models.user import (
     UserCreate,
@@ -45,7 +46,7 @@ def add_user(
     new_user: UserCreate,
     bg: BackgroundTasks,
     db: Session = Depends(get_db),
-    admin: Admin = Depends(Admin.get_current),
+    admin: Admin = Depends(require_permission("users:write")),
 ):
     """
     Add a new user
@@ -95,7 +96,7 @@ def modify_user(
     bg: BackgroundTasks,
     db: Session = Depends(get_db),
     dbuser: UsersResponse = Depends(get_validated_user),
-    admin: Admin = Depends(Admin.get_current),
+    admin: Admin = Depends(require_permission("users:write")),
 ):
     """
     Modify an existing user
@@ -152,7 +153,7 @@ def remove_user(
     bg: BackgroundTasks,
     db: Session = Depends(get_db),
     dbuser: UserResponse = Depends(get_validated_user),
-    admin: Admin = Depends(Admin.get_current),
+    admin: Admin = Depends(require_permission("users:write")),
 ):
     """Remove a user"""
     crud.remove_user(db, dbuser)
@@ -171,7 +172,7 @@ def reset_user_data_usage(
     bg: BackgroundTasks,
     db: Session = Depends(get_db),
     dbuser: UserResponse = Depends(get_validated_user),
-    admin: Admin = Depends(Admin.get_current),
+    admin: Admin = Depends(require_permission("users:write")),
 ):
     """Reset user data usage"""
     dbuser = crud.reset_user_data_usage(db=db, dbuser=dbuser)
@@ -192,7 +193,7 @@ def revoke_user_subscription(
     bg: BackgroundTasks,
     db: Session = Depends(get_db),
     dbuser: UserResponse = Depends(get_validated_user),
-    admin: Admin = Depends(Admin.get_current),
+    admin: Admin = Depends(require_permission("users:write")),
 ):
     """Revoke users subscription (Subscription link and proxies)"""
     dbuser = crud.revoke_user_sub(db=db, dbuser=dbuser)
@@ -219,7 +220,7 @@ def get_users(
     status: UserStatus = None,
     sort: str = None,
     db: Session = Depends(get_db),
-    admin: Admin = Depends(Admin.get_current),
+    admin: Admin = Depends(require_permission("users:read")),
 ):
     """Get all users"""
     if sort is not None:
@@ -283,6 +284,7 @@ def active_next_plan(
     bg: BackgroundTasks,
     db: Session = Depends(get_db),
     dbuser: UserResponse = Depends(get_validated_user),
+    admin: Admin = Depends(require_permission("users:write")),
 ):
     """Reset user by next plan"""
     dbuser = crud.reset_user_by_next(db=db, dbuser=dbuser)
@@ -311,7 +313,7 @@ def get_users_usage(
     end: str = "",
     db: Session = Depends(get_db),
     owner: Union[List[str], None] = Query(None, alias="admin"),
-    admin: Admin = Depends(Admin.get_current),
+    admin: Admin = Depends(require_permission("users:read")),
 ):
     """Get all users usage"""
     start, end = validate_dates(start, end)
@@ -348,7 +350,7 @@ def get_expired_users(
     expired_after: Optional[datetime] = Query(None, example="2024-01-01T00:00:00"),
     expired_before: Optional[datetime] = Query(None, example="2024-01-31T23:59:59"),
     db: Session = Depends(get_db),
-    admin: Admin = Depends(Admin.get_current),
+    admin: Admin = Depends(require_permission("users:read")),
 ):
     """
     Get users who have expired within the specified date range.
@@ -371,7 +373,7 @@ def delete_expired_users(
     expired_after: Optional[datetime] = Query(None, example="2024-01-01T00:00:00"),
     expired_before: Optional[datetime] = Query(None, example="2024-01-31T23:59:59"),
     db: Session = Depends(get_db),
-    admin: Admin = Depends(Admin.get_current),
+    admin: Admin = Depends(require_permission("users:write")),
 ):
     """
     Delete users who have expired within the specified date range.

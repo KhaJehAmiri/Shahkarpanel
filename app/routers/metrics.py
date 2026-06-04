@@ -12,10 +12,8 @@ router = APIRouter(tags=["Metrics"], prefix="/api")
 
 
 def _authorize(request: Request, db: Session) -> None:
-    """Allow either a matching static METRICS_TOKEN or a sudo admin token."""
-    token = request.query_params.get("token") or request.headers.get(
-        "Authorization", ""
-    ).removeprefix("Bearer ").strip()
+    """Allow METRICS_TOKEN or sudo admin bearer token (header only — not query)."""
+    token = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
 
     if METRICS_TOKEN and token == METRICS_TOKEN:
         return

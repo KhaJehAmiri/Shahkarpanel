@@ -4,6 +4,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict
 
+from app import feature_flags
 from app.db import Session, get_db
 from app.db.models import Workflow
 from app.events import EventType
@@ -51,6 +52,11 @@ class WorkflowResponse(BaseModel):
     created_at: datetime
 
 
+def _require_enabled():
+    if not feature_flags.is_enabled("workflows"):
+        raise HTTPException(status_code=404, detail="Workflows are disabled")
+
+
 def _validate_steps(steps: List[WorkflowStep]) -> list:
     actions = available_actions()
     for step in steps:
@@ -64,6 +70,7 @@ def _validate_steps(steps: List[WorkflowStep]) -> list:
 
 @router.get("", response_model=List[WorkflowResponse])
 def list_workflows(db: Session = Depends(get_db), _: Admin = Depends(Admin.check_sudo_admin)):
+    _require_enabled()
     return db.query(Workflow).order_by(Workflow.id).all()
 
 
@@ -73,6 +80,7 @@ def create_workflow(
     db: Session = Depends(get_db),
     _: Admin = Depends(Admin.check_sudo_admin),
 ):
+    _require_enabled()
     workflow = Workflow(
         name=body.name,
         trigger_event=body.trigger_event.value,
@@ -93,6 +101,7 @@ def modify_workflow(
     db: Session = Depends(get_db),
     _: Admin = Depends(Admin.check_sudo_admin),
 ):
+    _require_enabled()
     workflow = db.query(Workflow).filter(Workflow.id == workflow_id).first()
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
@@ -119,6 +128,7 @@ def delete_workflow(
     db: Session = Depends(get_db),
     _: Admin = Depends(Admin.check_sudo_admin),
 ):
+    _require_enabled()
     workflow = db.query(Workflow).filter(Workflow.id == workflow_id).first()
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")

@@ -36,7 +36,7 @@ def admin_token(
 
     dbadmin = validate_admin(db, form_data.username, form_data.password)
     if not dbadmin:
-        report.login(form_data.username, form_data.password, client_ip, False)
+        report.login(form_data.username, "🔒", client_ip, False)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",

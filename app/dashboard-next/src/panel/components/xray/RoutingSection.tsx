@@ -1,6 +1,6 @@
 import { FC, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { DOMAIN_STRATEGIES, buildRuleFromForm, defaultRule, ruleToForm } from "../../lib/xrayHelpers";
+import { DOMAIN_STRATEGIES, RULE_PROTOCOLS, buildRuleFromForm, defaultRule, ruleToForm } from "../../lib/xrayHelpers";
 import { Button, Callout, Card, EmptyState, Field, Input, Modal, Select } from "../ui";
 import { IcEdit, IcPlus, IcTrash } from "../icons";
 
@@ -140,11 +140,16 @@ const RuleModal: FC<{
       }
     >
       <div className="nx-stack">
-        <Field label={t("xray.outboundTag")}>
-          <Select value={f.outboundTag} onChange={upd("outboundTag")}>
-            {tags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}
-          </Select>
-        </Field>
+        <div className="nx-row" style={{ gap: 12, flexWrap: "wrap" }}>
+          <Field label={t("xray.outboundTag")} hint={f.balancerTag.trim() ? t("xray.outboundTagDisabled") : undefined}>
+            <Select value={f.outboundTag} onChange={upd("outboundTag")} disabled={!!f.balancerTag.trim()}>
+              {tags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}
+            </Select>
+          </Field>
+          <Field label={`${t("xray.balancerTag")} (${t("common.optional")})`} hint={t("xray.balancerTagHint")}>
+            <Input value={f.balancerTag} onChange={upd("balancerTag")} placeholder="balancer-out" />
+          </Field>
+        </div>
         <Field label={`${t("xray.inboundTag")} (${t("common.optional")})`}>
           <Input value={f.inboundTag} onChange={upd("inboundTag")} placeholder="VLESS WS, comma-separated" />
         </Field>
@@ -154,9 +159,15 @@ const RuleModal: FC<{
         <Field label={`Domain (${t("xray.ruleListHint")})`}>
           <Input value={f.domain} onChange={upd("domain")} placeholder="geosite:category-ads-all" />
         </Field>
-        <div className="nx-row" style={{ gap: 12 }}>
+        <Field label={`Source (${t("common.optional")})`}>
+          <Input value={f.source} onChange={upd("source")} placeholder="10.0.0.0/8, geoip:private" />
+        </Field>
+        <div className="nx-row" style={{ gap: 12, flexWrap: "wrap" }}>
           <Field label={`Port (${t("common.optional")})`}><Input value={f.port} onChange={upd("port")} /></Field>
           <Field label={`Network (${t("common.optional")})`}><Input value={f.network} onChange={upd("network")} placeholder="tcp,udp" /></Field>
+          <Field label={`Protocol (${t("common.optional")})`} hint={RULE_PROTOCOLS.join(", ")}>
+            <Input value={f.protocol} onChange={upd("protocol")} placeholder="http,tls,bittorrent" />
+          </Field>
         </div>
       </div>
     </Modal>

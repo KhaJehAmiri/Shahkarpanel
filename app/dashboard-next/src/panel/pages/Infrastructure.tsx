@@ -16,9 +16,18 @@ export const Infrastructure: FC = () => {
   const { t } = useTranslation();
   const { admin } = useApp();
   const [tab, setTab] = useState("nodes");
+  if (!admin?.is_sudo) {
+    return (
+      <div>
+        <PageHeader title={t("infra.title")} subtitle={t("infra.subtitle")} description={t("infra.description")} />
+        <Callout tone="warn">{t("common.sudoOnly")}</Callout>
+      </div>
+    );
+  }
   const tabs = [
     { id: "nodes", label: t("infra.tabNodes") },
-    ...(admin?.is_sudo ? [{ id: "xray", label: t("xray.tabHub") }, { id: "hosts", label: t("infra.tabHosts") }] : []),
+    { id: "xray", label: t("xray.tabHub") },
+    { id: "hosts", label: t("infra.tabHosts") },
     { id: "tunnels", label: t("infra.tabTunnels") },
   ];
   return (

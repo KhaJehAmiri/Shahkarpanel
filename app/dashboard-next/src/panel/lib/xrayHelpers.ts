@@ -51,7 +51,17 @@ export const FINGERPRINTS = [
 ];
 export const SNIFF_OVERRIDES = ["http", "tls", "quic", "fakedns"];
 export const KCP_HEADERS = ["none", "srtp", "utp", "wechat-video", "dtls", "wireguard"];
-export const OUTBOUND_PROTOCOLS = ["freedom", "blackhole", "socks"] as const;
+export const OUTBOUND_PROTOCOLS = [
+  "freedom",
+  "blackhole",
+  "socks",
+  "http",
+  "vless",
+  "vmess",
+  "trojan",
+  "shadowsocks",
+  "wireguard",
+] as const;
 
 const SYSTEM_TAGS = new Set(["API_INBOUND", "API", "TUN_IN", "metrics_in"]);
 
@@ -118,6 +128,14 @@ export function ensureConfigShape(cfg: Record<string, unknown>): Record<string, 
   return c;
 }
 
+export type FallbackForm = {
+  dest: string;
+  path: string;
+  xver: string;
+  alpn: string;
+  name: string;
+};
+
 export type InboundForm = {
   tag: string;
   listen: string;
@@ -136,6 +154,7 @@ export type InboundForm = {
   realityDest: string;
   realityServerNames: string;
   realityPrivateKey: string;
+  realityPublicKey: string;
   realityShortIds: string;
   realitySpiderX: string;
   realityXver: string;
@@ -154,7 +173,14 @@ export type InboundForm = {
   wgPeerPublicKey: string;
   wgAllowedIPs: string;
   wgMtu: string;
+  fallbacks: FallbackForm[];
 };
+
+export const emptyFallback = (): FallbackForm => ({ dest: "", path: "", xver: "0", alpn: "", name: "" });
+
+export function supportsFallback(protocol: string): boolean {
+  return protocol === "vless" || protocol === "trojan";
+}
 
 export const defaultInboundForm = (): InboundForm => ({
   tag: "",
@@ -174,6 +200,7 @@ export const defaultInboundForm = (): InboundForm => ({
   realityDest: "",
   realityServerNames: "",
   realityPrivateKey: "",
+  realityPublicKey: "",
   realityShortIds: "",
   realitySpiderX: "",
   realityXver: "0",
@@ -192,6 +219,7 @@ export const defaultInboundForm = (): InboundForm => ({
   wgPeerPublicKey: "",
   wgAllowedIPs: "0.0.0.0/0",
   wgMtu: "1420",
+  fallbacks: [],
 });
 
 function readStreamHints(ss: Record<string, unknown>): {
@@ -284,6 +312,7 @@ export function inboundToForm(i: Record<string, unknown>): InboundForm {
   f.realityDest = String(rs.dest || "");
   f.realityServerNames = Array.isArray(rs.serverNames) ? (rs.serverNames as string[]).join(",") : "";
   f.realityPrivateKey = String(rs.privateKey || "");
+  f.realityPublicKey = String(rs.publicKey || "");
   f.realityShortIds = Array.isArray(rs.shortIds) ? (rs.shortIds as string[]).join(",") : "";
   f.realitySpiderX = String(rs.spiderX || "");
   f.realityXver = String(rs.xver ?? "0");
@@ -292,6 +321,20 @@ export function inboundToForm(i: Record<string, unknown>): InboundForm {
   f.flow = flow;
   f.grpcMultiMode = Boolean(grpc.multiMode);
   f.xhttpMode = String(xhttp.mode || "auto");
+
+  const rawFallbacks = settings.fallbacks;
+  if (Array.isArray(rawFallbacks)) {
+    f.fallbacks = rawFallbacks.map((raw) => {
+      const fb = (raw || {}) as Record<string, unknown>;
+      return {
+        dest: fb.dest === undefined || fb.dest === null ? "" : String(fb.dest),
+        path: String(fb.path || ""),
+        xver: String(fb.xver ?? "0"),
+        alpn: String(fb.alpn || ""),
+        name: String(fb.name || ""),
+      };
+    });
+  }
 
   if (f.protocol === "dokodemo-door") {
     const addr = settings.address as string | undefined;
@@ -376,6 +419,7 @@ function applySecurity(stream: Record<string, unknown>, f: InboundForm) {
         ? f.realityServerNames.split(",").map((s) => s.trim()).filter(Boolean)
         : [f.sni || "www.google.com"],
       privateKey: f.realityPrivateKey,
+      publicKey: f.realityPublicKey || undefined,
       shortIds: f.realityShortIds
         ? f.realityShortIds.split(",").map((s) => s.trim()).filter(Boolean)
         : [""],
@@ -439,6 +483,26 @@ export function buildInboundFromForm(f: InboundForm): Record<string, unknown> {
     };
   }
 
+  if (supportsFallback(f.protocol) && f.fallbacks.length) {
+    const fallbacks = f.fallbacks
+      .filter((fb) => String(fb.dest).trim() !== "")
+      .map((fb) => {
+        const out: Record<string, unknown> = {};
+        const destRaw = String(fb.dest).trim();
+        const destNum = Number(destRaw);
+        out.dest = /^\d+$/.test(destRaw) ? destNum : destRaw;
+        const xver = parseInt(fb.xver, 10);
+        if (xver) out.xver = xver;
+        if (fb.path.trim()) out.path = fb.path.trim();
+        if (fb.alpn.trim()) out.alpn = fb.alpn.trim();
+        if (fb.name.trim()) out.name = fb.name.trim();
+        return out;
+      });
+    if (fallbacks.length) {
+      (inbound.settings as Record<string, unknown>).fallbacks = fallbacks;
+    }
+  }
+
   if (supportsStream(f.protocol)) {
     const stream: Record<string, unknown> = {};
     applyTransport(stream, f);
@@ -460,54 +524,65 @@ export function buildInboundFromForm(f: InboundForm): Record<string, unknown> {
   return inbound;
 }
 
+export const RULE_PROTOCOLS = ["http", "tls", "quic", "bittorrent"] as const;
+
 export type RoutingRuleForm = {
   type: string;
   outboundTag: string;
+  balancerTag: string;
   inboundTag: string;
   ip: string;
   domain: string;
   port: string;
   network: string;
   protocol: string;
+  source: string;
 };
 
 export const defaultRule = (): RoutingRuleForm => ({
   type: "field",
   outboundTag: "BLOCK",
+  balancerTag: "",
   inboundTag: "",
   ip: "",
   domain: "",
   port: "",
   network: "",
   protocol: "",
+  source: "",
 });
 
 export function ruleToForm(r: Record<string, unknown>): RoutingRuleForm {
+  const protocol = r.protocol;
   return {
     type: String(r.type || "field"),
     outboundTag: String(r.outboundTag || ""),
+    balancerTag: String(r.balancerTag || ""),
     inboundTag: Array.isArray(r.inboundTag) ? (r.inboundTag as string[]).join(",") : String(r.inboundTag || ""),
     ip: Array.isArray(r.ip) ? (r.ip as string[]).join(",") : "",
     domain: Array.isArray(r.domain) ? (r.domain as string[]).join(",") : "",
     port: String(r.port || ""),
     network: String(r.network || ""),
-    protocol: String(r.protocol || ""),
+    protocol: Array.isArray(protocol) ? (protocol as string[]).join(",") : String(protocol || ""),
+    source: Array.isArray(r.source) ? (r.source as string[]).join(",") : "",
   };
 }
 
 export function buildRuleFromForm(f: RoutingRuleForm): Record<string, unknown> {
   const r: Record<string, unknown> = { type: f.type || "field" };
-  if (f.outboundTag) r.outboundTag = f.outboundTag;
+  const splitList = (s: string) => s.split(/[\n,]/).map((x) => x.trim()).filter(Boolean);
+  if (f.balancerTag.trim()) r.balancerTag = f.balancerTag.trim();
+  else if (f.outboundTag) r.outboundTag = f.outboundTag;
   if (f.inboundTag) {
     const tags = f.inboundTag.split(",").map((s) => s.trim()).filter(Boolean);
     r.inboundTag = tags.length === 1 ? tags[0] : tags;
   }
-  const splitList = (s: string) => s.split(/[\n,]/).map((x) => x.trim()).filter(Boolean);
   if (f.ip) r.ip = splitList(f.ip);
   if (f.domain) r.domain = splitList(f.domain);
+  if (f.source) r.source = splitList(f.source);
   if (f.port) r.port = f.port;
   if (f.network) r.network = f.network;
-  if (f.protocol) r.protocol = f.protocol;
+  if (f.protocol) r.protocol = splitList(f.protocol);
   return r;
 }
 
@@ -519,6 +594,216 @@ export function socksEndpointFromSettings(settings: unknown): { address: string;
     return { address: String(srv.address || ""), port: String(srv.port ?? "1080") };
   }
   return { address: String(s.address || ""), port: String(s.port ?? "1080") };
+}
+
+/* ---- Outbound builders (proxy chaining + WARP) ------------------------- */
+
+export const OUTBOUND_NETWORKS = ["tcp", "ws", "grpc", "http", "httpupgrade", "splithttp"] as const;
+export const OUTBOUND_SECURITIES = ["none", "tls", "reality"] as const;
+
+export type OutboundForm = {
+  tag: string;
+  protocol: string;
+  address: string;
+  port: string;
+  user: string;
+  pass: string;
+  id: string;
+  flow: string;
+  method: string;
+  network: string;
+  security: string;
+  sni: string;
+  path: string;
+  hostHeader: string;
+  fingerprint: string;
+  realityPublicKey: string;
+  realityShortId: string;
+  wgSecretKey: string;
+  wgAddress: string;
+  wgPeerPublicKey: string;
+  wgEndpoint: string;
+  wgReserved: string;
+};
+
+export const defaultOutboundForm = (): OutboundForm => ({
+  tag: "",
+  protocol: "freedom",
+  address: "",
+  port: "443",
+  user: "",
+  pass: "",
+  id: "",
+  flow: "",
+  method: SS_METHODS[0],
+  network: "tcp",
+  security: "none",
+  sni: "",
+  path: "/",
+  hostHeader: "",
+  fingerprint: "chrome",
+  realityPublicKey: "",
+  realityShortId: "",
+  wgSecretKey: "",
+  wgAddress: "172.16.0.2/32",
+  wgPeerPublicKey: "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
+  wgEndpoint: "engage.cloudflareclient.com:2408",
+  wgReserved: "",
+});
+
+/** Cloudflare WARP scaffold (admin still pastes their registered secretKey/reserved). */
+export const warpOutboundForm = (): OutboundForm => ({
+  ...defaultOutboundForm(),
+  tag: "warp",
+  protocol: "wireguard",
+});
+
+function streamFromOutboundForm(f: OutboundForm): Record<string, unknown> | undefined {
+  if (f.network === "tcp" && f.security === "none") return undefined;
+  const stream: Record<string, unknown> = { network: f.network };
+  if (f.network === "ws") {
+    stream.wsSettings = { path: f.path || "/", headers: f.hostHeader ? { Host: f.hostHeader } : undefined };
+  } else if (f.network === "grpc") {
+    stream.grpcSettings = { serviceName: f.path || "" };
+  } else if (f.network === "httpupgrade") {
+    stream.httpupgradeSettings = { path: f.path || "/", host: f.hostHeader || undefined };
+  } else if (f.network === "splithttp") {
+    stream.splithttpSettings = { path: f.path || "/", host: f.hostHeader || undefined };
+  } else if (f.network === "http") {
+    stream.httpSettings = { path: f.path || "/", host: f.hostHeader ? [f.hostHeader] : undefined };
+  }
+  if (f.security === "tls") {
+    stream.security = "tls";
+    stream.tlsSettings = { serverName: f.sni || undefined, fingerprint: f.fingerprint || undefined };
+  } else if (f.security === "reality") {
+    stream.security = "reality";
+    stream.realitySettings = {
+      serverName: f.sni || undefined,
+      fingerprint: f.fingerprint || "chrome",
+      publicKey: f.realityPublicKey || undefined,
+      shortId: f.realityShortId || undefined,
+    };
+  }
+  return stream;
+}
+
+export function buildOutboundFromForm(f: OutboundForm): Record<string, unknown> {
+  const ob: Record<string, unknown> = { tag: f.tag.trim(), protocol: f.protocol };
+  const port = parseInt(f.port, 10) || 443;
+  const addr = f.address.trim();
+
+  if (f.protocol === "freedom" || f.protocol === "blackhole") {
+    ob.settings = {};
+    return ob;
+  }
+  if (f.protocol === "socks" || f.protocol === "http") {
+    const server: Record<string, unknown> = { address: addr, port };
+    if (f.user) server.users = [{ user: f.user, pass: f.pass }];
+    ob.settings = { servers: [server] };
+    const stream = streamFromOutboundForm(f);
+    if (stream) ob.streamSettings = stream;
+    return ob;
+  }
+  if (f.protocol === "shadowsocks") {
+    ob.settings = {
+      servers: [{ address: addr, port, method: f.method, password: f.pass }],
+    };
+    return ob;
+  }
+  if (f.protocol === "trojan") {
+    ob.settings = { servers: [{ address: addr, port, password: f.pass }] };
+    const stream = streamFromOutboundForm({ ...f, security: f.security === "none" ? "tls" : f.security });
+    if (stream) ob.streamSettings = stream;
+    return ob;
+  }
+  if (f.protocol === "vless" || f.protocol === "vmess") {
+    const user: Record<string, unknown> = { id: f.id };
+    if (f.protocol === "vless") {
+      user.encryption = "none";
+      if (f.flow) user.flow = f.flow;
+    } else {
+      user.security = "auto";
+    }
+    ob.settings = { vnext: [{ address: addr, port, users: [user] }] };
+    const stream = streamFromOutboundForm(f);
+    if (stream) ob.streamSettings = stream;
+    return ob;
+  }
+  if (f.protocol === "wireguard") {
+    const peer: Record<string, unknown> = {
+      publicKey: f.wgPeerPublicKey.trim(),
+      endpoint: f.wgEndpoint.trim(),
+      allowedIPs: ["0.0.0.0/0", "::/0"],
+    };
+    const settings: Record<string, unknown> = {
+      secretKey: f.wgSecretKey.trim(),
+      address: f.wgAddress.split(",").map((s) => s.trim()).filter(Boolean),
+      peers: [peer],
+    };
+    const reserved = f.wgReserved
+      .split(",")
+      .map((s) => parseInt(s.trim(), 10))
+      .filter((n) => !Number.isNaN(n));
+    if (reserved.length) settings.reserved = reserved;
+    ob.settings = settings;
+    return ob;
+  }
+  ob.settings = {};
+  return ob;
+}
+
+export function outboundToForm(o: Record<string, unknown>): OutboundForm {
+  const f = defaultOutboundForm();
+  f.tag = String(o.tag || "");
+  f.protocol = String(o.protocol || "freedom");
+  const settings = (o.settings || {}) as Record<string, unknown>;
+  const ss = (o.streamSettings || {}) as Record<string, unknown>;
+  const servers = settings.servers as Record<string, unknown>[] | undefined;
+  const vnext = settings.vnext as Record<string, unknown>[] | undefined;
+
+  if (servers && servers[0]) {
+    const s0 = servers[0];
+    f.address = String(s0.address || "");
+    f.port = String(s0.port ?? "443");
+    f.method = String(s0.method || SS_METHODS[0]);
+    f.pass = String(s0.password || "");
+    const users = s0.users as Record<string, unknown>[] | undefined;
+    if (users && users[0]) {
+      f.user = String(users[0].user || "");
+      f.pass = String(users[0].pass || f.pass);
+    }
+  }
+  if (vnext && vnext[0]) {
+    f.address = String(vnext[0].address || "");
+    f.port = String(vnext[0].port ?? "443");
+    const users = vnext[0].users as Record<string, unknown>[] | undefined;
+    if (users && users[0]) {
+      f.id = String(users[0].id || "");
+      f.flow = String(users[0].flow || "");
+    }
+  }
+  if (f.protocol === "wireguard") {
+    f.wgSecretKey = String(settings.secretKey || "");
+    f.wgAddress = Array.isArray(settings.address) ? (settings.address as string[]).join(",") : "";
+    f.wgReserved = Array.isArray(settings.reserved) ? (settings.reserved as number[]).join(",") : "";
+    const peers = settings.peers as Record<string, unknown>[] | undefined;
+    if (peers && peers[0]) {
+      f.wgPeerPublicKey = String(peers[0].publicKey || "");
+      f.wgEndpoint = String(peers[0].endpoint || "");
+    }
+  }
+  f.network = String(ss.network || "tcp");
+  f.security = String(ss.security || "none");
+  const tls = (ss.tlsSettings || ss.realitySettings || {}) as Record<string, unknown>;
+  f.sni = String(tls.serverName || "");
+  f.fingerprint = String(tls.fingerprint || "chrome");
+  f.realityPublicKey = String((ss.realitySettings as Record<string, unknown>)?.publicKey || "");
+  f.realityShortId = String((ss.realitySettings as Record<string, unknown>)?.shortId || "");
+  return f;
+}
+
+export function outboundSupportsStream(protocol: string): boolean {
+  return protocol === "vless" || protocol === "vmess" || protocol === "trojan" || protocol === "socks" || protocol === "http";
 }
 
 /** @deprecated use INBOUND_PROTOCOLS */

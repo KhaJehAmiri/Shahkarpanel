@@ -88,7 +88,7 @@ BACKUP_INTERVAL_HOURS = config("BACKUP_INTERVAL_HOURS", cast=int, default=0)
 # Number of most-recent backups to keep on disk. <= 0 keeps all.
 BACKUP_RETENTION_COUNT = config("BACKUP_RETENTION_COUNT", cast=int, default=7)
 # Whether to include the .env file (contains secrets) in the backup archive.
-BACKUP_INCLUDE_ENV = config("BACKUP_INCLUDE_ENV", cast=bool, default=True)
+BACKUP_INCLUDE_ENV = config("BACKUP_INCLUDE_ENV", cast=bool, default=False)
 
 UVICORN_HOST = config("UVICORN_HOST", default="0.0.0.0")
 UVICORN_PORT = config("UVICORN_PORT", cast=int, default=8000)
@@ -101,7 +101,11 @@ DASHBOARD_PATH = config("DASHBOARD_PATH", default="/dashboard/")
 DEBUG = config("DEBUG", default=False, cast=bool)
 DOCS = config("DOCS", default=False, cast=bool)
 
-ALLOWED_ORIGINS = config("ALLOWED_ORIGINS", default="*").split(",")
+# Comma-separated origins; empty = do not emit permissive CORS (same-origin only).
+ALLOWED_ORIGINS = [
+    o.strip() for o in config("ALLOWED_ORIGINS", default="").split(",") if o.strip()
+]
+CORS_ALLOW_CREDENTIALS = config("CORS_ALLOW_CREDENTIALS", cast=bool, default=True)
 
 VITE_BASE_API = f"http://127.0.0.1:{UVICORN_PORT}/api/" \
     if DEBUG and config("VITE_BASE_API", default="/api/") == "/api/" \

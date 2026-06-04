@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 
-from config import ALLOWED_ORIGINS, DOCS, LOG_JSON, XRAY_SUBSCRIPTION_PATH
+from config import ALLOWED_ORIGINS, CORS_ALLOW_CREDENTIALS, DOCS, LOG_JSON, XRAY_SUBSCRIPTION_PATH
 from app.utils.logging import RequestContextMiddleware, setup_structured_logging
 
 __version__ = "0.8.4"
@@ -27,14 +27,28 @@ scheduler = BackgroundScheduler(
 )
 logger = logging.getLogger("uvicorn.error")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+if ALLOWED_ORIGINS:
+    _cors_credentials = CORS_ALLOW_CREDENTIALS and "*" not in ALLOWED_ORIGINS
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=ALLOWED_ORIGINS,
+        allow_credentials=_cors_credentials,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 app.add_middleware(RequestContextMiddleware)
+
+
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+    if request.url.scheme == "https":
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    return response
 from app import dashboard, jobs, routers, telegram  # noqa
 from app.routers import api_router  # noqa
 

@@ -1,6 +1,30 @@
 import { ChangeEvent, FC } from "react";
 import { useTranslation } from "react-i18next";
-import { Button, Callout, Card, Field, Input } from "../ui";
+import { Button, Callout, Card, Checkbox, Field, Input } from "../ui";
+
+function stringifyHosts(hosts: unknown): string {
+  if (!hosts || typeof hosts !== "object") return "";
+  return Object.entries(hosts as Record<string, unknown>)
+    .map(([k, v]) => `${k}: ${Array.isArray(v) ? (v as unknown[]).map(String).join(", ") : String(v)}`)
+    .join("\n");
+}
+
+function parseHosts(raw: string): Record<string, unknown> | undefined {
+  const out: Record<string, unknown> = {};
+  for (const line of raw.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const sep = trimmed.indexOf(":") >= 0 ? ":" : trimmed.indexOf("=") >= 0 ? "=" : "";
+    if (!sep) continue;
+    const idx = trimmed.indexOf(sep);
+    const key = trimmed.slice(0, idx).trim();
+    const valRaw = trimmed.slice(idx + 1).trim();
+    if (!key) continue;
+    const vals = valRaw.split(",").map((s) => s.trim()).filter(Boolean);
+    out[key] = vals.length <= 1 ? (vals[0] ?? "") : vals;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
 
 export const DnsSection: FC<{
   config: Record<string, unknown>;
@@ -10,12 +34,20 @@ export const DnsSection: FC<{
 }> = ({ config, onChange, onSave, saving }) => {
   const { t } = useTranslation();
   const dns = (config.dns || { servers: [] }) as Record<string, unknown>;
-  const servers = Array.isArray(dns.servers) ? (dns.servers as unknown[]).map(String) : [];
-  const text = servers.join("\n");
+  const rawServers = Array.isArray(dns.servers) ? (dns.servers as unknown[]) : [];
+
+  // Preserve object-form (advanced) servers; only the plain-string ones are textarea-editable.
+  const stringServers = rawServers.filter((s) => typeof s === "string").map(String);
+  const objectServers = rawServers.filter((s) => typeof s === "object" && s !== null);
+  const text = stringServers.join("\n");
+
+  const patchDns = (patch: Record<string, unknown>) => {
+    onChange({ ...config, dns: { ...dns, ...patch } });
+  };
 
   const setServers = (raw: string) => {
     const list = raw.split("\n").map((s) => s.trim()).filter(Boolean);
-    onChange({ ...config, dns: { ...dns, servers: list } });
+    patchDns({ servers: [...list, ...objectServers] });
   };
 
   return (
@@ -32,13 +64,48 @@ export const DnsSection: FC<{
             style={{ fontFamily: "var(--nx-font-mono)", fontSize: 12 }}
           />
         </Field>
-        <Field label={`${t("xray.dnsQueryStrategy")} (${t("common.optional")})`}>
-          <Input
-            value={String(dns.queryStrategy || "")}
-            onChange={(e) => onChange({ ...config, dns: { ...dns, queryStrategy: e.target.value || undefined } })}
-            placeholder="UseIP / UseIPv4"
+        {objectServers.length > 0 && (
+          <Callout tone="info" title={t("xray.dnsAdvancedServers")}>
+            {t("xray.dnsAdvancedServersHint", { count: objectServers.length })}
+          </Callout>
+        )}
+        <Field label={t("xray.dnsHosts")} hint={t("xray.dnsHostsHint")}>
+          <textarea
+            className="nx-input"
+            rows={4}
+            value={stringifyHosts(dns.hosts)}
+            onChange={(e: ChangeEvent<HTMLTextAreaElement>) => patchDns({ hosts: parseHosts(e.target.value) })}
+            placeholder={"domain.com: 1.2.3.4\ngeosite:category-ads-all: 127.0.0.1"}
+            style={{ fontFamily: "var(--nx-font-mono)", fontSize: 12 }}
           />
         </Field>
+        <div className="nx-row" style={{ gap: 12, flexWrap: "wrap" }}>
+          <Field label={`${t("xray.dnsClientIp")} (${t("common.optional")})`}>
+            <Input
+              value={String(dns.clientIp || "")}
+              onChange={(e) => patchDns({ clientIp: e.target.value || undefined })}
+              placeholder="1.2.3.4"
+            />
+          </Field>
+          <Field label={`${t("xray.dnsQueryStrategy")} (${t("common.optional")})`}>
+            <Input
+              value={String(dns.queryStrategy || "")}
+              onChange={(e) => patchDns({ queryStrategy: e.target.value || undefined })}
+              placeholder="UseIP / UseIPv4"
+            />
+          </Field>
+          <Field label={`${t("xray.dnsTag")} (${t("common.optional")})`}>
+            <Input
+              value={String(dns.tag || "")}
+              onChange={(e) => patchDns({ tag: e.target.value || undefined })}
+              placeholder="dns-out"
+            />
+          </Field>
+        </div>
+        <label className="nx-row" style={{ gap: 8, cursor: "pointer" }}>
+          <Checkbox checked={Boolean(dns.disableCache)} onChange={() => patchDns({ disableCache: !dns.disableCache })} />
+          <span>{t("xray.dnsDisableCache")}</span>
+        </label>
       </Card>
       <div className="nx-row" style={{ justifyContent: "flex-end" }}>
         <Button variant="primary" disabled={saving} onClick={onSave}>{t("common.save")}</Button>

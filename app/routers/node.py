@@ -102,6 +102,10 @@ def bootstrap_node(body: NodeBootstrap, bg: BackgroundTasks, db: Session = Depen
     if body.tenant_id is not None or (body.role and body.role != "direct"):
         if body.role and body.role not in ("direct", "relay", "exit"):
             raise HTTPException(status_code=422, detail="invalid node role")
+        if body.tenant_id is not None:
+            from app.db.models import Tenant
+            if db.query(Tenant.id).filter(Tenant.id == body.tenant_id).first() is None:
+                raise HTTPException(status_code=422, detail="Unknown tenant_id")
         dbnode.tenant_id = body.tenant_id
         if body.role:
             dbnode.role = body.role

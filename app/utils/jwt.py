@@ -18,6 +18,22 @@ def get_secret_key():
         return get_jwt_secret_key(db)
 
 
+def clear_secret_key_cache() -> None:
+    """Invalidate cached JWT secret after rotation (call from admin tooling)."""
+    get_secret_key.cache_clear()
+
+
+_SUBSCRIPTION_SIG_LEN = 22
+_LEGACY_SUBSCRIPTION_SIG_LEN = 10
+
+
+def _subscription_signature(data_b64_str: str, length: int = _SUBSCRIPTION_SIG_LEN) -> str:
+    return b64encode(
+        sha256((data_b64_str + get_secret_key()).encode("utf-8")).digest(),
+        altchars=b"-_",
+    ).decode("utf-8")[:length]
+
+
 def create_admin_token(username: str, is_sudo=False) -> str:
     data = {"sub": username, "access": "sudo" if is_sudo else "admin", "iat": datetime.utcnow()}
     if JWT_ACCESS_TOKEN_EXPIRE_MINUTES > 0:
@@ -47,13 +63,7 @@ def get_admin_payload(token: str) -> Union[dict, None]:
 def create_subscription_token(username: str) -> str:
     data = username + ',' + str(ceil(time.time()))
     data_b64_str = b64encode(data.encode('utf-8'), altchars=b'-_').decode('utf-8').rstrip('=')
-    data_b64_sign = b64encode(
-        sha256(
-            (data_b64_str+get_secret_key()).encode('utf-8')
-        ).digest(),
-        altchars=b'-_'
-    ).decode('utf-8')[:10]
-    data_final = data_b64_str + data_b64_sign
+    data_final = data_b64_str + _subscription_signature(data_b64_str)
     return data_final
 
 
@@ -69,22 +79,29 @@ def get_subscription_payload(token: str) -> Union[dict, None]:
             else:
                 return
         else:
-            u_token = token[:-10]
-            u_signature = token[-10:]
-            try:
-                u_token_dec = b64decode(
-                    (u_token.encode('utf-8') + b'=' * (-len(u_token.encode('utf-8')) % 4)),
-                    altchars=b'-_', validate=True)
-                u_token_dec_str = u_token_dec.decode('utf-8')
-            except:
-                return
-            u_token_resign = b64encode(sha256((u_token+get_secret_key()).encode('utf-8')
-                                              ).digest(), altchars=b'-_').decode('utf-8')[:10]
-            if u_signature == u_token_resign:
-                u_username = u_token_dec_str.split(',')[0]
-                u_created_at = int(u_token_dec_str.split(',')[1])
-                return {"username": u_username, "created_at": datetime.utcfromtimestamp(u_created_at)}
-            else:
-                return
+            for sig_len in (_SUBSCRIPTION_SIG_LEN, _LEGACY_SUBSCRIPTION_SIG_LEN):
+                if len(token) < sig_len + 5:
+                    continue
+                u_token = token[:-sig_len]
+                u_signature = token[-sig_len:]
+                try:
+                    u_token_dec = b64decode(
+                        (u_token.encode("utf-8") + b"=" * (-len(u_token.encode("utf-8")) % 4)),
+                        altchars=b"-_",
+                        validate=True,
+                    )
+                    u_token_dec_str = u_token_dec.decode("utf-8")
+                except Exception:
+                    continue
+                if u_signature == _subscription_signature(u_token, sig_len):
+                    parts = u_token_dec_str.split(",", 1)
+                    if len(parts) != 2:
+                        continue
+                    u_username, ts = parts[0], parts[1]
+                    return {
+                        "username": u_username,
+                        "created_at": datetime.utcfromtimestamp(int(ts)),
+                    }
+            return
     except jwt.exceptions.PyJWTError:
         return

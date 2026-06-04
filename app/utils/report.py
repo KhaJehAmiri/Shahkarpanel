@@ -204,10 +204,12 @@ def expire_days_reached(db: Session, days: int, user: UserResponse, user_id: int
 
 def login(username: str, password: str, client_ip: str, success: bool) -> None:
     if NOTIFY_LOGIN:
+        # Never forward plaintext passwords to webhooks (failed attempts included).
+        redacted = "🔒"
         try:
             telegram.report_login(
                 username=username,
-                password=password,
+                password=redacted,
                 client_ip=client_ip,
                 status="✅ Success" if success else "❌ Failed"
             )
@@ -216,7 +218,7 @@ def login(username: str, password: str, client_ip: str, success: bool) -> None:
         try:
             discord.report_login(
                 username=username,
-                password=password,
+                password=redacted,
                 client_ip=client_ip,
                 status="✅ Success" if success else "❌ Failed"
             )

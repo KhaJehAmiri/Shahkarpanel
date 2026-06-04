@@ -166,7 +166,7 @@ xray-core
 *-dev.yaml
 *-debug.*
 
-# Node / Next.js (dashboard-next & dashboard-v2)
+# Node / Next.js (dashboard-next)
 node_modules/
 .next/
 *.tsbuildinfo

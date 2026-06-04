@@ -121,8 +121,8 @@ def test_build_install_command_basic():
     assert "https://panel.example.com/api/node/bootstrap" in cmd
     assert "tok123" in cmd
     assert "de-node-1" in cmd
-    assert '\\"tenant_id\\": 7' in cmd
-    assert '\\"role\\": \\"exit\\"' in cmd
+    assert '"tenant_id": 7' in cmd
+    assert '"role": "exit"' in cmd
 
 
 def test_build_install_command_preserves_explicit_scheme():
@@ -130,7 +130,12 @@ def test_build_install_command_preserves_explicit_scheme():
     assert "http://1.2.3.4:8000/api/node/bootstrap" in cmd
     # default role, no tenant
     assert "tenant_id" not in cmd
-    assert '\\"role\\": \\"direct\\"' in cmd
+    assert '"role": "direct"' in cmd
+
+
+def test_build_install_command_json_escapes_quotes():
+    cmd = provisioning.build_install_command("panel.example.com", "tok", 'node"evil', role="direct")
+    assert '"name": "node\\"evil"' in cmd or '"name": "node\\\"evil"' in cmd
 
 
 def test_build_install_command_validates():

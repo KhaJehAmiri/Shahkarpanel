@@ -71,8 +71,14 @@ def add_user(
 
     try:
         dbuser = crud.create_user(
-            db, new_user, admin=crud.get_admin(db, admin.username)
+            db,
+            new_user,
+            admin=crud.get_admin(db, admin.username),
         )
+    except ValueError as exc:
+        if "user limit" in str(exc).lower():
+            raise HTTPException(status_code=403, detail=str(exc))
+        raise
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=409, detail="User already exists")

@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict
 
 from app import feature_flags
-from app.api_keys import get_v2_admin
+from app.api_keys import require_v2_scope
 from app.db import Session, crud, get_db
 from app.models.admin import Admin
 from app.utils import responses
@@ -49,7 +49,7 @@ def list_users(
     page: int = Query(1, ge=1),
     size: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
-    admin: Admin = Depends(get_v2_admin),
+    admin: Admin = Depends(require_v2_scope("users:read")),
 ):
     _require_v2_enabled()
     from app.db.models import User

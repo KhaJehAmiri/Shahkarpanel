@@ -45,7 +45,7 @@ export const Shell: FC = () => {
     if (admin?.is_sudo) return NAV_BASE;
     return NAV_BASE.map((s) => ({
       ...s,
-      items: s.items.filter((id) => id !== "inbounds"),
+      items: s.items.filter((id) => id !== "inbounds" && id !== "infrastructure" && id !== "automation"),
     }));
   }, [admin?.is_sudo]);
 

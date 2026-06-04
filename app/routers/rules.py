@@ -4,6 +4,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict
 
+from app import feature_flags
 from app.db import Session, get_db
 from app.db.models import Rule
 from app.events import EventType
@@ -49,6 +50,11 @@ class RuleResponse(BaseModel):
     created_at: datetime
 
 
+def _require_enabled():
+    if not feature_flags.is_enabled("rule_engine"):
+        raise HTTPException(status_code=404, detail="Rule engine is disabled")
+
+
 def _validate_action(action: str) -> None:
     if action not in available_actions():
         raise HTTPException(
@@ -59,6 +65,7 @@ def _validate_action(action: str) -> None:
 
 @router.get("/rules", response_model=List[RuleResponse])
 def list_rules(db: Session = Depends(get_db), _: Admin = Depends(Admin.check_sudo_admin)):
+    _require_enabled()
     return db.query(Rule).order_by(Rule.id).all()
 
 
@@ -68,6 +75,7 @@ def create_rule(
     db: Session = Depends(get_db),
     _: Admin = Depends(Admin.check_sudo_admin),
 ):
+    _require_enabled()
     _validate_action(body.action)
     rule = Rule(
         name=body.name,
@@ -90,6 +98,7 @@ def modify_rule(
     db: Session = Depends(get_db),
     _: Admin = Depends(Admin.check_sudo_admin),
 ):
+    _require_enabled()
     rule = db.query(Rule).filter(Rule.id == rule_id).first()
     if not rule:
         raise HTTPException(status_code=404, detail="Rule not found")
@@ -119,6 +128,7 @@ def delete_rule(
     db: Session = Depends(get_db),
     _: Admin = Depends(Admin.check_sudo_admin),
 ):
+    _require_enabled()
     rule = db.query(Rule).filter(Rule.id == rule_id).first()
     if not rule:
         raise HTTPException(status_code=404, detail="Rule not found")

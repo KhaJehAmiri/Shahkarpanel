@@ -412,7 +412,25 @@ const UserDetail: FC<{ username: string; onClose: () => void; onEdit: () => void
                 {data.admin ? <span style={{ marginInlineStart: 8 }}>by {data.admin.username}</span> : null}
               </div>
             </div>
-            <Button size="sm" onClick={onEdit}><IcEdit className="nx-ico" /> {t("common.edit")}</Button>
+            <div className="nx-row" style={{ gap: 8, flexShrink: 0 }}>
+              <Button size="sm" variant="ghost" onClick={async () => {
+                if (!confirm(t("users.resetUsageConfirm"))) return;
+                try {
+                  await api.post(`/user/${encodeURIComponent(username)}/reset`);
+                  toast.push(t("common.saved"), "success");
+                  onClose();
+                } catch (e: any) { toast.push(e.message, "error"); }
+              }}>{t("users.resetUsage")}</Button>
+              <Button size="sm" variant="ghost" onClick={async () => {
+                if (!confirm(t("users.revokeSubConfirm"))) return;
+                try {
+                  await api.post(`/user/${encodeURIComponent(username)}/revoke_sub`);
+                  toast.push(t("common.saved"), "success");
+                  onClose();
+                } catch (e: any) { toast.push(e.message, "error"); }
+              }}>{t("users.revokeSub")}</Button>
+              <Button size="sm" onClick={onEdit}><IcEdit className="nx-ico" /> {t("common.edit")}</Button>
+            </div>
           </div>
 
           {/* Stat grid */}

@@ -369,6 +369,11 @@ def create_user(db: Session, user: UserCreate, admin: Admin = None) -> User:
     Returns:
         User: The created user object.
     """
+    if admin is not None and admin.max_users is not None:
+        current = get_users_count(db, admin=admin)
+        if current >= admin.max_users:
+            raise ValueError(f"Reseller user limit reached ({admin.max_users})")
+
     excluded_inbounds_tags = user.excluded_inbounds
     proxies = []
     for proxy_type, settings in user.proxies.items():
@@ -899,7 +904,10 @@ def get_jwt_secret_key(db: Session) -> str:
     Returns:
         str: JWT secret key.
     """
-    return db.query(JWT).first().secret_key
+    row = db.query(JWT).first()
+    if not row or not row.secret_key:
+        raise RuntimeError("JWT secret is not configured in the database")
+    return row.secret_key
 
 
 def get_tls_certificate(db: Session) -> TLS:
@@ -1624,7 +1632,7 @@ def delete_notification_reminder(db: Session, dbreminder: NotificationReminder) 
     return
 
 
-def count_online_users(db: Session, hours: int = 24):
+def count_online_users(db: Session, hours: int = 24, admin: Admin = None):
     """Users seen on VPN recently; only billable statuses (active / on_hold)."""
     twenty_four_hours_ago = datetime.utcnow() - timedelta(hours=hours)
     query = db.query(func.count(User.id)).filter(
@@ -1632,4 +1640,6 @@ def count_online_users(db: Session, hours: int = 24):
         User.online_at >= twenty_four_hours_ago,
         User.status.in_((UserStatus.active, UserStatus.on_hold)),
     )
+    if admin:
+        query = query.filter(User.admin == admin)
     return query.scalar()

@@ -2,6 +2,7 @@ import { FC, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import { PluginsStatus, Rule, Workflow } from "../api/types";
+import { useApp } from "../context/AppContext";
 import { useFetch } from "../lib/useFetch";
 import { PageHeader } from "../components/Shell";
 import {
@@ -19,18 +20,33 @@ const ACTIONS = ["log", "publish_event", "restart_node"];
 
 export const Automation: FC = () => {
   const { t } = useTranslation();
+  const { admin, isEnabled } = useApp();
   const [tab, setTab] = useState("rules");
+  if (!admin?.is_sudo) {
+    return (
+      <div>
+        <PageHeader title={t("automation.title")} subtitle={t("automation.subtitle")} description={t("automation.description")} />
+        <Callout tone="warn">{t("common.sudoOnly")}</Callout>
+      </div>
+    );
+  }
+  const tabs = [
+    ...(isEnabled("rule_engine") ? [{ id: "rules", label: t("automation.tabRules") }] : []),
+    ...(isEnabled("workflows") ? [{ id: "workflows", label: t("automation.tabWorkflows") }] : []),
+    { id: "plugins", label: t("automation.tabPlugins") },
+  ];
+  const activeTab = tabs.some((x) => x.id === tab) ? tab : (tabs[0]?.id ?? "plugins");
   return (
     <div>
       <PageHeader title={t("automation.title")} subtitle={t("automation.subtitle")} description={t("automation.description")} />
-      <Tabs active={tab} onChange={setTab} tabs={[
-        { id: "rules", label: t("automation.tabRules") },
-        { id: "workflows", label: t("automation.tabWorkflows") },
-        { id: "plugins", label: t("automation.tabPlugins") },
-      ]} />
-      {tab === "rules" && <RulesTab />}
-      {tab === "workflows" && <WorkflowsTab />}
-      {tab === "plugins" && <PluginsTab />}
+      {tabs.length === 0 ? (
+        <Callout tone="warn">{t("common.disabledFeature")}</Callout>
+      ) : (
+      <Tabs active={activeTab} onChange={setTab} tabs={tabs} />
+      )}
+      {activeTab === "rules" && <RulesTab />}
+      {activeTab === "workflows" && <WorkflowsTab />}
+      {activeTab === "plugins" && <PluginsTab />}
     </div>
   );
 };
@@ -46,6 +62,8 @@ const RulesTab: FC = () => {
   const [show, setShow] = useState(false);
   const { data, loading, error, status, reload } = useFetch<Rule[]>(() => api.get("/rules"), []);
 
+  const { isEnabled } = useApp();
+  if (!isEnabled("rule_engine") || status === 404) return <Callout tone="warn">{t("common.disabledFeature")}</Callout>;
   if (status === 403) return <Callout tone="warn">{t("common.sudoOnly")}</Callout>;
 
   const toggle = async (r: Rule) => {
@@ -128,9 +146,11 @@ const AddRule: FC<{ onClose: () => void; onDone: () => void }> = ({ onClose, onD
 const WorkflowsTab: FC = () => {
   const { t } = useTranslation();
   const toast = useToast();
+  const { isEnabled } = useApp();
   const [show, setShow] = useState(false);
   const { data, loading, error, status, reload } = useFetch<Workflow[]>(() => api.get("/workflows"), []);
 
+  if (!isEnabled("workflows") || status === 404) return <Callout tone="warn">{t("common.disabledFeature")}</Callout>;
   if (status === 403) return <Callout tone="warn">{t("common.sudoOnly")}</Callout>;
 
   const remove = async (id: number) => {

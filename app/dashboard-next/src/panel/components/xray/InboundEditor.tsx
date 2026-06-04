@@ -12,14 +12,17 @@ import {
   SS_NETWORKS,
   VLESS_FLOWS,
   defaultInboundForm,
+  emptyFallback,
   generateRealityKeypair,
   inboundToForm,
   randomShortId,
+  supportsFallback,
   supportsStream,
+  type FallbackForm,
   type InboundForm,
   buildInboundFromForm,
 } from "../../lib/xrayHelpers";
-import { Button, Checkbox, Field, Input, Modal, Select, useToast } from "../ui";
+import { Button, Checkbox, CopyButton, Field, Input, Modal, Select, useToast } from "../ui";
 
 const Section: FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
   <div>
@@ -49,6 +52,19 @@ export const InboundEditor: FC<{
   const toggle = (k: keyof InboundForm) => () =>
     setF((prev) => ({ ...prev, [k]: !prev[k as keyof InboundForm] }));
 
+  const addFallback = () =>
+    setF((prev) => ({ ...prev, fallbacks: [...prev.fallbacks, emptyFallback()] }));
+  const removeFallback = (idx: number) =>
+    setF((prev) => ({ ...prev, fallbacks: prev.fallbacks.filter((_, i) => i !== idx) }));
+  const updFallback = (idx: number, key: keyof FallbackForm) =>
+    (e: ChangeEvent<HTMLInputElement>) => {
+      const value = e.target.value;
+      setF((prev) => ({
+        ...prev,
+        fallbacks: prev.fallbacks.map((fb, i) => (i === idx ? { ...fb, [key]: value } : fb)),
+      }));
+    };
+
   const setProtocol = (p: string) => {
     setF((prev) => ({
       ...defaultInboundForm(),
@@ -62,10 +78,11 @@ export const InboundEditor: FC<{
   const genReality = async () => {
     setGenKeys(true);
     try {
-      const { privateKey } = await generateRealityKeypair();
+      const { privateKey, publicKey } = await generateRealityKeypair();
       setF((prev) => ({
         ...prev,
         realityPrivateKey: privateKey,
+        realityPublicKey: publicKey,
         realityShortIds: prev.realityShortIds || randomShortId(),
         security: "reality",
       }));
@@ -295,6 +312,12 @@ export const InboundEditor: FC<{
                 <Field label="dest"><Input value={f.realityDest} onChange={upd("realityDest")} placeholder="www.google.com:443" /></Field>
                 <Field label="SNI / serverNames"><Input value={f.realityServerNames} onChange={upd("realityServerNames")} /></Field>
                 <Field label="privateKey"><Input value={f.realityPrivateKey} onChange={upd("realityPrivateKey")} /></Field>
+                <Field label={t("inbounds.realityPublicKey")} hint={t("inbounds.realityPublicKeyHint")}>
+                  <div className="nx-row" style={{ gap: 8 }}>
+                    <Input value={f.realityPublicKey} onChange={upd("realityPublicKey")} placeholder={t("inbounds.realityPublicKeyPlaceholder")} />
+                    <CopyButton value={f.realityPublicKey} />
+                  </div>
+                </Field>
                 <Field label="shortIds"><Input value={f.realityShortIds} onChange={upd("realityShortIds")} placeholder="comma separated" /></Field>
                 <div className="nx-row" style={{ gap: 12, flexWrap: "wrap" }}>
                   <Field label="Fingerprint">
@@ -307,6 +330,47 @@ export const InboundEditor: FC<{
                 </div>
               </div>
             )}
+          </Section>
+        )}
+
+        {supportsFallback(f.protocol) && (
+          <Section title={t("inbounds.sectionFallbacks")}>
+            <CalloutInline>{t("inbounds.fallbackHint")}</CalloutInline>
+            {f.fallbacks.map((fb, idx) => (
+              <div
+                key={idx}
+                className="nx-stack"
+                style={{ gap: 10, padding: 12, border: "1px solid var(--nx-border)", borderRadius: 8 }}
+              >
+                <div className="nx-row" style={{ gap: 12, flexWrap: "wrap" }}>
+                  <Field label={t("inbounds.fallbackDest")} hint={t("inbounds.fallbackDestHint")}>
+                    <Input value={fb.dest} onChange={updFallback(idx, "dest")} placeholder="8080 / 127.0.0.1:8001" />
+                  </Field>
+                  <Field label="path">
+                    <Input value={fb.path} onChange={updFallback(idx, "path")} placeholder="/ws" />
+                  </Field>
+                  <Field label="xver">
+                    <Input type="number" value={fb.xver} onChange={updFallback(idx, "xver")} />
+                  </Field>
+                </div>
+                <div className="nx-row" style={{ gap: 12, flexWrap: "wrap", alignItems: "end" }}>
+                  <Field label="alpn">
+                    <Input value={fb.alpn} onChange={updFallback(idx, "alpn")} placeholder="h2 / http/1.1" />
+                  </Field>
+                  <Field label="name (SNI)">
+                    <Input value={fb.name} onChange={updFallback(idx, "name")} placeholder="example.com" />
+                  </Field>
+                  <Button variant="ghost" size="sm" onClick={() => removeFallback(idx)}>
+                    {t("common.remove")}
+                  </Button>
+                </div>
+              </div>
+            ))}
+            <div>
+              <Button variant="ghost" size="sm" onClick={addFallback}>
+                {t("inbounds.addFallback")}
+              </Button>
+            </div>
           </Section>
         )}
 

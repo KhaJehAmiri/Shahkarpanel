@@ -9,6 +9,7 @@ from app.db import Session, crud, get_db
 from app.dependencies import get_validated_sub, validate_dates
 from app.models.proxy import ProxyTypes
 from app.models.user import SubscriptionUserResponse, UserResponse, UserStatus
+from app.subscription.guards import ensure_subscription_config_allowed
 from app.subscription.share import encode_title, generate_subscription
 from app.subscription.wireguard import user_config as build_wireguard_user_config
 from app.templates import render_template
@@ -58,6 +59,8 @@ def user_subscription(
 ):
     """Provides a subscription link based on the user agent (Clash, V2Ray, etc.)."""
     user: UserResponse = UserResponse.model_validate(dbuser)
+
+    ensure_subscription_config_allowed(user)
 
     accept_header = request.headers.get("Accept", "")
     if "text/html" in accept_header:
@@ -157,6 +160,8 @@ def user_subscription_info(
     dbuser: UserResponse = Depends(get_validated_sub),
 ):
     """Retrieves detailed information about the user's subscription."""
+    user = UserResponse.model_validate(dbuser)
+    ensure_subscription_config_allowed(user)
     return dbuser
 
 
@@ -168,6 +173,8 @@ def user_get_usage(
     db: Session = Depends(get_db)
 ):
     """Fetches the usage statistics for the user within a specified date range."""
+    user = UserResponse.model_validate(dbuser)
+    ensure_subscription_config_allowed(user)
     start, end = validate_dates(start, end)
 
     usages = crud.get_user_usages(db, dbuser, start, end)
@@ -193,10 +200,7 @@ def user_subscription_wireguard(
     """Return a wg-quick ``.conf`` for the user, tied to the same token and
     central quota. Issuance is gated on billable status / quota so a
     disabled / limited / expired user does not receive a working config."""
-    if dbuser.status not in (UserStatus.active, UserStatus.on_hold):
-        raise HTTPException(status_code=403, detail="Subscription is not active")
-    if dbuser.data_limit and dbuser.used_traffic >= dbuser.data_limit:
-        raise HTTPException(status_code=403, detail="Data limit reached")
+    ensure_subscription_config_allowed(dbuser)
 
     settings = _wireguard_user_settings(dbuser)
     if not settings:
@@ -242,6 +246,7 @@ def user_subscription_with_client_type(
 ):
     """Provides a subscription link based on the specified client type (e.g., Clash, V2Ray)."""
     user: UserResponse = UserResponse.model_validate(dbuser)
+    ensure_subscription_config_allowed(user)
 
     response_headers = {
         "content-disposition": f'attachment; filename="{user.username}"',

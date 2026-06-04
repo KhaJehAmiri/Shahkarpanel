@@ -13,6 +13,7 @@ setup. We do this by SSHing in and running an install script that:
 API falls back to returning the one-line install command so the user can paste
 it into their server manually. The command builder is a pure, tested function.
 """
+import json
 import shlex
 from dataclasses import dataclass
 from typing import Optional
@@ -72,7 +73,17 @@ def build_install_command(
         else f"https://{panel_address}"
 
     q = shlex.quote
-    tenant_field = "" if tenant_id is None else f', \\"tenant_id\\": {int(tenant_id)}'
+    json_body = (
+        f'{{"token": {json.dumps(bootstrap_token)}, '
+        f'"name": {json.dumps(node_name)}, '
+        '"address": "$PUBLIC_IP", '
+        f'"port": {int(node_port)}, '
+        f'"api_port": {int(node_api_port)}, '
+        f'"role": {json.dumps(role)}'
+    )
+    if tenant_id is not None:
+        json_body += f', "tenant_id": {int(tenant_id)}'
+    json_body += "}"
 
     return (
         "set -e; "
@@ -87,12 +98,7 @@ def build_install_command(
         "PUBLIC_IP=$(curl -fsSL https://api.ipify.org || hostname -I | awk '{print $1}'); "
         f"curl -fsSL -X POST {q(panel_url + '/api/node/bootstrap')} "
         "-H 'Content-Type: application/json' "
-        f'-d "{{\\"token\\": \\"{bootstrap_token}\\", '
-        f'\\"name\\": \\"{node_name}\\", '
-        '\\"address\\": \\"$PUBLIC_IP\\", '
-        f'\\"port\\": {int(node_port)}, '
-        f'\\"api_port\\": {int(node_api_port)}, '
-        f'\\"role\\": \\"{role}\\"{tenant_field}}}"'
+        f'-d "{json_body}"'
     )
 
 

@@ -138,6 +138,18 @@ export interface ImportPreviewRow {
   status: string;
   conflict?: string | null;
   unmapped_inbounds: string[];
+  source?: string | null;
+  proxies?: Record<string, unknown>;
+}
+
+export interface ImportPreviewResponse {
+  rows: ImportPreviewRow[];
+  total: number;
+  truncated?: boolean;
+  source?: string;
+  format_hint?: string;
+  counts?: { total: number; new: number; exists: number; invalid: number };
+  panel_inbound_tags?: string[];
 }
 
 export interface Rule {

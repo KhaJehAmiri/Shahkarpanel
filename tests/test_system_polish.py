@@ -34,6 +34,12 @@ def test_parse_marzban_json():
     assert rows[0]["username"] == "bob"
 
 
+def test_parse_marzban_single_user():
+    payload = {"username": "solo", "proxies": {"vmess": {"id": "x"}}, "inbounds": {}}
+    rows = parsers.parse_upload("user.json", json.dumps(payload).encode())
+    assert rows[0]["username"] == "solo"
+
+
 def test_parse_3xui_clients_export():
     payload = {
         "inbounds": [{"tag": "main", "protocol": "vless"}],
@@ -44,10 +50,59 @@ def test_parse_3xui_clients_export():
     assert "vless" in rows[0]["proxies"]
 
 
+def test_parse_3xui_inbounds_bundle():
+    payload = {
+        "inbounds": [
+            {
+                "tag": "in-1",
+                "protocol": "vless",
+                "settings": {"clients": [{"email": "client1@x", "enable": True}]},
+            }
+        ]
+    }
+    rows = parsers.parse_upload("backup.json", json.dumps(payload).encode())
+    assert rows[0]["username"] == "client1"
+    assert "in-1" in rows[0]["inbounds"].get("vless", [])
+
+
+def test_parse_links_txt():
+    text = "vless://11111111-2222-4333-8444-555555555555@1.2.3.4:443?security=tls#myuser\n"
+    rows = parsers.parse_upload("links.txt", text.encode())
+    assert len(rows) == 1
+    assert rows[0]["username"] == "myuser"
+
+
+def test_parse_pasarguard_objects():
+    payload = {"objects": [{"username": "pg1", "proxies": {"trojan": {}}}]}
+    result = parsers.parse_upload_with_meta("backup.json", json.dumps(payload).encode())
+    assert result.source == "pasarguard"
+    assert result.rows[0]["username"] == "pg1"
+
+
 def test_apply_inbound_mapping():
     rows = [{"username": "a", "inbounds": {"vless": ["old-tag"]}}]
     mapped = parsers.apply_inbound_mapping(rows, {"old-tag": "new-tag"}, {"new-tag"})
     assert mapped[0]["inbounds"]["vless"] == ["new-tag"]
+
+
+def test_annotate_duplicate_in_file():
+    rows = [{"username": "dup"}, {"username": "dup"}]
+    out = parsers.annotate_conflicts(rows, set())
+    assert out[0]["conflict"] is None
+    assert out[1]["conflict"] == "duplicate_in_file"
+
+
+def test_count_by_conflict():
+    rows = [
+        {"conflict": None},
+        {"conflict": "exists"},
+        {"conflict": "invalid_username"},
+    ]
+    c = parsers.count_by_conflict(rows)
+    assert c["total"] == 3
+    assert c["new"] == 1
+    assert c["exists"] == 1
+    assert c["invalid"] == 1
 
 
 def test_deployment_snapshot_keys():

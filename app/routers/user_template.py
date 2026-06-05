@@ -1,13 +1,12 @@
 from typing import List
 
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.exc import IntegrityError
-from fastapi import Depends, HTTPException, APIRouter
 
 from app.db import Session, crud, get_db
-from app.models.admin import Admin
-from app.models.user_template import (UserTemplateCreate, UserTemplateModify,
-                                      UserTemplateResponse)
 from app.dependencies import get_user_template
+from app.models.admin import Admin
+from app.models.user_template import UserTemplateCreate, UserTemplateModify, UserTemplateResponse
 from app.rbac import require_permission
 
 router = APIRouter(tags=['User Template'], prefix='/api')

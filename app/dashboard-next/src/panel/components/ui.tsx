@@ -1,6 +1,7 @@
 import {
   createContext, FC, InputHTMLAttributes, ReactNode, useCallback, useContext, useState,
 } from "react";
+import { useTranslation } from "react-i18next";
 import { copyToClipboard } from "../lib/clipboard";
 import { IcCheck, IcClose } from "./icons";
 
@@ -169,12 +170,15 @@ export const SectionHelp: FC<{ title: ReactNode; children: ReactNode; tone?: "in
 );
 
 /* ------------------------------- HelpTip -------------------------------- */
-export const HelpTip: FC<{ text: ReactNode; placement?: "top" | "bottom" }> = ({ text, placement = "top" }) => (
-  <span className={`nx-tip nx-tip-${placement}`} tabIndex={0} aria-label="Help">
-    <span className="nx-tip-mark" aria-hidden>?</span>
-    <span className="nx-tip-bubble" role="tooltip">{text}</span>
-  </span>
-);
+export const HelpTip: FC<{ text: ReactNode; placement?: "top" | "bottom" }> = ({ text, placement = "top" }) => {
+  const { t } = useTranslation();
+  return (
+    <span className={`nx-tip nx-tip-${placement}`} tabIndex={0} aria-label={t("common.help")}>
+      <span className="nx-tip-mark" aria-hidden>?</span>
+      <span className="nx-tip-bubble" role="tooltip">{text}</span>
+    </span>
+  );
+};
 
 /* ----------------------------- Checkbox -------------------------------- */
 export const Checkbox: FC<{ checked: boolean; onChange?: () => void }> = ({ checked, onChange }) => (
@@ -186,15 +190,16 @@ export const Checkbox: FC<{ checked: boolean; onChange?: () => void }> = ({ chec
 /* ------------------------------ CopyField ------------------------------ */
 export const CopyField: FC<{ value: string; label?: string; mono?: boolean; multiline?: boolean }> = ({ value, label, mono = true, multiline }) => {
   const { push } = useToast();
+  const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
   const copy = async () => {
     const ok = await copyToClipboard(value);
     if (ok) {
       setCopied(true);
-      push("Copied to clipboard", "success");
+      push(t("common.copiedToClipboard"), "success");
       window.setTimeout(() => setCopied(false), 1400);
     } else {
-      push("Copy failed — select the text and use Ctrl/Cmd+C", "error");
+      push(t("common.copyFailedHint"), "error");
     }
   };
   return (
@@ -206,9 +211,9 @@ export const CopyField: FC<{ value: string; label?: string; mono?: boolean; mult
         ) : (
           <input className={`nx-input ${mono ? "nx-mono" : ""}`} readOnly value={value} onFocus={(e) => e.target.select()} />
         )}
-        <button type="button" className={`nx-copy-btn ${copied ? "ok" : ""}`} onClick={copy} aria-label="Copy">
+        <button type="button" className={`nx-copy-btn ${copied ? "ok" : ""}`} onClick={copy} aria-label={t("common.copy")}>
           {copied ? <IcCheck size={14} /> : <span aria-hidden style={{ fontSize: 14 }}>⧉</span>}
-          <span className="nx-copy-btn-label">{copied ? "Copied" : "Copy"}</span>
+          <span className="nx-copy-btn-label">{copied ? t("common.copied") : t("common.copy")}</span>
         </button>
       </div>
     </div>
@@ -217,19 +222,21 @@ export const CopyField: FC<{ value: string; label?: string; mono?: boolean; mult
 
 export const CopyButton: FC<{ value: string; size?: "sm" | "md"; label?: string; className?: string }> = ({ value, size = "sm", label, className = "" }) => {
   const { push } = useToast();
+  const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
   const copy = async () => {
     const ok = await copyToClipboard(value);
     if (ok) {
       setCopied(true);
-      push("Copied", "success");
+      push(t("common.copied"), "success");
       window.setTimeout(() => setCopied(false), 1400);
-    } else push("Copy failed", "error");
+    } else push(t("common.copyFailed"), "error");
   };
+  const copyLabel = label || t("common.copy");
   return (
-    <button type="button" onClick={copy} className={`nx-btn ${size === "sm" ? "sm" : ""} ${className}`} aria-label={label || "Copy"} title={label || "Copy"}>
+    <button type="button" onClick={copy} className={`nx-btn ${size === "sm" ? "sm" : ""} ${className}`} aria-label={copyLabel} title={copyLabel}>
       {copied ? <IcCheck size={14} /> : <span aria-hidden style={{ fontSize: 14 }}>⧉</span>}
-      {label ? <span>{copied ? "Copied" : label}</span> : null}
+      {label ? <span>{copied ? t("common.copied") : label}</span> : null}
     </button>
   );
 };
@@ -270,6 +277,7 @@ export const useToast = () => useContext(ToastCtx);
 const TOAST_ICON: Record<Toast["kind"], string> = { success: "✓", error: "!", info: "i" };
 
 export const ToastProvider: FC<{ children: ReactNode }> = ({ children }) => {
+  const { t: tr } = useTranslation();
   const [toasts, setToasts] = useState<Toast[]>([]);
   const dismiss = useCallback((id: number) => setToasts((t) => t.filter((x) => x.id !== id)), []);
   const push = useCallback((msg: string, kind: Toast["kind"] = "info") => {
@@ -285,7 +293,7 @@ export const ToastProvider: FC<{ children: ReactNode }> = ({ children }) => {
           <div key={t.id} className={`nx-toast ${t.kind}`} role="status">
             <span className="nx-toast-icon" aria-hidden>{TOAST_ICON[t.kind]}</span>
             <span className="nx-toast-msg">{t.msg}</span>
-            <button className="nx-toast-x" onClick={() => dismiss(t.id)} aria-label="Dismiss">×</button>
+            <button className="nx-toast-x" onClick={() => dismiss(t.id)} aria-label={tr("common.dismiss")}>×</button>
           </div>
         ))}
       </div>

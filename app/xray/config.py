@@ -251,7 +251,7 @@ class XRayConfig(dict):
                             f"You need to define at least one shortID in realitySettings of {inbound['tag']}")
                     try:
                         settings['spx'] = tls_settings.get('SpiderX')
-                    except:
+                    except Exception:
                         settings['spx'] = ""
 
                 if net in ('tcp', 'raw'):

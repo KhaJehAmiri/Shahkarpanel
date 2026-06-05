@@ -208,10 +208,19 @@ def _worker(job_id: str) -> None:
         job.finished_at = time.time()
 
 
+class UpdateInProgress(Exception):
+    """Raised when an update job is already running."""
+
+
 def start_apply_job() -> str:
     job_id = uuid.uuid4().hex[:12]
     job = UpdateJob(id=job_id)
     with _lock:
+        # Refuse to start a second update concurrently — two `git pull` +
+        # migrate + build + restart runs would race on the working tree.
+        for existing in _jobs.values():
+            if existing.status not in ("success", "failed"):
+                raise UpdateInProgress(existing.id)
         _jobs[job_id] = job
     threading.Thread(target=_worker, args=(job_id,), daemon=True).start()
     return job_id

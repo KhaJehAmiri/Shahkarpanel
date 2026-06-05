@@ -10,7 +10,7 @@ import { PageHeader } from "../components/Shell";
 import {
   Button, Callout, Card, CopyField, EmptyState, Field, Input, Modal, Pill, Select, SkeletonRows, Tabs, useToast,
 } from "../components/ui";
-import { IcPlus, IcRefresh, IcTrash, IcLink, IcEdit, IcEye } from "../components/icons";
+import { IcPlus, IcRefresh, IcTrash, IcLink, IcEdit, IcEye, IcBolt } from "../components/icons";
 import { XrayConfigsHub } from "../components/xray/XrayConfigsHub";
 
 export const Infrastructure: FC = () => {
@@ -189,6 +189,7 @@ const AddNode: FC<{
     name: "", address: "", port: "62050", api_port: "62051", region: "",
     core_kind: initialCoreKind || "xray",
     ssh_port: "22", username: "root", password: "", role: "direct",
+    makeTunnel: false, tunnelPort: "443",
   });
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<ProvisionResult | null>(null);
@@ -197,12 +198,27 @@ const AddNode: FC<{
   const submitManual = async () => {
     setBusy(true);
     try {
-      await api.post("/node", {
+      const node = await api.post<NodeItem>("/node", {
         name: f.name.trim(), address: f.address.trim(),
         port: parseInt(f.port), api_port: parseInt(f.api_port),
         region: f.region.trim() || null, add_as_new_host: true, usage_coefficient: 1,
         core_kind: f.core_kind,
       });
+      // Optionally wire a tunnel between this panel and the new node. A node in
+      // Iran becomes the relay (panel is the exit); a foreign node becomes the
+      // exit (panel is the relay).
+      if (f.makeTunnel && node?.id) {
+        const nodeIsIran = isIranNode(f.region);
+        const port = parseInt(f.tunnelPort) || 443;
+        try {
+          await api.post("/tunnels", {
+            name: `${f.name.trim()}-tunnel`,
+            relay_node_id: nodeIsIran ? node.id : null,
+            exit_node_id: nodeIsIran ? null : node.id,
+            transport: "reality", listen_port: port, target_port: port,
+          });
+        } catch (e: any) { toast.push(e.message, "error"); }
+      }
       toast.push(t("common.created"), "success"); onDone();
     } catch (e: any) { toast.push(e.message, "error"); } finally { setBusy(false); }
   };
@@ -276,6 +292,24 @@ const AddNode: FC<{
                 <option value="wireguard">WireGuard</option>
               </Select>
             </Field>
+            {isEnabled("tunneling") && (
+              <div className="nx-stack" style={{ gap: 8 }}>
+                <label className="nx-row" style={{ gap: 8 }}>
+                  <input type="checkbox" checked={f.makeTunnel} onChange={(e) => setF({ ...f, makeTunnel: e.target.checked })} />
+                  {t("infra.makeTunnelWithPanel")}
+                </label>
+                {f.makeTunnel && (
+                  <>
+                    <Callout tone="info">
+                      {isIranNode(f.region) ? t("infra.makeTunnelHintIran") : t("infra.makeTunnelHintForeign")}
+                    </Callout>
+                    <Field label={t("infra.tunnelPort")} hint={t("infra.tunnelPortHint")}>
+                      <Input type="number" value={f.tunnelPort} onChange={upd("tunnelPort")} />
+                    </Field>
+                  </>
+                )}
+              </div>
+            )}
           </>
         ) : (
           <>
@@ -333,7 +367,15 @@ const TunnelsTab: FC = () => {
     catch (e: any) { toast.push(e.message, "error"); }
   };
 
-  const nodeName = (id: number) => nodes.data?.find((n) => n.id === id)?.name || `#${id}`;
+  const apply = async (id: number) => {
+    try { await api.post(`/tunnels/${id}/apply`, {}); toast.push(t("infra.tunnelApplied"), "success"); }
+    catch (e: any) { toast.push(e.message, "error"); }
+  };
+
+  const endName = (id: number | null, kind: "panel" | "node") =>
+    kind === "panel" || id == null
+      ? t("infra.panelEndpoint")
+      : nodes.data?.find((n) => n.id === id)?.name || `#${id}`;
 
   return (
     <>
@@ -352,18 +394,21 @@ const TunnelsTab: FC = () => {
                 <thead><tr>
                   <th>{t("common.name")}</th><th>{t("infra.relayNode")}</th><th>{t("infra.exitNode")}</th>
                   <th>{t("infra.transport")}</th><th>{t("infra.listenPort")}→{t("infra.targetPort")}</th>
+                  <th>{t("common.status")}</th>
                   <th style={{ textAlign: "end" }}>{t("common.actions")}</th>
                 </tr></thead>
                 <tbody>
                   {data.map((tn) => (
                     <tr key={tn.id}>
                       <td style={{ fontWeight: 600 }}>{tn.name}</td>
-                      <td>{nodeName(tn.relay_node_id)}</td>
-                      <td>{nodeName(tn.exit_node_id)}</td>
+                      <td>{endName(tn.relay_node_id, tn.relay_kind)}</td>
+                      <td>{endName(tn.exit_node_id, tn.exit_kind)}</td>
                       <td><Pill tone="accent">{tn.transport}</Pill></td>
                       <td className="nx-mono">{tn.listen_port} → {tn.target_port}</td>
+                      <td><Pill tone={tn.enabled ? "ok" : "default"}>{tn.enabled ? t("common.enabled") : t("common.disabled")}</Pill></td>
                       <td>
                         <div className="nx-row" style={{ justifyContent: "flex-end", gap: 6 }}>
+                          <Button size="sm" variant="ghost" title={t("infra.applyTunnel")} disabled={!tn.enabled} onClick={() => apply(tn.id)}><IcBolt className="nx-ico" /></Button>
                           <Button size="sm" variant="ghost" title={t("infra.viewConfig")} onClick={() => setConfigId(tn.id)}><IcEye className="nx-ico" /></Button>
                           <Button size="sm" variant="ghost" onClick={() => setEdit(tn)}><IcEdit className="nx-ico" /></Button>
                           <Button variant="danger" size="sm" onClick={() => remove(tn.id)}><IcTrash className="nx-ico" /></Button>
@@ -562,38 +607,48 @@ const AddTunnel: FC<{ nodes: NodeItem[]; onClose: () => void; onDone: () => void
     if (!f.exit && defaultExit) setF((s) => ({ ...s, exit: String(defaultExit) }));
   }, [defaultRelay, defaultExit, f.relay, f.exit]);
 
+  // "panel" => this panel's local core is that end; otherwise a node id string.
+  const endId = (v: string): number | null => (v === "panel" ? null : parseInt(v));
+
   const submit = async () => {
+    if (f.relay === "panel" && f.exit === "panel") {
+      toast.push(t("infra.tunnelBothPanel"), "error"); return;
+    }
     setBusy(true);
     try {
       await api.post("/tunnels", {
-        name: f.name.trim(), relay_node_id: parseInt(f.relay), exit_node_id: parseInt(f.exit),
+        name: f.name.trim(), relay_node_id: endId(f.relay), exit_node_id: endId(f.exit),
         transport: f.transport, listen_port: parseInt(f.listen), target_port: parseInt(f.target),
       });
       toast.push(t("common.created"), "success"); onDone();
     } catch (e: any) { toast.push(e.message, "error"); } finally { setBusy(false); }
   };
 
+  const bothPanel = f.relay === "panel" && f.exit === "panel";
+
   return (
     <Modal open title={t("infra.addTunnel")} onClose={onClose}
       footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
-        <Button variant="primary" disabled={busy || !f.name || !f.relay || !f.exit} onClick={submit}>{t("common.create")}</Button></>}>
+        <Button variant="primary" disabled={busy || !f.name || !f.relay || !f.exit || bothPanel} onClick={submit}>{t("common.create")}</Button></>}>
       <div className="nx-stack">
         {deploy.data && (
           <Callout tone="info">
-            {panelForeign ? t("infra.tunnelHintAddIranFirst") : t("infra.tunnelHintAddForeignFirst")}
+            {panelForeign ? t("infra.tunnelHintPanelForeign") : t("infra.tunnelHintPanelIran")}
           </Callout>
         )}
         <Field label={t("common.name")}><Input value={f.name} onChange={upd("name")} autoFocus /></Field>
         <div className="nx-row" style={{ gap: 12 }}>
-          <Field label={t("infra.relayNode")}>
+          <Field label={t("infra.relayNode")} hint={t("infra.relayEndHint")}>
             <Select value={f.relay} onChange={upd("relay")}>
               <option value="">—</option>
+              <option value="panel">{t("infra.panelEndpoint")}</option>
               {(irNodes.length ? irNodes : nodes).map((n) => <option key={n.id} value={n.id}>{n.name} ({n.region || "?"})</option>)}
             </Select>
           </Field>
-          <Field label={t("infra.exitNode")}>
+          <Field label={t("infra.exitNode")} hint={t("infra.exitEndHint")}>
             <Select value={f.exit} onChange={upd("exit")}>
               <option value="">—</option>
+              <option value="panel">{t("infra.panelEndpoint")}</option>
               {(foreignNodes.length ? foreignNodes : nodes).map((n) => <option key={n.id} value={n.id}>{n.name} ({n.region || "?"})</option>)}
             </Select>
           </Field>

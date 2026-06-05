@@ -38,7 +38,13 @@
     "deleted": "Удалено",
     "error": "Что-то пошло не так",
     "disabledFeature": "Эта функция отключена. Включите её в разделе Система → Флаги функций.",
-    "sudoOnly": "Этот раздел доступен только владельцу (sudo)."
+    "sudoOnly": "Этот раздел доступен только владельцу (sudo).",
+    "help": "Справка",
+    "dismiss": "Закрыть",
+    "copiedToClipboard": "Скопировано в буфер обмена",
+    "copyFailed": "Не удалось скопировать",
+    "copyFailedHint": "Не удалось скопировать — выделите текст и нажмите Ctrl/Cmd+C",
+    "protocols": "Протоколы"
   },
   "nav": {
     "main": "Основное",
@@ -128,7 +134,36 @@
       "expired": "Истёк",
       "limited": "Ограничен",
       "on_hold": "Ожидание"
-    }
+    },
+    "import": "Импорт из других панелей",
+    "importWhere": "Поддерживаемые источники",
+    "importFile": "Файл экспорта (.json, .csv, .txt)",
+    "importPreview": "Предпросмотр",
+    "importApply": "Импортировать всё",
+    "importApplyConfirm": "Импортировать {{n}} нов. пользователей из файла?",
+    "importDone": "Создано: {{created}}, пропущено: {{skipped}}",
+    "importNothingNew": "В файле нет новых пользователей для импорта",
+    "importSkipExisting": "Пропускать уже существующих пользователей",
+    "importSource": "Определено",
+    "importTotal": "Всего",
+    "importNew": "Новые",
+    "importExists": "Уже существуют",
+    "importInvalid": "Неверные / дубликаты в файле",
+    "importTruncated": "Предпросмотр — первые 2000 строк; импорт применяет весь файл",
+    "importConflict": "Проблема",
+    "importConflict.exists": "существует",
+    "importConflict.invalid_username": "неверное имя",
+    "importConflict.duplicate_in_file": "дубликат в файле",
+    "importMapTitle": "Сопоставьте чужие теги inbound с этой панелью",
+    "importSkipInbound": "пропустить (исп. настройки панели)",
+    "importFmtMarzban": "Marzban / NexusPanel / PasarGuard: Настройки → Экспорт пользователей (JSON) или резервная копия с users[]",
+    "importFmt3xui": "3x-ui: JSON-бэкап панели (inbounds с клиентами) или экспорт inbound",
+    "importFmtCsv": "CSV: username, protocols, limit_gb, expire, note",
+    "importFmtLinks": "Ссылки: .txt с одной ссылкой vless/vmess/trojan/ss:// в строке",
+    "resetUsage": "Сбросить трафик",
+    "revokeSub": "Отозвать подписку",
+    "resetUsageConfirm": "Сбросить счётчик трафика этого пользователя?",
+    "revokeSubConfirm": "Отозвать ссылки подписки? Пользователь должен обновить клиенты."
   },
   "infra": {
     "title": "Инфраструктура",
@@ -169,9 +204,19 @@
     "transport": "Транспорт",
     "listenPort": "Порт прослушивания",
     "targetPort": "Целевой порт",
-    "tunnelDesc": "Передача трафика с внутреннего узла на зарубежный выходной узел.",
-    "tunnelHintAddIranFirst": "Панель за рубежом. Сначала добавьте узел IR (relay).",
-    "tunnelHintAddForeignFirst": "Панель в Иране. Сначала добавьте зарубежный exit.",
+    "tunnelDesc": "Передача трафика с внутреннего конца на зарубежный выходной конец. Любой конец может быть узлом или самой панелью.",
+    "tunnelHintPanelForeign": "Панель за рубежом и может быть выходом. Добавьте/выберите иранский relay-узел и укажите выход «Эта панель».",
+    "tunnelHintPanelIran": "Панель в Иране и может быть relay. Укажите relay «Эта панель» и выберите зарубежный выходной узел.",
+    "panelEndpoint": "Эта панель (локальное ядро)",
+    "relayEndHint": "Внутренняя сторона, к которой подключаются клиенты.",
+    "exitEndHint": "Зарубежная сторона с выходом в интернет.",
+    "applyTunnel": "Применить (развернуть сейчас)",
+    "tunnelApplied": "Туннель применён к обоим концам.",
+    "tunnelBothPanel": "Оба конца не могут быть этой панелью. Хотя бы один конец должен быть узлом.",
+    "makeTunnelWithPanel": "Создать туннель между этой панелью и узлом",
+    "makeTunnelHintIran": "Этот узел в Иране, поэтому он становится relay, а панель — выходом.",
+    "makeTunnelHintForeign": "Этот узел зарубежный, поэтому он становится выходом, а панель — relay.",
+    "tunnelPortHint": "Порт для прослушивания relay и цели выхода (по умолчанию 443).",
     "regionPreset": "Регион",
     "viewConfig": "Конфиг Xray",
     "tunnelConfig": "Конфиг туннеля",
@@ -414,7 +459,7 @@
   "billing": {
     "title": "Биллинг",
     "subtitle": "Тарифы, счета и кошелёк",
-    "description": "Коммерческий уровень. Опишите тарифы (трафик + срок + цена), создавайте счета, отслеживайте балансы и транзакции. Тарифы привязаны к шаблонам пользователя — оплата запускает выдачу подписки.",
+    "description": "Описание",
     "tabPlans": "Тарифы",
     "tabInvoices": "Счета",
     "tabTransactions": "Транзакции",
@@ -432,8 +477,7 @@
     "pay": "Оплачено",
     "billingDisabled": "Биллинг отключён.",
     "invoiceStatus": "Статус",
-    "type": "Тип",
-    "description": "Описание"
+    "type": "Тип"
   },
   "system": {
     "title": "Система",
@@ -487,29 +531,79 @@
     "xrayScopePanel": "Панель (локально)",
     "xrayScopeNode": "Узел",
     "xrayAlsoInInfra": "Также: Инфраструктура → Узлы → «Версия Xray».",
-    "panelVersion": "Версия панели"
+    "panelVersion": "Версия панели",
+    "updateCurrent": "Установленная версия",
+    "updateAvailable": "Доступная версия",
+    "updateDone": "Обновление завершено. Установлена версия v{{version}}.",
+    "updateFailed": "Не удалось завершить обновление. Повторите или перезапустите панель вручную.",
+    "updateProgress": "Прогресс",
+    "updateReleaseNotes": "Что нового",
+    "updatesBreaking": "Этот релиз может содержать несовместимые изменения — прочитайте заметки перед установкой.",
+    "updateStep": {
+      "backup": "Резервная копия",
+      "pull": "Загрузка обновления",
+      "migrate": "Миграция БД",
+      "build": "Пересборка панели",
+      "restart": "Перезапуск панели"
+    }
   },
   "flags": {
-    "prometheus_metrics": { "desc": "Endpoint Prometheus /metrics" },
-    "plugins": { "desc": "Система плагинов" },
-    "rule_engine": { "desc": "Правила и автоматизация" },
-    "auto_healing": { "desc": "Автоперезапуск нод" },
-    "billing": { "desc": "Биллинг" },
-    "api_v2": { "desc": "API v2" },
-    "smart_routing": { "desc": "Умная маршрутизация нод" },
-    "workflows": { "desc": "Workflows" },
-    "traffic_intelligence": { "desc": "Аналитика трафика" },
-    "plugin_marketplace": { "desc": "Маркетплейс плагинов" },
-    "tenants": { "desc": "Тенанты" },
-    "white_label": { "desc": "White-label" },
-    "node_provisioning": { "desc": "SSH provisioning" },
-    "tunneling": { "desc": "Туннели IR↔зарубежье" },
-    "setup_wizard": { "desc": "Мастер настройки" }
+    "prometheus_metrics": {
+      "desc": "Endpoint Prometheus /metrics"
+    },
+    "plugins": {
+      "desc": "Система плагинов"
+    },
+    "rule_engine": {
+      "desc": "Правила и автоматизация"
+    },
+    "auto_healing": {
+      "desc": "Автоперезапуск нод"
+    },
+    "billing": {
+      "desc": "Биллинг"
+    },
+    "api_v2": {
+      "desc": "API v2"
+    },
+    "smart_routing": {
+      "desc": "Умная маршрутизация нод"
+    },
+    "workflows": {
+      "desc": "Workflows"
+    },
+    "traffic_intelligence": {
+      "desc": "Аналитика трафика"
+    },
+    "plugin_marketplace": {
+      "desc": "Маркетплейс плагинов"
+    },
+    "tenants": {
+      "desc": "Тенанты"
+    },
+    "white_label": {
+      "desc": "White-label"
+    },
+    "node_provisioning": {
+      "desc": "SSH provisioning"
+    },
+    "tunneling": {
+      "desc": "Туннели IR↔зарубежье"
+    },
+    "setup_wizard": {
+      "desc": "Мастер настройки"
+    }
   },
   "marketplace": {
-    "event_log": { "desc": "Лог событий" },
-    "node_alert": { "desc": "Алерты нод" },
-    "auto_heal": { "desc": "Auto-heal нод" }
+    "event_log": {
+      "desc": "Лог событий"
+    },
+    "node_alert": {
+      "desc": "Алерты нод"
+    },
+    "auto_heal": {
+      "desc": "Auto-heal нод"
+    }
   },
   "setup": {
     "title": "Первоначальная настройка",

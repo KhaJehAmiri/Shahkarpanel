@@ -10,7 +10,7 @@ from urllib.request import urlopen
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from app import xray
+from app import logger, xray
 from app.db import Session, crud, get_db
 from app.models.admin import Admin
 from app.system import update_jobs
@@ -87,6 +87,7 @@ class XrayUpgradeBody(BaseModel):
 class XrayUpgradeResult(BaseModel):
     version: str
     scope: str
+    restart_warning: Optional[str] = None
 
 
 @router.get("/system/version", response_model=PanelVersionInfo)
@@ -108,7 +109,10 @@ def check_panel_updates(_: Admin = Depends(Admin.check_sudo_admin)):
 
 @router.post("/system/updates/apply", response_model=UpdateApplyResponse)
 def apply_panel_updates(_: Admin = Depends(Admin.check_sudo_admin)):
-    job_id = update_jobs.start_apply_job()
+    try:
+        job_id = update_jobs.start_apply_job()
+    except update_jobs.UpdateInProgress as exc:
+        raise HTTPException(status_code=409, detail="An update is already in progress") from exc
     return UpdateApplyResponse(job_id=job_id)
 
 
@@ -159,13 +163,18 @@ def upgrade_panel_xray(
 
     try:
         version = xu.install_xray_release(body.tag)
-        try:
-            xray.core.restart(xray.config.include_db_users())
-        except Exception:
-            pass
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return XrayUpgradeResult(version=version, scope="panel")
+
+    restart_warning = None
+    try:
+        xray.core.restart(xray.config.include_db_users())
+    except Exception as exc:
+        # The new binary is installed; a failed restart is recoverable but must
+        # not be hidden — surface it so the admin knows to restart manually.
+        logger.error("Xray %s installed but core restart failed: %s", version, exc)
+        restart_warning = str(exc)
+    return XrayUpgradeResult(version=version, scope="panel", restart_warning=restart_warning)
 
 
 @router.post("/nodes/{node_id}/xray/version", response_model=XrayUpgradeResult)

@@ -675,11 +675,16 @@ class BrandingSettings(Base):
 
 
 class Tunnel(Base):
-    """An encrypted hop between an in-country ``relay`` node and a foreign
-    ``exit`` node (phase 6). Many protocols don't survive a direct connection
+    """An encrypted hop between an in-country ``relay`` end and a foreign
+    ``exit`` end (phase 6). Many protocols don't survive a direct connection
     from inside Iran, so clients hit the relay which forwards to the exit over a
     secure transport. The panel generates the relay outbound and exit inbound
     Xray fragments from this definition.
+
+    Either end may be a registered :class:`Node` or the panel's own local Xray
+    core (when ``relay_node_id`` / ``exit_node_id`` is ``NULL``). This lets a
+    panel installed on an Iran box be the relay while only a foreign node is
+    added as the exit (or vice versa).
     """
 
     __tablename__ = "tunnels"
@@ -687,8 +692,10 @@ class Tunnel(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String(128), nullable=False)
     enabled = Column(Boolean, nullable=False, default=True)
-    relay_node_id = Column(Integer, ForeignKey("nodes.id"), nullable=False, index=True)
-    exit_node_id = Column(Integer, ForeignKey("nodes.id"), nullable=False, index=True)
+    # A NULL endpoint means "the panel's own local Xray core" (the panel host
+    # acts as that end of the tunnel). Otherwise it points at a node.
+    relay_node_id = Column(Integer, ForeignKey("nodes.id"), nullable=True, index=True)
+    exit_node_id = Column(Integer, ForeignKey("nodes.id"), nullable=True, index=True)
     # Transport for the relay->exit hop: 'reality' | 'ws' | 'grpc' | 'tcp'.
     transport = Column(String(16), nullable=False, default="reality")
     listen_port = Column(Integer, nullable=False)        # port clients hit on the relay

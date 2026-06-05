@@ -197,6 +197,19 @@ def update_user(dbuser: "DBUser"):
     _sync_wireguard()
 
 
+def _apply_node_tunnels(config, node_id: int):
+    """Fold this node's tunnel fragments (relay/exit) into its config copy.
+
+    Best-effort: returns the original config if injection fails so a tunnel
+    misconfiguration never keeps a node from connecting.
+    """
+    try:
+        from app.tunnel.inject import apply_endpoint_tunnels
+        return apply_endpoint_tunnels(config, node_id)
+    except Exception:
+        return config
+
+
 def remove_node(node_id: int):
     if node_id in xray.nodes:
         try:
@@ -283,6 +296,7 @@ def connect_node(node_id, config=None):
 
         if config is None:
             config = xray.config.include_db_users()
+        config = _apply_node_tunnels(config, node_id)
 
         node.start(config)
         version = node.get_version()
@@ -323,6 +337,7 @@ def restart_node(node_id, config=None):
 
         if config is None:
             config = xray.config.include_db_users()
+        config = _apply_node_tunnels(config, node_id)
 
         node.restart(config)
         logger.info(f"Xray core of \"{dbnode.name}\" node restarted")

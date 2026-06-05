@@ -28,4 +28,13 @@ if [ ! -f "$ROOT/app/dashboard-next/out/dashboard/index.html" ]; then
   exit 1
 fi
 
+# Fonts are served from /fonts (see app/dashboard/__init__.py). Next.js copies
+# public/ into out/ automatically, but guard against a stale/partial export so
+# Persian (Vazirmatn) and Latin (Inter) typography never silently falls back.
+if [ -d "$ROOT/app/dashboard-next/public/fonts" ]; then
+  mkdir -p "$ROOT/app/dashboard-next/out/fonts"
+  cp -f "$ROOT/app/dashboard-next/public/fonts/"*.woff2 \
+    "$ROOT/app/dashboard-next/out/fonts/" 2>/dev/null || true
+fi
+
 echo "==> Dashboard ready at app/dashboard-next/out/dashboard/"

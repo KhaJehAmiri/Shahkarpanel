@@ -38,7 +38,13 @@
     "deleted": "已删除",
     "error": "出现错误",
     "disabledFeature": "此功能已关闭。请在 系统 → 功能开关 中启用。",
-    "sudoOnly": "此区域仅对所有者（sudo）管理员开放。"
+    "sudoOnly": "此区域仅对所有者（sudo）管理员开放。",
+    "help": "帮助",
+    "dismiss": "关闭",
+    "copiedToClipboard": "已复制到剪贴板",
+    "copyFailed": "复制失败",
+    "copyFailedHint": "复制失败 — 请选中文本并按 Ctrl/Cmd+C",
+    "protocols": "协议"
   },
   "nav": {
     "main": "主要",
@@ -128,7 +134,36 @@
       "expired": "已过期",
       "limited": "受限",
       "on_hold": "暂停"
-    }
+    },
+    "import": "从其他面板导入",
+    "importWhere": "支持的来源",
+    "importFile": "导出文件 (.json, .csv, .txt)",
+    "importPreview": "预览",
+    "importApply": "全部导入",
+    "importApplyConfirm": "从文件导入 {{n}} 个新用户？",
+    "importDone": "已创建 {{created}}，已跳过 {{skipped}}",
+    "importNothingNew": "此文件中没有可导入的新用户",
+    "importSkipExisting": "跳过已存在的用户",
+    "importSource": "已检测",
+    "importTotal": "总计",
+    "importNew": "新增",
+    "importExists": "已存在",
+    "importInvalid": "无效 / 文件内重复",
+    "importTruncated": "预览显示前 2000 行；导入将应用整个文件",
+    "importConflict": "问题",
+    "importConflict.exists": "已存在",
+    "importConflict.invalid_username": "名称无效",
+    "importConflict.duplicate_in_file": "文件内重复",
+    "importMapTitle": "将外部 inbound 标签映射到此面板",
+    "importSkipInbound": "跳过（使用面板默认）",
+    "importFmtMarzban": "Marzban / NexusPanel / PasarGuard：设置 → 导出用户 (JSON)，或包含 users[] 的备份",
+    "importFmt3xui": "3x-ui：面板备份 JSON（含客户端的 inbounds）或 inbound 导出",
+    "importFmtCsv": "CSV：username, protocols, limit_gb, expire, note",
+    "importFmtLinks": "链接：每行一个 vless/vmess/trojan/ss:// 链接的 .txt",
+    "resetUsage": "重置用量",
+    "revokeSub": "吊销订阅",
+    "resetUsageConfirm": "重置该用户的流量计数？",
+    "revokeSubConfirm": "吊销订阅链接？用户需要刷新客户端。"
   },
   "infra": {
     "title": "基础设施",
@@ -169,9 +204,19 @@
     "transport": "传输方式",
     "listenPort": "监听端口",
     "targetPort": "目标端口",
-    "tunnelDesc": "将流量从境内节点中继到境外出口节点。",
-    "tunnelHintAddIranFirst": "面板在境外。请先添加伊朗中继节点。",
-    "tunnelHintAddForeignFirst": "面板在境内。请先添加境外出口节点。",
+    "tunnelDesc": "将流量从境内端中继到境外出口端。任一端可以是节点或面板本身。",
+    "tunnelHintPanelForeign": "面板在境外，可作为出口。添加或选择伊朗中继节点，并将出口设为「此面板」。",
+    "tunnelHintPanelIran": "面板在境内，可作为中继。将中继设为「此面板」，并选择境外出口节点。",
+    "panelEndpoint": "此面板（本地核心）",
+    "relayEndHint": "客户端连接的境内侧。",
+    "exitEndHint": "访问互联网的境外侧。",
+    "applyTunnel": "应用（立即部署）",
+    "tunnelApplied": "隧道已应用到两端。",
+    "tunnelBothPanel": "两端不能都是此面板，至少一端必须是节点。",
+    "makeTunnelWithPanel": "在此面板与该节点之间创建隧道",
+    "makeTunnelHintIran": "该节点在伊朗，因此作为中继，此面板作为出口。",
+    "makeTunnelHintForeign": "该节点在境外，因此作为出口，此面板作为中继。",
+    "tunnelPortHint": "中继监听与出口目标共用的端口（默认 443）。",
     "regionPreset": "区域预设",
     "viewConfig": "查看 Xray 配置",
     "tunnelConfig": "隧道配置",
@@ -414,7 +459,7 @@
   "billing": {
     "title": "账单",
     "subtitle": "套餐、发票与钱包",
-    "description": "商业层。定义销售套餐（流量+时长+价格）、生成发票、跟踪钱包余额与交易。套餐关联用户模板，付款后自动发放订阅。",
+    "description": "描述",
     "tabPlans": "套餐",
     "tabInvoices": "发票",
     "tabTransactions": "交易",
@@ -432,8 +477,7 @@
     "pay": "标记已付",
     "billingDisabled": "账单功能已禁用。",
     "invoiceStatus": "状态",
-    "type": "类型",
-    "description": "描述"
+    "type": "类型"
   },
   "system": {
     "title": "系统",
@@ -487,29 +531,79 @@
     "xrayScopePanel": "面板（本机）",
     "xrayScopeNode": "节点",
     "xrayAlsoInInfra": "也可在 基础设施 → 节点 →「设置 Xray 版本」。",
-    "panelVersion": "面板版本"
+    "panelVersion": "面板版本",
+    "updateCurrent": "已安装版本",
+    "updateAvailable": "可用版本",
+    "updateDone": "更新完成。已安装版本 v{{version}}。",
+    "updateFailed": "更新无法完成。请重试或手动重启面板。",
+    "updateProgress": "进度",
+    "updateReleaseNotes": "更新内容",
+    "updatesBreaking": "此版本可能包含重大变更 — 安装前请查看说明。",
+    "updateStep": {
+      "backup": "备份",
+      "pull": "下载更新",
+      "migrate": "数据库迁移",
+      "build": "重建面板",
+      "restart": "重启面板"
+    }
   },
   "flags": {
-    "prometheus_metrics": { "desc": "暴露 Prometheus /metrics" },
-    "plugins": { "desc": "插件系统" },
-    "rule_engine": { "desc": "规则引擎" },
-    "auto_healing": { "desc": "节点自动重启" },
-    "billing": { "desc": "计费功能" },
-    "api_v2": { "desc": "API v2" },
-    "smart_routing": { "desc": "智能选节点" },
-    "workflows": { "desc": "工作流" },
-    "traffic_intelligence": { "desc": "流量智能分析" },
-    "plugin_marketplace": { "desc": "插件市场" },
-    "tenants": { "desc": "租户" },
-    "white_label": { "desc": "白标" },
-    "node_provisioning": { "desc": "SSH 自动部署节点" },
-    "tunneling": { "desc": "境内中继到境外出口" },
-    "setup_wizard": { "desc": "首次设置向导" }
+    "prometheus_metrics": {
+      "desc": "暴露 Prometheus /metrics"
+    },
+    "plugins": {
+      "desc": "插件系统"
+    },
+    "rule_engine": {
+      "desc": "规则引擎"
+    },
+    "auto_healing": {
+      "desc": "节点自动重启"
+    },
+    "billing": {
+      "desc": "计费功能"
+    },
+    "api_v2": {
+      "desc": "API v2"
+    },
+    "smart_routing": {
+      "desc": "智能选节点"
+    },
+    "workflows": {
+      "desc": "工作流"
+    },
+    "traffic_intelligence": {
+      "desc": "流量智能分析"
+    },
+    "plugin_marketplace": {
+      "desc": "插件市场"
+    },
+    "tenants": {
+      "desc": "租户"
+    },
+    "white_label": {
+      "desc": "白标"
+    },
+    "node_provisioning": {
+      "desc": "SSH 自动部署节点"
+    },
+    "tunneling": {
+      "desc": "境内中继到境外出口"
+    },
+    "setup_wizard": {
+      "desc": "首次设置向导"
+    }
   },
   "marketplace": {
-    "event_log": { "desc": "记录总线事件" },
-    "node_alert": { "desc": "节点错误告警" },
-    "auto_heal": { "desc": "节点自动修复" }
+    "event_log": {
+      "desc": "记录总线事件"
+    },
+    "node_alert": {
+      "desc": "节点错误告警"
+    },
+    "auto_heal": {
+      "desc": "节点自动修复"
+    }
   },
   "setup": {
     "title": "首次设置",

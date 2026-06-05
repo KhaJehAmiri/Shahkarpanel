@@ -207,9 +207,24 @@ def test_build_tunnel_pair_reality():
     assert "publicKey" in out["streamSettings"]["realitySettings"]
     assert "privateKey" not in out["streamSettings"]["realitySettings"]
 
+    # Default relay routing is catch-all (dedicated relay box) -> tunnel outbound.
     rule = pair["relay"]["routing_rule"]
     assert rule["outboundTag"] == "tunnel-42-out"
-    assert rule["inboundTag"] == ["tunnel-42-in"]
+    assert "inboundTag" not in rule
+    assert rule["network"] == "tcp,udp"
+
+    # Scoped routing pins specific user inbound tags to the tunnel outbound.
+    scoped = tunnel_svc.build_tunnel_pair(
+        t, "de.example.com", relay_inbound_tags=["vless-in", "vmess-in"]
+    )
+    assert scoped["relay"]["routing_rule"]["inboundTag"] == ["vless-in", "vmess-in"]
+
+    # WireGuard-over-Reality adds a dokodemo-door UDP capture on the relay.
+    wg = tunnel_svc.build_tunnel_pair(t, "de.example.com", wireguard_port=51820)
+    wg_inbound = wg["relay"]["wireguard_inbound"]
+    assert wg_inbound["protocol"] == "dokodemo-door"
+    assert wg_inbound["port"] == 51820
+    assert wg_inbound["settings"]["network"] == "udp"
 
     inb = pair["exit"]["inbound"]
     assert inb["port"] == 8443
@@ -228,3 +243,81 @@ def test_build_tunnel_pair_ws_and_grpc():
 
     grpc = tunnel_svc.build_tunnel_pair(_make_tunnel("grpc"), "ex")
     assert grpc["exit"]["inbound"]["streamSettings"]["network"] == "grpc"
+
+
+# --------------------------------------------------------------------------- #
+# Per-endpoint tunnel injection (panel-local core as a tunnel end)
+# --------------------------------------------------------------------------- #
+def _base_xray_config():
+    from app.xray.config import XRayConfig
+    return XRayConfig({
+        "log": {"logLevel": "warning"},
+        "inbounds": [{
+            "tag": "vless-in",
+            "protocol": "vless",
+            "port": 443,
+            "settings": {"clients": []},
+            "streamSettings": {"network": "tcp"},
+        }],
+        "outbounds": [{"tag": "direct", "protocol": "freedom"}],
+    })
+
+
+def test_inject_panel_as_relay_adds_outbound_and_routing():
+    from app.db.models import Node
+    from app.tunnel.inject import apply_endpoint_tunnels
+
+    with GetDB() as db:
+        exit_node = Node(name="de-exit", address="de.example.com", port=62050, api_port=62051)
+        db.add(exit_node)
+        db.commit()
+        db.refresh(exit_node)
+        t = Tunnel(
+            name="panel-relay", enabled=True,
+            relay_node_id=None, exit_node_id=exit_node.id,
+            transport="reality", listen_port=8443, target_port=9443,
+            params=tunnel_svc.default_params("reality"),
+        )
+        db.add(t)
+        db.commit()
+        tid, exit_addr = t.id, exit_node.address
+
+    cfg = _base_xray_config()
+    out = apply_endpoint_tunnels(cfg, None)  # panel is the relay end
+
+    tags = {ob.get("tag") for ob in out["outbounds"]}
+    assert f"tunnel-{tid}-out" in tags
+    ob = next(ob for ob in out["outbounds"] if ob["tag"] == f"tunnel-{tid}-out")
+    assert ob["settings"]["vnext"][0]["address"] == exit_addr
+    # User inbound traffic is pinned to the tunnel outbound.
+    pinned = [r for r in out["routing"]["rules"] if r.get("outboundTag") == f"tunnel-{tid}-out"]
+    assert pinned and "vless-in" in pinned[0]["inboundTag"]
+
+
+def test_inject_panel_as_exit_adds_inbound():
+    from app.db.models import Node
+    from app.tunnel.inject import apply_endpoint_tunnels
+
+    with GetDB() as db:
+        relay_node = Node(name="ir-relay", address="1.2.3.4", port=62050, api_port=62051)
+        db.add(relay_node)
+        db.commit()
+        db.refresh(relay_node)
+        t = Tunnel(
+            name="panel-exit", enabled=True,
+            relay_node_id=relay_node.id, exit_node_id=None,
+            transport="reality", listen_port=8443, target_port=9443,
+            params=tunnel_svc.default_params("reality"),
+        )
+        db.add(t)
+        db.commit()
+        tid = t.id
+
+    cfg = _base_xray_config()
+    out = apply_endpoint_tunnels(cfg, None)  # panel is the exit end
+
+    in_tags = {ib.get("tag") for ib in out["inbounds"]}
+    assert f"tunnel-{tid}-exit" in in_tags
+    inb = next(ib for ib in out["inbounds"] if ib["tag"] == f"tunnel-{tid}-exit")
+    assert inb["port"] == 9443
+    assert "privateKey" in inb["streamSettings"]["realitySettings"]

@@ -38,7 +38,13 @@
     "deleted": "Deleted",
     "error": "Something went wrong",
     "disabledFeature": "This feature is turned off. Enable it under System → Feature Flags.",
-    "sudoOnly": "This area is available to owner (sudo) admins only."
+    "sudoOnly": "This area is available to owner (sudo) admins only.",
+    "help": "Help",
+    "dismiss": "Dismiss",
+    "copiedToClipboard": "Copied to clipboard",
+    "copyFailed": "Copy failed",
+    "copyFailedHint": "Copy failed — select the text and use Ctrl/Cmd+C",
+    "protocols": "Protocols"
   },
   "nav": {
     "main": "Main",
@@ -198,9 +204,19 @@
     "transport": "Transport",
     "listenPort": "Listen port",
     "targetPort": "Target port",
-    "tunnelDesc": "Relay traffic from an in-country node to a foreign exit node.",
-    "tunnelHintAddIranFirst": "This panel runs outside Iran. Add an Iran relay node first, then pick it as relay.",
-    "tunnelHintAddForeignFirst": "This panel runs inside Iran. Add a foreign exit node first, then pick it as exit.",
+    "tunnelDesc": "Relay traffic from an in-country end to a foreign exit end. Either end can be a node or this panel itself.",
+    "tunnelHintPanelForeign": "This panel runs outside Iran, so it can be the exit. Add or pick an Iran relay node and set the exit to \"This panel\".",
+    "tunnelHintPanelIran": "This panel runs inside Iran, so it can be the relay. Set the relay to \"This panel\" and pick a foreign exit node.",
+    "panelEndpoint": "This panel (local core)",
+    "relayEndHint": "The in-country side clients connect to.",
+    "exitEndHint": "The foreign side that reaches the internet.",
+    "applyTunnel": "Apply (deploy now)",
+    "tunnelApplied": "Tunnel applied to both ends.",
+    "tunnelBothPanel": "Both ends cannot be this panel. At least one end must be a node.",
+    "makeTunnelWithPanel": "Create a tunnel between this panel and the node",
+    "makeTunnelHintIran": "This node is in Iran, so it becomes the relay and this panel the exit.",
+    "makeTunnelHintForeign": "This node is foreign, so it becomes the exit and this panel the relay.",
+    "tunnelPortHint": "Port used for both the relay listen and exit target (default 443).",
     "regionPreset": "Region preset",
     "viewConfig": "View Xray config",
     "tunnelConfig": "Tunnel config",
@@ -443,7 +459,7 @@
   "billing": {
     "title": "Billing",
     "subtitle": "Plans, invoices and wallet",
-    "description": "The commercial layer. Define the plans you sell (data + duration + price), generate invoices, track wallet balances, and review every transaction. Plans link to user templates so a subscription is automatically provisioned on payment.",
+    "description": "Description",
     "tabPlans": "Plans",
     "tabInvoices": "Invoices",
     "tabTransactions": "Transactions",
@@ -461,8 +477,7 @@
     "pay": "Mark paid",
     "billingDisabled": "Billing is disabled.",
     "invoiceStatus": "Status",
-    "type": "Type",
-    "description": "Description"
+    "type": "Type"
   },
   "system": {
     "title": "System",
@@ -533,26 +548,62 @@
     "panelVersion": "Panel version"
   },
   "flags": {
-    "prometheus_metrics": { "desc": "Expose Prometheus /metrics for monitoring" },
-    "plugins": { "desc": "Enable the plugin system and load extensions" },
-    "rule_engine": { "desc": "Event-driven rules and automated actions" },
-    "auto_healing": { "desc": "Automatically restart nodes on error or down" },
-    "billing": { "desc": "Plans, wallets, and invoicing" },
-    "api_v2": { "desc": "Expose the versioned /api/v2 surface" },
-    "smart_routing": { "desc": "Latency, geo, and load-based node selection" },
-    "workflows": { "desc": "Multi-step automation workflows" },
-    "traffic_intelligence": { "desc": "Heavy usage and exhaustion prediction" },
-    "plugin_marketplace": { "desc": "Browse and install marketplace plugins" },
-    "tenants": { "desc": "White-label reseller tenants" },
-    "white_label": { "desc": "Per-tenant logo, colours, and title" },
-    "node_provisioning": { "desc": "Add nodes over SSH with automatic agent install" },
-    "tunneling": { "desc": "Relay in-country traffic to a foreign exit node" },
-    "setup_wizard": { "desc": "First-run setup wizard for new installs" }
+    "prometheus_metrics": {
+      "desc": "Expose Prometheus /metrics for monitoring"
+    },
+    "plugins": {
+      "desc": "Enable the plugin system and load extensions"
+    },
+    "rule_engine": {
+      "desc": "Event-driven rules and automated actions"
+    },
+    "auto_healing": {
+      "desc": "Automatically restart nodes on error or down"
+    },
+    "billing": {
+      "desc": "Plans, wallets, and invoicing"
+    },
+    "api_v2": {
+      "desc": "Expose the versioned /api/v2 surface"
+    },
+    "smart_routing": {
+      "desc": "Latency, geo, and load-based node selection"
+    },
+    "workflows": {
+      "desc": "Multi-step automation workflows"
+    },
+    "traffic_intelligence": {
+      "desc": "Heavy usage and exhaustion prediction"
+    },
+    "plugin_marketplace": {
+      "desc": "Browse and install marketplace plugins"
+    },
+    "tenants": {
+      "desc": "White-label reseller tenants"
+    },
+    "white_label": {
+      "desc": "Per-tenant logo, colours, and title"
+    },
+    "node_provisioning": {
+      "desc": "Add nodes over SSH with automatic agent install"
+    },
+    "tunneling": {
+      "desc": "Relay in-country traffic to a foreign exit node"
+    },
+    "setup_wizard": {
+      "desc": "First-run setup wizard for new installs"
+    }
   },
   "marketplace": {
-    "event_log": { "desc": "Logs every event on the bus" },
-    "node_alert": { "desc": "Warns when a node reports an error" },
-    "auto_heal": { "desc": "Restarts nodes on error/down with cooldown" }
+    "event_log": {
+      "desc": "Logs every event on the bus"
+    },
+    "node_alert": {
+      "desc": "Warns when a node reports an error"
+    },
+    "auto_heal": {
+      "desc": "Restarts nodes on error/down with cooldown"
+    }
   },
   "setup": {
     "title": "First-time setup",

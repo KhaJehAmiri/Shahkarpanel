@@ -107,6 +107,14 @@ class XRayCore:
         if self.started is True:
             raise RuntimeError("Xray is started already")
 
+        # The local core is the panel's own tunnel endpoint (node_id=None):
+        # fold in any tunnel fragments where the panel is the relay or exit.
+        try:
+            from app.tunnel.inject import apply_endpoint_tunnels
+            config = apply_endpoint_tunnels(config, None)
+        except Exception:
+            pass
+
         if config.get('log', {}).get('logLevel') in ('none', 'error'):
             config['log']['logLevel'] = 'warning'
 

@@ -106,7 +106,7 @@ export const Users: FC = () => {
             <div className="nx-table-wrap">
               <table className="nx-table">
                 <thead><tr>
-                  <th>{t("common.username")}</th><th>{t("common.status")}</th><th>Protocols</th>
+                  <th>{t("common.username")}</th><th>{t("common.status")}</th><th>{t("common.protocols")}</th>
                   <th>{t("users.used")}</th><th>{t("users.expire")}</th><th style={{ textAlign: "end" }}>{t("common.actions")}</th>
                 </tr></thead>
                 <tbody>
@@ -532,7 +532,7 @@ const UserImportWizard: FC<{ onClose: () => void; onDone: () => void }> = ({ onC
               <tr>
                 <th>{t("common.username")}</th>
                 <th>{t("common.status")}</th>
-                <th>Protocols</th>
+                <th>{t("common.protocols")}</th>
                 <th>{t("users.dataLimit")}</th>
                 <th>{t("users.importConflict")}</th>
               </tr>

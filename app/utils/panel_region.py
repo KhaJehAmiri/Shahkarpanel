@@ -53,8 +53,9 @@ def _country_code(ip: str, timeout: float = 5.0) -> Optional[str]:
 
 def _local_xray_version() -> Optional[str]:
     try:
+        from config import XRAY_EXECUTABLE_PATH
         out = subprocess.check_output(
-            ["/usr/local/bin/xray", "version"],
+            [XRAY_EXECUTABLE_PATH, "version"],
             stderr=subprocess.STDOUT,
             timeout=8,
             text=True,

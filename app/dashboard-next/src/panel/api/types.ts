@@ -98,8 +98,10 @@ export interface Tunnel {
   id: number;
   name: string;
   enabled: boolean;
-  relay_node_id: number;
-  exit_node_id: number;
+  relay_node_id: number | null;
+  exit_node_id: number | null;
+  relay_kind: "panel" | "node";
+  exit_kind: "panel" | "node";
   transport: string;
   listen_port: number;
   target_port: number;

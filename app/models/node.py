@@ -96,6 +96,8 @@ class NodeResponse(Node):
     latency_ms: Optional[float] = None
     last_health: Optional[datetime] = None
     wireguard: Optional[NodeWireGuardConfig] = None
+    # Tunnel topology role: 'direct' (default), 'relay' (in-country bridge), 'exit'.
+    role: str = "direct"
     model_config = ConfigDict(from_attributes=True)
 
 

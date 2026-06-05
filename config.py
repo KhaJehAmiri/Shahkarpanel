@@ -6,7 +6,15 @@ load_dotenv()
 
 SQLALCHEMY_DATABASE_URL = config("SQLALCHEMY_DATABASE_URL", default="sqlite:///db.sqlite3")
 SQLALCHEMY_POOL_SIZE = config("SQLALCHEMY_POOL_SIZE", cast=int, default=10)
-SQLIALCHEMY_MAX_OVERFLOW = config("SQLIALCHEMY_MAX_OVERFLOW", cast=int, default=30)
+# Correctly-spelled env var, with a fallback to the historical misspelling so
+# existing .env files that set SQLIALCHEMY_MAX_OVERFLOW keep working.
+SQLALCHEMY_MAX_OVERFLOW = config(
+    "SQLALCHEMY_MAX_OVERFLOW",
+    cast=int,
+    default=config("SQLIALCHEMY_MAX_OVERFLOW", cast=int, default=30),
+)
+# Backwards-compatible alias for any external importers of the old name.
+SQLIALCHEMY_MAX_OVERFLOW = SQLALCHEMY_MAX_OVERFLOW
 
 # Optional Redis URL used by the event bus / cache layer. When empty, the panel
 # falls back to an in-process backend (single-instance only). Required for HA.

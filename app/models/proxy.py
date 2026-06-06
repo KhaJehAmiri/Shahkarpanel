@@ -79,6 +79,21 @@ class ProxySettings(BaseModel, use_enum_values=True):
         return super().dict(**kwargs)
 
 
+def apply_proxy_patch(
+    proxy_type: ProxyTypes,
+    existing: Optional[dict],
+    patch: dict,
+) -> dict:
+    """Merge a partial API patch into stored proxy settings.
+
+    User edits often send only non-secret fields (e.g. VLESS ``flow``) while
+    omitting ``id``/``password``.  Merging with the DB row first keeps existing
+    credentials stable; only keys present in ``patch`` are updated.
+    """
+    merged = {**(existing or {}), **(patch or {})}
+    return ProxySettings.from_dict(proxy_type, merged).dict(no_obj=True)
+
+
 class VMessSettings(ProxySettings):
     id: UUID = Field(default_factory=uuid4)
 

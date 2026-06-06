@@ -2,7 +2,7 @@ import re
 import secrets
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -206,6 +206,9 @@ class UserCreate(User):
 
 
 class UserModify(User):
+    # Patches only — merged with existing DB settings in crud.update_user so
+    # omitted credential fields (id/password/keys) are never regenerated.
+    proxies: Dict[ProxyTypes, Dict[str, Any]] = Field(default_factory=dict)
     status: UserStatusModify = None
     data_limit_reset_strategy: UserDataLimitResetStrategy = None
     model_config = ConfigDict(json_schema_extra={
@@ -263,11 +266,13 @@ class UserModify(User):
 
     @field_validator("proxies", mode="before")
     def validate_proxies(cls, v):
-        return {
-            proxy_type: ProxySettings.from_dict(
-                proxy_type, v.get(proxy_type, {}))
-            for proxy_type in v
-        }
+        if not v:
+            return {}
+        out: Dict[ProxyTypes, Dict[str, Any]] = {}
+        for proxy_type, settings in v.items():
+            ptype = proxy_type if isinstance(proxy_type, ProxyTypes) else ProxyTypes(str(proxy_type))
+            out[ptype] = dict(settings) if isinstance(settings, dict) else dict(settings)
+        return out
 
     @field_validator("status", mode="before")
     def validate_status(cls, status, values):

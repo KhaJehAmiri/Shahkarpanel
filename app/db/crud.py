@@ -453,16 +453,21 @@ def update_user(db: Session, dbuser: User, modify: UserModify) -> User:
     Returns:
         User: The updated user object.
     """
+    from app.models.proxy import apply_proxy_patch
+
     added_proxies: Dict[ProxyTypes, Proxy] = {}
     if modify.proxies:
-        for proxy_type, settings in modify.proxies.items():
+        for proxy_type, patch in modify.proxies.items():
             dbproxy = db.query(Proxy) \
                 .where(Proxy.user == dbuser, Proxy.type == proxy_type) \
                 .first()
             if dbproxy:
-                dbproxy.settings = settings.dict(no_obj=True)
+                dbproxy.settings = apply_proxy_patch(proxy_type, dbproxy.settings, patch)
             else:
-                new_proxy = Proxy(type=proxy_type, settings=settings.dict(no_obj=True))
+                new_proxy = Proxy(
+                    type=proxy_type,
+                    settings=apply_proxy_patch(proxy_type, None, patch),
+                )
                 dbuser.proxies.append(new_proxy)
                 added_proxies.update({proxy_type: new_proxy})
         for proxy in dbuser.proxies:

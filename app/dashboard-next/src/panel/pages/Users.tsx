@@ -262,8 +262,22 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
       const inb: Record<string, string[]> = {};
       enabledProtos.forEach(([p, v]) => {
         const s: any = {};
-        if (p === "vless") s.flow = v.flow;
-        if (p === "shadowsocks") s.method = v.method;
+        const existing = mode === "edit" ? user?.proxies?.[p] : undefined;
+        if (p === "vless" || p === "vmess") {
+          s.flow = v.flow;
+          if (existing?.id) s.id = existing.id;
+        }
+        if (p === "trojan" && existing?.password) s.password = existing.password;
+        if (p === "shadowsocks") {
+          s.method = v.method;
+          if (existing?.password) s.password = existing.password;
+        }
+        if (p === "wireguard" && existing) {
+          if (existing.private_key) s.private_key = existing.private_key;
+          if (existing.public_key) s.public_key = existing.public_key;
+          if (existing.address) s.address = existing.address;
+          if (existing.preshared_key) s.preshared_key = existing.preshared_key;
+        }
         proxies[p] = s;
         inb[p] = v.tags;
       });

@@ -10,11 +10,11 @@ export interface PlatformInfo {
 }
 
 export const PLATFORMS: PlatformInfo[] = [
-  { id: "android", label: "اندروید" },
+  { id: "android", label: "Android" },
   { id: "ios", label: "iOS" },
-  { id: "windows", label: "ویندوز" },
-  { id: "macos", label: "مک" },
-  { id: "linux", label: "لینوکس" },
+  { id: "windows", label: "Windows" },
+  { id: "macos", label: "macOS" },
+  { id: "linux", label: "Linux" },
 ];
 
 export interface ClientApp {
@@ -56,7 +56,8 @@ const APPS: ClientApp[] = [
     short: "Hi",
     color: "#7c3aed",
     platforms: ["android", "ios", "windows", "macos", "linux"],
-    buildScheme: (url, o) => `hiddify://import/${url}${o?.name ? `#${enc(o.name)}` : ""}`,
+    buildScheme: (url, o) =>
+      `hiddify://install-config?url=${enc(url)}${o?.name ? `&name=${enc(o.name)}` : ""}`,
     download: {
       android: "https://github.com/hiddify/hiddify-next/releases",
       ios: "https://apps.apple.com/app/hiddify-proxy-vpn/id6596777532",
@@ -71,7 +72,7 @@ const APPS: ClientApp[] = [
     short: "St",
     color: "#0ea5e9",
     platforms: ["ios", "macos"],
-    buildScheme: (url) => `streisand://import/${url}`,
+    buildScheme: (url) => `streisand://import/${enc(url)}`,
     download: { ios: "https://apps.apple.com/app/streisand/id6450534064" },
   },
   {
@@ -80,7 +81,7 @@ const APPS: ClientApp[] = [
     short: "SR",
     color: "#6366f1",
     platforms: ["ios", "macos"],
-    buildScheme: (url) => `sub://${b64(url)}`,
+    buildScheme: (url) => `shadowrocket://add/sub://${b64(url)}`,
     download: { ios: "https://apps.apple.com/app/shadowrocket/id932747118" },
   },
   {
@@ -107,7 +108,7 @@ const APPS: ClientApp[] = [
     short: "CV",
     color: "#0891b2",
     platforms: ["windows", "macos", "linux"],
-    buildScheme: (url) => `clash://install-config?url=${enc(url)}`,
+    buildScheme: (url) => `clash-verge://install-config?url=${enc(url)}`,
     download: { windows: "https://github.com/clash-verge-rev/clash-verge-rev/releases", macos: "https://github.com/clash-verge-rev/clash-verge-rev/releases", linux: "https://github.com/clash-verge-rev/clash-verge-rev/releases" },
   },
 ];

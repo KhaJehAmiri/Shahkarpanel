@@ -4,6 +4,9 @@ import { api } from "../api/client";
 import { ImportPreviewResponse, ImportPreviewRow, InboundsByProtocol, UserItem, UsersResponse } from "../api/types";
 import { useFetch } from "../lib/useFetch";
 import { formatBytes, formatDate, relativeExpiry, statusTone, usagePct } from "../lib/format";
+import {
+  bytesToDataLimitValue, dataLimitToBytes, detectDataLimitUnit, type DataLimitUnit,
+} from "../lib/data-limit";
 import { PageHeader } from "../components/Shell";
 import {
   Button, Callout, Card, Checkbox, CopyField, Drawer, EmptyState, Field, Input, Modal, Pill, Select,
@@ -174,7 +177,12 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
   const [templateId, setTemplateId] = useState("");
 
   const [username, setUsername] = useState(user?.username || "");
-  const [dataGb, setDataGb] = useState(user?.data_limit ? (user.data_limit / 1024 ** 3).toString() : "");
+  const [dataLimitUnit, setDataLimitUnit] = useState<DataLimitUnit>(
+    user?.data_limit ? detectDataLimitUnit(user.data_limit) : "MB",
+  );
+  const [dataLimitValue, setDataLimitValue] = useState(
+    user?.data_limit ? bytesToDataLimitValue(user.data_limit, detectDataLimitUnit(user.data_limit)) : "",
+  );
   const [unlimited, setUnlimited] = useState(!user?.data_limit);
   const [expireDate, setExpireDate] = useState(user?.expire ? new Date(user.expire * 1000).toISOString().slice(0, 10) : "");
   const [noExpire, setNoExpire] = useState(!user?.expire);
@@ -262,7 +270,7 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
       const body: any = {
         proxies,
         inbounds: inb,
-        data_limit: unlimited || !dataGb ? 0 : Math.round(parseFloat(dataGb) * 1024 ** 3),
+        data_limit: unlimited || !dataLimitValue ? 0 : dataLimitToBytes(dataLimitValue, dataLimitUnit),
         data_limit_reset_strategy: reset,
         note: note || "",
       };
@@ -378,9 +386,27 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
         </div>
 
         <div className="nx-user-form-grid">
-          <Field label={`${t("users.dataLimit")} (GB)`}>
+          <Field label={t("users.dataLimit")}>
             <div className="nx-row" style={{ gap: 8 }}>
-              <Input type="number" min="0" step="0.1" value={unlimited ? "" : dataGb} disabled={unlimited} placeholder="∞" onChange={(e: any) => setDataGb(e.target.value)} />
+              <Input
+                type="number"
+                min="0"
+                step={dataLimitUnit === "MB" ? "1" : "0.001"}
+                value={unlimited ? "" : dataLimitValue}
+                disabled={unlimited}
+                placeholder="∞"
+                onChange={(e: any) => setDataLimitValue(e.target.value)}
+                style={{ flex: 1 }}
+              />
+              <Select
+                value={dataLimitUnit}
+                disabled={unlimited}
+                onChange={(e: any) => setDataLimitUnit(e.target.value as DataLimitUnit)}
+                style={{ width: 88 }}
+              >
+                <option value="MB">MB</option>
+                <option value="GB">GB</option>
+              </Select>
               <label className="nx-row" style={{ gap: 6, fontSize: 12, whiteSpace: "nowrap" }}>
                 <Checkbox checked={unlimited} onChange={() => setUnlimited((u) => !u)} /> ∞
               </label>
@@ -575,7 +601,7 @@ const UserDetail: FC<{ username: string; onClose: () => void; onEdit: () => void
 
   const pct = data ? usagePct(data.used_traffic, data.data_limit) : 0;
   const remaining = data ? remainingPct(data.used_traffic, data.data_limit) : null;
-  const subUrl = absoluteUrl(data?.subscription_url);
+  const subUrl = absoluteUrl(data?.public_subscription_url || data?.subscription_url);
   const rawLinks = data?.links || [];
   const links = rawLinks.map((l) => absoluteUrl(l));
   const hasWireguard = !!data?.proxies && "wireguard" in data.proxies;

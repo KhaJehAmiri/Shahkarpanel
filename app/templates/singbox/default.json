@@ -6,18 +6,18 @@
     "servers": [
       {
         "tag": "dns-remote",
-        "address": "1.1.1.2",
+        "type": "udp",
+        "server": "1.1.1.1",
         "detour": "proxy"
       },
       {
         "tag": "dns-local",
-        "address": "local",
-        "detour": "direct"
+        "type": "local"
       }
     ],
     "rules": [
       {
-        "outbound": "any",
+        "domain": "localhost",
         "server": "dns-local"
       }
     ],

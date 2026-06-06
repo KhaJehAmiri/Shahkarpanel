@@ -5,16 +5,17 @@ from operator import attrgetter
 from typing import Union
 
 from pymysql.err import OperationalError
-from sqlalchemy import and_, bindparam, insert, select, update
+from sqlalchemy import and_, bindparam, case, insert, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.exc import OperationalError as SAOperationalError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.dml import Insert
 
 from app import scheduler, xray
-from app.db import GetDB
+from app.db import GetDB, crud
 from app.db.models import Admin, NodeUsage, NodeUserUsage, System, User
 from app.models.user import UserStatus
+from app.quota import clamp_usage_entries, limit_user_quota
 from config import (
     DISABLE_RECORDING_NODE_USAGE,
     JOB_RECORD_NODE_USAGES_INTERVAL,
@@ -192,20 +193,21 @@ def record_aggregated_user_usages(api_params: dict, usage_coefficient: dict):
 
     with GetDB() as db:
         uids = [int(u["uid"]) for u in users_usage]
-        billable_ids = {
-            row[0]
-            for row in db.query(User.id)
+        billable_rows = (
+            db.query(User.id, User.used_traffic, User.data_limit, User.admin_id)
             .filter(User.id.in_(uids), User.status.in_(BILLABLE_STATUSES))
             .all()
-        }
-        user_admin_map = dict(
-            db.query(User.id, User.admin_id)
-            .filter(User.id.in_(billable_ids))
-            .all()
         )
+        billable_ids = {row[0] for row in billable_rows}
+        user_admin_map = {row[0]: row[3] for row in billable_rows}
 
     users_usage = [u for u in users_usage if int(u["uid"]) in billable_ids]
     if not users_usage:
+        return
+
+    usage_rows = [(r[0], r[1], r[2]) for r in billable_rows]
+    users_usage, hit_limit_uids = clamp_usage_entries(users_usage, usage_rows)
+    if not users_usage and not hit_limit_uids:
         return
 
     admin_usage = defaultdict(int)
@@ -216,14 +218,40 @@ def record_aggregated_user_usages(api_params: dict, usage_coefficient: dict):
 
     # record users usage (only active / on_hold — disabled users must not accrue traffic or online_at)
     with GetDB() as db:
-        stmt = update(User). \
-            where(User.id == bindparam('uid')). \
-            values(
-                used_traffic=User.used_traffic + bindparam('value'),
-                online_at=datetime.utcnow()
-        )
+        if users_usage:
+            stmt = update(User). \
+                where(User.id == bindparam('uid')). \
+                values(
+                    used_traffic=case(
+                        (and_(
+                            User.data_limit.isnot(None),
+                            User.data_limit > 0,
+                            User.used_traffic + bindparam('value') > User.data_limit,
+                        ), User.data_limit),
+                        else_=User.used_traffic + bindparam('value'),
+                    ),
+                    online_at=datetime.utcnow(),
+                )
+            safe_execute(db, stmt, users_usage)
 
-        safe_execute(db, stmt, users_usage)
+            billed_uids = [int(u["uid"]) for u in users_usage]
+            hit_limit_uids = [
+                row[0]
+                for row in db.query(User.id)
+                .filter(
+                    User.id.in_(billed_uids),
+                    User.data_limit.isnot(None),
+                    User.data_limit > 0,
+                    User.used_traffic >= User.data_limit,
+                    User.status == UserStatus.active,
+                )
+                .all()
+            ]
+
+        for uid in hit_limit_uids:
+            dbuser = crud.get_user_by_id(db, uid)
+            if dbuser:
+                limit_user_quota(db, dbuser, cap_usage=True)
 
         admin_data = [{"admin_id": admin_id, "value": value} for admin_id, value in admin_usage.items()]
         if admin_data:

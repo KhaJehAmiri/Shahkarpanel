@@ -314,13 +314,25 @@ def process_inbounds_and_tags(
                 )
 
                 conf.add(
-                    remark=host["remark"].format_map(format_variables),
+                    remark=_sanitize_proxy_remark(host["remark"].format_map(format_variables)),
                     address=address.format_map(format_variables),
                     inbound=host_inbound,
                     settings=settings.model_dump()
                 )
 
     return conf.render(reverse=reverse)
+
+
+def _sanitize_proxy_remark(remark: str) -> str:
+    """Strip legacy Marzban branding from host remarks in exported configs."""
+    for old, new in (
+        ("🚀 Marz", "Nexus"),
+        ("Marz (", "Nexus ("),
+        ("Marzban", "NexusPanel"),
+        ("marzban", "NexusPanel"),
+    ):
+        remark = remark.replace(old, new)
+    return remark
 
 
 def encode_title(text: str) -> str:

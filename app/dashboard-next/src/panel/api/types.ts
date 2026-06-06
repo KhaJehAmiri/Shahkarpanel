@@ -40,6 +40,7 @@ export interface UserItem {
   inbounds?: Record<string, string[]>;
   links?: string[];
   subscription_url?: string;
+  public_subscription_url?: string;
 }
 
 export interface InboundInfo {
@@ -71,6 +72,10 @@ export interface NodeItem {
   capacity?: number | null;
   latency_ms?: number | null;
   core_kind?: string;
+  provision_status?: string | null;
+  provision_message?: string | null;
+  provision_progress?: number | null;
+  provision_step?: string | null;
 }
 
 export interface Tenant {

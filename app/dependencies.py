@@ -84,10 +84,21 @@ def get_validated_sub(
         raise HTTPException(status_code=404, detail="Not Found")
 
     dbuser = crud.get_user(db, sub['username'])
-    if not dbuser or dbuser.created_at > sub['created_at']:
+    if not dbuser:
         raise HTTPException(status_code=404, detail="Not Found")
 
-    if dbuser.sub_revoked_at and dbuser.sub_revoked_at > sub['created_at']:
+    sub_created = sub.get("created_at")
+    token_ts = int(sub_created.timestamp()) if sub_created else 0
+
+    if token_ts > 0:
+        # Legacy time-based tokens: reject if user was created after the token was issued.
+        user_ts = int(dbuser.created_at.replace(tzinfo=None).timestamp())
+        if user_ts > token_ts:
+            raise HTTPException(status_code=404, detail="Not Found")
+        if dbuser.sub_revoked_at and dbuser.sub_revoked_at > sub_created:
+            raise HTTPException(status_code=404, detail="Not Found")
+    elif dbuser.sub_revoked_at:
+        # Stable per-user token (epoch 0): invalid only when subscription was revoked.
         raise HTTPException(status_code=404, detail="Not Found")
 
     return dbuser

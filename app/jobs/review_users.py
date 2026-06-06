@@ -3,10 +3,11 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy.orm import Session
 
-from app import logger, scheduler, xray
+from app import logger, scheduler
 from app.db import (GetDB, get_notification_reminder, get_users,
-                    start_user_expire, update_user_status, reset_user_by_next)
+                    start_user_expire, reset_user_by_next)
 from app.models.user import ReminderType, UserResponse, UserStatus
+from app.quota import enforce_usage_cap, limit_user_quota
 from app.utils import report
 from app.utils.helpers import (calculate_expiration_days,
                                calculate_usage_percent)
@@ -72,21 +73,31 @@ def review():
                         continue
 
             if limited:
-                status = UserStatus.limited
+                if limit_user_quota(db, user, cap_usage=True):
+                    report.status_change(
+                        username=user.username,
+                        status=UserStatus.limited,
+                        user=UserResponse.model_validate(user),
+                        user_admin=user.admin,
+                    )
+                continue
             elif expired:
+                from app import xray
+                from app.db import update_user_status
+
                 status = UserStatus.expired
+                update_user_status(db, user, status)
+                xray.operations.remove_user_immediate(user)
+                report.status_change(
+                    username=user.username, status=status,
+                    user=UserResponse.model_validate(user), user_admin=user.admin,
+                )
+                logger.info(f"User \"{user.username}\" status changed to {status}")
+                continue
             else:
                 if WEBHOOK_ADDRESS:
                     add_notification_reminders(db, user, now)
                 continue
-
-            xray.operations.remove_user(user)
-            update_user_status(db, user, status)
-
-            report.status_change(username=user.username, status=status,
-                                 user=UserResponse.model_validate(user), user_admin=user.admin)
-
-            logger.info(f"User \"{user.username}\" status changed to {status}")
 
         for user in get_users(db, status=UserStatus.on_hold):
 
@@ -108,11 +119,16 @@ def review():
 
             update_user_status(db, user, status)
             start_user_expire(db, user)
+            xray.operations.sync_core_users_async()
 
             report.status_change(username=user.username, status=status,
                                  user=UserResponse.model_validate(user), user_admin=user.admin)
 
             logger.info(f"User \"{user.username}\" status changed to {status}")
+
+        for user in get_users(db, status=UserStatus.limited):
+            if user.data_limit and user.used_traffic > user.data_limit:
+                enforce_usage_cap(db, user)
 
 
 from app.ha import run_if_leader  # noqa: E402

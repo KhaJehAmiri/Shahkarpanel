@@ -118,21 +118,22 @@ def test_build_install_command_basic():
         "panel.example.com", "tok123", "de-node-1", tenant_id=7, role="exit",
     )
     assert "get.docker.com" in cmd
-    assert "https://panel.example.com/api/node/bootstrap" in cmd
+    assert "http://panel.example.com/api/node/bootstrap" in cmd
     assert "tok123" in cmd
     assert "de-node-1" in cmd
-    assert '"tenant_id": 7' in cmd
-    assert '"role": "exit"' in cmd
+    assert '"tenant_id":7' in cmd or '"tenant_id": 7' in cmd
+    assert '"role":"exit"' in cmd or '"role": "exit"' in cmd
+    assert "'\"$PUBLIC_IP\"'" in cmd
 
 
 def test_build_install_command_enables_wireguard_and_v2ray():
-    # The node image bundles xray + wireguard-tools; the run command must grant
-    # NET_ADMIN + ip_forward so the same agent can serve WireGuard and v2ray.
+    # Host ip_forward + NET_ADMIN; no container --sysctl with --network=host.
     cmd = provisioning.build_install_command(
         "panel.example.com", "tok", "n", control_secret="s3cr3t",
     )
     assert "--cap-add=NET_ADMIN" in cmd
-    assert "net.ipv4.ip_forward=1" in cmd
+    assert "sysctl -w net.ipv4.ip_forward=1" in cmd
+    assert "--sysctl net.ipv4.ip_forward" not in cmd
     assert "NODE_CONTROL_SECRET=s3cr3t" in cmd
 
 
@@ -146,12 +147,28 @@ def test_build_install_command_preserves_explicit_scheme():
     assert "http://1.2.3.4:8000/api/node/bootstrap" in cmd
     # default role, no tenant
     assert "tenant_id" not in cmd
-    assert '"role": "direct"' in cmd
+    assert '"role":"direct"' in cmd or '"role": "direct"' in cmd
+    assert "'\"$PUBLIC_IP\"'" in cmd
 
 
 def test_build_install_command_json_escapes_quotes():
     cmd = provisioning.build_install_command("panel.example.com", "tok", 'node"evil', role="direct")
-    assert '"name": "node\\"evil"' in cmd or '"name": "node\\\"evil"' in cmd
+    assert '\\"name\\":\\"node\\\\\\"evil\\"' in cmd or '"name":"node\\"evil"' in cmd
+
+
+def test_build_install_command_wireguard_core_kind():
+    cmd = provisioning.build_install_command(
+        "panel.example.com", "tok", "wg-1", core_kind="wireguard", region="eu",
+    )
+    assert '"core_kind":"wireguard"' in cmd or '"core_kind": "wireguard"' in cmd
+    assert '"region":"eu"' in cmd or '"region": "eu"' in cmd
+
+
+def test_build_install_command_builds_image_from_panel_bundle():
+    cmd = provisioning.build_install_command("http://1.2.3.4:8000", "tok", "n1")
+    assert "/api/nodes/agent-bundle?token=tok" in cmd
+    assert "docker build -t" in cmd
+    assert '"$NP_IMG"' in cmd
 
 
 def test_build_install_command_validates():
@@ -161,6 +178,8 @@ def test_build_install_command_validates():
         provisioning.build_install_command("p", "", "n")
     with pytest.raises(provisioning.ProvisioningError):
         provisioning.build_install_command("p", "t", "n", role="bogus")
+    with pytest.raises(provisioning.ProvisioningError):
+        provisioning.build_install_command("p", "t", "n", core_kind="bogus")
 
 
 def test_run_remote_command_without_paramiko_is_graceful(monkeypatch):

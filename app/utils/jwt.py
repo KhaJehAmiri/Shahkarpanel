@@ -4,7 +4,6 @@ from base64 import b64decode, b64encode
 from datetime import datetime, timedelta
 from functools import lru_cache
 from hashlib import sha256
-from math import ceil
 from typing import Union
 
 
@@ -60,8 +59,10 @@ def get_admin_payload(token: str) -> Union[dict, None]:
         return
 
 
-def create_subscription_token(username: str) -> str:
-    data = username + ',' + str(ceil(time.time()))
+def create_subscription_token(username: str, *, issued_at: int | None = None) -> str:
+    """Build a signed subscription token. ``issued_at=0`` = stable per-user token."""
+    ts = 0 if issued_at is None else int(issued_at)
+    data = username + "," + str(ts)
     data_b64_str = b64encode(data.encode('utf-8'), altchars=b'-_').decode('utf-8').rstrip('=')
     data_final = data_b64_str + _subscription_signature(data_b64_str)
     return data_final

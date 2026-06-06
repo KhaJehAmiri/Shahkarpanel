@@ -9,6 +9,11 @@ import { Overview } from "./pages/Overview";
 import { Users } from "./pages/Users";
 import { Inbounds } from "./pages/Inbounds";
 import { Infrastructure } from "./pages/Infrastructure";
+import { Nodes } from "./pages/Nodes";
+import { TunnelsPage } from "./pages/TunnelsPage";
+import { WireGuard } from "./pages/WireGuard";
+import { XrayConfig } from "./pages/XrayConfig";
+import { Hosts } from "./pages/Hosts";
 import { Resellers } from "./pages/Resellers";
 import { Automation } from "./pages/Automation";
 import { Analytics } from "./pages/Analytics";
@@ -44,6 +49,11 @@ export default function DashboardRoot() {
           <Route path="/overview" element={<Overview />} />
           <Route path="/inbounds" element={<Inbounds />} />
           <Route path="/users" element={<Users />} />
+          <Route path="/nodes" element={<Nodes />} />
+          <Route path="/tunnels" element={<TunnelsPage />} />
+          <Route path="/wireguard" element={<WireGuard />} />
+          <Route path="/xray" element={<XrayConfig />} />
+          <Route path="/hosts" element={<Hosts />} />
           <Route path="/infrastructure" element={<Infrastructure />} />
           <Route path="/resellers" element={<Resellers />} />
           <Route path="/automation" element={<Automation />} />

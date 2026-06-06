@@ -9,6 +9,7 @@ from app.models.node import NodeStatus
 from app.models.user import UserResponse
 from app.utils.concurrency import threaded_function
 from app.xray.node import XRayNode
+from app.xray.serving import schedule_core_sync, sync_core_users_now, sync_main_core_user
 from xray_api import XRay as XRayAPI
 from xray_api.types.account import Account, XTLSFlows
 
@@ -56,12 +57,17 @@ def _alter_inbound_user(api: XRayAPI, inbound_tag: str, account: Account):
         pass
 
 
-def _sync_wireguard():
-    """Best-effort: converge native WireGuard nodes after a user change.
+def sync_core_users():
+    sync_core_users_now()
 
-    No-op (one cheap query) when no WG node exists; runs off-thread so it never
-    blocks the Xray path and never raises into the caller.
-    """
+
+@threaded_function
+def sync_core_users_async():
+    schedule_core_sync()
+
+
+def _sync_wireguard():
+    """Best-effort: converge native WireGuard nodes after a user change."""
     try:
         from app.wireguard.operations import sync_user_change
         sync_user_change()
@@ -84,39 +90,9 @@ def _sync_wireguard_node(node_id: int, node_object):
 
 
 def add_user(dbuser: "DBUser"):
-    user = UserResponse.model_validate(dbuser)
-    email = f"{dbuser.id}.{dbuser.username}"
-
-    for proxy_type, inbound_tags in user.inbounds.items():
-        for inbound_tag in inbound_tags:
-            inbound = xray.config.inbounds_by_tag.get(inbound_tag, {})
-
-            try:
-                proxy_settings = user.proxies[proxy_type].dict(no_obj=True)
-            except KeyError:
-                pass
-            account = proxy_type.account_model(email=email, **proxy_settings)
-
-            # XTLS currently only supports transmission methods of TCP and mKCP
-            if getattr(account, 'flow', None) and (
-                inbound.get('network', 'tcp') not in ('tcp', 'kcp')
-                or
-                (
-                    inbound.get('network', 'tcp') in ('tcp', 'kcp')
-                    and
-                    inbound.get('tls') not in ('tls', 'reality')
-                )
-                or
-                inbound.get('header_type') == 'http'
-            ):
-                account.flow = XTLSFlows.NONE
-
-            _add_user_to_inbound(xray.api, inbound_tag, account)  # main core
-            for node in list(xray.nodes.values()):
-                if node.connected and node.started:
-                    _add_user_to_inbound(node.api, inbound_tag, account)
-
-    _sync_wireguard()
+    """Register user on main core (DB rebuild) and push to connected nodes."""
+    schedule_core_sync()
+    _push_user_to_nodes(dbuser)
 
 
 def _remove_user_from_inbound_sync(api: XRayAPI, inbound_tag: str, email: str):
@@ -127,74 +103,44 @@ def _remove_user_from_inbound_sync(api: XRayAPI, inbound_tag: str, email: str):
 
 
 def remove_user_immediate(dbuser: "DBUser"):
-    """Synchronous removal — used when disabling so Xray stops billing immediately."""
-    email = f"{dbuser.id}.{dbuser.username}"
-    for inbound_tag in xray.config.inbounds_by_tag:
-        _remove_user_from_inbound_sync(xray.api, inbound_tag, email)
-        for node in list(xray.nodes.values()):
-            if node.connected and node.started:
-                _remove_user_from_inbound_sync(node.api, inbound_tag, email)
-
-    _sync_wireguard()
+    """Stop serving immediately — rebuild core from DB (excludes non-active users)."""
+    sync_core_users_now()
 
 
 def remove_user(dbuser: "DBUser"):
-    email = f"{dbuser.id}.{dbuser.username}"
-
-    for inbound_tag in xray.config.inbounds_by_tag:
-        _remove_user_from_inbound(xray.api, inbound_tag, email)
-        for node in list(xray.nodes.values()):
-            if node.connected and node.started:
-                _remove_user_from_inbound(node.api, inbound_tag, email)
-
-    _sync_wireguard()
+    schedule_core_sync()
 
 
-def update_user(dbuser: "DBUser"):
+def _push_user_to_nodes(dbuser: "DBUser"):
+    """Best-effort API push to remote Xray nodes (main core uses DB rebuild)."""
     user = UserResponse.model_validate(dbuser)
     email = f"{dbuser.id}.{dbuser.username}"
-
-    active_inbounds = []
     for proxy_type, inbound_tags in user.inbounds.items():
         for inbound_tag in inbound_tags:
-            active_inbounds.append(inbound_tag)
             inbound = xray.config.inbounds_by_tag.get(inbound_tag, {})
-
             try:
                 proxy_settings = user.proxies[proxy_type].dict(no_obj=True)
             except KeyError:
-                pass
+                continue
             account = proxy_type.account_model(email=email, **proxy_settings)
-
-            # XTLS currently only supports transmission methods of TCP and mKCP
             if getattr(account, 'flow', None) and (
                 inbound.get('network', 'tcp') not in ('tcp', 'kcp')
-                or
-                (
+                or (
                     inbound.get('network', 'tcp') in ('tcp', 'kcp')
-                    and
-                    inbound.get('tls') not in ('tls', 'reality')
+                    and inbound.get('tls') not in ('tls', 'reality')
                 )
-                or
-                inbound.get('header_type') == 'http'
+                or inbound.get('header_type') == 'http'
             ):
                 account.flow = XTLSFlows.NONE
-
-            _alter_inbound_user(xray.api, inbound_tag, account)  # main core
             for node in list(xray.nodes.values()):
                 if node.connected and node.started:
                     _alter_inbound_user(node.api, inbound_tag, account)
 
-    for inbound_tag in xray.config.inbounds_by_tag:
-        if inbound_tag in active_inbounds:
-            continue
-        # remove disabled inbounds
-        _remove_user_from_inbound(xray.api, inbound_tag, email)
-        for node in list(xray.nodes.values()):
-            if node.connected and node.started:
-                _remove_user_from_inbound(node.api, inbound_tag, email)
 
-    _sync_wireguard()
+def update_user(dbuser: "DBUser"):
+    schedule_core_sync()
+    sync_main_core_user(dbuser)
+    _push_user_to_nodes(dbuser)
 
 
 def _apply_node_tunnels(config, node_id: int):
@@ -352,6 +298,10 @@ def restart_node(node_id, config=None):
 
 __all__ = [
     "add_user",
+    "sync_core_users",
+    "sync_core_users_async",
+    "schedule_core_sync",
+    "sync_core_users_now",
     "remove_user",
     "remove_user_immediate",
     "add_node",

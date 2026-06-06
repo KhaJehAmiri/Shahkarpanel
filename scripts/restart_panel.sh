@@ -5,6 +5,11 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 LOG="${NEXUS_PANEL_LOG:-/tmp/nexuspanel.log}"
 
+# Ensure SSH provisioning deps (paramiko) are present.
+pip3 install -q -r requirements.txt --break-system-packages 2>/dev/null \
+  || pip3 install -q -r requirements.txt 2>/dev/null \
+  || true
+
 pkill -f "python3 main.py" 2>/dev/null || true
 sleep 2
 nohup python3 main.py >>"$LOG" 2>&1 &

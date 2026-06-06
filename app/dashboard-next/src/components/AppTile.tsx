@@ -10,9 +10,25 @@ interface Props {
   subUrl: string;
   profileName?: string;
   onToast: (msg: string, kind?: "ok" | "error") => void;
+  importLabel?: string;
+  downloadLabel?: string;
+  directImportHint?: string;
+  pasteFallback?: (appName: string) => string;
+  noResponse?: string;
 }
 
-export function AppTile({ app, platform, subUrl, profileName, onToast }: Props) {
+export function AppTile({
+  app,
+  platform,
+  subUrl,
+  profileName,
+  onToast,
+  importLabel = "Import",
+  downloadLabel = "Download",
+  directImportHint = "One-tap import",
+  pasteFallback,
+  noResponse = "App did not respond",
+}: Props) {
   const [busy, setBusy] = useState(false);
   const deepLink = app.buildScheme(subUrl, { name: profileName });
   const dl = app.download?.[platform];
@@ -46,8 +62,8 @@ export function AppTile({ app, platform, subUrl, profileName, onToast }: Props) 
         const ok = await copyToClipboard(subUrl);
         onToast(
           ok
-            ? `اگر ${app.name} نصب نیست، لینک کپی شد — در اپ پیست کنید.`
-            : "اپ پاسخ نداد",
+            ? (pasteFallback?.(app.name) ?? `Link copied — paste in ${app.name}.`)
+            : noResponse,
           ok ? "ok" : "error",
         );
       }
@@ -55,7 +71,7 @@ export function AppTile({ app, platform, subUrl, profileName, onToast }: Props) 
   }
 
   return (
-    <div className="group flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-3 transition hover:border-accent hover:bg-accent-soft">
+    <div className="group flex items-center gap-3 rounded-xl border border-border/80 bg-surface/80 px-3 py-3 backdrop-blur-sm transition hover:border-accent/50 hover:bg-accent/5">
       <div
         className="grid h-11 w-11 flex-shrink-0 place-items-center rounded-md text-base font-bold text-white"
         style={{ background: app.color }}
@@ -73,11 +89,11 @@ export function AppTile({ app, platform, subUrl, profileName, onToast }: Props) 
               rel="noopener noreferrer"
               className="underline decoration-dotted underline-offset-2 hover:text-accent"
             >
-              دانلود اپ
+              {downloadLabel}
             </a>
           )}
           <span className="opacity-60">·</span>
-          <span>ایمپورت مستقیم</span>
+          <span>{directImportHint}</span>
         </div>
       </div>
       <button
@@ -86,7 +102,7 @@ export function AppTile({ app, platform, subUrl, profileName, onToast }: Props) 
         onClick={importInApp}
         className="flex-shrink-0 rounded-md bg-accent px-3.5 py-2 text-xs font-bold text-bg transition hover:opacity-90 disabled:opacity-50"
       >
-        {busy ? "…" : "ایمپورت"}
+        {busy ? "…" : importLabel}
       </button>
     </div>
   );

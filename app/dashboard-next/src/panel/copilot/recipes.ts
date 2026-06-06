@@ -7,6 +7,7 @@ export interface CopilotSnapshot {
   nodes: number;
   wgNodes: number;
   xrayNodes: number;
+  tunnels: number;
   inbounds: number;
   users: number;
 }
@@ -31,7 +32,7 @@ export interface CopilotRecipe {
 }
 
 export const emptySnapshot: CopilotSnapshot = {
-  panelConfigured: false, nodes: 0, wgNodes: 0, xrayNodes: 0, inbounds: 0, users: 0,
+  panelConfigured: false, nodes: 0, wgNodes: 0, xrayNodes: 0, tunnels: 0, inbounds: 0, users: 0,
 };
 
 /** Fetch a snapshot; every call degrades gracefully (missing perms → 0). */
@@ -62,6 +63,10 @@ export async function fetchSnapshot(isSudo: boolean): Promise<CopilotSnapshot> {
         const s = await api.get<{ completed: boolean }>("/setup/status");
         snap.panelConfigured = !!s?.completed;
       }),
+      safe(async () => {
+        const tunnels = await api.get<unknown[]>("/tunnels");
+        snap.tunnels = Array.isArray(tunnels) ? tunnels.length : 0;
+      }),
     ] : []),
   ]);
 
@@ -87,7 +92,7 @@ export const RECIPES: CopilotRecipe[] = [
         id: "server",
         titleKey: "copilot.quickstart.s_server",
         bodyKey: "copilot.quickstart.s_server_b",
-        cta: { labelKey: "copilot.cta.addServer", intent: "add-node-ssh", hash: "#/infrastructure" },
+        cta: { labelKey: "copilot.cta.addServer", intent: "add-node-ssh", hash: "#/nodes" },
         check: (s) => s.nodes > 0,
       },
       {
@@ -123,7 +128,7 @@ export const RECIPES: CopilotRecipe[] = [
         id: "wgnode",
         titleKey: "copilot.wg.s_node",
         bodyKey: "copilot.wg.s_node_b",
-        cta: { labelKey: "copilot.cta.addWgServer", intent: "add-wg-node", hash: "#/infrastructure" },
+        cta: { labelKey: "copilot.cta.addWgServer", intent: "add-wg-node", hash: "#/nodes" },
         check: (s) => s.wgNodes > 0,
       },
       {
@@ -131,12 +136,43 @@ export const RECIPES: CopilotRecipe[] = [
         titleKey: "copilot.wg.s_user",
         bodyKey: "copilot.wg.s_user_b",
         cta: { labelKey: "copilot.cta.createWgUser", intent: "create-wg-user", hash: "#/users" },
+        check: (s) => s.users > 0,
       },
       {
         id: "wgshare",
         titleKey: "copilot.wg.s_share",
         bodyKey: "copilot.wg.s_share_b",
         cta: { labelKey: "copilot.cta.openUsers", hash: "#/users" },
+      },
+    ],
+  },
+  {
+    id: "tunnel",
+    titleKey: "copilot.tunnel.title",
+    descKey: "copilot.tunnel.desc",
+    icon: "🔗",
+    sudoOnly: true,
+    requiresFlag: "tunneling",
+    steps: [
+      {
+        id: "exit",
+        titleKey: "copilot.tunnel.s_exit",
+        bodyKey: "copilot.tunnel.s_exit_b",
+        cta: { labelKey: "copilot.cta.addServer", intent: "add-node-ssh", hash: "#/nodes" },
+        check: (s) => s.nodes > 0,
+      },
+      {
+        id: "create",
+        titleKey: "copilot.tunnel.s_tunnel",
+        bodyKey: "copilot.tunnel.s_tunnel_b",
+        cta: { labelKey: "copilot.cta.openTunnels", hash: "#/tunnels" },
+        check: (s) => s.tunnels > 0,
+      },
+      {
+        id: "apply",
+        titleKey: "copilot.tunnel.s_apply",
+        bodyKey: "copilot.tunnel.s_apply_b",
+        cta: { labelKey: "copilot.cta.openTunnels", hash: "#/tunnels" },
       },
     ],
   },
@@ -151,7 +187,7 @@ export const RECIPES: CopilotRecipe[] = [
         id: "xnode",
         titleKey: "copilot.v2ray.s_node",
         bodyKey: "copilot.v2ray.s_node_b",
-        cta: { labelKey: "copilot.cta.addServer", intent: "add-node-ssh", hash: "#/infrastructure" },
+        cta: { labelKey: "copilot.cta.addServer", intent: "add-node-ssh", hash: "#/nodes" },
         check: (s) => s.xrayNodes > 0,
       },
       {
@@ -188,7 +224,7 @@ export const RECIPES: CopilotRecipe[] = [
         id: "explain",
         titleKey: "copilot.auto.s_explain",
         bodyKey: "copilot.auto.s_explain_b",
-        cta: { labelKey: "copilot.cta.addServer", intent: "add-node-ssh", hash: "#/infrastructure" },
+        cta: { labelKey: "copilot.cta.addServer", intent: "add-node-ssh", hash: "#/nodes" },
         check: (s) => s.nodes > 0,
       },
     ],

@@ -130,12 +130,28 @@ class XrayService(rpyc.Service):
         self.core.restart(config)
 
     @rpyc.exposed
-    def wg_apply(self, spec: dict):
-        self.wg.apply(WireGuardSpec.from_dict(spec))
+    def wg_apply(self, spec):
+        import json
+
+        from rpyc.utils.classic import obtain
+
+        if isinstance(spec, str):
+            plain = json.loads(spec)
+        else:
+            # Legacy callers may still pass a netref dict — obtain locally first.
+            plain = obtain(spec)
+        self.wg.apply(WireGuardSpec.from_dict(plain))
 
     @rpyc.exposed
-    def wg_transfer(self, interface: str) -> dict:
-        return self.wg.get_transfer(interface)
+    def wg_apply_json(self, spec_json: str):
+        import json
+
+        self.wg.apply(WireGuardSpec.from_dict(json.loads(spec_json)))
+
+    @rpyc.exposed
+    def wg_transfer(self, interface: str) -> str:
+        import json
+        return json.dumps(self.wg.get_transfer(interface))
 
     @rpyc.exposed
     def wg_down(self, interface: str):

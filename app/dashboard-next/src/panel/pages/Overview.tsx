@@ -3,18 +3,21 @@ import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import { RealtimeStats, SystemStats, TopUser } from "../api/types";
 import { useApp } from "../context/AppContext";
+import { useCopilot } from "../copilot/CopilotContext";
 import { useFetch, usePolling } from "../lib/useFetch";
 import { formatBytes, formatSpeed } from "../lib/format";
 import { PageHeader } from "../components/Shell";
-import { Card, CardHead, Stat, UsageBar, SkeletonRows, Pill, Callout } from "../components/ui";
+import { PathCard } from "../components/PathCard";
+import { Card, CardHead, Stat, UsageBar, SkeletonRows, Pill, Callout, Button } from "../components/ui";
 import { BarChart, Donut } from "../components/charts";
-import { IcUsers, IcServer, IcBolt, IcChart, IcDownload } from "../components/icons";
+import { IcUsers, IcServer, IcBolt, IcChart, IcDownload, IcInbound, IcShield, IcLink } from "../components/icons";
 
 type NodeUsageRow = { node_id: number | null; node_name: string; uplink: number; downlink: number };
 
 export const Overview: FC = () => {
   const { t, i18n } = useTranslation();
   const { admin } = useApp();
+  const { setOpen } = useCopilot();
   const sys = useFetch<SystemStats>(() => api.get("/system"), []);
   const top = useFetch<TopUser[]>(() => api.get("/analytics/top-users?limit=8"), []);
   const nodesUsage = useFetch<{ usages: NodeUsageRow[] }>(
@@ -34,7 +37,48 @@ export const Overview: FC = () => {
 
   return (
     <div>
-      <PageHeader title={t("overview.title")} subtitle={t("overview.subtitle")} description={t("overview.description")} />
+      <PageHeader
+        title={t("overview.title")}
+        subtitle={t("overview.subtitle")}
+        description={t("overview.description")}
+        actions={admin?.is_sudo ? (
+          <Button variant="ghost" onClick={() => setOpen(true)}>✦ {t("overview.openGuide")}</Button>
+        ) : undefined}
+      />
+
+      {admin?.is_sudo && (
+        <div style={{ marginBottom: 20 }}>
+          <div className="nx-muted" style={{ fontSize: 12, fontWeight: 600, marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            {t("overview.pickPath")}
+          </div>
+          <div className="nx-path-grid">
+            <PathCard
+              icon={<IcInbound className="nx-ico" />}
+              title={t("overview.pathProxy")}
+              steps={t("overview.pathProxySteps")}
+              action={t("overview.pathStart")}
+              to="/inbounds"
+              tone="accent"
+            />
+            <PathCard
+              icon={<IcShield className="nx-ico" />}
+              title={t("overview.pathWg")}
+              steps={t("overview.pathWgSteps")}
+              action={t("overview.pathStart")}
+              to="/wireguard"
+              tone="ok"
+            />
+            <PathCard
+              icon={<IcLink className="nx-ico" />}
+              title={t("overview.pathTunnel")}
+              steps={t("overview.pathTunnelSteps")}
+              action={t("overview.pathStart")}
+              to="/tunnels"
+              tone="info"
+            />
+          </div>
+        </div>
+      )}
 
       {sys.loading && !s ? (
         <Card><SkeletonRows rows={2} cols={4} /></Card>

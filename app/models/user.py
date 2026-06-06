@@ -289,6 +289,7 @@ class UserResponse(User):
     created_at: datetime
     links: List[str] = []
     subscription_url: str = ""
+    public_subscription_url: str = ""
     proxies: dict
     excluded_inbounds: Dict[ProxyTypes, List[str]] = {}
 
@@ -308,8 +309,11 @@ class UserResponse(User):
         if not self.subscription_url:
             salt = secrets.token_hex(8)
             url_prefix = (XRAY_SUBSCRIPTION_URL_PREFIX).replace('*', salt)
+            # One stable token per username — never changes between API calls.
             token = create_subscription_token(self.username)
             self.subscription_url = f"{url_prefix}/{XRAY_SUBSCRIPTION_PATH}/{token}"
+        from app.subscription.public_url import public_subscription_url
+        self.public_subscription_url = public_subscription_url(self)
         return self
 
     @field_validator("proxies", mode="before")
@@ -335,6 +339,9 @@ class SubscriptionUserResponse(UserResponse):
     note: str | None = Field(None, exclude=True)
     inbounds: Dict[ProxyTypes, List[str]] | None = Field(None, exclude=True)
     auto_delete_in_days: int | None = Field(None, exclude=True)
+    config_available: bool = True
+    block_reason: str | None = None
+    public_subscription_url: str | None = None
     model_config = ConfigDict(from_attributes=True)
 
 

@@ -37,6 +37,10 @@ class _Remote:
     def wg_apply(self, spec):
         self.calls.append(("apply", spec))
 
+    def wg_apply_json(self, spec_json):
+        import json
+        self.calls.append(("apply_json", json.loads(spec_json)))
+
     def wg_transfer(self, interface):
         self.calls.append(("transfer", interface))
         return {"PUBKEY": {"rx": 1, "tx": 2}}
@@ -81,8 +85,25 @@ def test_rpyc_client_apply_and_transfer():
     node = FakeRpycNode()
     client = RPyCWireGuardClient(node)
     client.apply({"interface": "wg0"})
-    assert node.remote.calls[0] == ("apply", {"interface": "wg0"})
+    assert node.remote.calls[0] == ("apply_json", {"interface": "wg0"})
     assert client.transfer("wg0") == {"PUBKEY": {"rx": 1, "tx": 2}}
+
+
+def test_rpyc_client_apply_sends_plain_dict_tree():
+    """Nested spec must survive JSON round-trip (RPyC netref workaround)."""
+    node = FakeRpycNode()
+    client = RPyCWireGuardClient(node)
+    spec = {
+        "interface": "wg0",
+        "listen_port": 51820,
+        "private_key": "priv",
+        "address": "10.10.0.1/24",
+        "peers": [{"public_key": "PUB", "allowed_ips": ["10.10.0.2/32"]}],
+    }
+    client.apply(spec)
+    sent = node.remote.calls[0][1]  # apply_json → parsed dict
+    assert isinstance(sent, dict)
+    assert sent["peers"][0]["allowed_ips"] == ["10.10.0.2/32"]
 
 
 # --------------------------------------------------------------------------- #

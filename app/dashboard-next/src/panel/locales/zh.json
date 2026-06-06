@@ -44,7 +44,12 @@
     "copiedToClipboard": "已复制到剪贴板",
     "copyFailed": "复制失败",
     "copyFailedHint": "复制失败 — 请选中文本并按 Ctrl/Cmd+C",
-    "protocols": "协议"
+    "protocols": "协议",
+    "roleOwner": "所有者",
+    "roleReseller": "经销商",
+    "theme": "主题",
+    "done": "完成",
+    "start": "开始"
   },
   "nav": {
     "main": "主要",
@@ -58,7 +63,16 @@
     "automation": "自动化",
     "analytics": "分析",
     "billing": "账单",
-    "system": "系统"
+    "system": "系统",
+    "work": "日常",
+    "connect": "连接",
+    "advanced": "高级",
+    "manage": "洞察",
+    "nodes": "服务器",
+    "tunnels": "隧道",
+    "wireguard": "WireGuard",
+    "xray": "Xray 配置",
+    "hosts": "订阅主机"
   },
   "login": {
     "title": "欢迎回来",
@@ -69,8 +83,8 @@
   },
   "overview": {
     "title": "概览",
-    "subtitle": "平台实时快照",
-    "description": "首页。实时查看 CPU、内存、在线用户与所有节点的流量。若有红色告警，前往对应模块处理。",
+    "subtitle": "控制中心",
+    "description": "选择下方路径或查看实时统计。菜单每项只做一件事——不会迷路。",
     "totalUsers": "用户总数",
     "activeUsers": "活跃用户",
     "onlineUsers": "在线（24小时）",
@@ -91,7 +105,16 @@
     "totalTraffic": "总流量",
     "incoming": "入站",
     "outgoing": "出站",
-    "version": "版本"
+    "version": "版本",
+    "pickPath": "您想做什么？",
+    "pathProxy": "代理用户（VLESS、VMess…）",
+    "pathProxySteps": "1. 入站 → 2. 用户 → 3. 分享链接",
+    "pathWg": "WireGuard VPN",
+    "pathWgSteps": "1. WG 服务器 → 2. 用户 → 3. 下载 .conf",
+    "pathTunnel": "伊朗 ↔ 境外隧道",
+    "pathTunnelSteps": "1. 出口服务器 → 2. 创建隧道 → 3. Apply",
+    "pathStart": "从这里开始",
+    "openGuide": "分步指南"
   },
   "users": {
     "title": "用户",
@@ -194,7 +217,7 @@
     "xrayUpgradeConfirm": "在节点上安装此 Xray 版本？节点核心将重启。",
     "xrayVersionCol": "Xray 版本",
     "xrayVersionHintTitle": "更改 Xray 版本",
-    "xrayVersionHint": "基础设施 → 节点 → 操作列中的「设置 Xray 版本」（仅 Xray 节点）。",
+    "xrayVersionHint": "打开服务器 → 在操作列使用「Set Xray version」（仅 Xray 节点，非 WireGuard）。",
     "reconnect": "重新连接",
     "reconnecting": "已安排重新连接",
     "tunnelsDisabled": "隧道功能已禁用。",
@@ -253,7 +276,9 @@
       "openInbounds": "打开入站",
       "createUser": "创建用户",
       "createWgUser": "创建 WireGuard 用户",
-      "openUsers": "打开用户"
+      "openUsers": "打开用户",
+      "openNodes": "打开服务器",
+      "openTunnels": "打开隧道"
     },
     "quickstart": {
       "title": "快速开始",
@@ -304,6 +329,16 @@
       "s_user_b": "设置用户名、流量限额和到期时间。选择可用协议。",
       "s_share": "分享订阅",
       "s_share_b": "打开用户，复制订阅链接或二维码并发送。"
+    },
+    "tunnel": {
+      "title": "设置隧道",
+      "desc": "将伊朗连接到境外出口服务器。",
+      "s_exit": "添加境外出口服务器",
+      "s_exit_b": "添加境外 Xray 核心节点——自动安装或手动连接。",
+      "s_tunnel": "创建隧道",
+      "s_tunnel_b": "在隧道页选择 relay（伊朗）和 exit（境外）。任一端可以是面板或节点。",
+      "s_apply": "点击 Apply",
+      "s_apply_b": "创建后点击 Apply，在两端部署配置。"
     }
   },
   "inbounds": {
@@ -612,5 +647,39 @@
     "features": "启用功能",
     "finish": "完成设置",
     "skip": "稍后"
+  },
+  "nodes": {
+    "title": "服务器",
+    "subtitle": "运行流量的机器",
+    "description": "每个服务器（节点）运行 Xray 或 WireGuard。在此添加、删除、重连和设置 Xray 版本——一页一事。"
+  },
+  "tunnels": {
+    "title": "隧道",
+    "subtitle": "将流量从伊朗路由到境外",
+    "description": "连接 relay（伊朗）与 exit（境外）。任一端可以是节点或本面板。创建后点击 Apply 部署。"
+  },
+  "hosts": {
+    "title": "订阅主机",
+    "subtitle": "用户看到的域名和地址",
+    "description": "控制订阅链接中的域名、SNI 和 TLS。使用 {SERVER_IP} 和 {USERNAME} 作为占位符。"
+  },
+  "xrayPage": {
+    "title": "Xray 配置",
+    "subtitle": "高级 JSON — routing、DNS、outbounds",
+    "description": "面向高级用户。入站和用户从连接菜单管理；此页为整个 Xray 核心设置。"
+  },
+  "wireguard": {
+    "title": "WireGuard",
+    "subtitle": "原生 VPN — 与 Xray 分开",
+    "description": "WireGuard 独立流程：添加 WG 服务器、启用 WG 的用户、下载 .conf。",
+    "notXrayTitle": "不是 Xray",
+    "notXrayBody": "WireGuard 不使用 Xray 入站。使用 core=wireguard 的服务器并在用户上启用 WG 协议。",
+    "nodesCount": "WG 服务器",
+    "setupTitle": "三步设置",
+    "step1": "添加 WireGuard 服务器",
+    "step2": "创建启用 WireGuard 的用户",
+    "step3": "在用户页面下载 .conf",
+    "addNode": "添加 WG 服务器",
+    "addUser": "添加 WG 用户"
   }
 }

@@ -57,7 +57,7 @@ def add_default_host(db: Session, inbound: ProxyInbound):
         db (Session): Database session.
         inbound (ProxyInbound): Proxy inbound to add the default host to.
     """
-    host = ProxyHost(remark="🚀 Marz ({USERNAME}) [{PROTOCOL} - {TRANSPORT}]", address="{SERVER_IP}", inbound=inbound)
+    host = ProxyHost(remark="Nexus ({USERNAME}) [{PROTOCOL} - {TRANSPORT}]", address="{SERVER_IP}", inbound=inbound)
     db.add(host)
     db.commit()
 
@@ -1414,6 +1414,19 @@ def update_node(db: Session, dbnode: Node, modify: NodeModify) -> Node:
     db.commit()
     db.refresh(dbnode)
     return dbnode
+
+
+def provision_wireguard_defaults(db: Session, dbnode: Node, *, listen_port: int = 51820) -> "NodeWireGuard":
+    """Generate server keys and persist default WG settings for a new WG node."""
+    from app.wireguard import generate_keypair
+
+    priv, pub = generate_keypair()
+    endpoint = f"{dbnode.address}:{listen_port}"
+    return set_node_wireguard(
+        db, dbnode,
+        private_key=priv, public_key=pub,
+        endpoint=endpoint, listen_port=listen_port,
+    )
 
 
 def set_node_wireguard(db: Session, dbnode: Node, *, interface: str = "wg0",

@@ -7,30 +7,38 @@ import { Copilot } from "../copilot/Copilot";
 import { LANGUAGES, setLanguage } from "../i18n";
 import { IcGlobe, IcLogout, IcMenu, IcMoon, IcSun, navIcon } from "./icons";
 
-const NAV_BASE = [
-  { group: "main", items: ["overview", "inbounds", "users"] as string[] },
-  { group: "platform", items: ["infrastructure", "automation", "analytics"] },
+/** Clear, task-oriented navigation — each item is one job, not a junk drawer. */
+const NAV_SUDO = [
+  { group: "work", items: ["overview", "users"] },
+  { group: "connect", items: ["inbounds", "nodes", "tunnels", "wireguard"] },
+  { group: "advanced", items: ["xray", "hosts"] },
+  { group: "manage", items: ["analytics", "automation"] },
   { group: "business", items: ["resellers", "billing"] },
 ];
 
 const PATHS: Record<string, string> = {
   overview: "/overview",
-  inbounds: "/inbounds",
   users: "/users",
-  infrastructure: "/infrastructure",
-  automation: "/automation",
+  inbounds: "/inbounds",
+  nodes: "/nodes",
+  tunnels: "/tunnels",
+  wireguard: "/wireguard",
+  xray: "/xray",
+  hosts: "/hosts",
   analytics: "/analytics",
+  automation: "/automation",
   resellers: "/resellers",
   billing: "/billing",
   system: "/system",
+  // Legacy bookmark
+  infrastructure: "/nodes",
 };
 
 const NavItem: FC<{ id: string; onNav: () => void }> = ({ id, onNav }) => {
   const { t } = useTranslation();
-  const iconKey = id === "infrastructure" ? "infra" : id;
   return (
     <NavLink to={PATHS[id]} onClick={onNav} className={({ isActive }) => `nx-nav-item ${isActive ? "active" : ""}`}>
-      {navIcon(iconKey)}
+      {navIcon(id)}
       <span>{t(`nav.${id}`)}</span>
     </NavLink>
   );
@@ -45,19 +53,20 @@ export const Shell: FC = () => {
   const loc = useLocation();
 
   const nav = useMemo(() => {
-    if (admin?.is_sudo) return NAV_BASE;
+    if (admin?.is_sudo) return NAV_SUDO;
     const role = admin?.role || "reseller";
-    return NAV_BASE.map((s) => {
-      let items = s.items.filter((id) => id !== "inbounds" && id !== "infrastructure" && id !== "automation");
-      if (role === "support") {
-        items = items.filter((id) => id !== "resellers" && id !== "billing");
-      }
-      return { ...s, items };
-    });
+    const base = [{ group: "work", items: ["overview", "users"] }];
+    if (role !== "support") {
+      base.push({ group: "business", items: ["resellers", "billing"] });
+    }
+    base.push({ group: "manage", items: ["analytics"] });
+    return base;
   }, [admin?.is_sudo, admin?.role]);
 
   const currentId =
     Object.keys(PATHS).find((k) => loc.pathname.startsWith(PATHS[k])) || "overview";
+  const navTitle = t(`nav.${currentId}`, { defaultValue: t("nav.overview") });
+  const roleLabel = admin?.is_sudo ? t("common.roleOwner") : t("common.roleReseller");
 
   const closeNav = () => setOpen(false);
 
@@ -83,7 +92,6 @@ export const Shell: FC = () => {
         ))}
 
         <div className="nx-spacer" />
-        <div className="nx-nav-group-label">{t("nav.platform")}</div>
         <NavItem id="system" onNav={closeNav} />
       </aside>
 
@@ -94,8 +102,8 @@ export const Shell: FC = () => {
               <IcMenu />
             </button>
             <div>
-              <div className="nx-topbar-title">{t(`nav.${currentId}`)}</div>
-              <div className="nx-breadcrumb">{t("common.appName")} / {t(`nav.${currentId}`)}</div>
+              <div className="nx-topbar-title">{navTitle}</div>
+              <div className="nx-breadcrumb">{t("common.appName")} / {navTitle}</div>
             </div>
           </div>
 
@@ -106,7 +114,7 @@ export const Shell: FC = () => {
             </button>
             <button
               className="nx-btn icon ghost"
-              title="Theme"
+              title={t("common.theme")}
               onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
             >
               {theme === "dark" ? <IcSun /> : <IcMoon />}
@@ -143,9 +151,7 @@ export const Shell: FC = () => {
             <div className="nx-row" style={{ gap: 8, marginInlineStart: 6 }}>
               <div style={{ textAlign: "end" }}>
                 <div style={{ fontSize: 13, fontWeight: 600 }}>{admin?.username}</div>
-                <div className="nx-faint" style={{ fontSize: 11 }}>
-                  {admin?.is_sudo ? "Owner" : "Reseller"}
-                </div>
+                <div className="nx-faint" style={{ fontSize: 11 }}>{roleLabel}</div>
               </div>
               <button className="nx-btn icon ghost" title={t("common.logout")} onClick={logout}>
                 <IcLogout />

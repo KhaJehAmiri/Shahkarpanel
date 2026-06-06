@@ -1,62 +1,43 @@
 import { FC, useEffect, useState } from "react";
+import { Navigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import { NodeItem, Tunnel } from "../api/types";
 import { useApp } from "../context/AppContext";
 import { useCopilot } from "../copilot/CopilotContext";
-import { useFetch } from "../lib/useFetch";
+import { useFetch, usePolling } from "../lib/useFetch";
 import { statusTone } from "../lib/format";
-import { PageHeader } from "../components/Shell";
 import {
-  Button, Callout, Card, CopyField, EmptyState, Field, Input, Modal, Pill, Select, SkeletonRows, Tabs, useToast,
+  Button, Callout, Card, CopyField, EmptyState, Field, Input, Modal, Pill, Select, SkeletonRows, UsageBar, useToast,
 } from "../components/ui";
 import { IcPlus, IcRefresh, IcTrash, IcLink, IcEdit, IcEye, IcBolt } from "../components/icons";
-import { XrayConfigsHub } from "../components/xray/XrayConfigsHub";
+import { AddNodeModal, AddNodePreset } from "../components/AddNodeModal";
+import { isIranNode } from "../lib/region";
+/** @deprecated Use /nodes — kept for old bookmarks. */
+export const Infrastructure: FC = () => <Navigate to="/nodes" replace />;
 
-export const Infrastructure: FC = () => {
-  const { t } = useTranslation();
-  const { admin } = useApp();
-  const [tab, setTab] = useState("nodes");
-  if (!admin?.is_sudo) {
-    return (
-      <div>
-        <PageHeader title={t("infra.title")} subtitle={t("infra.subtitle")} description={t("infra.description")} />
-        <Callout tone="warn">{t("common.sudoOnly")}</Callout>
-      </div>
-    );
-  }
-  const tabs = [
-    { id: "nodes", label: t("infra.tabNodes") },
-    { id: "xray", label: t("xray.tabHub") },
-    { id: "hosts", label: t("infra.tabHosts") },
-    { id: "tunnels", label: t("infra.tabTunnels") },
-  ];
-  return (
-    <div>
-      <PageHeader title={t("infra.title")} subtitle={t("infra.subtitle")} description={t("infra.description")} />
-      <Tabs active={tab} onChange={setTab} tabs={tabs} />
-      {tab === "nodes" && <NodesTab />}
-      {tab === "xray" && <XrayConfigsHub />}
-      {tab === "hosts" && <HostsTab />}
-      {tab === "tunnels" && <TunnelsTab />}
-    </div>
-  );
-};
-
-const NodesTab: FC = () => {
+export const NodesTab: FC = () => {
   const { t } = useTranslation();
   const toast = useToast();
   const { consumeIntent } = useCopilot();
   const [show, setShow] = useState(false);
   const [xrayNode, setXrayNode] = useState<NodeItem | null>(null);
-  const [preset, setPreset] = useState<{ mode?: "manual" | "ssh"; coreKind?: string }>({});
+  const [preset, setPreset] = useState<AddNodePreset>({});
   const { data, loading, error, reload } = useFetch<NodeItem[]>(() => api.get("/nodes"), []);
+  const provisioning = (data || []).some((n) => n.provision_status === "provisioning");
+  usePolling(reload, 3000, provisioning);
 
-  // The Copilot can deep-link straight into "add server" with a preset.
+  const provisionLabel = (step?: string | null) => {
+    if (!step) return t("infra.provisionStep.queued");
+    const key = `infra.provisionStep.${step}`;
+    const label = t(key);
+    return label === key ? step : label;
+  };
+
+  // Copilot / WireGuard page deep-link into the unified add-server modal.
   useEffect(() => {
-    if (consumeIntent("add-wg-node")) { setPreset({ mode: "manual", coreKind: "wireguard" }); setShow(true); }
-    else if (consumeIntent("add-node-ssh")) { setPreset({ mode: "ssh" }); setShow(true); }
-    else if (consumeIntent("add-node")) { setPreset({ mode: "manual" }); setShow(true); }
+    if (consumeIntent("add-wg-node")) { setPreset({ coreKind: "wireguard" }); setShow(true); }
+    else if (consumeIntent("add-node-ssh") || consumeIntent("add-node")) { setPreset({ coreKind: "xray" }); setShow(true); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -100,7 +81,27 @@ const NodesTab: FC = () => {
                     <tr key={n.id}>
                       <td style={{ fontWeight: 600 }}>{n.name}{n.core_kind === "wireguard" ? <span style={{ marginInlineStart: 8 }}><Pill tone="info">WG</Pill></span> : null}</td>
                       <td className="nx-mono" style={{ fontSize: 12 }}>{n.address}:{n.port}</td>
-                      <td><Pill tone={statusTone(n.status)} dot>{n.status}</Pill>{n.message ? <div className="nx-faint" style={{ fontSize: 11 }}>{n.message}</div> : null}</td>
+                      <td style={{ minWidth: 160 }}>
+                        {n.provision_status === "provisioning" ? (
+                          <div className="nx-stack" style={{ gap: 6 }}>
+                            <div className="nx-row" style={{ justifyContent: "space-between", fontSize: 12 }}>
+                              <span>{provisionLabel(n.provision_step)}</span>
+                              <span className="nx-mono">{n.provision_progress ?? 5}%</span>
+                            </div>
+                            <UsageBar pct={n.provision_progress ?? 5} />
+                          </div>
+                        ) : n.provision_status === "failed" ? (
+                          <>
+                            <Pill tone="danger" dot>{t("infra.provisionFailedShort")}</Pill>
+                            {n.provision_message ? <div className="nx-faint" style={{ fontSize: 11, marginTop: 4 }}>{n.provision_message}</div> : null}
+                          </>
+                        ) : (
+                          <>
+                            <Pill tone={statusTone(n.status)} dot>{n.status}</Pill>
+                            {n.message ? <div className="nx-faint" style={{ fontSize: 11 }}>{n.message}</div> : null}
+                          </>
+                        )}
+                      </td>
                       <td>{n.region || "—"}</td>
                       <td className="nx-mono" style={{ fontSize: 12 }}>{n.xray_version || "—"}</td>
                       <td>{n.latency_ms != null ? `${n.latency_ms.toFixed(0)} ms` : "—"}</td>
@@ -111,7 +112,9 @@ const NodesTab: FC = () => {
                               {t("infra.xraySetVersion")}
                             </Button>
                           )}
-                          <Button size="sm" onClick={() => reconnect(n)}><IcRefresh className="nx-ico" /> {t("infra.reconnect")}</Button>
+                          {n.provision_status !== "provisioning" && (
+                            <Button size="sm" onClick={() => reconnect(n)}><IcRefresh className="nx-ico" /> {t("infra.reconnect")}</Button>
+                          )}
                           <Button variant="danger" size="sm" onClick={() => remove(n)}><IcTrash className="nx-ico" /></Button>
                         </div>
                       </td>
@@ -123,11 +126,10 @@ const NodesTab: FC = () => {
           )}
       </Card>
       {show && (
-        <AddNode
+        <AddNodeModal
+          preset={preset}
           onClose={() => setShow(false)}
           onDone={() => { setShow(false); reload(); }}
-          initialMode={preset.mode}
-          initialCoreKind={preset.coreKind}
         />
       )}
       {xrayNode && (
@@ -172,181 +174,7 @@ const XrayVersionModal: FC<{ node: NodeItem; onClose: () => void; onDone: () => 
   );
 };
 
-type ProvisionResult = { status: string; install_command: string; detail?: string; output?: string };
-
-const AddNode: FC<{
-  onClose: () => void;
-  onDone: () => void;
-  initialMode?: "manual" | "ssh";
-  initialCoreKind?: string;
-}> = ({ onClose, onDone, initialMode, initialCoreKind }) => {
-  const { t } = useTranslation();
-  const { isEnabled } = useApp();
-  const toast = useToast();
-  const canProvision = isEnabled("node_provisioning");
-  const [mode, setMode] = useState<"manual" | "ssh">(initialMode || (canProvision ? "ssh" : "manual"));
-  const [f, setF] = useState({
-    name: "", address: "", port: "62050", api_port: "62051", region: "",
-    core_kind: initialCoreKind || "xray",
-    ssh_port: "22", username: "root", password: "", role: "direct",
-    makeTunnel: false, tunnelPort: "443",
-  });
-  const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<ProvisionResult | null>(null);
-  const upd = (k: string) => (e: any) => setF({ ...f, [k]: e.target.value });
-
-  const submitManual = async () => {
-    setBusy(true);
-    try {
-      const node = await api.post<NodeItem>("/node", {
-        name: f.name.trim(), address: f.address.trim(),
-        port: parseInt(f.port), api_port: parseInt(f.api_port),
-        region: f.region.trim() || null, add_as_new_host: true, usage_coefficient: 1,
-        core_kind: f.core_kind,
-      });
-      // Optionally wire a tunnel between this panel and the new node. A node in
-      // Iran becomes the relay (panel is the exit); a foreign node becomes the
-      // exit (panel is the relay).
-      if (f.makeTunnel && node?.id) {
-        const nodeIsIran = isIranNode(f.region);
-        const port = parseInt(f.tunnelPort) || 443;
-        try {
-          await api.post("/tunnels", {
-            name: `${f.name.trim()}-tunnel`,
-            relay_node_id: nodeIsIran ? node.id : null,
-            exit_node_id: nodeIsIran ? null : node.id,
-            transport: "reality", listen_port: port, target_port: port,
-          });
-        } catch (e: any) { toast.push(e.message, "error"); }
-      }
-      toast.push(t("common.created"), "success"); onDone();
-    } catch (e: any) { toast.push(e.message, "error"); } finally { setBusy(false); }
-  };
-
-  const submitSsh = async () => {
-    setBusy(true);
-    setResult(null);
-    try {
-      const res = await api.post<ProvisionResult>("/nodes/provision", {
-        name: f.name.trim(), host: f.address.trim(), ssh_port: parseInt(f.ssh_port),
-        username: f.username.trim() || "root", password: f.password, role: f.role, run: true,
-      });
-      setResult(res);
-      if (res.status === "provisioned") {
-        toast.push(t("infra.provisionStarted"), "success");
-        // Give the agent a moment to self-register, then refresh the list.
-        setTimeout(onDone, 2500);
-      } else {
-        toast.push(t("infra.provisionManual"), "info");
-      }
-    } catch (e: any) { toast.push(e.message, "error"); } finally { setBusy(false); }
-  };
-
-  const valid = mode === "manual"
-    ? !!f.name && !!f.address
-    : !!f.name && !!f.address && !!f.password;
-
-  return (
-    <Modal open title={t("infra.addNode")} onClose={onClose}
-      footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
-        <Button variant="primary" disabled={busy || !valid} onClick={mode === "manual" ? submitManual : submitSsh}>
-          {mode === "manual" ? t("common.create") : t("infra.provisionInstall")}
-        </Button></>}>
-      <div className="nx-stack">
-        {canProvision && (
-          <div className="nx-seg">
-            <button type="button" className={`nx-seg-btn ${mode === "ssh" ? "active" : ""}`} onClick={() => { setMode("ssh"); setResult(null); }}>
-              {t("infra.modeAuto")}
-            </button>
-            <button type="button" className={`nx-seg-btn ${mode === "manual" ? "active" : ""}`} onClick={() => { setMode("manual"); setResult(null); }}>
-              {t("infra.modeManual")}
-            </button>
-          </div>
-        )}
-
-        {mode === "ssh" ? (
-          <Callout tone="info">{t("infra.autoHint")}</Callout>
-        ) : null}
-
-        <Field label={t("common.name")}><Input value={f.name} onChange={upd("name")} autoFocus placeholder="de-node-1" /></Field>
-        <Field label={mode === "ssh" ? t("infra.serverIp") : t("infra.address")}>
-          <Input value={f.address} onChange={upd("address")} placeholder="1.2.3.4" />
-        </Field>
-
-        {mode === "manual" ? (
-          <>
-            <div className="nx-row" style={{ gap: 12 }}>
-              <Field label={t("infra.port")}><Input type="number" value={f.port} onChange={upd("port")} /></Field>
-              <Field label={t("infra.apiPort")}><Input type="number" value={f.api_port} onChange={upd("api_port")} /></Field>
-            </div>
-            <Field label={t("infra.regionPreset")}>
-              <Select value={f.region} onChange={upd("region")}>
-                <option value="">—</option>
-                {["ir", "eu", "us", "ae", "tr"].map((r) => <option key={r} value={r}>{r}</option>)}
-                <option value="custom">custom</option>
-              </Select>
-            </Field>
-            <Field label={t("infra.coreKind")}>
-              <Select value={f.core_kind} onChange={upd("core_kind")}>
-                <option value="xray">Xray (v2ray)</option>
-                <option value="wireguard">WireGuard</option>
-              </Select>
-            </Field>
-            {isEnabled("tunneling") && (
-              <div className="nx-stack" style={{ gap: 8 }}>
-                <label className="nx-row" style={{ gap: 8 }}>
-                  <input type="checkbox" checked={f.makeTunnel} onChange={(e) => setF({ ...f, makeTunnel: e.target.checked })} />
-                  {t("infra.makeTunnelWithPanel")}
-                </label>
-                {f.makeTunnel && (
-                  <>
-                    <Callout tone="info">
-                      {isIranNode(f.region) ? t("infra.makeTunnelHintIran") : t("infra.makeTunnelHintForeign")}
-                    </Callout>
-                    <Field label={t("infra.tunnelPort")} hint={t("infra.tunnelPortHint")}>
-                      <Input type="number" value={f.tunnelPort} onChange={upd("tunnelPort")} />
-                    </Field>
-                  </>
-                )}
-              </div>
-            )}
-          </>
-        ) : (
-          <>
-            <div className="nx-row" style={{ gap: 12 }}>
-              <Field label={t("infra.sshUser")}><Input value={f.username} onChange={upd("username")} placeholder="root" /></Field>
-              <Field label={t("infra.sshPort")}><Input type="number" value={f.ssh_port} onChange={upd("ssh_port")} /></Field>
-            </div>
-            <Field label={t("infra.sshPassword")} hint={t("infra.sshPasswordHint")}>
-              <Input type="password" value={f.password} onChange={upd("password")} autoComplete="new-password" />
-            </Field>
-            <Field label={t("infra.role")}>
-              <Select value={f.role} onChange={upd("role")}>
-                <option value="direct">direct</option>
-                <option value="relay">relay</option>
-                <option value="exit">exit</option>
-              </Select>
-            </Field>
-            <div className="nx-faint" style={{ fontSize: 12 }}>{t("infra.autoInstallsHint")}</div>
-          </>
-        )}
-
-        {result && (
-          <div className="nx-stack" style={{ gap: 8 }}>
-            <Callout tone={result.status === "provisioned" ? "ok" : "warn"}>
-              {result.detail || result.status}
-            </Callout>
-            {result.status !== "provisioned" && result.install_command && (
-              <CopyField label={t("infra.installCommand")} value={result.install_command} multiline />
-            )}
-          </div>
-        )}
-      </div>
-    </Modal>
-  );
-};
-
-const TunnelsTab: FC = () => {
+export const TunnelsTab: FC = () => {
   const { t } = useTranslation();
   const toast = useToast();
   const { isEnabled } = useApp();
@@ -429,7 +257,7 @@ const TunnelsTab: FC = () => {
 };
 
 /* -------------------------------- Hosts --------------------------------- */
-const HostsTab: FC = () => {
+export const HostsTab: FC = () => {
   const { t } = useTranslation();
   const toast = useToast();
   const { data, loading, error, reload } = useFetch<Record<string, any[]>>(() => api.get("/hosts"), []);
@@ -577,11 +405,6 @@ const TunnelConfigModal: FC<{ tunnelId: number; onClose: () => void }> = ({ tunn
           </pre>}
     </Modal>
   );
-};
-
-const isIranNode = (region?: string | null) => {
-  const r = (region || "").toLowerCase();
-  return r === "ir" || r === "iran" || r === "domestic";
 };
 
 const AddTunnel: FC<{ nodes: NodeItem[]; onClose: () => void; onDone: () => void }> = ({ nodes, onClose, onDone }) => {

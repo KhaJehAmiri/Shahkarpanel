@@ -9,7 +9,8 @@ from app.db import Session, crud, get_db
 from app.dependencies import get_validated_sub, validate_dates
 from app.models.proxy import ProxyTypes
 from app.models.user import SubscriptionUserResponse, UserResponse, UserStatus
-from app.subscription.guards import ensure_subscription_config_allowed
+from app.subscription.guards import ensure_subscription_config_allowed, subscription_access
+from app.subscription.public_url import public_subscription_url
 from app.subscription.share import encode_title, generate_subscription
 from app.subscription.wireguard import user_config as build_wireguard_user_config
 from app.templates import render_template
@@ -60,8 +61,6 @@ def user_subscription(
     """Provides a subscription link based on the user agent (Clash, V2Ray, etc.)."""
     user: UserResponse = UserResponse.model_validate(dbuser)
 
-    ensure_subscription_config_allowed(user)
-
     accept_header = request.headers.get("Accept", "")
     if "text/html" in accept_header:
         # Phase 9: prefer the new Next.js subscription page (graphical, with
@@ -77,14 +76,18 @@ def user_subscription(
         return HTMLResponse(
             render_template(
                 SUBSCRIPTION_PAGE_TEMPLATE,
-                {"user": user}
+                {"user": user, **subscription_access(user)}
             )
         )
 
+    ensure_subscription_config_allowed(user)
+
     crud.update_user_sub(db, dbuser, user_agent)
+    req_token = request.path_params.get("token", "")
+    pub_url = public_subscription_url(user, request, request_token=req_token)
     response_headers = {
         "content-disposition": f'attachment; filename="{user.username}"',
-        "profile-web-page-url": str(request.url),
+        "profile-web-page-url": pub_url,
         "support-url": SUB_SUPPORT_URL,
         "profile-title": encode_title(SUB_PROFILE_TITLE),
         "profile-update-interval": SUB_UPDATE_INTERVAL,
@@ -101,6 +104,10 @@ def user_subscription(
     elif re.match(r'^([Cc]lash|[Ss]tash)', user_agent):
         conf = generate_subscription(user=user, config_format="clash", as_base64=False, reverse=False)
         return Response(content=conf, media_type="text/yaml", headers=response_headers)
+
+    elif re.match(r'^HiddifyNextX', user_agent):
+        conf = generate_subscription(user=user, config_format="v2ray-json", as_base64=False, reverse=False)
+        return Response(content=conf, media_type="application/json", headers=response_headers)
 
     elif re.match(r'^(SFA|SFI|SFM|SFT|[Kk]aring|[Hh]iddify[Nn]ext)', user_agent):
         conf = generate_subscription(user=user, config_format="sing-box", as_base64=False, reverse=False)
@@ -157,12 +164,24 @@ def user_subscription(
 
 @router.get("/{token}/info", response_model=SubscriptionUserResponse)
 def user_subscription_info(
+    request: Request,
     dbuser: UserResponse = Depends(get_validated_sub),
 ):
     """Retrieves detailed information about the user's subscription."""
     user = UserResponse.model_validate(dbuser)
-    ensure_subscription_config_allowed(user)
-    return dbuser
+    payload = user.model_dump()
+    access = subscription_access(user)
+    req_token = request.path_params.get("token", "")
+    pub_url = public_subscription_url(user, request, request_token=req_token)
+    payload.update(access)
+    payload["public_subscription_url"] = pub_url
+    if not access["config_available"]:
+        payload["links"] = []
+        payload["subscription_url"] = ""
+        payload["public_subscription_url"] = ""
+    else:
+        payload["subscription_url"] = pub_url
+    return SubscriptionUserResponse.model_validate(payload)
 
 
 @router.get("/{token}/usage")
@@ -173,8 +192,6 @@ def user_get_usage(
     db: Session = Depends(get_db)
 ):
     """Fetches the usage statistics for the user within a specified date range."""
-    user = UserResponse.model_validate(dbuser)
-    ensure_subscription_config_allowed(user)
     start, end = validate_dates(start, end)
 
     usages = crud.get_user_usages(db, dbuser, start, end)
@@ -248,9 +265,11 @@ def user_subscription_with_client_type(
     user: UserResponse = UserResponse.model_validate(dbuser)
     ensure_subscription_config_allowed(user)
 
+    req_token = request.path_params.get("token", "")
+    pub_url = public_subscription_url(user, request, request_token=req_token)
     response_headers = {
         "content-disposition": f'attachment; filename="{user.username}"',
-        "profile-web-page-url": str(request.url),
+        "profile-web-page-url": pub_url,
         "support-url": SUB_SUPPORT_URL,
         "profile-title": encode_title(SUB_PROFILE_TITLE),
         "profile-update-interval": SUB_UPDATE_INTERVAL,

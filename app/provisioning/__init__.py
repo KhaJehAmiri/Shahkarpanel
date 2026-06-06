@@ -23,6 +23,7 @@ __all__ = [
     "ProvisioningUnavailable",
     "SSHCredentials",
     "build_install_command",
+    "resolve_panel_public_url",
     "ssh_available",
     "run_remote_command",
 ]
@@ -34,6 +35,43 @@ class ProvisioningError(RuntimeError):
 
 class ProvisioningUnavailable(ProvisioningError):
     """Raised when SSH provisioning can't run (e.g. paramiko not installed)."""
+
+
+def resolve_panel_public_url() -> str:
+    """Base URL remote nodes use to reach this panel (bootstrap callback)."""
+    from config import (
+        PANEL_PUBLIC_ADDRESS,
+        UVICORN_HOST,
+        UVICORN_PORT,
+        UVICORN_SSL_CERTFILE,
+    )
+
+    def _with_scheme(host_port: str) -> str:
+        host_port = host_port.strip().rstrip("/")
+        if host_port.startswith(("http://", "https://")):
+            return host_port
+        scheme = "https" if UVICORN_SSL_CERTFILE else "http"
+        return f"{scheme}://{host_port}"
+
+    if PANEL_PUBLIC_ADDRESS:
+        return _with_scheme(PANEL_PUBLIC_ADDRESS)
+
+    from app.utils.system import get_public_ip
+
+    ip = get_public_ip()
+    if ip:
+        scheme = "https" if UVICORN_SSL_CERTFILE else "http"
+        if (scheme == "https" and UVICORN_PORT == 443) or (scheme == "http" and UVICORN_PORT == 80):
+            return f"{scheme}://{ip}"
+        return f"{scheme}://{ip}:{UVICORN_PORT}"
+
+    host = (UVICORN_HOST or "").strip()
+    if host and host not in ("0.0.0.0", "::"):
+        return _with_scheme(f"{host}:{UVICORN_PORT}")
+
+    raise ProvisioningError(
+        "Set PANEL_PUBLIC_ADDRESS in .env (e.g. 203.0.113.1:8000) so new nodes can reach this panel."
+    )
 
 
 @dataclass
@@ -52,10 +90,13 @@ def build_install_command(
     *,
     tenant_id: Optional[int] = None,
     role: str = "direct",
+    core_kind: str = "xray",
+    region: Optional[str] = None,
     image: str = "nexuspanel/node:latest",
     node_port: int = 62050,
     node_api_port: int = 62051,
     control_secret: Optional[str] = None,
+    force_image_rebuild: bool = False,
 ) -> str:
     """Build the self-contained bash command that provisions a fresh server.
 
@@ -75,25 +116,46 @@ def build_install_command(
         raise ProvisioningError("bootstrap_token is required")
     if role not in ("direct", "relay", "exit"):
         raise ProvisioningError(f"invalid role: {role}")
+    if core_kind not in ("xray", "wireguard"):
+        raise ProvisioningError(f"invalid core_kind: {core_kind}")
 
     panel_url = panel_address if panel_address.startswith(("http://", "https://")) \
-        else f"https://{panel_address}"
+        else f"http://{panel_address}"
 
     q = shlex.quote
-    json_body = (
-        f'{{"token": {json.dumps(bootstrap_token)}, '
-        f'"name": {json.dumps(node_name)}, '
-        '"address": "$PUBLIC_IP", '
-        f'"port": {int(node_port)}, '
-        f'"api_port": {int(node_api_port)}, '
-        f'"role": {json.dumps(role)}'
+    # Single-line JSON for SSH: -d "..." breaks on inner quotes; heredocs break in sh -c.
+    bootstrap_curl = (
+        f"curl -fsSL --connect-timeout 15 --max-time 60 -X POST {q(panel_url + '/api/node/bootstrap')} "
+        "-H 'Content-Type: application/json' -d "
+        f"'{{\"token\":{json.dumps(bootstrap_token)},"
+        f"\"name\":{json.dumps(node_name)},"
+        f"\"address\":\"'\"$PUBLIC_IP\"'\","
+        f"\"port\":{int(node_port)},"
+        f"\"api_port\":{int(node_api_port)},"
+        f"\"role\":{json.dumps(role)},"
+        f"\"core_kind\":{json.dumps(core_kind)}"
     )
     if tenant_id is not None:
-        json_body += f', "tenant_id": {int(tenant_id)}'
-    json_body += "}"
+        bootstrap_curl += f',\"tenant_id\":{int(tenant_id)}'
+    if region:
+        bootstrap_curl += f',\"region\":{json.dumps(region)}'
+    bootstrap_curl += "}'"
 
     secret_env = (
         f"-e NODE_CONTROL_SECRET={q(control_secret)} " if control_secret else ""
+    )
+
+    bundle_url = f"{panel_url.rstrip('/')}/api/nodes/agent-bundle?token={bootstrap_token}"
+
+    # If the image tag is not on the remote host, try pull then build from the
+    # panel's bundled node-agent source (nexuspanel/node is not on Docker Hub).
+    # Always rebuild from the panel bundle so agent code updates reach the node.
+    ensure_image = (
+        f"NP_IMG={q(image)}; "
+        "NP_BD=$(mktemp -d); "
+        f"curl -fsSL {q(bundle_url)} | tar -xzf - -C \"$NP_BD\"; "
+        "docker build -t \"$NP_IMG\" \"$NP_BD/node\"; "
+        "rm -rf \"$NP_BD\"; "
     )
 
     return (
@@ -106,18 +168,17 @@ def build_install_command(
         "|| echo 'net.ipv4.ip_forward=1' >> /etc/sysctl.conf; "
         "docker rm -f nexusnode >/dev/null 2>&1 || true; "
         "mkdir -p /var/lib/nexuspanel-node; "
-        # --cap-add=NET_ADMIN + host net let the agent manage the wg interface;
-        # the bundled Xray core serves v2ray protocols from the same container.
+        f"{ensure_image}"
+        # --cap-add=NET_ADMIN + host network let the agent manage the wg interface.
+        # ip_forward is set on the host above; --sysctl is invalid with --network=host.
         "docker run -d --name nexusnode --restart=always --network=host "
-        "--cap-add=NET_ADMIN --sysctl net.ipv4.ip_forward=1 "
+        "--cap-add=NET_ADMIN "
         "-v /var/lib/nexuspanel-node:/var/lib/nexuspanel-node "
         "-e SERVICE_PROTOCOL=rpyc "
         f"{secret_env}"
-        f"{q(image)}; "
+        "\"$NP_IMG\"; "
         "PUBLIC_IP=$(curl -fsSL https://api.ipify.org || hostname -I | awk '{print $1}'); "
-        f"curl -fsSL -X POST {q(panel_url + '/api/node/bootstrap')} "
-        "-H 'Content-Type: application/json' "
-        f'-d "{json_body}"'
+        f"{bootstrap_curl}"
     )
 
 
@@ -129,7 +190,12 @@ def ssh_available() -> bool:
         return False
 
 
-def run_remote_command(creds: SSHCredentials, command: str, timeout: int = 20) -> str:
+def run_remote_command(
+    creds: SSHCredentials,
+    command: str,
+    timeout: int = 30,
+    exec_timeout: int = 600,
+) -> str:
     """Run ``command`` on the remote host over SSH, returning combined output.
 
     Raises :class:`ProvisioningUnavailable` if paramiko isn't installed and
@@ -167,7 +233,7 @@ def run_remote_command(creds: SSHCredentials, command: str, timeout: int = 20) -
             connect_kwargs["password"] = creds.password
         client.connect(**connect_kwargs)
 
-        stdin, stdout, stderr = client.exec_command(command, timeout=timeout * 6)
+        stdin, stdout, stderr = client.exec_command(command, timeout=exec_timeout)
         exit_code = stdout.channel.recv_exit_status()
         out = stdout.read().decode("utf-8", "replace")
         err = stderr.read().decode("utf-8", "replace")

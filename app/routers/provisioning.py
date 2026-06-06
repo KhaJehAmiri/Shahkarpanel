@@ -1,19 +1,24 @@
 """Add a node over SSH by IP + password (phase 6).
 
-A reseller pastes their server's IP and SSH credentials; the panel installs the
-node agent and the agent self-registers (tagged to the reseller's tenant). When
-SSH isn't available the endpoint returns the one-line install command to run
-manually, so the feature degrades gracefully.
+Creates a placeholder node immediately, runs SSH install in the background, and
+exposes job progress for the dashboard progress bar.
 """
+import hmac
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import Response
 from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError
 
-from app import feature_flags, logger, provisioning
+from app import feature_flags, provisioning
+from app.bootstrap_limit import enforce_bootstrap_rate_limit
+from app.provisioning import jobs as provision_jobs
+from app.provisioning.agent_bundle import build_agent_bundle
 from app import tenant as tenant_svc
-from app.db import Session, get_db
+from app.db import Session, crud, get_db
 from app.models.admin import Admin
+from app.models.node import CoreKind, NodeCreate, NodeStatus
 from app.rbac import require_permission
 from app.utils import responses
 from config import (
@@ -22,10 +27,8 @@ from config import (
     NODE_CONTROL_SECRET,
     NODE_DEFAULT_API_PORT,
     NODE_DEFAULT_PORT,
+    NODE_PROVISION_EXEC_TIMEOUT,
     NODE_PROVISION_SSH_TIMEOUT,
-    PANEL_PUBLIC_ADDRESS,
-    UVICORN_HOST,
-    UVICORN_PORT,
 )
 
 router = APIRouter(
@@ -40,8 +43,11 @@ def _require_enabled():
         raise HTTPException(status_code=404, detail="Node provisioning is disabled")
 
 
-def _panel_address() -> str:
-    return PANEL_PUBLIC_ADDRESS or f"{UVICORN_HOST}:{UVICORN_PORT}"
+def _panel_url() -> str:
+    try:
+        return provisioning.resolve_panel_public_url()
+    except provisioning.ProvisioningError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
 
 
 class ProvisionRequest(BaseModel):
@@ -52,36 +58,81 @@ class ProvisionRequest(BaseModel):
     password: Optional[str] = None
     private_key: Optional[str] = None
     role: str = "direct"
-    run: bool = True   # when False, only return the install command
+    core_kind: str = "xray"
+    region: Optional[str] = None
+    run: bool = True
+    refresh_agent: bool = False
 
 
 class ProvisionResponse(BaseModel):
-    status: str               # "provisioned" | "manual"
+    status: str
     node_role: str
-    install_command: str
+    job_id: Optional[str] = None
+    node_id: Optional[int] = None
+    install_command: str = ""
     detail: Optional[str] = None
-    output: Optional[str] = None
+
+
+class ProvisionJobResponse(BaseModel):
+    job_id: str
+    node_id: int
+    node_name: str
+    status: str
+    progress: int
+    step: str
+    message: Optional[str] = None
+    error: Optional[str] = None
+
+
+@router.get("/agent-bundle")
+def agent_bundle(request: Request, token: str):
+    """Gzip tarball of ``node/`` for remote ``docker build`` during SSH provision."""
+    enforce_bootstrap_rate_limit(request)
+    if not NODE_BOOTSTRAP_TOKEN or not hmac.compare_digest(token, NODE_BOOTSTRAP_TOKEN):
+        raise HTTPException(status_code=403, detail="Invalid bootstrap token")
+    try:
+        payload = build_agent_bundle()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    return Response(
+        content=payload,
+        media_type="application/gzip",
+        headers={"Content-Disposition": 'attachment; filename="nexuspanel-node-agent.tar.gz"'},
+    )
+
+
+@router.get("/provision/jobs/{job_id}", response_model=ProvisionJobResponse)
+def get_provision_job(
+    job_id: str,
+    _: Admin = Depends(require_permission("nodes:provision")),
+):
+    job = provision_jobs.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Provision job not found")
+    return ProvisionJobResponse(**provision_jobs.job_to_api(job))
 
 
 @router.get("/install-command", response_model=ProvisionResponse)
 def install_command(
     name: str,
     role: str = "direct",
+    core_kind: str = "xray",
+    region: Optional[str] = None,
     db: Session = Depends(get_db),
     admin: Admin = Depends(require_permission("nodes:provision")),
 ):
-    """Return the one-line command to provision a fresh server manually."""
     _require_enabled()
     if not NODE_BOOTSTRAP_TOKEN:
-        raise HTTPException(
-            status_code=400,
-            detail="NODE_BOOTSTRAP_TOKEN is not set; provisioning is unavailable.",
-        )
+        raise HTTPException(status_code=400, detail="NODE_BOOTSTRAP_TOKEN is not set.")
+    if core_kind not in ("xray", "wireguard"):
+        raise HTTPException(status_code=422, detail="invalid core_kind")
     tenant_id = tenant_svc.admin_tenant_id(db, admin)
+    panel_url = _panel_url()
     try:
         cmd = provisioning.build_install_command(
-            _panel_address(), NODE_BOOTSTRAP_TOKEN, name,
-            tenant_id=tenant_id, role=role, image=NODE_AGENT_IMAGE,
+            panel_url, NODE_BOOTSTRAP_TOKEN, name,
+            tenant_id=tenant_id, role=role, core_kind=core_kind, region=region,
+            image=NODE_AGENT_IMAGE,
             node_port=NODE_DEFAULT_PORT, node_api_port=NODE_DEFAULT_API_PORT,
             control_secret=NODE_CONTROL_SECRET or None,
         )
@@ -97,57 +148,119 @@ def provision_node(
     db: Session = Depends(get_db),
     admin: Admin = Depends(require_permission("nodes:provision")),
 ):
-    """Provision a node on the reseller's own server via SSH.
-
-    The agent self-registers via /api/node/bootstrap; this endpoint kicks off the
-    install. If paramiko isn't installed (or SSH fails) we return the install
-    command for manual use instead of failing hard.
-    """
+    """Queue SSH provisioning: placeholder node appears instantly; install runs in background."""
     _require_enabled()
     if not NODE_BOOTSTRAP_TOKEN:
-        raise HTTPException(
-            status_code=400,
-            detail="NODE_BOOTSTRAP_TOKEN is not set; provisioning is unavailable.",
-        )
+        raise HTTPException(status_code=400, detail="NODE_BOOTSTRAP_TOKEN is not set.")
     if body.role not in ("direct", "relay", "exit"):
         raise HTTPException(status_code=422, detail="invalid role")
+    if body.core_kind not in ("xray", "wireguard"):
+        raise HTTPException(status_code=422, detail="invalid core_kind")
     if not body.password and not body.private_key:
         raise HTTPException(status_code=422, detail="password or private_key is required")
 
-    tenant_id = tenant_svc.admin_tenant_id(db, admin)
-    try:
+    if not body.run:
+        tenant_id = tenant_svc.admin_tenant_id(db, admin)
+        panel_url = _panel_url()
         cmd = provisioning.build_install_command(
-            _panel_address(), NODE_BOOTSTRAP_TOKEN, body.name,
-            tenant_id=tenant_id, role=body.role, image=NODE_AGENT_IMAGE,
+            panel_url, NODE_BOOTSTRAP_TOKEN, body.name,
+            tenant_id=tenant_id, role=body.role, core_kind=body.core_kind,
+            region=body.region, image=NODE_AGENT_IMAGE,
             node_port=NODE_DEFAULT_PORT, node_api_port=NODE_DEFAULT_API_PORT,
             control_secret=NODE_CONTROL_SECRET or None,
+        )
+        return ProvisionResponse(
+            status="manual", node_role=body.role, install_command=cmd,
+            detail="Returning install command only (run=false).",
+        )
+
+    if not provisioning.ssh_available():
+        raise HTTPException(
+            status_code=503,
+            detail="SSH provisioning is unavailable (paramiko not installed).",
+        )
+
+    tenant_id = tenant_svc.admin_tenant_id(db, admin)
+    panel_url = _panel_url()
+    try:
+        cmd = provisioning.build_install_command(
+            panel_url, NODE_BOOTSTRAP_TOKEN, body.name,
+            tenant_id=tenant_id, role=body.role, core_kind=body.core_kind,
+            region=body.region, image=NODE_AGENT_IMAGE,
+            node_port=NODE_DEFAULT_PORT, node_api_port=NODE_DEFAULT_API_PORT,
+            control_secret=NODE_CONTROL_SECRET or None,
+            force_image_rebuild=body.refresh_agent,
         )
     except provisioning.ProvisioningError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
-    if not body.run or not provisioning.ssh_available():
-        detail = (
-            "SSH client (paramiko) unavailable; run the command on your server."
-            if body.run else "Returning install command only (run=false)."
-        )
-        return ProvisionResponse(status="manual", node_role=body.role,
-                                 install_command=cmd, detail=detail)
+    from app.db.models import Node as DBNode
+
+    name = body.name.strip()
+    existing = db.query(DBNode).filter(DBNode.name == name).first()
+    if existing and (
+        existing.provision_status in ("failed", "provisioning")
+        or body.refresh_agent
+    ):
+        dbnode = existing
+        dbnode.address = body.host.strip()
+        dbnode.port = NODE_DEFAULT_PORT
+        dbnode.api_port = NODE_DEFAULT_API_PORT
+        dbnode.region = body.region
+        dbnode.core_kind = CoreKind(body.core_kind).value
+        dbnode.role = body.role
+        dbnode.tenant_id = tenant_id
+        dbnode.provision_status = "provisioning"
+        dbnode.provision_host = body.host.strip()
+        dbnode.provision_message = "queued"
+        dbnode.message = None
+        dbnode.status = NodeStatus.connecting
+        db.commit()
+        db.refresh(dbnode)
+    else:
+        try:
+            dbnode = crud.create_node(
+                db,
+                NodeCreate(
+                    name=name,
+                    address=body.host.strip(),
+                    port=NODE_DEFAULT_PORT,
+                    api_port=NODE_DEFAULT_API_PORT,
+                    region=body.region,
+                    core_kind=CoreKind(body.core_kind),
+                    add_as_new_host=False,
+                ),
+            )
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(status_code=409, detail=f'Node "{body.name}" already exists')
+
+        dbnode.role = body.role
+        dbnode.tenant_id = tenant_id
+        dbnode.provision_status = "provisioning"
+        dbnode.provision_host = body.host.strip()
+        dbnode.provision_message = "queued"
+        dbnode.status = NodeStatus.connecting
+        db.commit()
+        db.refresh(dbnode)
 
     creds = provisioning.SSHCredentials(
-        host=body.host, port=body.ssh_port, username=body.username,
+        host=body.host.strip(), port=body.ssh_port, username=body.username,
         password=body.password, private_key=body.private_key,
     )
-    try:
-        out = provisioning.run_remote_command(creds, cmd, timeout=NODE_PROVISION_SSH_TIMEOUT)
-    except provisioning.ProvisioningError as exc:
-        logger.warning("Node provisioning over SSH failed for %s: %s", body.host, exc)
-        return ProvisionResponse(
-            status="manual", node_role=body.role, install_command=cmd,
-            detail=f"SSH provisioning failed ({exc}). Run the command manually.",
-        )
+    job_id = provision_jobs.start_job(
+        node_id=dbnode.id,
+        node_name=dbnode.name,
+        creds=creds,
+        command=cmd,
+        ssh_timeout=NODE_PROVISION_SSH_TIMEOUT,
+        exec_timeout=NODE_PROVISION_EXEC_TIMEOUT,
+    )
 
     return ProvisionResponse(
-        status="provisioned", node_role=body.role, install_command=cmd,
-        detail="Server provisioned; the node will self-register shortly.",
-        output=out[-2000:] if out else None,
+        status="started",
+        job_id=job_id,
+        node_id=dbnode.id,
+        node_role=body.role,
+        detail="Install started — track progress in the nodes list.",
     )

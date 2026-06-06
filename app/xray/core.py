@@ -1,7 +1,10 @@
 import atexit
+import os
 import re
+import signal
 import subprocess
 import threading
+import time
 from collections import deque
 from contextlib import contextmanager
 
@@ -20,6 +23,12 @@ class XRayCore:
         self.version = self.get_version()
         self.process = None
         self.restarting = False
+
+        # Bumped on every (re)start so the serving layer can detect that the
+        # live core was replaced and rebuild its registered-user registry from
+        # the exact config the core booted with.
+        self.config_generation = 0
+        self.last_config = None
 
         self._logs_buffer = deque(maxlen=100)
         self._temp_log_buffers = {}
@@ -135,6 +144,12 @@ class XRayCore:
         self.process.stdin.write(config.to_json())
         self.process.stdin.flush()
         self.process.stdin.close()
+
+        # Record the booted config so the serving layer can reconcile its
+        # registered-user registry against reality after any restart path.
+        self.last_config = config
+        self.config_generation += 1
+
         logger.warning(f"Xray core {self.version} started")
 
         self.__capture_process_logs()
@@ -144,16 +159,55 @@ class XRayCore:
             threading.Thread(target=func).start()
 
     def stop(self):
-        if not self.started:
+        proc = self.process
+        if not proc:
             return
 
-        self.process.terminate()
+        try:
+            proc.terminate()
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                pass
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
         self.process = None
         logger.warning("Xray core stopped")
 
         # execute on stop functions
         for func in self._on_stop_funcs:
             threading.Thread(target=func).start()
+
+    @staticmethod
+    def _kill_stale_stdin_xray(keep_pid: int | None = None):
+        """Ensure no orphan ``xray run -config stdin`` survives a restart."""
+        try:
+            out = subprocess.check_output(
+                ["pgrep", "-f", "^/usr/local/bin/xray run -config stdin:"],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return
+        for line in out.strip().splitlines():
+            if not line.strip().isdigit():
+                continue
+            pid = int(line.strip())
+            if keep_pid and pid == keep_pid:
+                continue
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            except Exception:
+                pass
+        time.sleep(0.3)
 
     def restart(self, config: XRayConfig):
         if self.restarting is True:
@@ -163,6 +217,7 @@ class XRayCore:
             self.restarting = True
             logger.warning("Restarting Xray core...")
             self.stop()
+            self._kill_stale_stdin_xray(keep_pid=None)
             self.start(config)
         finally:
             self.restarting = False

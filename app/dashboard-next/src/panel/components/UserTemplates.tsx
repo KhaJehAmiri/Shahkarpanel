@@ -1,10 +1,13 @@
 import { FC, useState } from "react";
+import {
+  bytesToDataLimitValue, dataLimitToBytes, detectDataLimitUnit, type DataLimitUnit,
+} from "../lib/data-limit";
 import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import { useFetch } from "../lib/useFetch";
 import { formatBytes } from "../lib/format";
 import {
-  Button, Card, EmptyState, Field, Input, Modal, SkeletonRows, useToast,
+  Button, Card, EmptyState, Field, Input, Modal, Select, SkeletonRows, useToast,
 } from "./ui";
 import { IcPlus, IcTrash, IcEdit } from "./icons";
 
@@ -83,7 +86,12 @@ const TemplateFormModal: FC<{ row?: UserTemplateRow; onClose: () => void; onDone
   const { t } = useTranslation();
   const toast = useToast();
   const [name, setName] = useState(row?.name || "");
-  const [dataGb, setDataGb] = useState(row?.data_limit ? String(row.data_limit / 1024 ** 3) : "");
+  const [dataLimitUnit, setDataLimitUnit] = useState<DataLimitUnit>(
+    row?.data_limit ? detectDataLimitUnit(row.data_limit) : "MB",
+  );
+  const [dataLimitValue, setDataLimitValue] = useState(
+    row?.data_limit ? bytesToDataLimitValue(row.data_limit, detectDataLimitUnit(row.data_limit)) : "",
+  );
   const [expireDays, setExpireDays] = useState(row?.expire_duration ? String(Math.round(row.expire_duration / 86400)) : "");
   const [busy, setBusy] = useState(false);
 
@@ -92,7 +100,7 @@ const TemplateFormModal: FC<{ row?: UserTemplateRow; onClose: () => void; onDone
     try {
       const body: Record<string, unknown> = {
         name: name.trim(),
-        data_limit: dataGb ? Math.round(parseFloat(dataGb) * 1024 ** 3) : 0,
+        data_limit: dataLimitValue ? dataLimitToBytes(dataLimitValue, dataLimitUnit) : 0,
         expire_duration: expireDays ? parseInt(expireDays, 10) * 86400 : 0,
         inbounds: row?.inbounds || {},
       };
@@ -116,7 +124,15 @@ const TemplateFormModal: FC<{ row?: UserTemplateRow; onClose: () => void; onDone
         <Button variant="primary" disabled={busy || !name.trim()} onClick={submit}>{row ? t("common.save") : t("common.create")}</Button></>}>
       <div className="nx-stack">
         <Field label={t("common.name")}><Input value={name} onChange={(e: any) => setName(e.target.value)} autoFocus /></Field>
-        <Field label={`${t("users.dataLimit")} (GB)`} hint="0 = unlimited"><Input type="number" min="0" value={dataGb} onChange={(e: any) => setDataGb(e.target.value)} /></Field>
+        <Field label={t("users.dataLimit")} hint="0 = unlimited">
+          <div className="nx-row" style={{ gap: 8 }}>
+            <Input type="number" min="0" step={dataLimitUnit === "MB" ? "1" : "0.001"} value={dataLimitValue} onChange={(e: any) => setDataLimitValue(e.target.value)} style={{ flex: 1 }} />
+            <Select value={dataLimitUnit} onChange={(e: any) => setDataLimitUnit(e.target.value as DataLimitUnit)} style={{ width: 88 }}>
+              <option value="MB">MB</option>
+              <option value="GB">GB</option>
+            </Select>
+          </div>
+        </Field>
         <Field label={`${t("users.expire")} (days)`} hint="0 = none"><Input type="number" min="0" value={expireDays} onChange={(e: any) => setExpireDays(e.target.value)} /></Field>
       </div>
     </Modal>

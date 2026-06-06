@@ -98,6 +98,10 @@ class NodeResponse(Node):
     wireguard: Optional[NodeWireGuardConfig] = None
     # Tunnel topology role: 'direct' (default), 'relay' (in-country bridge), 'exit'.
     role: str = "direct"
+    provision_status: Optional[str] = None
+    provision_message: Optional[str] = None
+    provision_progress: Optional[int] = None
+    provision_step: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
 
 

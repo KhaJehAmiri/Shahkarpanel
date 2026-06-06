@@ -98,8 +98,8 @@ export const Tabs: FC<{ tabs: { id: string; label: string }[]; active: string; o
 );
 
 /* ------------------------------- Callout ------------------------------- */
-export const Callout: FC<{ tone?: "info" | "warn" | "danger" | "ok"; title?: string; children: ReactNode }> = ({ tone = "info", title, children }) => (
-  <div className={`nx-callout ${tone}`}>
+export const Callout: FC<{ tone?: "info" | "warn" | "danger" | "ok"; title?: string; className?: string; children: ReactNode }> = ({ tone = "info", title, className, children }) => (
+  <div className={["nx-callout", tone, className].filter(Boolean).join(" ")}>
     <div>
       {title && <div className="nx-callout-title">{title}</div>}
       <div>{children}</div>
@@ -124,12 +124,14 @@ export const EmptyState: FC<{ title: string; desc?: string; steps?: string[]; ac
 
 /* -------------------------------- Modal -------------------------------- */
 export const Modal: FC<{
-  open: boolean; title: string; onClose: () => void; children: ReactNode; footer?: ReactNode; wide?: boolean;
-}> = ({ open, title, onClose, children, footer, wide }) => {
+  open: boolean; title: string; onClose: () => void; children: ReactNode; footer?: ReactNode;
+  wide?: boolean; formWide?: boolean;
+}> = ({ open, title, onClose, children, footer, wide, formWide }) => {
   if (!open) return null;
+  const modalCls = ["nx-modal", wide && "wide", formWide && "form-wide"].filter(Boolean).join(" ");
   return (
     <div className="nx-overlay" onClick={onClose}>
-      <div className={`nx-modal${wide ? " wide" : ""}`} onClick={(e) => e.stopPropagation()}>
+      <div className={modalCls} onClick={(e) => e.stopPropagation()}>
         <div className="nx-modal-head">
           <div className="nx-card-title">{title}</div>
           <button className="nx-btn icon ghost" onClick={onClose}><IcClose /></button>

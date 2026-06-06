@@ -291,11 +291,9 @@ class V2rayShareLink(str):
               xmux: dict = {},
               ):
 
-        payload = {
-            "security": tls,
-            "type": net,
-            "headerType": type
-        }
+        payload = {"security": tls, "type": net}
+        if type:
+            payload["headerType"] = type
         if flow and (tls in ('tls', 'reality') and net in ('tcp', 'raw', 'kcp') and type != 'http'):
             payload['flow'] = flow
 
@@ -333,14 +331,18 @@ class V2rayShareLink(str):
             payload["host"] = host
 
         elif net == "ws":
-            payload["path"] = path
-            payload["host"] = host
+            if path:
+                payload["path"] = path
+            if host:
+                payload["host"] = host
             if heartbeatPeriod:
                 payload["heartbeatPeriod"] = heartbeatPeriod
 
         else:
-            payload["path"] = path
-            payload["host"] = host
+            if path:
+                payload["path"] = path
+            if host:
+                payload["host"] = host
 
         if tls == "tls":
             payload["sni"] = sni
@@ -810,21 +812,21 @@ class V2rayJsonConfig(str):
 
     @staticmethod
     def vless_config(address=None, port=None, id=None, flow="") -> dict:
+        user = {
+            "id": id,
+            "security": "auto",
+            "encryption": "none",
+            "email": "NexusPanel",
+            "alterId": 0,
+        }
+        if flow:
+            user["flow"] = flow
         return {
             "vnext": [
                 {
                     "address": address,
                     "port": port,
-                    "users": [
-                        {
-                            "id": id,
-                            "security": "auto",
-                            "encryption": "none",
-                            "email": "NexusPanel",
-                            "alterId": 0,
-                            "flow": flow
-                        }
-                    ],
+                    "users": [user],
                 }
             ]
         }

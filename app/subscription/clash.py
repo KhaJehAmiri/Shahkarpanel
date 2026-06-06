@@ -92,7 +92,7 @@ class ClashConfiguration(object):
         if random_user_agent:
             if "headers" not in config:
                 config["headers"] = {}
-            config["header"]["User-Agent"] = choice(self.user_agent_list)
+            config["headers"]["User-Agent"] = choice(self.user_agent_list)
 
         return config
 

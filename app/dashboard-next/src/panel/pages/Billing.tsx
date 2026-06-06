@@ -1,4 +1,7 @@
 import { FC, useState } from "react";
+import {
+  bytesToDataLimitValue, dataLimitToBytes, detectDataLimitUnit, type DataLimitUnit,
+} from "../lib/data-limit";
 import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import { Invoice, Plan, Transaction, Wallet } from "../api/types";
@@ -7,7 +10,7 @@ import { useFetch } from "../lib/useFetch";
 import { formatBytes } from "../lib/format";
 import { PageHeader } from "../components/Shell";
 import {
-  Button, Callout, Card, EmptyState, Field, Input, Modal, Pill, SkeletonRows, Stat, Tabs, useToast,
+  Button, Callout, Card, EmptyState, Field, Input, Modal, Pill, Select, SkeletonRows, Stat, Tabs, useToast,
 } from "../components/ui";
 import { IcPlus, IcTrash, IcWallet, IcEdit } from "../components/icons";
 
@@ -126,10 +129,12 @@ const CreditModal: FC<{ onClose: () => void; onDone: () => void }> = ({ onClose,
 const EditPlan: FC<{ plan: Plan; onClose: () => void; onDone: () => void }> = ({ plan, onClose, onDone }) => {
   const { t } = useTranslation();
   const toast = useToast();
+  const planUnit = plan.data_limit ? detectDataLimitUnit(plan.data_limit) : "MB";
   const [f, setF] = useState({
     name: plan.name,
     price: String(plan.price),
-    dataGb: plan.data_limit ? String(plan.data_limit / 1024 ** 3) : "",
+    dataLimitValue: plan.data_limit ? bytesToDataLimitValue(plan.data_limit, planUnit) : "",
+    dataLimitUnit: planUnit as DataLimitUnit,
     days: plan.duration_days ? String(plan.duration_days) : "",
     enabled: plan.enabled,
   });
@@ -141,7 +146,7 @@ const EditPlan: FC<{ plan: Plan; onClose: () => void; onDone: () => void }> = ({
       await api.put(`/plans/${plan.id}`, {
         name: f.name.trim(),
         price: parseInt(f.price) || 0,
-        data_limit: f.dataGb ? Math.round(parseFloat(f.dataGb) * 1024 ** 3) : null,
+        data_limit: f.dataLimitValue ? dataLimitToBytes(f.dataLimitValue, f.dataLimitUnit) : null,
         duration_days: f.days ? parseInt(f.days) : null,
         enabled: f.enabled,
       });
@@ -156,6 +161,15 @@ const EditPlan: FC<{ plan: Plan; onClose: () => void; onDone: () => void }> = ({
       <div className="nx-stack">
         <Field label={t("common.name")}><Input value={f.name} onChange={upd("name")} /></Field>
         <Field label={t("billing.price")}><Input type="number" value={f.price} onChange={upd("price")} /></Field>
+        <Field label={t("billing.dataLimit")}>
+          <div className="nx-row" style={{ gap: 8 }}>
+            <Input type="number" value={f.dataLimitValue} onChange={upd("dataLimitValue")} style={{ flex: 1 }} />
+            <Select value={f.dataLimitUnit} onChange={upd("dataLimitUnit")} style={{ width: 88 }}>
+              <option value="MB">MB</option>
+              <option value="GB">GB</option>
+            </Select>
+          </div>
+        </Field>
         <label className="nx-row" style={{ gap: 8 }}><input type="checkbox" checked={f.enabled} onChange={upd("enabled")} /> {t("common.enabled")}</label>
       </div>
     </Modal>
@@ -165,7 +179,7 @@ const EditPlan: FC<{ plan: Plan; onClose: () => void; onDone: () => void }> = ({
 const AddPlan: FC<{ onClose: () => void; onDone: () => void }> = ({ onClose, onDone }) => {
   const { t } = useTranslation();
   const toast = useToast();
-  const [f, setF] = useState({ name: "", price: "0", dataGb: "", days: "", devices: "" });
+  const [f, setF] = useState({ name: "", price: "0", dataLimitValue: "", dataLimitUnit: "MB" as DataLimitUnit, days: "", devices: "" });
   const [busy, setBusy] = useState(false);
   const upd = (k: string) => (e: any) => setF({ ...f, [k]: e.target.value });
 
@@ -174,7 +188,7 @@ const AddPlan: FC<{ onClose: () => void; onDone: () => void }> = ({ onClose, onD
     try {
       await api.post("/plans", {
         name: f.name.trim(), price: parseInt(f.price) || 0,
-        data_limit: f.dataGb ? Math.round(parseFloat(f.dataGb) * 1024 ** 3) : null,
+        data_limit: f.dataLimitValue ? dataLimitToBytes(f.dataLimitValue, f.dataLimitUnit) : null,
         duration_days: f.days ? parseInt(f.days) : null,
         device_limit: f.devices ? parseInt(f.devices) : null, enabled: true,
       });
@@ -190,7 +204,15 @@ const AddPlan: FC<{ onClose: () => void; onDone: () => void }> = ({ onClose, onD
         <Field label={t("common.name")}><Input value={f.name} onChange={upd("name")} autoFocus /></Field>
         <div className="nx-row" style={{ gap: 12 }}>
           <Field label={t("billing.price")}><Input type="number" value={f.price} onChange={upd("price")} /></Field>
-          <Field label={t("billing.dataLimit")}><Input type="number" value={f.dataGb} onChange={upd("dataGb")} /></Field>
+          <Field label={t("billing.dataLimit")}>
+            <div className="nx-row" style={{ gap: 8 }}>
+              <Input type="number" value={f.dataLimitValue} onChange={upd("dataLimitValue")} style={{ flex: 1 }} />
+              <Select value={f.dataLimitUnit} onChange={upd("dataLimitUnit")} style={{ width: 88 }}>
+                <option value="MB">MB</option>
+                <option value="GB">GB</option>
+              </Select>
+            </div>
+          </Field>
         </div>
         <div className="nx-row" style={{ gap: 12 }}>
           <Field label={t("billing.duration")}><Input type="number" value={f.days} onChange={upd("days")} /></Field>

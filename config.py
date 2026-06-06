@@ -44,7 +44,8 @@ NODE_BOOTSTRAP_MAX_ATTEMPTS = config("NODE_BOOTSTRAP_MAX_ATTEMPTS", cast=int, de
 NODE_BOOTSTRAP_WINDOW_SECONDS = config("NODE_BOOTSTRAP_WINDOW_SECONDS", cast=int, default=3600)
 LOGIN_MAX_ATTEMPTS = config("LOGIN_MAX_ATTEMPTS", cast=int, default=10)
 LOGIN_MAX_WINDOW_SECONDS = config("LOGIN_MAX_WINDOW_SECONDS", cast=int, default=900)
-PROVISIONING_SSH_STRICT_HOST_KEY = config("PROVISIONING_SSH_STRICT_HOST_KEY", cast=bool, default=True)
+# False = accept first connect to new servers (normal for one-click node install).
+PROVISIONING_SSH_STRICT_HOST_KEY = config("PROVISIONING_SSH_STRICT_HOST_KEY", cast=bool, default=False)
 # Interval (seconds) for the cluster failover detector. 0 disables it.
 CLUSTER_FAILOVER_CHECK_INTERVAL = config("CLUSTER_FAILOVER_CHECK_INTERVAL", cast=int, default=0)
 # A node must stay in error for this many seconds before being considered down.
@@ -96,7 +97,9 @@ PANEL_PUBLIC_ADDRESS = config("PANEL_PUBLIC_ADDRESS", default="")
 # with your own published image (see scripts/ for building a node image).
 NODE_AGENT_IMAGE = config("NODE_AGENT_IMAGE", default="nexuspanel/node:latest")
 # SSH connect timeout (seconds) when auto-provisioning a node.
-NODE_PROVISION_SSH_TIMEOUT = config("NODE_PROVISION_SSH_TIMEOUT", cast=int, default=20)
+NODE_PROVISION_SSH_TIMEOUT = config("NODE_PROVISION_SSH_TIMEOUT", cast=int, default=30)
+# Max seconds to wait for the remote install script (Docker build + agent start).
+NODE_PROVISION_EXEC_TIMEOUT = config("NODE_PROVISION_EXEC_TIMEOUT", cast=int, default=1200)
 # Default ports a provisioned node listens on.
 NODE_DEFAULT_PORT = config("NODE_DEFAULT_PORT", cast=int, default=62050)
 NODE_DEFAULT_API_PORT = config("NODE_DEFAULT_API_PORT", cast=int, default=62051)
@@ -256,7 +259,7 @@ DISABLE_RECORDING_NODE_USAGE = config("DISABLE_RECORDING_NODE_USAGE", cast=bool,
 # headers: profile-update-interval, support-url, profile-title
 SUB_UPDATE_INTERVAL = config("SUB_UPDATE_INTERVAL", default="12")
 SUB_SUPPORT_URL = config("SUB_SUPPORT_URL", default="https://t.me/")
-SUB_PROFILE_TITLE = config("SUB_PROFILE_TITLE", default="Subscription")
+SUB_PROFILE_TITLE = config("SUB_PROFILE_TITLE", default="NexusPanel")
 
 # discord webhook log
 DISCORD_WEBHOOK_URL = config("DISCORD_WEBHOOK_URL", default="")
@@ -264,6 +267,7 @@ DISCORD_WEBHOOK_URL = config("DISCORD_WEBHOOK_URL", default="")
 
 # Interval jobs, all values are in seconds
 JOB_CORE_HEALTH_CHECK_INTERVAL = config("JOB_CORE_HEALTH_CHECK_INTERVAL", cast=int, default=10)
+JOB_CORE_USER_RECONCILE_INTERVAL = config("JOB_CORE_USER_RECONCILE_INTERVAL", cast=int, default=45)
 JOB_RECORD_NODE_USAGES_INTERVAL = config("JOB_RECORD_NODE_USAGES_INTERVAL", cast=int, default=30)
 JOB_RECORD_USER_USAGES_INTERVAL = config("JOB_RECORD_USER_USAGES_INTERVAL", cast=int, default=10)
 JOB_REVIEW_USERS_INTERVAL = config("JOB_REVIEW_USERS_INTERVAL", cast=int, default=10)

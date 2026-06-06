@@ -44,7 +44,12 @@
     "copiedToClipboard": "در کلیپ‌بورد کپی شد",
     "copyFailed": "کپی ناموفق بود",
     "copyFailedHint": "کپی ناموفق — متن را انتخاب و Ctrl/Cmd+C بزنید",
-    "protocols": "پروتکل‌ها"
+    "protocols": "پروتکل‌ها",
+    "roleOwner": "مالک",
+    "roleReseller": "نماینده",
+    "theme": "تم",
+    "done": "انجام شد",
+    "start": "شروع"
   },
   "nav": {
     "main": "اصلی",
@@ -58,7 +63,16 @@
     "automation": "اتوماسیون",
     "analytics": "تحلیل‌ها",
     "billing": "مالی",
-    "system": "سیستم"
+    "system": "سیستم",
+    "work": "کار روزمره",
+    "connect": "اتصال",
+    "advanced": "پیشرفته",
+    "manage": "مدیریت",
+    "nodes": "سرورها",
+    "tunnels": "تونل‌ها",
+    "wireguard": "WireGuard",
+    "xray": "کانفیگ Xray",
+    "hosts": "هاست اشتراک"
   },
   "login": {
     "title": "خوش آمدید",
@@ -69,8 +83,8 @@
   },
   "overview": {
     "title": "نمای کلی",
-    "subtitle": "وضعیت لحظه‌ای پلتفرم شما",
-    "description": "این صفحه‌ی خانه‌ی شماست. وضعیت زنده‌ی CPU، حافظه، کاربران آنلاین و ترافیک همه‌ی نودها را اینجا می‌بینید. هر روز یک‌بار نگاه کنید — اگر چیزی قرمز شد، به ماژول مربوطه بروید و حلش کنید.",
+    "subtitle": "مرکز کنترل شما",
+    "description": "یک مسیر را انتخاب کنید یا آمار زنده را ببینید. هر بخش منو یک کار مشخص دارد — گم نمی‌شوید.",
     "totalUsers": "کل کاربران",
     "activeUsers": "کاربران فعال",
     "onlineUsers": "آنلاین (۲۴ ساعت)",
@@ -91,7 +105,16 @@
     "totalTraffic": "کل ترافیک",
     "incoming": "ورودی",
     "outgoing": "خروجی",
-    "version": "نسخه"
+    "version": "نسخه",
+    "pickPath": "چه کاری می‌خواهید انجام دهید؟",
+    "pathProxy": "کاربر پروکسی (VLESS، VMess…)",
+    "pathProxySteps": "۱. اینباند ← ۲. کاربر ← ۳. لینک اشتراک",
+    "pathWg": "VPN با WireGuard",
+    "pathWgSteps": "۱. سرور WG ← ۲. کاربر ← ۳. دانلود .conf",
+    "pathTunnel": "تونل ایران ↔ خارج",
+    "pathTunnelSteps": "۱. سرور خروجی ← ۲. ساخت تونل ← ۳. Apply",
+    "pathStart": "از اینجا شروع کنید",
+    "openGuide": "راهنمای گام‌به‌گام"
   },
   "users": {
     "title": "کاربران",
@@ -194,7 +217,7 @@
     "xrayUpgradeConfirm": "این نسخه Xray روی نود دانلود و نصب شود؟ هسته نود ری‌استارت می‌شود.",
     "xrayVersionCol": "نسخه Xray",
     "xrayVersionHintTitle": "تغییر نسخه Xray",
-    "xrayVersionHint": "مسیر: زیرساخت → تب نودها → دکمه «تعیین نسخه Xray» در ستون عملیات (فقط نودهای Xray، نه WireGuard).",
+    "xrayVersionHint": "بروید به سرورها ← دکمه «تنظیم نسخه Xray» در ستون عملیات (فقط نود Xray، نه WireGuard).",
     "reconnect": "اتصال مجدد",
     "reconnecting": "اتصال مجدد زمان‌بندی شد",
     "tunnelsDisabled": "تونل‌سازی غیرفعال است.",
@@ -222,7 +245,7 @@
     "tunnelConfig": "کانفیگ تونل",
     "modeAuto": "نصب خودکار (SSH)",
     "modeManual": "اتصال دستی",
-    "autoHint": "آی‌پی سرور و اطلاعات ورود SSH را وارد کنید. پنل وصل می‌شود، Docker و عامل نود (Xray + وایرگارد) را نصب می‌کند و سرور خودش به‌صورت خودکار ثبت می‌شود.",
+    "autoHint": "آی‌پی سرور و SSH را وارد کنید. پنل خودکار Docker و ایجنت را نصب می‌کند — Xray یا WireGuard را بالا انتخاب کنید. نیازی به تنظیم دستی روی سرور نیست.",
     "serverIp": "آی‌پی سرور",
     "sshUser": "کاربر SSH",
     "sshPort": "پورت SSH",
@@ -232,7 +255,22 @@
     "autoInstallsHint": "Docker و عامل نود را با هم Xray (v2ray) و هم وایرگارد نصب می‌کند، NET_ADMIN و IP forwarding را فعال و سپس خودش را ثبت می‌کند.",
     "installCommand": "دستور نصب (روی سرور با کاربر root اجرا کنید)",
     "provisionInstall": "نصب روی سرور",
+    "provisionRunning": "در حال شروع…",
+    "provisionQueued": "نصب شروع شد — پیشرفت را در لیست نودها ببینید.",
+    "provisionWait": "در حال اتصال SSH، ساخت ایمیج و نصب ایجنت — ممکن است ۵ تا ۱۵ دقیقه طول بکشد. لطفاً صبر کنید.",
     "provisionStarted": "سرور آماده‌سازی شد — نود به‌زودی ظاهر می‌شود.",
+    "provisionFailed": "نصب از راه دور ناموفق بود. SSH، فایروال و دسترسی سرور را بررسی کنید.",
+    "provisionFailedShort": "نصب ناموفق",
+    "provisionStep": {
+      "queued": "در صف",
+      "ssh": "اتصال SSH",
+      "docker": "نصب Docker",
+      "image": "ساخت ایمیج ایجنت",
+      "agent": "اجرای ایجنت",
+      "register": "ثبت در پنل",
+      "done": "تمام شد",
+      "failed": "خطا"
+    },
     "provisionManual": "اجرای از راه دور ممکن نشد — دستور را کپی کنید و روی سرور اجرا کنید."
   },
   "copilot": {
@@ -253,7 +291,9 @@
       "openInbounds": "باز کردن اینباندها",
       "createUser": "ساخت کاربر",
       "createWgUser": "ساخت کاربر وایرگارد",
-      "openUsers": "باز کردن کاربران"
+      "openUsers": "باز کردن کاربران",
+      "openNodes": "باز کردن سرورها",
+      "openTunnels": "باز کردن تونل‌ها"
     },
     "quickstart": {
       "title": "شروع سریع",
@@ -304,6 +344,16 @@
       "s_user_b": "نام کاربری، حجم و انقضا تعیین کن. پروتکل‌هایی که می‌تونه استفاده کنه را انتخاب کن.",
       "s_share": "اشتراک را به اشتراک بگذار",
       "s_share_b": "کاربر را باز کن، لینک یا QR اشتراک را کپی و ارسال کن."
+    },
+    "tunnel": {
+      "title": "راه‌اندازی تونل",
+      "desc": "اتصال ایران به یک سرور خارج.",
+      "s_exit": "سرور خروجی (خارج) اضافه کنید",
+      "s_exit_b": "یک نود خارج با core=Xray اضافه کنید — نصب خودکار یا اتصال دستی.",
+      "s_tunnel": "تونل بسازید",
+      "s_tunnel_b": "در تونل‌ها، relay (ایران) و exit (خارج) را انتخاب کنید. هر طرف می‌تواند پنل یا نود باشد.",
+      "s_apply": "Apply بزنید",
+      "s_apply_b": "بعد از ساخت، Apply را بزنید تا کانفیگ در هر دو طرف deploy شود."
     }
   },
   "inbounds": {
@@ -612,5 +662,39 @@
     "features": "فعال‌سازی قابلیت‌ها",
     "finish": "پایان راه‌اندازی",
     "skip": "بعداً"
+  },
+  "nodes": {
+    "title": "سرورها",
+    "subtitle": "ماشین‌هایی که ترافیک را اجرا می‌کنند",
+    "description": "هر سرور (نود) Xray یا WireGuard اجرا می‌کند. افزودن، حذف، اتصال مجدد و نسخه Xray — یک صفحه، یک کار."
+  },
+  "tunnels": {
+    "title": "تونل‌ها",
+    "subtitle": "عبور ترافیک از ایران به خارج",
+    "description": "طرف relay (ایران) و exit (خارج) را به هم وصل کنید. هر طرف می‌تواند نود یا خود پنل باشد. بعد از ساخت، Apply بزنید."
+  },
+  "hosts": {
+    "title": "هاست اشتراک",
+    "subtitle": "دامنه و آدرسی که کاربر می‌بیند",
+    "description": "دامنه، SNI و TLS در لینک اشتراک. از {SERVER_IP} و {USERNAME} به‌عنوان placeholder استفاده کنید."
+  },
+  "xrayPage": {
+    "title": "کانفیگ Xray",
+    "subtitle": "JSON پیشرفته — routing، DNS، outbounds",
+    "description": "برای کاربران حرفه‌ای. اینباندها و کاربران از منوی اتصال؛ اینجا تنظیمات کل Xray است."
+  },
+  "wireguard": {
+    "title": "WireGuard",
+    "subtitle": "VPN بومی — جدا از Xray",
+    "description": "WireGuard مسیر جدا دارد: سرور WG، کاربر با پروتکل WG، سپس دانلود .conf",
+    "notXrayTitle": "این Xray نیست",
+    "notXrayBody": "WireGuard از اینباند Xray استفاده نمی‌کند. سرور با core=wireguard و پروتکل WG در کاربران را فعال کنید.",
+    "nodesCount": "سرورهای WG",
+    "setupTitle": "راه‌اندازی در ۳ مرحله",
+    "step1": "سرور WireGuard اضافه کنید",
+    "step2": "کاربر با پروتکل WireGuard بسازید",
+    "step3": "فایل .conf را از صفحه کاربر دانلود کنید",
+    "addNode": "افزودن سرور WG",
+    "addUser": "افزودن کاربر WG"
   }
 }

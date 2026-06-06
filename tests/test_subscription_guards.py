@@ -7,7 +7,7 @@ from fastapi import HTTPException
 
 from app.models.proxy import ProxyTypes
 from app.models.user import UserResponse, UserStatus
-from app.subscription.guards import ensure_subscription_config_allowed
+from app.subscription.guards import ensure_subscription_config_allowed, subscription_access
 
 
 def _user(**kwargs) -> UserResponse:
@@ -58,3 +58,28 @@ def test_blocks_over_quota():
 
 def test_allows_under_quota():
     ensure_subscription_config_allowed(_user(data_limit=1000, used_traffic=999))
+
+
+def test_subscription_access_allows_info_for_limited():
+    access = subscription_access(_user(status=UserStatus.limited, data_limit=1000, used_traffic=1000))
+    assert access["config_available"] is False
+    assert access["block_reason"] == "data_limit"
+
+
+def test_subscription_access_data_limit_block():
+    access = subscription_access(_user(status=UserStatus.active, data_limit=1000, used_traffic=1000))
+    assert access["config_available"] is False
+    assert access["block_reason"] == "data_limit"
+
+
+def test_subscription_access_active_ok():
+    access = subscription_access(_user(status=UserStatus.active, data_limit=1000, used_traffic=500))
+    assert access["config_available"] is True
+    assert access["block_reason"] is None
+
+
+def test_subscription_access_expired_timestamp():
+    import time
+    access = subscription_access(_user(status=UserStatus.active, expire=int(time.time()) - 60))
+    assert access["config_available"] is False
+    assert access["block_reason"] == "expired"

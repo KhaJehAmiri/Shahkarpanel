@@ -44,15 +44,27 @@
     "copiedToClipboard": "Copied to clipboard",
     "copyFailed": "Copy failed",
     "copyFailedHint": "Copy failed — select the text and use Ctrl/Cmd+C",
-    "protocols": "Protocols"
+    "protocols": "Protocols",
+    "roleOwner": "Owner",
+    "roleReseller": "Reseller",
+    "theme": "Theme",
+    "done": "Done",
+    "start": "Start"
   },
   "nav": {
-    "main": "Main",
-    "platform": "Platform",
+    "work": "Daily",
+    "connect": "Connectivity",
+    "advanced": "Advanced",
+    "manage": "Insights",
     "business": "Business",
     "overview": "Overview",
     "inbounds": "Inbounds",
     "users": "Users",
+    "nodes": "Servers",
+    "tunnels": "Tunnels",
+    "wireguard": "WireGuard",
+    "xray": "Xray config",
+    "hosts": "Subscription hosts",
     "infrastructure": "Infrastructure",
     "resellers": "Resellers & Brand",
     "automation": "Automation",
@@ -69,8 +81,17 @@
   },
   "overview": {
     "title": "Overview",
-    "subtitle": "Live snapshot of your platform",
-    "description": "This is your home page. Watch real-time CPU, memory, online users and traffic across all nodes. Use it as your daily health check — if anything turns red here, jump to the relevant module to fix it.",
+    "subtitle": "Your control center",
+    "description": "Pick a path below to get started, or check live stats. Each section in the menu does one job — you won't get lost.",
+    "pickPath": "What do you want to do?",
+    "pathProxy": "Proxy users (VLESS, VMess…)",
+    "pathProxySteps": "1. Create inbound → 2. Add user → 3. Share link",
+    "pathWg": "WireGuard VPN",
+    "pathWgSteps": "1. Add WG server → 2. Add user → 3. Download .conf",
+    "pathTunnel": "Iran ↔ foreign tunnel",
+    "pathTunnelSteps": "1. Add exit server → 2. Create tunnel → 3. Apply",
+    "pathStart": "Start here",
+    "openGuide": "Step-by-step guide",
     "totalUsers": "Total users",
     "activeUsers": "Active users",
     "onlineUsers": "Online (24h)",
@@ -194,7 +215,7 @@
     "xrayUpgradeConfirm": "Download and install this Xray release on the node? The node core will restart.",
     "xrayVersionCol": "Xray version",
     "xrayVersionHintTitle": "Change Xray version",
-    "xrayVersionHint": "Go to Infrastructure → Nodes tab → use the “Set Xray version” button in the Actions column (Xray nodes only, not WireGuard).",
+    "xrayVersionHint": "Open Servers → use “Set Xray version” in the Actions column (Xray nodes only, not WireGuard).",
     "reconnect": "Reconnect",
     "reconnecting": "Reconnect scheduled",
     "tunnelsDisabled": "Tunneling is disabled.",
@@ -222,7 +243,7 @@
     "tunnelConfig": "Tunnel config",
     "modeAuto": "Auto install (SSH)",
     "modeManual": "Manual connect",
-    "autoHint": "Paste the server IP and its SSH login. The panel connects, installs Docker and the node agent (Xray + WireGuard), and the server registers itself automatically.",
+    "autoHint": "Enter the server IP and SSH login. The panel installs Docker and the node agent automatically — pick Xray or WireGuard above. No manual setup on the server.",
     "serverIp": "Server IP",
     "sshUser": "SSH user",
     "sshPort": "SSH port",
@@ -232,8 +253,57 @@
     "autoInstallsHint": "Installs Docker + node agent with both Xray (v2ray) and WireGuard, enables NET_ADMIN and IP forwarding, then self-registers.",
     "installCommand": "Install command (run on the server as root)",
     "provisionInstall": "Install on server",
+    "provisionRunning": "Starting…",
+    "provisionQueued": "Install started — track progress in the nodes list.",
+    "provisionWait": "Connecting over SSH, building the agent image, and installing — this can take 5–15 minutes. Please wait.",
     "provisionStarted": "Server provisioned — the node will appear shortly.",
+    "provisionFailed": "Remote install failed. Check SSH credentials, firewall, and that the server is reachable.",
+    "provisionFailedShort": "Install failed",
+    "provisionStep": {
+      "queued": "Queued",
+      "ssh": "Connecting SSH",
+      "docker": "Installing Docker",
+      "image": "Building agent image",
+      "agent": "Starting agent",
+      "register": "Registering with panel",
+      "done": "Complete",
+      "failed": "Failed"
+    },
     "provisionManual": "Couldn't run remotely — copy the command and run it on the server."
+  },
+  "nodes": {
+    "title": "Servers",
+    "subtitle": "Machines that run your traffic",
+    "description": "Each server (node) runs Xray or WireGuard. Add, remove, reconnect and set Xray versions here — one page, one job."
+  },
+  "tunnels": {
+    "title": "Tunnels",
+    "subtitle": "Route traffic from Iran to abroad",
+    "description": "Connect a relay end (Iran) to an exit end (foreign). Either side can be a node or this panel. After creating a tunnel, click Apply to deploy."
+  },
+  "hosts": {
+    "title": "Subscription hosts",
+    "subtitle": "Domain and address users see",
+    "description": "Control domain, SNI and TLS in subscription links. Use {SERVER_IP} and {USERNAME} as placeholders."
+  },
+  "xrayPage": {
+    "title": "Xray config",
+    "subtitle": "Advanced JSON — routing, DNS, outbounds",
+    "description": "Power users only. Manage inbounds and users from Connectivity; this page is whole-core Xray settings."
+  },
+  "wireguard": {
+    "title": "WireGuard",
+    "subtitle": "Native VPN — separate from Xray",
+    "description": "WireGuard works on its own path: add a WG server, create a user with WG enabled, then download the .conf file.",
+    "notXrayTitle": "Not Xray",
+    "notXrayBody": "WireGuard does not use Xray inbounds. Use servers with core=wireguard and enable the WG protocol on users.",
+    "nodesCount": "WG servers",
+    "setupTitle": "Setup in 3 steps",
+    "step1": "Add a WireGuard server",
+    "step2": "Create a user with WireGuard enabled",
+    "step3": "Download the .conf from the user page",
+    "addNode": "Add WG server",
+    "addUser": "Add WG user"
   },
   "copilot": {
     "title": "Copilot",
@@ -253,7 +323,9 @@
       "openInbounds": "Open inbounds",
       "createUser": "Create a user",
       "createWgUser": "Create a WireGuard user",
-      "openUsers": "Open users"
+      "openUsers": "Open users",
+      "openNodes": "Open servers",
+      "openTunnels": "Open tunnels"
     },
     "quickstart": {
       "title": "Quick start",
@@ -268,6 +340,16 @@
       "s_user_b": "A user gets a data limit, an expiry and a subscription link to share.",
       "s_share": "Share the subscription",
       "s_share_b": "Open the user, copy the subscription URL or QR, and send it to your customer. That's it!"
+    },
+    "tunnel": {
+      "title": "Set up a tunnel",
+      "desc": "Connect Iran to a foreign exit server.",
+      "s_exit": "Add a foreign exit server",
+      "s_exit_b": "Add a node outside Iran with the Xray core — auto-install or manual connect.",
+      "s_tunnel": "Create the tunnel",
+      "s_tunnel_b": "On Tunnels, pick relay (Iran) and exit (foreign). Either end can be this panel or a node.",
+      "s_apply": "Click Apply",
+      "s_apply_b": "After saving, hit Apply so the config deploys on both ends."
     },
     "wg": {
       "title": "Set up WireGuard",

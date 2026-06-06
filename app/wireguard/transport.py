@@ -8,7 +8,8 @@ holds for Xray. ``client_for_node`` auto-detects, mirroring ``XRayNode``.
 The clients only depend on a tiny duck-typed surface so they are unit testable
 with fakes (no live node required).
 """
-from typing import Optional
+import json
+from typing import Any, Optional
 
 
 class WireGuardTransportError(Exception):
@@ -33,6 +34,30 @@ class RESTWireGuardClient:
         self._node.make_request("/wg/down", timeout, interface=interface)
 
 
+def _rpyc_obtain(value: Any) -> Any:
+    """Materialize RPyC netrefs into plain Python values."""
+    try:
+        from rpyc.utils.classic import obtain
+        return obtain(value)
+    except Exception:
+        return value
+
+
+def _plain_tree(value: Any) -> Any:
+    """Deep-copy to plain Python types (handles RPyC netrefs)."""
+    value = _rpyc_obtain(value)
+    if isinstance(value, dict):
+        return {str(k): _plain_tree(v) for k, v in value.items()}
+    if hasattr(value, "items"):
+        try:
+            return {str(k): _plain_tree(v) for k, v in value.items()}
+        except Exception:
+            return {}
+    if isinstance(value, (list, tuple)):
+        return [_plain_tree(v) for v in value]
+    return value
+
+
 class RPyCWireGuardClient:
     """Talks to the node agent's exposed ``wg_*`` methods over RPyC."""
 
@@ -40,11 +65,29 @@ class RPyCWireGuardClient:
         self._node = node
 
     def apply(self, spec: dict, timeout: int = 15) -> None:
-        self._node.remote.wg_apply(spec)
+        # Ship JSON text — RPyC netrefs break dict.get() inside the node agent.
+        plain = _plain_tree(spec)
+        remote = self._node.remote
+        if hasattr(remote, "wg_apply_json"):
+            remote.wg_apply_json(json.dumps(plain, separators=(",", ":")))
+        else:
+            remote.wg_apply(plain)
 
     def transfer(self, interface: str, timeout: int = 10) -> dict:
-        # rpyc returns a netref; coerce to a plain dict for the panel side.
-        return dict(self._node.remote.wg_transfer(interface) or {})
+        try:
+            raw = self._node.remote.wg_transfer(interface) or {}
+        except Exception:
+            return {}
+        if isinstance(raw, str):
+            try:
+                return json.loads(raw) if raw else {}
+            except json.JSONDecodeError:
+                return {}
+        try:
+            plain = _plain_tree(raw)
+            return plain if isinstance(plain, dict) else {}
+        except Exception:
+            return {}
 
     def down(self, interface: str, timeout: int = 10) -> None:
         self._node.remote.wg_down(interface)

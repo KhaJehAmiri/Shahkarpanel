@@ -198,7 +198,7 @@ def modify_user(
     user = UserResponse.model_validate(dbuser)
 
     if user.status in [UserStatus.active, UserStatus.on_hold]:
-        bg.add_task(xray.operations.update_user, dbuser=dbuser)
+        bg.add_task(xray.operations.sync_core_users_async)
     else:
         xray.operations.remove_user_immediate(dbuser)
 
@@ -250,8 +250,10 @@ def reset_user_data_usage(
 ):
     """Reset user data usage"""
     dbuser = crud.reset_user_data_usage(db=db, dbuser=dbuser)
-    if dbuser.status in [UserStatus.active, UserStatus.on_hold]:
-        bg.add_task(xray.operations.add_user, dbuser=dbuser)
+    if dbuser.status == UserStatus.active:
+        bg.add_task(xray.operations.sync_core_users_async)
+    elif dbuser.status == UserStatus.on_hold:
+        bg.add_task(xray.operations.sync_core_users_async)
 
     user = UserResponse.model_validate(dbuser)
     bg.add_task(

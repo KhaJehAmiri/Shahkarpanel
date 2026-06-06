@@ -1,8 +1,36 @@
 """Subscription issuance guards — central quota/status checks for config export."""
 
+from datetime import datetime
+from typing import Literal, Optional, TypedDict
+
 from fastapi import HTTPException
 
 from app.models.user import UserResponse, UserStatus
+
+BlockReason = Literal["inactive", "data_limit", "expired"]
+
+
+class SubscriptionAccess(TypedDict):
+    config_available: bool
+    block_reason: Optional[BlockReason]
+
+
+def subscription_access(user: UserResponse) -> SubscriptionAccess:
+    """Read-only access metadata for the subscription UI (always allowed)."""
+    now_ts = datetime.utcnow().timestamp()
+    if user.status == UserStatus.expired:
+        return {"config_available": False, "block_reason": "expired"}
+    if user.status in (UserStatus.disabled,):
+        return {"config_available": False, "block_reason": "inactive"}
+    if user.expire and user.expire > 0 and user.expire <= now_ts:
+        return {"config_available": False, "block_reason": "expired"}
+    if user.status == UserStatus.limited:
+        return {"config_available": False, "block_reason": "data_limit"}
+    if user.status not in (UserStatus.active, UserStatus.on_hold):
+        return {"config_available": False, "block_reason": "inactive"}
+    if user.data_limit and user.used_traffic >= user.data_limit:
+        return {"config_available": False, "block_reason": "data_limit"}
+    return {"config_available": True, "block_reason": None}
 
 
 def ensure_subscription_config_allowed(user: UserResponse) -> None:
@@ -10,8 +38,12 @@ def ensure_subscription_config_allowed(user: UserResponse) -> None:
 
     Aligns Xray subscription paths with WireGuard .conf gating so a disabled
     or limited account cannot keep using configs after admin action.
+    The HTML subscription page and ``/info`` stay available so users see
+    usage/status instead of a bare 403.
     """
-    if user.status not in (UserStatus.active, UserStatus.on_hold):
-        raise HTTPException(status_code=403, detail="Subscription is not active")
-    if user.data_limit and user.used_traffic >= user.data_limit:
+    access = subscription_access(user)
+    if access["config_available"]:
+        return
+    if access["block_reason"] == "data_limit":
         raise HTTPException(status_code=403, detail="Data limit reached")
+    raise HTTPException(status_code=403, detail="Subscription is not active")

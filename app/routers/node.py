@@ -45,6 +45,7 @@ class NodeBootstrap(BaseModel):
     # Phase 6: white-label / topology metadata supplied by the install command.
     tenant_id: Optional[int] = None
     role: Optional[str] = "direct"
+    core_kind: Optional[str] = "xray"
 
 
 class NodeBootstrapResponse(BaseModel):
@@ -98,38 +99,72 @@ def bootstrap_node(
     if not NODE_BOOTSTRAP_TOKEN or not hmac.compare_digest(body.token, NODE_BOOTSTRAP_TOKEN):
         raise HTTPException(status_code=403, detail="Invalid or disabled bootstrap token")
 
-    try:
-        dbnode = crud.create_node(
-            db,
-            NodeCreate(
-                name=body.name,
-                address=body.address,
-                port=body.port,
-                api_port=body.api_port,
-                region=body.region,
-                group_id=body.group_id,
-            ),
-        )
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(status_code=409, detail=f'Node "{body.name}" already exists')
+    if body.core_kind and body.core_kind not in ("xray", "wireguard"):
+        raise HTTPException(status_code=422, detail="invalid core_kind")
 
-    # Phase 6: tag the node to a reseller tenant / topology role when the
-    # install command provided them (self-provisioned reseller node).
-    if body.tenant_id is not None or (body.role and body.role != "direct"):
-        if body.role and body.role not in ("direct", "relay", "exit"):
-            raise HTTPException(status_code=422, detail="invalid node role")
+    from app.db.models import Node as DBNode
+    from app.models.node import CoreKind
+    from app.provisioning import jobs as provision_jobs
+
+    pending = db.query(DBNode).filter(
+        DBNode.name == body.name,
+        DBNode.provision_status.in_(("provisioning", "failed")),
+    ).first()
+
+    if pending:
+        pending.address = body.address
+        pending.port = body.port
+        pending.api_port = body.api_port
+        if body.region:
+            pending.region = body.region
+        if body.group_id is not None:
+            pending.group_id = body.group_id
+        pending.provision_status = "registered"
+        pending.provision_host = body.address
+        pending.provision_message = None
         if body.tenant_id is not None:
-            from app.db.models import Tenant
-            if db.query(Tenant.id).filter(Tenant.id == body.tenant_id).first() is None:
-                raise HTTPException(status_code=422, detail="Unknown tenant_id")
-        dbnode.tenant_id = body.tenant_id
+            pending.tenant_id = body.tenant_id
         if body.role:
-            dbnode.role = body.role
-        dbnode.provision_status = "registered"
-        dbnode.provision_host = body.address
+            pending.role = body.role
         db.commit()
-        db.refresh(dbnode)
+        db.refresh(pending)
+        dbnode = pending
+        provision_jobs.complete_for_node(pending.id)
+    else:
+        try:
+            dbnode = crud.create_node(
+                db,
+                NodeCreate(
+                    name=body.name,
+                    address=body.address,
+                    port=body.port,
+                    api_port=body.api_port,
+                    region=body.region,
+                    group_id=body.group_id,
+                    core_kind=CoreKind(body.core_kind or "xray"),
+                ),
+            )
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(status_code=409, detail=f'Node "{body.name}" already exists')
+
+        if body.tenant_id is not None or (body.role and body.role != "direct"):
+            if body.role and body.role not in ("direct", "relay", "exit"):
+                raise HTTPException(status_code=422, detail="invalid node role")
+            if body.tenant_id is not None:
+                from app.db.models import Tenant
+                if db.query(Tenant.id).filter(Tenant.id == body.tenant_id).first() is None:
+                    raise HTTPException(status_code=422, detail="Unknown tenant_id")
+            dbnode.tenant_id = body.tenant_id
+            if body.role:
+                dbnode.role = body.role
+            dbnode.provision_status = "registered"
+            dbnode.provision_host = body.address
+            db.commit()
+            db.refresh(dbnode)
+
+    if dbnode.core_kind == CoreKind.wireguard.value:
+        crud.provision_wireguard_defaults(db, dbnode)
 
     bg.add_task(xray.operations.connect_node, node_id=dbnode.id)
     tls = crud.get_tls_certificate(db)
@@ -277,7 +312,22 @@ def get_nodes(
     db: Session = Depends(get_db), _: Admin = Depends(Admin.check_sudo_admin)
 ):
     """Retrieve a list of all nodes. Accessible only to sudo admins."""
-    return crud.get_nodes(db)
+    from app.provisioning import jobs as provision_jobs
+
+    out: List[NodeResponse] = []
+    for dbnode in crud.get_nodes(db):
+        row = NodeResponse.model_validate(dbnode)
+        job = provision_jobs.progress_for_node(dbnode.id)
+        if job:
+            row.provision_progress = job.progress
+            row.provision_step = job.step
+            if job.message:
+                row.provision_message = job.message
+        elif row.provision_status == "provisioning":
+            row.provision_progress = row.provision_progress or 5
+            row.provision_step = row.provision_step or "queued"
+        out.append(row)
+    return out
 
 
 @router.put("/node/{node_id}", response_model=NodeResponse)

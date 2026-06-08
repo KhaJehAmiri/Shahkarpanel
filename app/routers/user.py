@@ -42,6 +42,22 @@ def _ensure_protocol_enabled(proxy_type, db: Session) -> None:
                 detail="WireGuard has no configured node on your server",
             )
         return
+    if proxy_type == ProxyTypes.Hysteria2:
+        nodes = crud.get_singbox_nodes(db)
+        if not any(n.singbox and n.singbox.hysteria2_enabled for n in nodes):
+            raise HTTPException(
+                status_code=400,
+                detail="Hysteria2 has no configured node on your server",
+            )
+        return
+    if proxy_type == ProxyTypes.TUIC:
+        nodes = crud.get_singbox_nodes(db)
+        if not any(n.singbox and n.singbox.tuic_enabled for n in nodes):
+            raise HTTPException(
+                status_code=400,
+                detail="TUIC has no configured node on your server",
+            )
+        return
     if not xray.config.inbounds_by_protocol.get(proxy_type):
         raise HTTPException(
             status_code=400,

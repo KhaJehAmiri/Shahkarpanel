@@ -8,9 +8,10 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from app.db import Session, crud, get_db
 from app.dependencies import get_validated_sub, validate_dates
 from app.models.proxy import ProxyTypes
-from app.models.user import SubscriptionUserResponse, UserResponse, UserStatus
+from app.models.user import SubscriptionUserResponse, UserResponse
 from app.subscription.guards import ensure_subscription_config_allowed, subscription_access
 from app.subscription.public_url import public_subscription_url
+from app.subscription.quic import user_hysteria2_link, user_tuic_link
 from app.subscription.share import encode_title, generate_subscription
 from app.subscription.wireguard import user_config as build_wireguard_user_config
 from app.templates import render_template
@@ -199,12 +200,15 @@ def user_get_usage(
     return {"usages": usages, "username": dbuser.username}
 
 
-def _wireguard_user_settings(dbuser) -> dict:
-    """Return the user's WireGuard proxy settings dict, or ``None``."""
+def _proxy_settings(dbuser, proxy_type: ProxyTypes) -> dict | None:
     for proxy in dbuser.proxies:
-        if proxy.type is ProxyTypes.WireGuard:
+        if proxy.type is proxy_type:
             return proxy.settings or {}
     return None
+
+
+def _wireguard_user_settings(dbuser) -> dict:
+    return _proxy_settings(dbuser, ProxyTypes.WireGuard)
 
 
 @router.get("/{token}/wireguard")
@@ -251,6 +255,62 @@ def user_subscription_wireguard(
         media_type="text/plain",
         headers={"content-disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.get("/{token}/hysteria2")
+@router.get("/{token}/hysteria2/{node_id}", include_in_schema=False)
+def user_subscription_hysteria2(
+    dbuser=Depends(get_validated_sub),
+    node_id: int = None,
+    db: Session = Depends(get_db),
+):
+    """Return a ``hysteria2://`` share link for the user."""
+    ensure_subscription_config_allowed(dbuser)
+    settings = _proxy_settings(dbuser, ProxyTypes.Hysteria2)
+    if not settings:
+        raise HTTPException(status_code=404, detail="No Hysteria2 configuration for this user")
+
+    nodes = [
+        n for n in crud.get_singbox_nodes(db)
+        if n.singbox and n.singbox.hysteria2_enabled
+    ]
+    if node_id is not None:
+        nodes = [n for n in nodes if n.id == node_id]
+    if not nodes:
+        raise HTTPException(status_code=404, detail="No Hysteria2 node available")
+
+    link = user_hysteria2_link(settings, nodes[0], remark=f"{dbuser.username}-{nodes[0].name}")
+    if not link:
+        raise HTTPException(status_code=404, detail="No Hysteria2 configuration available")
+    return Response(content=link + "\n", media_type="text/plain")
+
+
+@router.get("/{token}/tuic")
+@router.get("/{token}/tuic/{node_id}", include_in_schema=False)
+def user_subscription_tuic(
+    dbuser=Depends(get_validated_sub),
+    node_id: int = None,
+    db: Session = Depends(get_db),
+):
+    """Return a ``tuic://`` share link for the user."""
+    ensure_subscription_config_allowed(dbuser)
+    settings = _proxy_settings(dbuser, ProxyTypes.TUIC)
+    if not settings:
+        raise HTTPException(status_code=404, detail="No TUIC configuration for this user")
+
+    nodes = [
+        n for n in crud.get_singbox_nodes(db)
+        if n.singbox and n.singbox.tuic_enabled
+    ]
+    if node_id is not None:
+        nodes = [n for n in nodes if n.id == node_id]
+    if not nodes:
+        raise HTTPException(status_code=404, detail="No TUIC node available")
+
+    link = user_tuic_link(settings, nodes[0], remark=f"{dbuser.username}-{nodes[0].name}")
+    if not link:
+        raise HTTPException(status_code=404, detail="No TUIC configuration available")
+    return Response(content=link + "\n", media_type="text/plain")
 
 
 @router.get("/{token}/{client_type}")

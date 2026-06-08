@@ -24,6 +24,25 @@ class CoreKind(str, Enum):
     wireguard = "wireguard"
 
 
+class NodeSingBoxConfig(BaseModel):
+    """Per-node sing-box server config (Hysteria2 / TUIC on a normal Xray node)."""
+
+    certificate_path: Optional[str] = None
+    key_path: Optional[str] = None
+    sni: Optional[str] = None
+    clash_api_port: int = 9095
+    clash_api_secret: Optional[str] = None
+    hysteria2_enabled: bool = False
+    hysteria2_port: Optional[int] = None
+    hysteria2_up_mbps: Optional[int] = None
+    hysteria2_down_mbps: Optional[int] = None
+    hysteria2_obfs_password: Optional[str] = None
+    tuic_enabled: bool = False
+    tuic_port: Optional[int] = None
+    tuic_congestion_control: str = "bbr"
+    model_config = ConfigDict(from_attributes=True)
+
+
 class NodeWireGuardConfig(BaseModel):
     """Per-node native WireGuard server configuration."""
 
@@ -106,6 +125,7 @@ class NodeResponse(Node):
     latency_ms: Optional[float] = None
     last_health: Optional[datetime] = None
     wireguard: Optional[NodeWireGuardConfig] = None
+    singbox: Optional[NodeSingBoxConfig] = None
     # Tunnel topology role: 'direct' (default), 'relay' (in-country bridge), 'exit'.
     role: str = "direct"
     provision_status: Optional[str] = None

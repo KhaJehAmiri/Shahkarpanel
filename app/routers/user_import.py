@@ -236,7 +236,11 @@ def _import_rows(
         try:
             new_user = _row_to_user_create(row)
             for proxy_type in new_user.proxies:
-                if proxy_type != ProxyTypes.WireGuard and not xray.config.inbounds_by_protocol.get(proxy_type):
+                if proxy_type not in (
+                    ProxyTypes.WireGuard,
+                    ProxyTypes.Hysteria2,
+                    ProxyTypes.TUIC,
+                ) and not xray.config.inbounds_by_protocol.get(proxy_type):
                     raise ValueError(f"Protocol {proxy_type} is disabled")
             dbuser = crud.create_user(db, new_user, admin=dbadmin)
             if row.status.lower() == "disabled":

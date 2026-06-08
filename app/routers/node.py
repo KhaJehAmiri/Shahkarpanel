@@ -9,9 +9,9 @@ from sqlalchemy.exc import IntegrityError
 from starlette.websockets import WebSocketDisconnect
 
 from app import logger, xray
+from app.bootstrap_limit import enforce_bootstrap_rate_limit
 from app.db import Session, crud, get_db
 from app.dependencies import get_dbnode, get_scoped_node, validate_dates
-from app.rbac import require_permission
 from app.events import EventType, publish
 from app.models.admin import Admin
 from app.models.node import (
@@ -25,9 +25,9 @@ from app.models.node import (
     NodesUsageResponse,
 )
 from app.models.proxy import ProxyHost
+from app.rbac import require_permission
 from app.utils import responses
 from app.utils.ws_auth import ws_bearer_token
-from app.bootstrap_limit import enforce_bootstrap_rate_limit
 from config import (
     NODE_BOOTSTRAP_MAX_ATTEMPTS,
     NODE_BOOTSTRAP_TOKEN,
@@ -363,6 +363,58 @@ class AmneziaWGConfig(BaseModel):
     awg_h2: Optional[int] = None
     awg_h3: Optional[int] = None
     awg_h4: Optional[int] = None
+
+
+class SingBoxNodeConfig(BaseModel):
+    certificate_path: Optional[str] = None
+    key_path: Optional[str] = None
+    sni: Optional[str] = None
+    clash_api_port: Optional[int] = None
+    clash_api_secret: Optional[str] = None
+    hysteria2_enabled: Optional[bool] = None
+    hysteria2_port: Optional[int] = None
+    hysteria2_up_mbps: Optional[int] = None
+    hysteria2_down_mbps: Optional[int] = None
+    hysteria2_obfs_password: Optional[str] = None
+    tuic_enabled: Optional[bool] = None
+    tuic_port: Optional[int] = None
+    tuic_congestion_control: Optional[str] = None
+
+
+@router.put("/node/{node_id}/singbox", response_model=NodeResponse)
+def set_node_singbox(
+    body: SingBoxNodeConfig,
+    bg: BackgroundTasks,
+    dbnode=Depends(get_dbnode),
+    db: Session = Depends(get_db),
+    _: Admin = Depends(Admin.check_sudo_admin),
+):
+    """Configure Hysteria2/TUIC on a normal Xray node (sudo only).
+
+    sing-box runs alongside Xray on the node agent; enabling a protocol here
+    provisions the inbound and pushes the user list on save.
+    """
+    from app.models.node import CoreKind
+
+    if dbnode.core_kind == CoreKind.wireguard.value:
+        raise HTTPException(status_code=400, detail="WireGuard nodes cannot run sing-box")
+    crud.upsert_node_singbox(db, dbnode, **body.model_dump(exclude_unset=True))
+    db.refresh(dbnode)
+    bg.add_task(_sync_singbox_node, dbnode.id)
+    return dbnode
+
+
+def _sync_singbox_node(node_id: int) -> None:
+    try:
+        from app.db import GetDB
+        from app.singbox.operations import sync_node
+
+        with GetDB() as db:
+            dbnode = crud.get_node_by_id(db, node_id)
+            if dbnode:
+                sync_node(db, dbnode)
+    except Exception:
+        pass
 
 
 @router.put("/node/{node_id}/amneziawg", response_model=NodeResponse)

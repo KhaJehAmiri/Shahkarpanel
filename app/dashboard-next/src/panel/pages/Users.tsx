@@ -34,7 +34,15 @@ const FLOWS = [
   { v: "", label: "none (recommended)" },
   { v: "xtls-rprx-vision", label: "xtls-rprx-vision" },
 ];
-const PROTO_LABEL: Record<string, string> = { vless: "VLESS", vmess: "VMess", trojan: "Trojan", shadowsocks: "Shadowsocks", wireguard: "WireGuard" };
+const PROTO_LABEL: Record<string, string> = {
+  vless: "VLESS",
+  vmess: "VMess",
+  trojan: "Trojan",
+  shadowsocks: "Shadowsocks",
+  wireguard: "WireGuard",
+  hysteria2: "Hysteria2",
+  tuic: "TUIC",
+};
 
 export const Users: FC = () => {
   const { t, i18n } = useTranslation();
@@ -371,13 +379,13 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
                           <Checkbox checked={v.enabled} onChange={() => setProto(p, { enabled: !v.enabled })} />
                         </span>
                         <b>{PROTO_LABEL[p] || p}</b>
-                        <span className="nx-faint" style={{ fontSize: 11 }}>{p === "wireguard" ? t("users.wgNativePeer") : `${inbounds.data?.[p]?.length || 0} inbound(s)`}</span>
+                        <span className="nx-faint" style={{ fontSize: 11 }}>{(p === "wireguard" || p === "hysteria2" || p === "tuic") ? t("users.wgNativePeer") : `${inbounds.data?.[p]?.length || 0} inbound(s)`}</span>
                         {v.enabled && <span className="nx-faint" style={{ fontSize: 10 }}>{expanded[p] ? "▾" : "▸"}</span>}
                       </div>
                     </div>
                     {v.enabled && expanded[p] && (
                       <div style={{ marginTop: 10, paddingInlineStart: 28 }}>
-                        {p === "wireguard" ? (
+                        {(p === "wireguard" || p === "hysteria2" || p === "tuic") ? (
                           <div className="nx-faint" style={{ fontSize: 12, marginBottom: 8 }}>{t("users.wgHint")}</div>
                         ) : (
                         <div className="nx-row" style={{ gap: 6, flexWrap: "wrap", marginBottom: 8 }}>

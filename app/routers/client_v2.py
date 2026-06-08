@@ -11,12 +11,11 @@ Endpoints consumed by the SigmaGuard mobile/desktop app:
 Auth reuses the end-user portal credentials (``portal_enabled`` users). Gated
 behind the ``client_api`` feature flag.
 """
+from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel
-
-from datetime import datetime
 
 from app import client as client_engine
 from app import dedicated_ip as dedicated_ip_svc
@@ -77,8 +76,12 @@ def _available_protocols(db: Session) -> set:
         # rpyc account proto can't carry 2022 ciphers). Only advertise it once
         # the operator has provisioned it and flipped the flag.
         avail.add("shadowsocks-2022")
-    if "hysteria2" in served:
-        avail.add("hysteria2")
+    sb_nodes = crud.get_singbox_nodes(db)
+    if sb_nodes:
+        if any(n.singbox and n.singbox.hysteria2_enabled for n in sb_nodes):
+            avail.add("hysteria2")
+        if any(n.singbox and n.singbox.tuic_enabled for n in sb_nodes):
+            avail.add("tuic")
 
     wg_nodes = (
         db.query(Node)

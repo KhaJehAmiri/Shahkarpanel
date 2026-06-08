@@ -3,7 +3,8 @@ import secrets
 
 from passlib.context import CryptContext
 
-from app import billing, platform_settings as ps
+from app import billing
+from app import platform_settings as ps
 from app.billing.commission import credit_parent_commission
 from app.billing.providers import reload_providers
 from app.db import GetDB

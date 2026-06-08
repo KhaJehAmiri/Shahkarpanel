@@ -147,10 +147,11 @@ def test_client_api_flag_default_off():
 # Phase B — dedicated IP pool
 # --------------------------------------------------------------------------- #
 def _make_trader(db):
+    from passlib.context import CryptContext
+
     from app.db.models import Admin as DBAdmin
     from app.models.proxy import ProxyTypes
     from app.models.user import UserCreate, UserStatus
-    from passlib.context import CryptContext
 
     pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
     admin = DBAdmin(
@@ -196,7 +197,6 @@ def test_dedicated_ip_assign_and_release():
 def test_dedicated_ip_pool_exhaustion():
     from app import dedicated_ip as svc
     from app.db import GetDB
-    from app.db.models import DedicatedIP
 
     with GetDB() as db:
         # Drain any free IPs so the pool is deterministically empty.
@@ -209,6 +209,7 @@ def test_dedicated_ip_pool_exhaustion():
 
 def test_device_and_telemetry_tables_exist():
     from sqlalchemy import inspect
+
     from app.db.base import engine
 
     tables = set(inspect(engine).get_table_names())
@@ -303,6 +304,7 @@ def test_client_profile_create_and_modify():
 
 def test_client_profile_rejects_invalid():
     import pytest
+
     from app.models.user import UserModify
 
     with pytest.raises(Exception):

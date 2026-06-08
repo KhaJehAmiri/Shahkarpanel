@@ -26,7 +26,9 @@ def test_reseller_permissions_are_scoped():
     admin = Admin(username="r1", is_sudo=False, role="reseller")
     assert has_permission(admin, "users:write")
     assert has_permission(admin, "billing:read")
-    assert not has_permission(admin, "billing:write")
+    # Phase 6: resellers manage their own plans/balance (billing:write) but
+    # cannot create other admins.
+    assert has_permission(admin, "billing:write")
     assert not has_permission(admin, "admins:write")
 
 

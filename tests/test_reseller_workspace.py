@@ -3,14 +3,13 @@ import secrets
 
 from passlib.context import CryptContext
 
-from app.db import GetDB, crud
+from app.db import GetDB
 from app.db.models import Admin as DBAdmin
 from app.db.models import Node
 from app.tenant.reseller_ops import (
     assert_can_add_node,
     count_owned_nodes,
     list_scoped_nodes,
-    resolve_max_nodes,
     workspace_summary,
 )
 
@@ -50,9 +49,10 @@ def test_node_limit_enforced():
         admin = _reseller(db, max_nodes=1)
         db.add(Node(name=f"n-{secrets.token_hex(3)}", address="1.2.3.4", port=62050, api_port=62051, owner_admin_id=admin.id))
         db.commit()
-        from app.models.admin import Admin
-        from fastapi import HTTPException
         import pytest
+        from fastapi import HTTPException
+
+        from app.models.admin import Admin
         pydantic = Admin(username=admin.username, is_sudo=False, role="reseller", max_nodes=1)
         with pytest.raises(HTTPException, match="limit"):
             assert_can_add_node(db, pydantic)

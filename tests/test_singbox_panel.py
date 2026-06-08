@@ -3,7 +3,6 @@ from app.singbox.sync import SBUser, build_name_user_map, build_node_spec, user_
 from app.singbox.transport import RESTSingBoxClient, RPyCSingBoxClient, client_for_node
 from app.singbox.usage import SingBoxUsageTracker, build_singbox_usage_params
 
-
 CFG = {
     "certificate_path": "/c.pem", "key_path": "/k.pem", "sni": "vpn.example.com",
     "clash_api_port": 9099, "clash_api_secret": "sek",

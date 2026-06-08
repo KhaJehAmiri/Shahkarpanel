@@ -8,7 +8,6 @@ from app.billing.usage_billing import (
     aggregate_reseller_usage,
     align_hour,
     bill_reseller_usage,
-    compute_charge,
     get_or_create_checkpoint,
     node_owned_by_reseller,
     traffic_to_gb_units,
@@ -17,7 +16,7 @@ from app.billing.usage_billing import (
 )
 from app.db import GetDB, crud
 from app.db.models import Admin as DBAdmin
-from app.db.models import Node, NodeUserUsage, User
+from app.db.models import Node, NodeUserUsage
 from app.models.proxy import ProxyTypes
 from app.models.user import UserCreate, UserStatus
 

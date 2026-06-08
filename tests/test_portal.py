@@ -5,7 +5,7 @@ from passlib.context import CryptContext
 
 from app.db import GetDB, crud
 from app.db.models import Admin as DBAdmin
-from app.db.models import Plan, User as DBUser
+from app.db.models import Plan
 from app.models.proxy import ProxyTypes
 from app.models.user import UserCreate, UserStatus
 from app.portal import apply_plan_to_user, compute_renewal_expire

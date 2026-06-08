@@ -86,8 +86,8 @@ def test_assert_plan_accessible_blocks_other_reseller():
         a2 = _reseller(db)
         plan = _plan(db, f"p-{secrets.token_hex(3)}", owner_admin_id=a2.id)
         pydantic = Admin(username=a1.username, is_sudo=False, role="reseller")
-        from fastapi import HTTPException
         import pytest
+        from fastapi import HTTPException
 
         with pytest.raises(HTTPException, match="catalog"):
             assert_plan_accessible(db, pydantic, plan)

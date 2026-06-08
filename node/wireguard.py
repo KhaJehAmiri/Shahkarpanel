@@ -33,6 +33,9 @@ class WireGuardSpec:
     address: List[str]                      # interface CIDRs, e.g. ["10.10.0.1/24"]
     peers: List[WireGuardPeer] = field(default_factory=list)
     mtu: Optional[int] = None
+    # AmneziaWG obfuscation params (Jc/Jmin/...). When set and amneziawg-go is
+    # installed, the manager uses awg syncconf instead of plain wg.
+    amnezia: Optional[dict] = None
 
     @classmethod
     def from_dict(cls, data: dict) -> "WireGuardSpec":
@@ -54,6 +57,7 @@ class WireGuardSpec:
             address=list(address or []),
             peers=peers,
             mtu=int(data["mtu"]) if data.get("mtu") else None,
+            amnezia=data.get("amnezia") or None,
         )
 
 
@@ -80,13 +84,20 @@ def parse_transfer(output: str) -> Dict[str, dict]:
 
 
 def render_syncconf(spec: WireGuardSpec) -> str:
-    """Render the stripped config consumed by ``wg syncconf`` (interface key /
-    port plus peers; addresses and MTU are applied via ``ip`` separately)."""
+    """Render the stripped config consumed by ``wg``/``awg syncconf``.
+
+    Interface key/port plus peers; addresses and MTU are applied via ``ip``
+    separately. AmneziaWG params are included when ``spec.amnezia`` is set.
+    """
     lines = [
         "[Interface]",
         f"ListenPort = {spec.listen_port}",
         f"PrivateKey = {spec.private_key}",
     ]
+    if spec.amnezia:
+        for key in ("Jc", "Jmin", "Jmax", "S1", "S2", "H1", "H2", "H3", "H4"):
+            if key in spec.amnezia:
+                lines.append(f"{key} = {spec.amnezia[key]}")
     for peer in spec.peers:
         lines.append("")
         lines.append("[Peer]")
@@ -99,7 +110,7 @@ def render_syncconf(spec: WireGuardSpec) -> str:
 
 
 class WireGuardManager:
-    """Thin wrapper over ``wg`` / ``ip`` for declarative interface management."""
+    """Thin wrapper over ``wg``/``awg`` + ``ip`` for declarative interface management."""
 
     def __init__(self, run: Optional[Callable] = None):
         self._run = run or self._default_run
@@ -113,12 +124,30 @@ class WireGuardManager:
     def available(self) -> bool:
         return shutil.which("wg") is not None and shutil.which("ip") is not None
 
+    def amnezia_available(self) -> bool:
+        return (
+            shutil.which("amneziawg-go") is not None
+            and (shutil.which("awg") is not None or shutil.which("wg") is not None)
+            and shutil.which("ip") is not None
+        )
+
+    def _use_amnezia(self, spec: WireGuardSpec) -> bool:
+        return bool(spec.amnezia) and self.amnezia_available()
+
+    def _wg_bin(self, spec: WireGuardSpec) -> str:
+        if self._use_amnezia(spec) and shutil.which("awg"):
+            return "awg"
+        return "wg"
+
     def interface_exists(self, interface: str) -> bool:
         result = self._run(["ip", "link", "show", interface], check=False)
         return getattr(result, "returncode", 1) == 0
 
     def ensure_interface(self, spec: WireGuardSpec) -> None:
-        if not self.interface_exists(spec.interface):
+        if self._use_amnezia(spec):
+            if not self.interface_exists(spec.interface):
+                self._run(["amneziawg-go", spec.interface], check=False)
+        elif not self.interface_exists(spec.interface):
             self._run(["ip", "link", "add", "dev", spec.interface, "type", "wireguard"])
         # Make addresses declarative: flush then re-add.
         self._run(["ip", "address", "flush", "dev", spec.interface], check=False)
@@ -132,11 +161,14 @@ class WireGuardManager:
         """Bring the interface to the desired state (idempotent)."""
         self.ensure_interface(spec)
         conf = render_syncconf(spec)
-        self._run(["wg", "syncconf", spec.interface, "/dev/stdin"], input=conf)
-        logger.info("Applied WireGuard spec to %s (%d peers)", spec.interface, len(spec.peers))
+        wg = self._wg_bin(spec)
+        self._run([wg, "syncconf", spec.interface, "/dev/stdin"], input=conf)
+        mode = "AmneziaWG" if self._use_amnezia(spec) else "WireGuard"
+        logger.info("Applied %s spec to %s (%d peers)", mode, spec.interface, len(spec.peers))
 
     def get_transfer(self, interface: str) -> Dict[str, dict]:
-        result = self._run(["wg", "show", interface, "transfer"], check=False)
+        wg = "awg" if shutil.which("awg") else "wg"
+        result = self._run([wg, "show", interface, "transfer"], check=False)
         if getattr(result, "returncode", 1) != 0:
             return {}
         return parse_transfer(getattr(result, "stdout", "") or "")

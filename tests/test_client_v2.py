@@ -279,7 +279,8 @@ def test_amnezia_params_from_node_extracts_set_fields():
         awg_s1, awg_s2 = 50, 100
         awg_h1 = awg_h2 = awg_h3 = awg_h4 = None
 
-    params = amnezia_params_from_node(_Cfg())
+    assert amnezia_params_from_node(_Cfg()) == {}
+    params = amnezia_params_from_node(_Cfg(), amnezia_available=True)
     assert params == {"Jc": 4, "Jmin": 40, "Jmax": 70, "S1": 50, "S2": 100}
 
 

@@ -17,23 +17,16 @@ DEFAULT_KEEPALIVE = 25
 AWG_KEYS = ("Jc", "Jmin", "Jmax", "S1", "S2", "H1", "H2", "H3", "H4")
 
 
-def amnezia_params_from_node(cfg) -> Dict[str, int]:
+def amnezia_params_from_node(cfg, *, amnezia_available: bool = False) -> Dict[str, int]:
     """Extract AmneziaWG params from a NodeWireGuard row into wg-quick keys.
 
-    Returns an empty dict for a plain (non-obfuscated) WireGuard node.
+    Only emitted when the node agent actually runs amneziawg-go; otherwise
+    returns an empty dict so clients get plain WireGuard that matches the server.
     """
-    mapping = {
-        "Jc": getattr(cfg, "awg_jc", None),
-        "Jmin": getattr(cfg, "awg_jmin", None),
-        "Jmax": getattr(cfg, "awg_jmax", None),
-        "S1": getattr(cfg, "awg_s1", None),
-        "S2": getattr(cfg, "awg_s2", None),
-        "H1": getattr(cfg, "awg_h1", None),
-        "H2": getattr(cfg, "awg_h2", None),
-        "H3": getattr(cfg, "awg_h3", None),
-        "H4": getattr(cfg, "awg_h4", None),
-    }
-    return {k: int(v) for k, v in mapping.items() if v is not None}
+    if not amnezia_available:
+        return {}
+    from app.wireguard.sync import awg_params_from_cfg
+    return awg_params_from_cfg(cfg)
 
 
 def render_wireguard_conf(
@@ -95,7 +88,7 @@ def node_endpoint(dbnode) -> str:
     return f"{dbnode.address}:{cfg.listen_port}"
 
 
-def user_config(user_settings: dict, dbnode) -> Optional[str]:
+def user_config(user_settings: dict, dbnode, *, amnezia_available: bool = False) -> Optional[str]:
     """Build the ``.conf`` for one user on one WG node, or ``None`` when the
     user has no usable WireGuard credentials / address for that node."""
     cfg = dbnode.wireguard
@@ -113,5 +106,5 @@ def user_config(user_settings: dict, dbnode) -> Optional[str]:
         dns=cfg.dns,
         preshared_key=user_settings.get("preshared_key"),
         mtu=cfg.mtu,
-        amnezia=amnezia_params_from_node(cfg),
+        amnezia=amnezia_params_from_node(cfg, amnezia_available=amnezia_available),
     )

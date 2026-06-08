@@ -160,6 +160,10 @@ class XrayService(rpyc.Service):
         self.wg.teardown(interface)
 
     @rpyc.exposed
+    def wg_amnezia_available(self) -> bool:
+        return self.wg.amnezia_available()
+
+    @rpyc.exposed
     def singbox_apply_json(self, spec_json: str):
         import json
         self.singbox.apply(SingBoxSpec.from_dict(json.loads(spec_json)))

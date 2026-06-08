@@ -60,6 +60,7 @@ class Service(object):
         self.router.add_api_route("/wg/apply", self.wg_apply, methods=["POST"])
         self.router.add_api_route("/wg/transfer", self.wg_transfer, methods=["POST"])
         self.router.add_api_route("/wg/down", self.wg_down, methods=["POST"])
+        self.router.add_api_route("/wg/amnezia-available", self.wg_amnezia_available, methods=["POST"])
         # sing-box product endpoints (Hysteria2/TUIC). Same declarative model:
         # the panel pushes the full inbound+user spec and reads per-user traffic.
         self.router.add_api_route("/singbox/apply", self.singbox_apply, methods=["POST"])
@@ -279,6 +280,10 @@ class Service(object):
             logger.error(f"Failed to tear down WireGuard interface: {exc}")
             raise HTTPException(status_code=503, detail=str(exc))
         return {"interface": interface, "down": True}
+
+    def wg_amnezia_available(self, session_id: UUID = Body(embed=True)):
+        self.match_session_id(session_id)
+        return {"available": self.wg.amnezia_available()}
 
     def singbox_apply(self, session_id: UUID = Body(embed=True), spec: dict = Body(embed=True)):
         self.match_session_id(session_id)

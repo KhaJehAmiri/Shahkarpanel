@@ -32,6 +32,23 @@ RUN apt-get update \
     && tar -xzf /tmp/sb.tar.gz -C /tmp \
     && install -m 0755 /tmp/sing-box-${SB_VER}-linux-${SB_ARCH}/sing-box /usr/local/bin/sing-box \
     && rm -rf /tmp/sb.tar.gz /tmp/sing-box-* \
+    # AmneziaWG userspace engine + awg CLI (obfuscated WireGuard).
+    && case "$(uname -m)" in \
+         x86_64|amd64) AWG_ARCH=amd64 ;; \
+         aarch64|arm64) AWG_ARCH=arm64 ;; \
+         *) AWG_ARCH=amd64 ;; \
+       esac \
+    && AWG_VER="$(curl -sL https://api.github.com/repos/amnezia-vpn/amneziawg-go/releases/latest | grep -oE '\"tag_name\": \"v[^\"]+' | head -n1 | cut -d'v' -f2)" \
+    && AWG_VER="${AWG_VER:-0.2.12}" \
+    && curl -L -o /tmp/awg-go.tar.gz "https://github.com/amnezia-vpn/amneziawg-go/releases/download/v${AWG_VER}/amneziawg-go-linux-${AWG_ARCH}-${AWG_VER}.tar.gz" \
+    && tar -xzf /tmp/awg-go.tar.gz -C /tmp \
+    && install -m 0755 /tmp/amneziawg-go /usr/local/bin/amneziawg-go \
+    && AWGTOOLS_VER="$(curl -sL https://api.github.com/repos/amnezia-vpn/amneziawg-tools/releases/latest | grep -oE '\"tag_name\": \"v[^\"]+' | head -n1 | cut -d'v' -f2)" \
+    && AWGTOOLS_VER="${AWGTOOLS_VER:-1.0.0}" \
+    && curl -L -o /tmp/awgtools.tar.gz "https://github.com/amnezia-vpn/amneziawg-tools/releases/download/v${AWGTOOLS_VER}/amneziawg-tools-linux-${AWG_ARCH}-${AWGTOOLS_VER}.tar.gz" \
+    && tar -xzf /tmp/awgtools.tar.gz -C /tmp \
+    && install -m 0755 /tmp/awg /usr/local/bin/awg \
+    && rm -rf /tmp/awg-go.tar.gz /tmp/awgtools.tar.gz /tmp/awg /tmp/amneziawg-go \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt /code/

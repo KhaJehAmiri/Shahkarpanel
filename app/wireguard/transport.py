@@ -33,6 +33,13 @@ class RESTWireGuardClient:
     def down(self, interface: str, timeout: int = 10) -> None:
         self._node.make_request("/wg/down", timeout, interface=interface)
 
+    def amnezia_available(self, timeout: int = 5) -> bool:
+        try:
+            res = self._node.make_request("/wg/amnezia-available", timeout)
+            return bool((res or {}).get("available"))
+        except Exception:
+            return False
+
 
 def _rpyc_obtain(value: Any) -> Any:
     """Materialize RPyC netrefs into plain Python values."""
@@ -91,6 +98,12 @@ class RPyCWireGuardClient:
 
     def down(self, interface: str, timeout: int = 10) -> None:
         self._node.remote.wg_down(interface)
+
+    def amnezia_available(self, timeout: int = 5) -> bool:
+        try:
+            return bool(self._node.remote.wg_amnezia_available())
+        except Exception:
+            return False
 
 
 def client_for_node(node) -> Optional[object]:

@@ -245,7 +245,10 @@ def user_subscription_wireguard(
                 settings = proxy.settings or {}
                 break
 
-    conf = build_wireguard_user_config(settings, dbnode)
+    from app.wireguard.capabilities import node_amnezia_available
+    conf = build_wireguard_user_config(
+        settings, dbnode, amnezia_available=node_amnezia_available(dbnode)
+    )
     if conf is None:
         raise HTTPException(status_code=404, detail="No WireGuard configuration available")
 

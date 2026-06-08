@@ -90,14 +90,13 @@ def _available_protocols(db: Session) -> set:
     )
     if wg_nodes:
         avail.add("wireguard")
-        wg_ids = [n.id for n in wg_nodes]
-        amnezia = (
-            db.query(NodeWireGuard)
-            .filter(NodeWireGuard.node_id.in_(wg_ids), NodeWireGuard.awg_jc.isnot(None))
-            .first()
-        )
-        if amnezia is not None:
-            avail.add("amneziawg")
+        from app.wireguard.capabilities import node_amnezia_available
+        from app.wireguard.sync import awg_params_from_cfg
+
+        for n in wg_nodes:
+            if n.wireguard and awg_params_from_cfg(n.wireguard) and node_amnezia_available(n):
+                avail.add("amneziawg")
+                break
 
     return avail
 

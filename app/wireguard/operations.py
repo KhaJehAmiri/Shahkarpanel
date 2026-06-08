@@ -17,7 +17,7 @@ from app.models.proxy import ProxyTypes
 from app.models.user import UserStatus
 from app.utils.concurrency import threaded_function
 from app.wireguard.pool import WireGuardPeerIPAllocator
-from app.wireguard.sync import WGUserPeer, build_node_spec
+from app.wireguard.sync import WGUserPeer, awg_params_from_cfg, build_node_spec
 from app.wireguard.transport import client_for_node
 
 logger = logging.getLogger("nexus-wg")
@@ -132,6 +132,7 @@ def sync_node(db, dbnode, *, peers: Optional[List[WGUserPeer]] = None, node_obje
         ensure_addresses_for_subnet(db, cfg.subnet)
         peers = collect_wg_peers(db)
 
+    awg = awg_params_from_cfg(cfg)
     spec = build_node_spec(
         interface=cfg.interface,
         listen_port=cfg.listen_port,
@@ -139,6 +140,7 @@ def sync_node(db, dbnode, *, peers: Optional[List[WGUserPeer]] = None, node_obje
         subnet=cfg.subnet,
         peers=peers,
         mtu=cfg.mtu,
+        amnezia=awg or None,
     )
     try:
         client.apply(spec)

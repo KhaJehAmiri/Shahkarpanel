@@ -46,6 +46,22 @@ def _normalize_allowed(address: str) -> str:
     return f"{ip}/{prefix}"
 
 
+def awg_params_from_cfg(cfg) -> dict:
+    """Extract AmneziaWG [Interface] params from a NodeWireGuard row."""
+    mapping = {
+        "Jc": getattr(cfg, "awg_jc", None),
+        "Jmin": getattr(cfg, "awg_jmin", None),
+        "Jmax": getattr(cfg, "awg_jmax", None),
+        "S1": getattr(cfg, "awg_s1", None),
+        "S2": getattr(cfg, "awg_s2", None),
+        "H1": getattr(cfg, "awg_h1", None),
+        "H2": getattr(cfg, "awg_h2", None),
+        "H3": getattr(cfg, "awg_h3", None),
+        "H4": getattr(cfg, "awg_h4", None),
+    }
+    return {k: int(v) for k, v in mapping.items() if v is not None}
+
+
 def build_node_spec(
     *,
     interface: str,
@@ -54,6 +70,7 @@ def build_node_spec(
     subnet: str,
     peers: List[WGUserPeer],
     mtu: Optional[int] = None,
+    amnezia: Optional[dict] = None,
 ) -> dict:
     """Build the declarative spec dict for the node agent's ``/wg/apply``.
 
@@ -73,7 +90,7 @@ def build_node_spec(
                 "preshared_key": p.preshared_key or None,
             }
         )
-    return {
+    spec = {
         "interface": interface,
         "listen_port": int(listen_port),
         "private_key": private_key,
@@ -81,6 +98,9 @@ def build_node_spec(
         "peers": peer_payload,
         "mtu": int(mtu) if mtu else None,
     }
+    if amnezia:
+        spec["amnezia"] = amnezia
+    return spec
 
 
 def build_pubkey_user_map(peers: List[WGUserPeer]) -> Dict[str, int]:

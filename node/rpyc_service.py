@@ -6,6 +6,7 @@ import rpyc
 
 from config import XRAY_ASSETS_PATH, XRAY_EXECUTABLE_PATH
 from logger import logger
+from singbox import SingBoxManager, SingBoxSpec
 from wireguard import WireGuardManager, WireGuardSpec
 from xray import XRayConfig, XRayCore
 
@@ -47,6 +48,7 @@ class XrayService(rpyc.Service):
         self.core = None
         self.connection = None
         self.wg = WireGuardManager()
+        self.singbox = SingBoxManager()
 
     def on_connect(self, conn):
         if self.connection:
@@ -156,6 +158,24 @@ class XrayService(rpyc.Service):
     @rpyc.exposed
     def wg_down(self, interface: str):
         self.wg.teardown(interface)
+
+    @rpyc.exposed
+    def singbox_apply_json(self, spec_json: str):
+        import json
+        self.singbox.apply(SingBoxSpec.from_dict(json.loads(spec_json)))
+
+    @rpyc.exposed
+    def singbox_transfer(self) -> str:
+        import json
+        return json.dumps(self.singbox.get_transfer())
+
+    @rpyc.exposed
+    def singbox_available(self) -> bool:
+        return self.singbox.available()
+
+    @rpyc.exposed
+    def singbox_down(self):
+        self.singbox.stop()
 
     @rpyc.exposed
     def fetch_xray_version(self):

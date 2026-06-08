@@ -13,6 +13,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from config import XRAY_ASSETS_PATH, XRAY_EXECUTABLE_PATH
 from logger import logger
+from singbox import SingBoxManager, SingBoxSpec
 from wireguard import WireGuardManager, WireGuardSpec
 from xray import XRayConfig, XRayCore
 
@@ -44,6 +45,7 @@ class Service(object):
         self.core_version = self.core.get_version()
         self.config = None
         self.wg = WireGuardManager()
+        self.singbox = SingBoxManager()
 
         self.router.add_api_route("/", self.base, methods=["POST"])
         self.router.add_api_route("/ping", self.ping, methods=["POST"])
@@ -58,6 +60,11 @@ class Service(object):
         self.router.add_api_route("/wg/apply", self.wg_apply, methods=["POST"])
         self.router.add_api_route("/wg/transfer", self.wg_transfer, methods=["POST"])
         self.router.add_api_route("/wg/down", self.wg_down, methods=["POST"])
+        # sing-box product endpoints (Hysteria2/TUIC). Same declarative model:
+        # the panel pushes the full inbound+user spec and reads per-user traffic.
+        self.router.add_api_route("/singbox/apply", self.singbox_apply, methods=["POST"])
+        self.router.add_api_route("/singbox/transfer", self.singbox_transfer, methods=["POST"])
+        self.router.add_api_route("/singbox/down", self.singbox_down, methods=["POST"])
         self.router.add_api_route("/xray/upgrade", self.xray_upgrade, methods=["POST"])
 
         self.router.add_websocket_route("/logs", self.logs)
@@ -272,6 +279,38 @@ class Service(object):
             logger.error(f"Failed to tear down WireGuard interface: {exc}")
             raise HTTPException(status_code=503, detail=str(exc))
         return {"interface": interface, "down": True}
+
+    def singbox_apply(self, session_id: UUID = Body(embed=True), spec: dict = Body(embed=True)):
+        self.match_session_id(session_id)
+        try:
+            sb_spec = SingBoxSpec.from_dict(spec)
+        except (KeyError, ValueError, TypeError) as exc:
+            raise HTTPException(status_code=422, detail={"spec": f"Invalid sing-box spec: {exc}"})
+        if not self.singbox.available():
+            raise HTTPException(status_code=503, detail="sing-box binary not installed on node")
+        try:
+            self.singbox.apply(sb_spec)
+        except Exception as exc:
+            logger.error(f"Failed to apply sing-box spec: {exc}")
+            raise HTTPException(status_code=503, detail=str(exc))
+        return {"inbounds": len(sb_spec.inbounds), "running": self.singbox.is_running()}
+
+    def singbox_transfer(self, session_id: UUID = Body(embed=True)):
+        self.match_session_id(session_id)
+        try:
+            return {"transfer": self.singbox.get_transfer()}
+        except Exception as exc:
+            logger.error(f"Failed to read sing-box transfer: {exc}")
+            raise HTTPException(status_code=503, detail=str(exc))
+
+    def singbox_down(self, session_id: UUID = Body(embed=True)):
+        self.match_session_id(session_id)
+        try:
+            self.singbox.stop()
+        except Exception as exc:
+            logger.error(f"Failed to stop sing-box: {exc}")
+            raise HTTPException(status_code=503, detail=str(exc))
+        return {"down": True}
 
     async def logs(self, websocket: WebSocket):
         session_id = websocket.query_params.get('session_id')

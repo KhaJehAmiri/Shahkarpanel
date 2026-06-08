@@ -19,6 +19,19 @@ RUN apt-get update \
     && mkdir -p /usr/local/share/xray \
     && mv /tmp/xray/*.dat /usr/local/share/xray/ \
     && rm -rf /tmp/xray /tmp/xray.zip \
+    # sing-box: the node's second engine for QUIC protocols (Hysteria2/TUIC).
+    && case "$(uname -m)" in \
+         x86_64|amd64) SB_ARCH=amd64 ;; \
+         aarch64|arm64) SB_ARCH=arm64 ;; \
+         armv7l) SB_ARCH=armv7 ;; \
+         *) SB_ARCH=amd64 ;; \
+       esac \
+    && SB_VER="$(curl -sL https://api.github.com/repos/SagerNet/sing-box/releases/latest | grep -oE '\"tag_name\": \"v[^\"]+' | head -n1 | cut -d'v' -f2)" \
+    && SB_VER="${SB_VER:-1.10.7}" \
+    && curl -L -o /tmp/sb.tar.gz "https://github.com/SagerNet/sing-box/releases/download/v${SB_VER}/sing-box-${SB_VER}-linux-${SB_ARCH}.tar.gz" \
+    && tar -xzf /tmp/sb.tar.gz -C /tmp \
+    && install -m 0755 /tmp/sing-box-${SB_VER}-linux-${SB_ARCH}/sing-box /usr/local/bin/sing-box \
+    && rm -rf /tmp/sb.tar.gz /tmp/sing-box-* \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt /code/

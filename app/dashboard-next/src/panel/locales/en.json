@@ -710,6 +710,12 @@
     "api_v2": {
       "desc": "Expose the versioned /api/v2 surface"
     },
+    "client_api": {
+      "desc": "SigmaGuard client API (login, negotiate, config, probe)"
+    },
+    "client_ss2022": {
+      "desc": "Advertise Shadowsocks-2022 to clients (needs node inbound)"
+    },
     "smart_routing": {
       "desc": "Latency, geo, and load-based node selection"
     },

@@ -678,6 +678,12 @@
     "api_v2": {
       "desc": "API نسخه‌دار /api/v2"
     },
+    "client_api": {
+      "desc": "API کلاینت SigmaGuard (ورود، negotiate، config، probe)"
+    },
+    "client_ss2022": {
+      "desc": "معرفی Shadowsocks-2022 به کلاینت‌ها (نیازمند inbound نود)"
+    },
     "smart_routing": {
       "desc": "انتخاب نود بر اساس تأخیر، منطقه و بار"
     },

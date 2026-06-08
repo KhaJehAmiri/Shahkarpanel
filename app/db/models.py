@@ -123,6 +123,12 @@ class User(Base):
     hashed_portal_password = Column(String(128), nullable=True)
     portal_password_reset_at = Column(DateTime, nullable=True)
 
+    # SigmaGuard client profile (phase A): 'gamer' | 'trader' | 'normal'.
+    # Drives protocol priority and node-selection policy in the client API.
+    client_profile = Column(
+        String(16), nullable=False, server_default=text("'normal'"), default="normal"
+    )
+
     next_plan = relationship(
         "NextPlan",
         uselist=False,
@@ -406,6 +412,20 @@ class NodeWireGuard(Base):
     mtu = Column(Integer, nullable=False, server_default=text("1420"), default=1420)
     dns = Column(String(256), nullable=True)
 
+    # AmneziaWG obfuscation parameters (phase: protocols). When any are set the
+    # node serves AmneziaWG (obfuscated WireGuard) and client configs emit these
+    # under [Interface]. All-null = plain WireGuard. Jc/Jmin/Jmax are junk-packet
+    # counts/sizes; S1/S2 are init/response junk sizes; H1–H4 are magic headers.
+    awg_jc = Column(Integer, nullable=True)
+    awg_jmin = Column(Integer, nullable=True)
+    awg_jmax = Column(Integer, nullable=True)
+    awg_s1 = Column(Integer, nullable=True)
+    awg_s2 = Column(Integer, nullable=True)
+    awg_h1 = Column(BigInteger, nullable=True)
+    awg_h2 = Column(BigInteger, nullable=True)
+    awg_h3 = Column(BigInteger, nullable=True)
+    awg_h4 = Column(BigInteger, nullable=True)
+
 
 class NodeUserUsage(Base):
     __tablename__ = "node_user_usages"
@@ -622,6 +642,79 @@ class PlatformSetting(Base):
     key = Column(String(64), primary_key=True)
     value = Column(JSON, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ClientProbe(Base):
+    """Network probe result reported by the SigmaGuard client (phase A).
+
+    The app pings candidate nodes and POSTs the measurements; the panel stores
+    them to refine node recommendations over time.
+    """
+
+    __tablename__ = "client_probes"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+    node_id = Column(Integer, ForeignKey("nodes.id"), index=True, nullable=True)
+    profile = Column(String(16), nullable=True)
+    protocol = Column(String(32), nullable=True)
+    ping_ms = Column(Float, nullable=True)
+    packet_loss_pct = Column(Float, nullable=True)
+    handshake_ms = Column(Float, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class ClientDevice(Base):
+    """A push-notification target registered by the SigmaGuard app (phase B).
+
+    One row per device token; re-registering the same token updates the owner
+    and metadata (upsert on ``token``).
+    """
+
+    __tablename__ = "client_devices"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+    token = Column(String(512), unique=True, nullable=False, index=True)
+    platform = Column(String(16), nullable=True)  # 'android' | 'ios' | …
+    app_version = Column(String(32), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ClientTelemetry(Base):
+    """Per-session network-quality sample reported by the app (phase B)."""
+
+    __tablename__ = "client_telemetry"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+    session_id = Column(String(64), nullable=True, index=True)
+    active_protocol = Column(String(32), nullable=True)
+    active_node = Column(Integer, ForeignKey("nodes.id"), nullable=True)
+    ping_ms = Column(Float, nullable=True)
+    packet_loss_pct = Column(Float, nullable=True)
+    bytes_sent = Column(BigInteger, nullable=True)
+    bytes_recv = Column(BigInteger, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class DedicatedIP(Base):
+    """A static exit IP reserved for a single Trader account (phase B).
+
+    Unassigned rows (``user_id IS NULL``) form the available pool. Once bound to
+    a user the IP must never rotate; the client API surfaces it so the user can
+    whitelist it on exchanges.
+    """
+
+    __tablename__ = "dedicated_ips"
+
+    id = Column(Integer, primary_key=True)
+    address = Column(String(64), unique=True, nullable=False, index=True)
+    node_id = Column(Integer, ForeignKey("nodes.id"), nullable=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, unique=True, index=True)
+    assigned_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 class UsageBillingCheckpoint(Base):

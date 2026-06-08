@@ -601,6 +601,12 @@
     "api_v2": {
       "desc": "API v2"
     },
+    "client_api": {
+      "desc": "SigmaGuard 客户端 API（登录、negotiate、config、probe）"
+    },
+    "client_ss2022": {
+      "desc": "向客户端公布 Shadowsocks-2022（需节点 inbound）"
+    },
     "smart_routing": {
       "desc": "智能选节点"
     },

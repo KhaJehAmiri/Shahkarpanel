@@ -67,6 +67,57 @@ def get_admin_payload(token: str) -> Union[dict, None]:
         return
 
 
+APP_REFRESH_TOKEN_EXPIRE_DAYS = 30
+
+
+def create_app_access_token(username: str) -> str:
+    """Short-lived access token for the SigmaGuard mobile/desktop client."""
+    data = {"sub": username, "access": "app", "iat": datetime.utcnow()}
+    if JWT_ACCESS_TOKEN_EXPIRE_MINUTES > 0:
+        data["exp"] = datetime.utcnow() + timedelta(minutes=JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
+    return jwt.encode(data, get_secret_key(), algorithm="HS256")
+
+
+def create_app_refresh_token(username: str) -> str:
+    """Long-lived refresh token (30-day cycle) for the client app."""
+    data = {
+        "sub": username,
+        "access": "app_refresh",
+        "iat": datetime.utcnow(),
+        "exp": datetime.utcnow() + timedelta(days=APP_REFRESH_TOKEN_EXPIRE_DAYS),
+    }
+    return jwt.encode(data, get_secret_key(), algorithm="HS256")
+
+
+def app_access_token_expires_in() -> Union[int, None]:
+    """Access-token lifetime in seconds, or ``None`` when tokens never expire."""
+    if JWT_ACCESS_TOKEN_EXPIRE_MINUTES > 0:
+        return JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    return None
+
+
+def get_app_payload(token: str) -> Union[dict, None]:
+    try:
+        payload = jwt.decode(token, get_secret_key(), algorithms=["HS256"])
+        username = payload.get("sub")
+        if not username or payload.get("access") != "app":
+            return
+        return {"username": username}
+    except jwt.exceptions.PyJWTError:
+        return
+
+
+def get_app_refresh_payload(token: str) -> Union[dict, None]:
+    try:
+        payload = jwt.decode(token, get_secret_key(), algorithms=["HS256"])
+        username = payload.get("sub")
+        if not username or payload.get("access") != "app_refresh":
+            return
+        return {"username": username}
+    except jwt.exceptions.PyJWTError:
+        return
+
+
 def get_portal_payload(token: str) -> Union[dict, None]:
     try:
         payload = jwt.decode(token, get_secret_key(), algorithms=["HS256"])

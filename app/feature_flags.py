@@ -43,6 +43,18 @@ KNOWN_FLAGS: Dict[str, FlagSpec] = {
             "End-user self-service portal for subscription renewal.",
         ),
         FlagSpec("api_v2", False, "flags.api_v2.desc", "Expose the v2 API."),
+        FlagSpec(
+            "client_api",
+            False,
+            "flags.client_api.desc",
+            "Expose the SigmaGuard client API (auth, negotiate, config, probe).",
+        ),
+        FlagSpec(
+            "client_ss2022",
+            False,
+            "flags.client_ss2022.desc",
+            "Advertise Shadowsocks-2022 to clients (requires node-side inbound).",
+        ),
         FlagSpec("smart_routing", False, "flags.smart_routing.desc", "Latency, geo, and load-based node routing."),
         FlagSpec("workflows", False, "flags.workflows.desc", "Multi-step workflow automation."),
         FlagSpec(

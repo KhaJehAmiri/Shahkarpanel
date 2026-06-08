@@ -8,10 +8,32 @@ subscription token and the SAME central ``used_traffic`` quota.
 The renderer is pure (no DB / no I/O) so it is unit testable. ``user_config``
 assembles the inputs from a user's WireGuard proxy settings and a WG node.
 """
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 DEFAULT_ALLOWED_IPS = "0.0.0.0/0, ::/0"
 DEFAULT_KEEPALIVE = 25
+
+# AmneziaWG [Interface] keys, in canonical order. Values are integers.
+AWG_KEYS = ("Jc", "Jmin", "Jmax", "S1", "S2", "H1", "H2", "H3", "H4")
+
+
+def amnezia_params_from_node(cfg) -> Dict[str, int]:
+    """Extract AmneziaWG params from a NodeWireGuard row into wg-quick keys.
+
+    Returns an empty dict for a plain (non-obfuscated) WireGuard node.
+    """
+    mapping = {
+        "Jc": getattr(cfg, "awg_jc", None),
+        "Jmin": getattr(cfg, "awg_jmin", None),
+        "Jmax": getattr(cfg, "awg_jmax", None),
+        "S1": getattr(cfg, "awg_s1", None),
+        "S2": getattr(cfg, "awg_s2", None),
+        "H1": getattr(cfg, "awg_h1", None),
+        "H2": getattr(cfg, "awg_h2", None),
+        "H3": getattr(cfg, "awg_h3", None),
+        "H4": getattr(cfg, "awg_h4", None),
+    }
+    return {k: int(v) for k, v in mapping.items() if v is not None}
 
 
 def render_wireguard_conf(
@@ -25,8 +47,14 @@ def render_wireguard_conf(
     allowed_ips: str = DEFAULT_ALLOWED_IPS,
     mtu: Optional[int] = None,
     keepalive: int = DEFAULT_KEEPALIVE,
+    amnezia: Optional[Dict[str, int]] = None,
 ) -> str:
-    """Render a single-peer wg-quick client config."""
+    """Render a single-peer wg-quick / AmneziaWG client config.
+
+    When ``amnezia`` carries obfuscation parameters they are emitted under
+    ``[Interface]`` (AmneziaWG superset of wg-quick); otherwise the output is a
+    plain WireGuard config.
+    """
     interface: List[str] = [
         "[Interface]",
         f"PrivateKey = {private_key}",
@@ -36,6 +64,10 @@ def render_wireguard_conf(
         interface.append(f"DNS = {dns}")
     if mtu:
         interface.append(f"MTU = {mtu}")
+    if amnezia:
+        for key in AWG_KEYS:
+            if key in amnezia:
+                interface.append(f"{key} = {amnezia[key]}")
 
     peer: List[str] = [
         "[Peer]",
@@ -81,4 +113,5 @@ def user_config(user_settings: dict, dbnode) -> Optional[str]:
         dns=cfg.dns,
         preshared_key=user_settings.get("preshared_key"),
         mtu=cfg.mtu,
+        amnezia=amnezia_params_from_node(cfg),
     )

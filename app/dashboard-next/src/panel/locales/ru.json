@@ -601,6 +601,12 @@
     "api_v2": {
       "desc": "API v2"
     },
+    "client_api": {
+      "desc": "Client API SigmaGuard (login, negotiate, config, probe)"
+    },
+    "client_ss2022": {
+      "desc": "Объявлять Shadowsocks-2022 клиентам (нужен inbound на ноде)"
+    },
     "smart_routing": {
       "desc": "Умная маршрутизация нод"
     },

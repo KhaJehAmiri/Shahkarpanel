@@ -1477,6 +1477,29 @@ def set_node_wireguard(db: Session, dbnode: Node, *, interface: str = "wg0",
     return cfg
 
 
+_AWG_FIELDS = (
+    "awg_jc", "awg_jmin", "awg_jmax", "awg_s1", "awg_s2",
+    "awg_h1", "awg_h2", "awg_h3", "awg_h4",
+)
+
+
+def set_node_amnezia(db: Session, dbnode: Node, params: Dict[str, Optional[int]]) -> "NodeWireGuard":
+    """Set/clear AmneziaWG obfuscation params on a node's WireGuard config.
+
+    Only keys present in ``params`` are written; passing ``None`` clears one.
+    Raises ``ValueError`` if the node has no WireGuard config yet.
+    """
+    cfg = dbnode.wireguard
+    if cfg is None:
+        raise ValueError("Node has no WireGuard configuration")
+    for field in _AWG_FIELDS:
+        if field in params:
+            setattr(cfg, field, params[field])
+    db.commit()
+    db.refresh(cfg)
+    return cfg
+
+
 def get_wireguard_nodes(db: Session, enabled_only: bool = True) -> List[Node]:
     """Return nodes whose core_kind is 'wireguard'."""
     query = db.query(Node).filter(Node.core_kind == CoreKind.wireguard.value)

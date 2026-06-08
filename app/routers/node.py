@@ -352,6 +352,42 @@ def modify_node(
     return dbnode
 
 
+class AmneziaWGConfig(BaseModel):
+    """AmneziaWG obfuscation parameters. All optional; null clears a field."""
+    awg_jc: Optional[int] = None
+    awg_jmin: Optional[int] = None
+    awg_jmax: Optional[int] = None
+    awg_s1: Optional[int] = None
+    awg_s2: Optional[int] = None
+    awg_h1: Optional[int] = None
+    awg_h2: Optional[int] = None
+    awg_h3: Optional[int] = None
+    awg_h4: Optional[int] = None
+
+
+@router.put("/node/{node_id}/amneziawg", response_model=NodeResponse)
+def set_node_amneziawg(
+    body: AmneziaWGConfig,
+    dbnode=Depends(get_dbnode),
+    db: Session = Depends(get_db),
+    _: Admin = Depends(Admin.check_sudo_admin),
+):
+    """Configure AmneziaWG obfuscation on a WireGuard node (sudo only).
+
+    Turns a plain WireGuard node into an obfuscated AmneziaWG node; client
+    configs then emit the Jc/Jmin/Jmax/S1/S2/H1–H4 parameters under [Interface].
+    """
+    from app.models.node import CoreKind
+
+    if dbnode.core_kind != CoreKind.wireguard.value:
+        raise HTTPException(status_code=400, detail="Node is not a WireGuard node")
+    try:
+        crud.set_node_amnezia(db, dbnode, body.model_dump(exclude_unset=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return dbnode
+
+
 @router.post("/node/{node_id}/reconnect")
 def reconnect_node(
     bg: BackgroundTasks,

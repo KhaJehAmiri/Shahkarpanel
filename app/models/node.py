@@ -34,6 +34,16 @@ class NodeWireGuardConfig(BaseModel):
     endpoint: Optional[str] = None
     mtu: int = Field(default=1420, gt=0)
     dns: Optional[str] = None
+    # AmneziaWG obfuscation (null = plain WireGuard).
+    awg_jc: Optional[int] = None
+    awg_jmin: Optional[int] = None
+    awg_jmax: Optional[int] = None
+    awg_s1: Optional[int] = None
+    awg_s2: Optional[int] = None
+    awg_h1: Optional[int] = None
+    awg_h2: Optional[int] = None
+    awg_h3: Optional[int] = None
+    awg_h4: Optional[int] = None
     model_config = ConfigDict(from_attributes=True)
 
 

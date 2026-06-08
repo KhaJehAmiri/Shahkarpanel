@@ -159,6 +159,11 @@ def provision_node(
     if not body.password and not body.private_key:
         raise HTTPException(status_code=422, detail="password or private_key is required")
 
+    from app.tenant.reseller_ops import assert_can_add_node, db_admin
+
+    if body.run:
+        assert_can_add_node(db, admin)
+
     if not body.run:
         tenant_id = tenant_svc.admin_tenant_id(db, admin)
         panel_url = _panel_url()
@@ -210,6 +215,9 @@ def provision_node(
         dbnode.core_kind = CoreKind(body.core_kind).value
         dbnode.role = body.role
         dbnode.tenant_id = tenant_id
+        owner = db_admin(db, admin)
+        if owner:
+            dbnode.owner_admin_id = owner.id
         dbnode.provision_status = "provisioning"
         dbnode.provision_host = body.host.strip()
         dbnode.provision_message = "queued"
@@ -237,6 +245,9 @@ def provision_node(
 
         dbnode.role = body.role
         dbnode.tenant_id = tenant_id
+        owner = db_admin(db, admin)
+        if owner:
+            dbnode.owner_admin_id = owner.id
         dbnode.provision_status = "provisioning"
         dbnode.provision_host = body.host.strip()
         dbnode.provision_message = "queued"

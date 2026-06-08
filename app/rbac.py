@@ -31,6 +31,7 @@ ROLE_PERMISSIONS: Dict[str, Set[str]] = {
         # owner's shared nodes (that's nodes:write).
         "nodes:provision",
         "billing:read",
+        "billing:write",
         "system:read",
     },
     "support": {

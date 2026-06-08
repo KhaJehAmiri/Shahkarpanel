@@ -1,13 +1,23 @@
-import { FC, useState } from "react";
+import { FC, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { login } from "../api/client";
+import { api, login } from "../api/client";
+import { Branding } from "../api/types";
 import { useApp } from "../context/AppContext";
 import { LANGUAGES, setLanguage } from "../i18n";
+import { applyBranding, brandingTitle } from "../lib/branding";
 import { Button, Field, Input } from "../components/ui";
 
 export const Login: FC = () => {
   const { t, i18n } = useTranslation();
   const { onAuthenticated } = useApp();
+  const [branding, setBranding] = useState<Branding | null>(null);
+
+  useEffect(() => {
+    api.get<Branding>("/branding").then((b) => {
+      setBranding(b);
+      applyBranding(b);
+    }).catch(() => {});
+  }, []);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -31,9 +41,13 @@ export const Login: FC = () => {
     <div className="nx-login">
       <div className="nx-login-card">
         <div className="nx-brand" style={{ padding: "0 0 22px", justifyContent: "center" }}>
-          <div className="nx-brand-logo" style={{ width: 40, height: 40, fontSize: 18 }}>N</div>
+          {branding?.logo_url ? (
+            <img src={branding.logo_url} alt="" className="nx-brand-logo" style={{ width: 40, height: 40, objectFit: "contain" }} />
+          ) : (
+            <div className="nx-brand-logo" style={{ width: 40, height: 40, fontSize: 18 }}>N</div>
+          )}
           <div>
-            <div className="nx-brand-name" style={{ fontSize: 18 }}>{t("common.appName")}</div>
+            <div className="nx-brand-name" style={{ fontSize: 18 }}>{brandingTitle(branding, t("common.appName"))}</div>
             <div className="nx-brand-sub">{t("common.tagline")}</div>
           </div>
         </div>

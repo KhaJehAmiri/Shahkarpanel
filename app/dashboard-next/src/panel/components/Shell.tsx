@@ -2,6 +2,7 @@ import { FC, useMemo, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useApp } from "../context/AppContext";
+import { brandingTitle } from "../lib/branding";
 import { useCopilot } from "../copilot/CopilotContext";
 import { Copilot } from "../copilot/Copilot";
 import { LANGUAGES, setLanguage } from "../i18n";
@@ -46,7 +47,8 @@ const NavItem: FC<{ id: string; onNav: () => void }> = ({ id, onNav }) => {
 
 export const Shell: FC = () => {
   const { t, i18n } = useTranslation();
-  const { admin, theme, setTheme, logout } = useApp();
+  const { admin, branding, theme, setTheme, logout } = useApp();
+  const appTitle = brandingTitle(branding, t("common.appName"));
   const { setOpen: setCopilotOpen } = useCopilot();
   const [open, setOpen] = useState(false);
   const [langOpen, setLangOpen] = useState(false);
@@ -57,6 +59,7 @@ export const Shell: FC = () => {
     const role = admin?.role || "reseller";
     const base = [{ group: "work", items: ["overview", "users"] }];
     if (role !== "support") {
+      base.push({ group: "connect", items: ["nodes"] });
       base.push({ group: "business", items: ["resellers", "billing"] });
     }
     base.push({ group: "manage", items: ["analytics"] });
@@ -75,9 +78,13 @@ export const Shell: FC = () => {
       <div className={`nx-scrim ${open ? "show" : ""}`} onClick={closeNav} />
       <aside className={`nx-sidebar ${open ? "open" : ""}`}>
         <div className="nx-brand">
-          <div className="nx-brand-logo">N</div>
+          {branding?.logo_url ? (
+            <img src={branding.logo_url} alt="" className="nx-brand-logo" style={{ objectFit: "contain" }} />
+          ) : (
+            <div className="nx-brand-logo">N</div>
+          )}
           <div>
-            <div className="nx-brand-name">{t("common.appName")}</div>
+            <div className="nx-brand-name">{appTitle}</div>
             <div className="nx-brand-sub">{t("common.tagline")}</div>
           </div>
         </div>
@@ -103,7 +110,7 @@ export const Shell: FC = () => {
             </button>
             <div>
               <div className="nx-topbar-title">{navTitle}</div>
-              <div className="nx-breadcrumb">{t("common.appName")} / {navTitle}</div>
+              <div className="nx-breadcrumb">{appTitle} / {navTitle}</div>
             </div>
           </div>
 

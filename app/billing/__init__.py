@@ -11,6 +11,15 @@ from app.db import Session
 from app.db.models import Invoice, Transaction, Wallet
 
 from .providers import available_providers, get_provider, register_provider
+from .usage_billing import (
+    aggregate_reseller_usage,
+    bill_reseller_usage,
+    compute_charge,
+    run_usage_billing,
+    traffic_to_gb_units,
+    usage_summary_for_admin,
+    wallet_is_low,
+)
 
 __all__ = [
     "get_or_create_wallet",
@@ -23,6 +32,13 @@ __all__ = [
     "get_provider",
     "available_providers",
     "register_provider",
+    "aggregate_reseller_usage",
+    "bill_reseller_usage",
+    "compute_charge",
+    "run_usage_billing",
+    "traffic_to_gb_units",
+    "usage_summary_for_admin",
+    "wallet_is_low",
 ]
 
 
@@ -43,6 +59,8 @@ def add_transaction(
     type: str,
     description: Optional[str] = None,
     reference: Optional[str] = None,
+    *,
+    skip_commission: bool = False,
 ) -> Transaction:
     """Append a ledger entry and adjust the wallet balance atomically."""
     wallet = get_or_create_wallet(db, admin_id)
@@ -57,6 +75,17 @@ def add_transaction(
     wallet.balance += amount
     db.commit()
     db.refresh(tx)
+    if not skip_commission and amount < 0 and type not in ("commission", "invoice"):
+        from app.billing.commission import credit_parent_commission
+
+        credit_parent_commission(
+            db,
+            admin_id,
+            amount,
+            tx_type=type,
+            description=description or type,
+            reference=reference or str(tx.id),
+        )
     return tx
 
 

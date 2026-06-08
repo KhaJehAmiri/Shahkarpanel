@@ -2,6 +2,9 @@ export interface AdminInfo {
   username: string;
   is_sudo: boolean;
   role?: string | null;
+  max_users?: number | null;
+  max_nodes?: number | null;
+  tenant_id?: number | null;
   telegram_id?: number | null;
   discord_webhook?: string | null;
 }
@@ -41,6 +44,7 @@ export interface UserItem {
   links?: string[];
   subscription_url?: string;
   public_subscription_url?: string;
+  portal_enabled?: boolean;
 }
 
 export interface InboundInfo {
@@ -205,6 +209,8 @@ export interface Plan {
   duration_days?: number | null;
   device_limit?: number | null;
   enabled: boolean;
+  tenant_id?: number | null;
+  owner_admin_id?: number | null;
 }
 
 export interface Invoice {
@@ -228,6 +234,65 @@ export interface Transaction {
 export interface Wallet {
   admin_id: number;
   balance: number;
+}
+
+export interface OnboardingStatus {
+  show_wizard: boolean;
+  completed: boolean;
+  steps: Record<string, boolean>;
+}
+
+export interface MrrSummary {
+  period_days: number;
+  total_revenue: number;
+  mrr_estimate: number;
+  by_type: Record<string, number>;
+  wallet_float: number;
+  active_resellers: number;
+  sub_resellers: number;
+  top_resellers: { admin_id: number; username: string; revenue: number }[];
+}
+
+export interface SubResellerAccount {
+  username: string;
+  role?: string | null;
+  max_users?: number | null;
+  max_nodes?: number | null;
+  parent_admin_id?: number | null;
+  commission_percent?: number;
+}
+
+export interface UsageSummary {
+  rate_per_gb: number;
+  discount_percent: number;
+  period_since: string;
+  period_until: string;
+  owned_bytes: number;
+  foreign_bytes: number;
+  owned_gb: number;
+  foreign_gb: number;
+  estimated_cost: number;
+  wallet_balance: number;
+  wallet_low: boolean;
+  wallet_low_threshold: number;
+}
+
+export interface ResellerWorkspace {
+  username: string;
+  role: string;
+  tenant_id?: number | null;
+  tenant_name?: string | null;
+  tenant_slug?: string | null;
+  byo_node_discount_percent: number;
+  users_count: number;
+  max_users?: number | null;
+  nodes_count: number;
+  max_nodes?: number | null;
+  wallet_balance?: number | null;
+  wallet_low?: boolean;
+  usage_rate_per_gb?: number;
+  users_usage: number;
+  max_total_traffic?: number | null;
 }
 
 export interface ApiKey {

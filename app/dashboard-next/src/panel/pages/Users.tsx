@@ -1,7 +1,7 @@
 import { FC, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
-import { ImportPreviewResponse, ImportPreviewRow, InboundsByProtocol, UserItem, UsersResponse } from "../api/types";
+import { ImportPreviewResponse, ImportPreviewRow, InboundsByProtocol, Plan, UserItem, UsersResponse } from "../api/types";
 import { useFetch } from "../lib/useFetch";
 import { formatBytes, formatDate, relativeExpiry, statusTone, usagePct } from "../lib/format";
 import {
@@ -191,6 +191,8 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
   );
   const [reset, setReset] = useState(user?.data_limit_reset_strategy || "no_reset");
   const [note, setNote] = useState(user?.note || "");
+  const [portalEnabled, setPortalEnabled] = useState(!!user?.portal_enabled);
+  const [portalPassword, setPortalPassword] = useState("");
   const [protos, setProtos] = useState<Record<string, ProtoState>>({});
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState(false);
@@ -304,6 +306,8 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
         await api.post("/user", body);
         toast.push(t("common.created"), "success");
       } else {
+        body.portal_enabled = portalEnabled;
+        if (portalPassword.trim()) body.portal_password = portalPassword.trim();
         await api.put(`/user/${encodeURIComponent(user!.username)}`, body);
         toast.push(t("common.saved"), "success");
       }
@@ -452,6 +456,26 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
             </Select>
           </Field>
           <Field label={`Note (${t("common.optional")})`}><Input value={note} onChange={(e: any) => setNote(e.target.value)} /></Field>
+          {mode === "edit" && (
+            <Card style={{ padding: 14 }}>
+              <div className="nx-card-title" style={{ fontSize: 13, marginBottom: 10 }}>{t("users.portalSection")}</div>
+              <label className="nx-row" style={{ gap: 8, marginBottom: 10 }}>
+                <input type="checkbox" checked={portalEnabled} onChange={(e) => setPortalEnabled(e.target.checked)} />
+                {t("users.portalEnabled")}
+              </label>
+              <Field label={t("users.portalPassword")} hint={t("users.portalPasswordHint")}>
+                <Input
+                  type="password"
+                  value={portalPassword}
+                  onChange={(e: any) => setPortalPassword(e.target.value)}
+                  placeholder={t("users.portalPasswordPlaceholder")}
+                />
+              </Field>
+              <div className="nx-faint" style={{ fontSize: 11, marginTop: 6 }}>
+                {t("users.portalUrl")}: <code>/portal/</code>
+              </div>
+            </Card>
+          )}
         </div>
         <div className="nx-row" style={{ justifyContent: "flex-end", gap: 10, marginTop: 8, paddingTop: 14, borderTop: "1px solid var(--nx-border)" }}>
           <Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
@@ -609,9 +633,12 @@ const remainingPct = (used: number, limit: number | null | undefined) => {
 const UserDetail: FC<{ username: string; onClose: () => void; onEdit: () => void }> = ({ username, onClose, onEdit }) => {
   const { t, i18n } = useTranslation();
   const toast = useToast();
+  const { isEnabled } = useApp();
   const { data, loading } = useFetch<UserItem>(() => api.get(`/user/${encodeURIComponent(username)}`), [username]);
   const [tab, setTab] = useState<"subscription" | "configs">("subscription");
   const [activeLink, setActiveLink] = useState(0);
+  const [sellPlan, setSellPlan] = useState(false);
+  const billingOn = isEnabled("billing");
 
   const pct = data ? usagePct(data.used_traffic, data.data_limit) : 0;
   const remaining = data ? remainingPct(data.used_traffic, data.data_limit) : null;
@@ -662,6 +689,9 @@ const UserDetail: FC<{ username: string; onClose: () => void; onEdit: () => void
                   onClose();
                 } catch (e: any) { toast.push(e.message, "error"); }
               }}>{t("users.revokeSub")}</Button>
+              {billingOn ? (
+                <Button size="sm" variant="primary" onClick={() => setSellPlan(true)}>{t("users.sellPlan")}</Button>
+              ) : null}
               <Button size="sm" onClick={onEdit}><IcEdit className="nx-ico" /> {t("common.edit")}</Button>
             </div>
           </div>
@@ -688,6 +718,14 @@ const UserDetail: FC<{ username: string; onClose: () => void; onEdit: () => void
               <div className="nx-statbox-v">{data.online_at ? formatDate(new Date(data.online_at).getTime() / 1000, i18n.language) : "—"}</div>
             </div>
           </div>
+
+          {data.portal_enabled ? (
+            <div style={{ marginBottom: 14 }}>
+              <Callout tone="ok" title={t("users.portalEnabled")}>
+                <a href="/portal/" target="_blank" rel="noreferrer" className="nx-link">{t("users.openPortal")}</a>
+              </Callout>
+            </div>
+          ) : null}
 
           {/* Tabs */}
           {(subUrl || links.length > 0) && (
@@ -728,6 +766,53 @@ const UserDetail: FC<{ username: string; onClose: () => void; onEdit: () => void
           )}
         </>
       )}
+      {sellPlan && billingOn ? (
+        <SellPlanModal username={username} onClose={() => setSellPlan(false)} onDone={() => { setSellPlan(false); onClose(); }} />
+      ) : null}
     </Drawer>
+  );
+};
+
+const SellPlanModal: FC<{ username: string; onClose: () => void; onDone: () => void }> = ({ username, onClose, onDone }) => {
+  const { t } = useTranslation();
+  const toast = useToast();
+  const { data: plans, loading } = useFetch<Plan[]>(() => api.get("/plans?enabled_only=true"), []);
+  const [planId, setPlanId] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    const id = parseInt(planId, 10);
+    if (!id) return;
+    setBusy(true);
+    try {
+      await api.post(`/user/${encodeURIComponent(username)}/apply-plan`, { plan_id: id });
+      toast.push(t("users.sellPlanDone"), "success");
+      onDone();
+    } catch (e: any) {
+      toast.push(e.message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal open title={t("users.sellPlan")} onClose={onClose}
+      footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
+        <Button variant="primary" disabled={busy || !planId} onClick={submit}>{t("users.sellPlanConfirm")}</Button></>}>
+      {loading ? <SkeletonRows rows={2} cols={1} /> : !plans?.length ? (
+        <Callout tone="warn">{t("users.sellPlanEmpty")}</Callout>
+      ) : (
+        <Field label={t("billing.tabPlans")}>
+          <Select value={planId} onChange={(e: any) => setPlanId(e.target.value)}>
+            <option value="">{t("users.sellPlanChoose")}</option>
+            {plans.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name} — {p.price.toLocaleString()} · {p.duration_days ? `${p.duration_days}d` : "∞"}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      )}
+    </Modal>
   );
 };

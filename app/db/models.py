@@ -60,6 +60,13 @@ class Admin(Base):
     tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=True, index=True)
     tenant = relationship("Tenant", back_populates="admins", foreign_keys=[tenant_id])
 
+    # Sub-reseller hierarchy (phase 5). A child reseller is managed by parent_admin.
+    parent_admin_id = Column(Integer, ForeignKey("admins.id"), nullable=True, index=True)
+    parent = relationship("Admin", remote_side=[id], foreign_keys=[parent_admin_id])
+    # Commission (phase 6): % of child spend credited to parent_admin.
+    commission_percent = Column(Integer, nullable=False, default=0, server_default=text("0"))
+
+
 
 class AdminUsageLogs(Base):
     __tablename__ = "admin_usage_logs"
@@ -111,6 +118,10 @@ class User(Base):
 
     edit_at = Column(DateTime, nullable=True, default=None)
     last_status_change = Column(DateTime, default=datetime.utcnow, nullable=True)
+
+    portal_enabled = Column(Boolean, nullable=False, default=False)
+    hashed_portal_password = Column(String(128), nullable=True)
+    portal_password_reset_at = Column(DateTime, nullable=True)
 
     next_plan = relationship(
         "NextPlan",
@@ -547,12 +558,14 @@ class Plan(Base):
     __tablename__ = "plans"
 
     id = Column(Integer, primary_key=True)
-    name = Column(String(128), unique=True, nullable=False)
+    name = Column(String(128), nullable=False)
     price = Column(BigInteger, nullable=False, default=0)        # minor units (e.g. cents)
     data_limit = Column(BigInteger, nullable=True)               # bytes; null = unlimited
     duration_days = Column(Integer, nullable=True)               # null = no expiry
     device_limit = Column(Integer, nullable=True)
     enabled = Column(Boolean, nullable=False, default=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=True, index=True)
+    owner_admin_id = Column(Integer, ForeignKey("admins.id"), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -581,6 +594,67 @@ class Transaction(Base):
     description = Column(String(512), nullable=True)
     reference = Column(String(128), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class UserOrder(Base):
+    """End-user purchase of a plan (self-service renewal)."""
+
+    __tablename__ = "user_orders"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+    plan_id = Column(Integer, ForeignKey("plans.id"), nullable=False)
+    amount = Column(BigInteger, nullable=False)
+    status = Column(String(16), nullable=False, default="pending", index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    paid_at = Column(DateTime, nullable=True)
+    applied_at = Column(DateTime, nullable=True)
+
+    user = relationship("User")
+    plan = relationship("Plan")
+
+
+class PlatformSetting(Base):
+    """Key/value platform configuration editable from the admin UI."""
+
+    __tablename__ = "platform_settings"
+
+    key = Column(String(64), primary_key=True)
+    value = Column(JSON, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class UsageBillingCheckpoint(Base):
+    """Tracks the last hour billed for per-GB usage charges on a reseller."""
+
+    __tablename__ = "usage_billing_checkpoints"
+
+    admin_id = Column(Integer, ForeignKey("admins.id"), primary_key=True)
+    last_billed_at = Column(DateTime, nullable=False)
+
+    admin = relationship("Admin")
+
+
+class PaymentIntent(Base):
+    """A PSP checkout session for wallet top-up or portal plan purchase."""
+
+    __tablename__ = "payment_intents"
+
+    id = Column(Integer, primary_key=True)
+    kind = Column(String(32), nullable=False)  # topup | portal_renew
+    admin_id = Column(Integer, ForeignKey("admins.id"), index=True, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=True)
+    plan_id = Column(Integer, ForeignKey("plans.id"), nullable=True)
+    amount = Column(BigInteger, nullable=False)
+    provider = Column(String(32), nullable=False)
+    status = Column(String(16), nullable=False, default="pending", index=True)
+    extra = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)
+
+    admin = relationship("Admin")
+    user = relationship("User")
+    plan = relationship("Plan")
 
 
 class Invoice(Base):

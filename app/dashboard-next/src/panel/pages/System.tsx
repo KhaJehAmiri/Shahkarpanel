@@ -9,15 +9,17 @@ import { LANGUAGES, setLanguage } from "../i18n";
 import {
   Button, Callout, Card, CardHead, EmptyState, Field, Input, Modal, Pill, Select, SkeletonRows, Tabs, Toggle, useToast,
 } from "../components/ui";
+import { CommercialSettings } from "../components/CommercialSettings";
 import { IcPlus, IcDownload, IcTrash, IcKey, IcSun, IcMoon, IcEdit } from "../components/icons";
 
 export const System: FC = () => {
   const { t } = useTranslation();
-  const { admin } = useApp();
+  const { admin, isEnabled } = useApp();
   const [tab, setTab] = useState(admin?.is_sudo ? "flags" : "apikeys");
   const tabs = [
     ...(admin?.is_sudo ? [
       { id: "flags", label: t("system.tabFlags") },
+      ...(isEnabled("billing") ? [{ id: "commercial", label: t("system.tabCommercial") }] : []),
       { id: "updates", label: t("system.tabUpdates") },
       { id: "deployment", label: t("system.tabDeployment") },
       { id: "xray", label: t("system.tabXray") },
@@ -32,6 +34,7 @@ export const System: FC = () => {
       <PageHeader title={t("system.title")} subtitle={t("system.subtitle")} description={t("system.description")} />
       <Tabs active={tab} onChange={setTab} tabs={tabs} />
       {tab === "flags" && <FlagsTab />}
+      {tab === "commercial" && <CommercialSettings />}
       {tab === "updates" && <UpdatesTab />}
       {tab === "deployment" && <DeploymentTab />}
       {tab === "xray" && <XrayCoreTab />}
@@ -467,17 +470,21 @@ const AdminsTab: FC = () => {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState("reseller");
+  const [maxUsers, setMaxUsers] = useState("");
   const { data, loading, error, reload, status } = useFetch<AdminRow[]>(() => api.get("/admins"), []);
 
   if (status === 403) return <Callout tone="warn">{t("common.sudoOnly")}</Callout>;
 
   const create = async () => {
     try {
-      await api.post("/admin", { username, password, is_sudo: false, role });
+      const body: Record<string, unknown> = { username, password, is_sudo: false, role };
+      if (maxUsers.trim()) body.max_users = parseInt(maxUsers, 10);
+      await api.post("/admin", body);
       toast.push(t("common.created"), "success");
       setShow(false);
       setUsername("");
       setPassword("");
+      setMaxUsers("");
       reload();
     } catch (e: any) {
       toast.push(e.message, "error");
@@ -544,6 +551,9 @@ const AdminsTab: FC = () => {
               <option value="reseller">reseller</option>
               <option value="support">support</option>
             </select>
+          </Field>
+          <Field label={`${t("system.maxUsers")} (${t("common.optional")})`}>
+            <Input type="number" min={1} value={maxUsers} onChange={(e: any) => setMaxUsers(e.target.value)} placeholder="∞" />
           </Field>
         </div>
       </Modal>

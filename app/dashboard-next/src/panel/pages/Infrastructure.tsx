@@ -16,7 +16,7 @@ import { isIranNode } from "../lib/region";
 /** @deprecated Use /nodes — kept for old bookmarks. */
 export const Infrastructure: FC = () => <Navigate to="/nodes" replace />;
 
-export const NodesTab: FC = () => {
+export const NodesTab: FC<{ resellerMode?: boolean }> = ({ resellerMode }) => {
   const { t } = useTranslation();
   const toast = useToast();
   const { consumeIntent } = useCopilot();
@@ -55,9 +55,11 @@ export const NodesTab: FC = () => {
 
   return (
     <>
-      <Callout tone="info" title={t("infra.xrayVersionHintTitle")}>
-        {t("infra.xrayVersionHint")}
-      </Callout>
+      {!resellerMode && (
+        <Callout tone="info" title={t("infra.xrayVersionHintTitle")}>
+          {t("infra.xrayVersionHint")}
+        </Callout>
+      )}
       <div className="nx-row" style={{ justifyContent: "flex-end", margin: "14px 0", gap: 8 }}>
         <Button variant="ghost" onClick={reload}><IcRefresh className="nx-ico" /></Button>
         <Button variant="primary" onClick={openAdd}><IcPlus className="nx-ico" /> {t("infra.addNode")}</Button>

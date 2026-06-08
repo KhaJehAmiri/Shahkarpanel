@@ -136,11 +136,34 @@ One panel install → **multiple resellers**, each with their own brand — **no
 
 | Feature | Description |
 |---------|-------------|
-| **Tenant** | Scoped admins, users, plans, nodes |
-| **Branding** | Logo, colors, panel title, support URL |
+| **Reseller accounts** | Username/password login; scoped users, nodes, wallet |
+| **Sub-resellers** | Parent creates child accounts with quotas + **commission %** |
+| **Tenant** (optional) | Advanced white-label isolation for plans/nodes |
+| **Branding** | Logo, colors, panel title, support URL, custom domain |
 | **SSH node add** | Reseller provides IP + password; panel installs agent |
 | **BYO discount** | Cheaper usage rate on reseller-owned nodes |
-| **UI** | **White-label** section in dashboard sidebar |
+| **Plans & billing** | Reseller-owned plans, wallet top-up, GB usage billing |
+| **Payment gateways** | Demo + **Stripe Checkout** (keys & webhook from UI) |
+| **User portal** | End-user self-service at `/portal/` (renewal, direct pay) |
+| **Owner dashboard** | MRR rollup, wallet float, top resellers on Overview |
+| **Onboarding** | First-run wizard for new resellers (branding → plan → user) |
+
+### Commercial settings (UI-managed)
+
+Platform owner configures billing and payments from the dashboard — **no `.env` edits required**:
+
+| Location | What you control |
+|----------|------------------|
+| **System → Commercial** | GB usage rate, low-wallet threshold, job interval |
+| **Billing → Settings** | Same commercial form (sudo shortcut) |
+| **Commercial → Payment** | Demo gateway, min/max amounts, Stripe keys & webhook |
+| **Commercial → Reseller** | Max sub-resellers per parent, default commission % |
+
+Stripe webhook URL: `https://YOUR_PANEL/api/billing/webhook/stripe`
+
+Enable feature flags: `billing`, `user_portal`, `white_label`, `node_provisioning` (and `tenants` for advanced isolation).
+
+`.env` variables such as `USAGE_BILLING_RATE_PER_GB` remain as **fallbacks** until overridden in the UI.
 
 ---
 
@@ -206,6 +229,11 @@ Data: `/var/lib/nexuspanel`
 | `NODE_AGENT_IMAGE` | Node image (`nexuspanel/node:latest`) |
 | `PANEL_PUBLIC_ADDRESS` | Public URL for provisioned nodes |
 | `HA_ENABLED` | Multi-instance panel |
+| `USAGE_BILLING_RATE_PER_GB` | Fallback GB rate (overridden by **System → Commercial**) |
+| `PAYMENT_DEMO_ENABLED` | Fallback for demo gateway toggle |
+| `SUB_RESELLER_MAX_PER_PARENT` | Fallback max sub-resellers per parent |
+
+Commercial keys (Stripe, rates, commission) are stored in `platform_settings` and edited from the dashboard.
 
 See [`.env.example`](.env.example).
 

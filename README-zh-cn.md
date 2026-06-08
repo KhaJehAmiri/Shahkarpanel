@@ -33,8 +33,12 @@ bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/nexuspanel/maste
 | 核心 | 用户、节点、订阅、Telegram |
 | 基础设施 | PostgreSQL、Redis、备份、特性开关 |
 | 运维 | Prometheus、Grafana、规则引擎、插件 |
-| 商业 | RBAC、计费、API v2 |
-| 白标 | 租户、品牌、SSH 添加节点、中继隧道 |
+| 商业 | RBAC、套餐、钱包、发票、GB 用量计费、Stripe、API v2 |
+| 白标 | 经销商账号、子经销商佣金、租户、品牌、SSH 节点、用户门户 `/portal/` |
+
+**商业设置（UI）**：所有者可在 **System → Commercial** 配置 GB 费率、Stripe 密钥与 webhook、子经销商上限与默认佣金。`.env` 仅作回退。
+
+Stripe webhook：`https://YOUR_PANEL/api/billing/webhook/stripe`
 
 ---
 

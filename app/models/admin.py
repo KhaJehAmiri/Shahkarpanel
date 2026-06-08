@@ -28,6 +28,9 @@ class Admin(BaseModel):
     max_users: Optional[int] = None
     max_total_traffic: Optional[int] = None
     max_nodes: Optional[int] = None
+    tenant_id: Optional[int] = None
+    parent_admin_id: Optional[int] = None
+    commission_percent: int = 0
     model_config = ConfigDict(from_attributes=True)
 
     @property
@@ -112,6 +115,7 @@ class AdminCreate(Admin):
     password: str
     telegram_id: Optional[int] = None
     discord_webhook: Optional[str] = None
+    parent_admin_id: Optional[int] = None
 
     @property
     def hashed_password(self):
@@ -134,6 +138,7 @@ class AdminModify(BaseModel):
     max_users: Optional[int] = None
     max_total_traffic: Optional[int] = None
     max_nodes: Optional[int] = None
+    commission_percent: Optional[int] = None
 
     @property
     def hashed_password(self):

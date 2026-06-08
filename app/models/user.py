@@ -211,6 +211,8 @@ class UserModify(User):
     proxies: Dict[ProxyTypes, Dict[str, Any]] = Field(default_factory=dict)
     status: UserStatusModify = None
     data_limit_reset_strategy: UserDataLimitResetStrategy = None
+    portal_enabled: Optional[bool] = None
+    portal_password: Optional[str] = Field(default=None, min_length=4)
     model_config = ConfigDict(json_schema_extra={
         "example": {
             "proxies": {
@@ -292,6 +294,7 @@ class UserResponse(User):
     used_traffic: int
     lifetime_used_traffic: int = 0
     created_at: datetime
+    portal_enabled: bool = False
     links: List[str] = []
     subscription_url: str = ""
     public_subscription_url: str = ""

@@ -270,5 +270,20 @@ JOB_CORE_HEALTH_CHECK_INTERVAL = config("JOB_CORE_HEALTH_CHECK_INTERVAL", cast=i
 JOB_CORE_USER_RECONCILE_INTERVAL = config("JOB_CORE_USER_RECONCILE_INTERVAL", cast=int, default=45)
 JOB_RECORD_NODE_USAGES_INTERVAL = config("JOB_RECORD_NODE_USAGES_INTERVAL", cast=int, default=30)
 JOB_RECORD_USER_USAGES_INTERVAL = config("JOB_RECORD_USER_USAGES_INTERVAL", cast=int, default=10)
+JOB_BILL_USAGE_INTERVAL = config("JOB_BILL_USAGE_INTERVAL", cast=int, default=3600)
+
+# Usage-based billing (phase 3): minor units charged per GB of user traffic.
+# 0 disables the periodic billing job.
+USAGE_BILLING_RATE_PER_GB = config("USAGE_BILLING_RATE_PER_GB", cast=int, default=0)
+WALLET_LOW_BALANCE_THRESHOLD = config("WALLET_LOW_BALANCE_THRESHOLD", cast=int, default=10000)
+
+# Payment gateways (phase 4). Demo provider is for staging; disable in production.
+PAYMENT_DEMO_ENABLED = config("PAYMENT_DEMO_ENABLED", cast=bool, default=True)
+PORTAL_DIRECT_PAYMENT = config("PORTAL_DIRECT_PAYMENT", cast=bool, default=True)
+PAYMENT_MIN_AMOUNT = config("PAYMENT_MIN_AMOUNT", cast=int, default=100)
+PAYMENT_MAX_AMOUNT = config("PAYMENT_MAX_AMOUNT", cast=int, default=100_000_000)
+
+# Sub-reseller limits (phase 5).
+SUB_RESELLER_MAX_PER_PARENT = config("SUB_RESELLER_MAX_PER_PARENT", cast=int, default=10)
 JOB_REVIEW_USERS_INTERVAL = config("JOB_REVIEW_USERS_INTERVAL", cast=int, default=10)
 JOB_SEND_NOTIFICATIONS_INTERVAL = config("JOB_SEND_NOTIFICATIONS_INTERVAL", cast=int, default=30)

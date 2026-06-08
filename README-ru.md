@@ -33,8 +33,12 @@ bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/nexuspanel/maste
 | Ядро | Пользователи, ноды, подписки, Telegram |
 | Инфраструктура | PostgreSQL, Redis, бэкапы, feature flags |
 | Операции | Prometheus, Grafana, rules, plugins |
-| Коммерция | RBAC, billing, API v2 |
-| White-label | Tenants, брендинг, SSH-ноды, туннели relay→exit |
+| Коммерция | RBAC, планы, кошелёк, GB billing, Stripe, API v2 |
+| White-label | Аккаунты реселлеров, суб-реселлеры + комиссия, tenants, брендинг, портал `/portal/` |
+
+**Коммерческие настройки (UI)**: владелец задаёт тариф GB, Stripe и комиссии в **System → Commercial**. Переменные `.env` — только fallback.
+
+Webhook Stripe: `https://YOUR_PANEL/api/billing/webhook/stripe`
 
 ---
 

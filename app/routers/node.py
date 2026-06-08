@@ -10,7 +10,8 @@ from starlette.websockets import WebSocketDisconnect
 
 from app import logger, xray
 from app.db import Session, crud, get_db
-from app.dependencies import get_dbnode, validate_dates
+from app.dependencies import get_dbnode, get_scoped_node, validate_dates
+from app.rbac import require_permission
 from app.events import EventType, publish
 from app.models.admin import Admin
 from app.models.node import (
@@ -309,13 +310,15 @@ async def node_logs(node_id: int, websocket: WebSocket, db: Session = Depends(ge
 
 @router.get("/nodes", response_model=List[NodeResponse])
 def get_nodes(
-    db: Session = Depends(get_db), _: Admin = Depends(Admin.check_sudo_admin)
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(require_permission("nodes:read")),
 ):
-    """Retrieve a list of all nodes. Accessible only to sudo admins."""
+    """List nodes. Sudo sees all; resellers see only their workspace."""
     from app.provisioning import jobs as provision_jobs
+    from app.tenant.reseller_ops import list_scoped_nodes
 
     out: List[NodeResponse] = []
-    for dbnode in crud.get_nodes(db):
+    for dbnode in list_scoped_nodes(db, admin):
         row = NodeResponse.model_validate(dbnode)
         job = provision_jobs.progress_for_node(dbnode.id)
         if job:
@@ -352,21 +355,21 @@ def modify_node(
 @router.post("/node/{node_id}/reconnect")
 def reconnect_node(
     bg: BackgroundTasks,
-    dbnode: NodeResponse = Depends(get_node),
-    _: Admin = Depends(Admin.check_sudo_admin),
+    dbnode=Depends(get_scoped_node),
+    _: Admin = Depends(require_permission("nodes:provision")),
 ):
-    """Trigger a reconnection for the specified node. Only accessible to sudo admins."""
+    """Trigger a reconnection for a node in the caller's workspace."""
     bg.add_task(xray.operations.connect_node, node_id=dbnode.id)
     return {"detail": "Reconnection task scheduled"}
 
 
 @router.delete("/node/{node_id}")
 def remove_node(
-    dbnode: NodeResponse = Depends(get_node),
+    dbnode=Depends(get_scoped_node),
     db: Session = Depends(get_db),
-    admin: Admin = Depends(Admin.check_sudo_admin),
+    admin: Admin = Depends(require_permission("nodes:provision")),
 ):
-    """Delete a node and remove it from xray in the background."""
+    """Delete an owned node and remove it from xray in the background."""
     crud.remove_node(db, dbnode)
     xray.operations.remove_node(dbnode.id)
 

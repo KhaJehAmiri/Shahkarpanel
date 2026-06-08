@@ -355,6 +355,64 @@ def get_user_usage(
     return {"usages": usages, "username": dbuser.username}
 
 
+class ApplyPlanBody(BaseModel):
+    plan_id: int
+
+
+@router.post("/user/{username}/apply-plan", response_model=UserResponse, responses={403: responses._403, 404: responses._404})
+def apply_plan_to_user_endpoint(
+    body: ApplyPlanBody,
+    db: Session = Depends(get_db),
+    dbuser: UserResponse = Depends(get_validated_user),
+    admin: Admin = Depends(require_permission("users:write")),
+):
+    """Sell a commercial plan to a user (debits reseller wallet, renews immediately)."""
+    from app import billing, feature_flags
+    from app.portal import apply_plan_to_user, create_user_order, mark_order_applied
+    from app.tenant.plan_ops import assert_plan_accessible, assert_plan_for_user
+
+    if not feature_flags.is_enabled("billing"):
+        raise HTTPException(status_code=404, detail="Billing is disabled")
+
+    plan = crud.get_plan_by_id(db, body.plan_id)
+    if not plan or not plan.enabled:
+        raise HTTPException(status_code=404, detail="Plan not found")
+
+    dbrow = crud.get_user(db, dbuser.username)
+    if not dbrow or not dbrow.admin_id:
+        raise HTTPException(status_code=400, detail="User has no owning reseller")
+
+    assert_plan_accessible(db, admin, plan)
+    assert_plan_for_user(db, dbrow.admin_id, plan)
+
+    price = int(plan.price or 0)
+    if price > 0:
+        wallet = billing.get_or_create_wallet(db, dbrow.admin_id)
+        if wallet.balance < price:
+            raise HTTPException(
+                status_code=402,
+                detail="Insufficient wallet balance — top up before selling this plan",
+            )
+        billing.add_transaction(
+            db,
+            dbrow.admin_id,
+            -price,
+            type="plan_sale",
+            description=f"Plan sale for {dbrow.username} — {plan.name}",
+            reference=f"user:{dbrow.id}:plan:{plan.id}",
+        )
+
+    order = create_user_order(db, dbrow, plan, status="paid")
+    dbrow = apply_plan_to_user(db, dbrow, plan)
+    mark_order_applied(db, order)
+
+    if dbrow.status in (UserStatus.active, UserStatus.on_hold):
+        xray.operations.sync_core_users()
+
+    logger.info(f'User "{dbrow.username}" renewed via plan "{plan.name}" by {admin.username}')
+    return UserResponse.model_validate(dbrow)
+
+
 @router.post("/user/{username}/active-next", response_model=UserResponse, responses={403: responses._403, 404: responses._404})
 def active_next_plan(
     bg: BackgroundTasks,

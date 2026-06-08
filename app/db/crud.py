@@ -29,6 +29,7 @@ from app.db.models import (
     ProxyTypes,
     System,
     User,
+    UserOrder,
     UserTemplate,
     UserUsageResetLogs,
 )
@@ -547,6 +548,17 @@ def update_user(db: Session, dbuser: User, modify: UserModify) -> User:
     elif dbuser.next_plan is not None:
         db.delete(dbuser.next_plan)
 
+    if modify.portal_enabled is not None:
+        dbuser.portal_enabled = modify.portal_enabled
+        if not modify.portal_enabled:
+            dbuser.hashed_portal_password = None
+
+    if modify.portal_password:
+        from app.models.admin import pwd_context
+        dbuser.hashed_portal_password = pwd_context.hash(modify.portal_password)
+        dbuser.portal_enabled = True
+        dbuser.portal_password_reset_at = datetime.utcnow()
+
     dbuser.edit_at = datetime.utcnow()
 
     db.commit()
@@ -963,10 +975,18 @@ def create_admin(db: Session, admin: AdminCreate) -> Admin:
         max_users=getattr(admin, "max_users", None),
         max_total_traffic=getattr(admin, "max_total_traffic", None),
         max_nodes=getattr(admin, "max_nodes", None),
+        parent_admin_id=getattr(admin, "parent_admin_id", None),
+        commission_percent=int(getattr(admin, "commission_percent", 0) or 0),
     )
     db.add(dbadmin)
     db.commit()
     db.refresh(dbadmin)
+    if dbadmin.parent_admin_id and dbadmin.tenant_id is None:
+        parent = db.query(Admin).filter(Admin.id == dbadmin.parent_admin_id).first()
+        if parent and parent.tenant_id is not None:
+            dbadmin.tenant_id = parent.tenant_id
+            db.commit()
+            db.refresh(dbadmin)
     return dbadmin
 
 
@@ -991,7 +1011,7 @@ def update_admin(db: Session, dbadmin: Admin, modified_admin: AdminModify) -> Ad
         dbadmin.telegram_id = modified_admin.telegram_id
     if modified_admin.discord_webhook:
         dbadmin.discord_webhook = modified_admin.discord_webhook
-    for attr in ("role", "max_users", "max_total_traffic", "max_nodes"):
+    for attr in ("role", "max_users", "max_total_traffic", "max_nodes", "commission_percent"):
         value = getattr(modified_admin, attr, None)
         if value is not None:
             setattr(dbadmin, attr, value)
@@ -1648,6 +1668,28 @@ def delete_notification_reminder(db: Session, dbreminder: NotificationReminder) 
     db.delete(dbreminder)
     db.commit()
     return
+
+
+def verify_portal_user(db: Session, username: str, password: str) -> Optional[User]:
+    """Authenticate an end-user for the self-service portal."""
+    from app.models.admin import pwd_context
+
+    dbuser = get_user(db, username)
+    if not dbuser or not dbuser.portal_enabled or not dbuser.hashed_portal_password:
+        return None
+    if pwd_context.verify(password, dbuser.hashed_portal_password):
+        return dbuser
+    return None
+
+
+def list_user_orders(db: Session, user_id: int, limit: int = 20) -> List[UserOrder]:
+    return (
+        db.query(UserOrder)
+        .filter(UserOrder.user_id == user_id)
+        .order_by(UserOrder.created_at.desc())
+        .limit(limit)
+        .all()
+    )
 
 
 def count_online_users(db: Session, hours: int = 24, admin: Admin = None):

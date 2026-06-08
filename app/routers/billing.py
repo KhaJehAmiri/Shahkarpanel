@@ -1,9 +1,18 @@
+from datetime import datetime
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict
 
 from app import billing, feature_flags
+from app.billing.mrr import compute_mrr
+from app.billing.payments import (
+    complete_payment,
+    create_topup_payment,
+    get_intent_for_admin,
+    list_online_providers,
+)
+from app.billing.usage_billing import usage_summary_for_admin
 from app.db import Session, crud, get_db
 from app.models.admin import Admin
 from app.rbac import require_permission
@@ -74,6 +83,13 @@ class TransactionResponse(BaseModel):
 def list_providers(_: Admin = Depends(require_permission("billing:read"))):
     _require_billing_enabled()
     return billing.available_providers()
+
+
+@router.get("/payment-providers", response_model=List[str])
+def list_payment_providers(_: Admin = Depends(require_permission("billing:read"))):
+    """Online PSPs available for self-service top-up (excludes manual)."""
+    _require_billing_enabled()
+    return list_online_providers()
 
 
 @router.get("/wallet", response_model=WalletResponse)
@@ -158,3 +174,195 @@ def list_my_transactions(
 ):
     _require_billing_enabled()
     return billing.list_transactions(db, _admin_id(db, admin))
+
+
+class UsageSummaryResponse(BaseModel):
+    rate_per_gb: int
+    discount_percent: int
+    period_since: datetime
+    period_until: datetime
+    owned_bytes: int
+    foreign_bytes: int
+    owned_gb: int
+    foreign_gb: int
+    estimated_cost: int
+    wallet_balance: int
+    wallet_low: bool
+    wallet_low_threshold: int
+
+
+class TopUpRequest(BaseModel):
+    amount: int
+    provider: str = "demo"
+
+
+class PaymentCreateResponse(BaseModel):
+    payment_id: int
+    kind: str
+    amount: int
+    provider: str
+    status: str
+    instructions: Optional[str] = None
+    confirm_token: Optional[str] = None
+    checkout_url: Optional[str] = None
+
+
+class PaymentCompleteBody(BaseModel):
+    confirm_token: Optional[str] = None
+
+
+class PaymentResponse(BaseModel):
+    payment_id: int
+    kind: str
+    amount: int
+    provider: str
+    status: str
+    completed_at: Optional[datetime] = None
+
+
+@router.post("/topup", response_model=PaymentCreateResponse)
+def topup_wallet(
+    body: TopUpRequest,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(require_permission("billing:read")),
+):
+    """Reseller self-service wallet top-up via an online payment provider."""
+    _require_billing_enabled()
+    admin_id = _admin_id(db, admin)
+    intent, payload = create_topup_payment(db, admin_id, body.amount, body.provider)
+    return PaymentCreateResponse(
+        payment_id=intent.id,
+        kind=intent.kind,
+        amount=intent.amount,
+        provider=intent.provider,
+        status=intent.status,
+        instructions=payload.get("instructions"),
+        confirm_token=payload.get("confirm_token"),
+        checkout_url=payload.get("checkout_url"),
+    )
+
+
+@router.post("/payments/{payment_id}/complete", response_model=PaymentResponse)
+def complete_wallet_payment(
+    payment_id: int,
+    body: PaymentCompleteBody,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(require_permission("billing:read")),
+):
+    """Confirm an online top-up (demo gateway or PSP callback)."""
+    _require_billing_enabled()
+    intent = get_intent_for_admin(db, payment_id, _admin_id(db, admin))
+    if intent.kind != "topup":
+        raise HTTPException(status_code=400, detail="Not a top-up payment")
+    intent = complete_payment(db, intent, body.model_dump(exclude_unset=True))
+    return PaymentResponse(
+        payment_id=intent.id,
+        kind=intent.kind,
+        amount=intent.amount,
+        provider=intent.provider,
+        status=intent.status,
+        completed_at=intent.completed_at,
+    )
+
+
+class MrrResellerRow(BaseModel):
+    admin_id: int
+    username: str
+    revenue: int
+
+
+class MrrResponse(BaseModel):
+    period_days: int
+    total_revenue: int
+    mrr_estimate: int
+    by_type: dict
+    wallet_float: int
+    active_resellers: int
+    sub_resellers: int
+    top_resellers: List[MrrResellerRow]
+
+
+@router.get("/mrr", response_model=MrrResponse)
+def owner_mrr(
+    days: int = 30,
+    db: Session = Depends(get_db),
+    _: Admin = Depends(Admin.check_sudo_admin),
+):
+    """Platform owner revenue dashboard (MRR-style rollup)."""
+    _require_billing_enabled()
+    if days < 1 or days > 365:
+        raise HTTPException(status_code=422, detail="days must be 1–365")
+    return compute_mrr(db, days=days)
+
+
+@router.post("/webhook/stripe")
+async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
+    """Stripe Checkout completion webhook (no auth — verified by signature when configured)."""
+    import hashlib
+    import hmac
+    import json
+
+    from app import platform_settings as ps
+    from app.billing.payments import complete_payment
+    from app.db.models import PaymentIntent
+
+    if not ps.get_bool("payment.stripe_enabled"):
+        raise HTTPException(status_code=404, detail="Stripe disabled")
+
+    body = await request.body()
+    sig = request.headers.get("stripe-signature", "")
+    webhook_secret = ps.get_str("payment.stripe_webhook_secret")
+    if webhook_secret and sig:
+        try:
+            parts = dict(p.split("=", 1) for p in sig.split(",") if "=" in p)
+            timestamp = parts.get("t", "")
+            v1 = parts.get("v1", "")
+            signed = f"{timestamp}.{body.decode()}"
+            expected = hmac.new(
+                webhook_secret.encode(),
+                signed.encode(),
+                hashlib.sha256,
+            ).hexdigest()
+            if not hmac.compare_digest(expected, v1):
+                raise HTTPException(status_code=400, detail="Invalid signature")
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=400, detail="Signature verification failed")
+
+    try:
+        event = json.loads(body)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    if event.get("type") != "checkout.session.completed":
+        return {"received": True}
+
+    session = event.get("data", {}).get("object", {})
+    pid = session.get("metadata", {}).get("payment_intent_id")
+    if not pid:
+        return {"received": True}
+
+    intent = db.query(PaymentIntent).filter(PaymentIntent.id == int(pid)).first()
+    if intent is None or intent.status == "completed":
+        return {"received": True}
+
+    complete_payment(
+        db,
+        intent,
+        {"stripe_webhook": "checkout.session.completed", "session_id": session.get("id")},
+    )
+    return {"received": True}
+
+
+@router.get("/usage", response_model=UsageSummaryResponse)
+def usage_summary(
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(require_permission("billing:read")),
+):
+    """Unbilled traffic split (own vs shared nodes) and estimated GB charge."""
+    _require_billing_enabled()
+    dbadmin = crud.get_admin(db, admin.username)
+    if dbadmin is None:
+        raise HTTPException(status_code=400, detail="Admin not found in database")
+    return usage_summary_for_admin(db, dbadmin)

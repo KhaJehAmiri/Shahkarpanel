@@ -61,6 +61,15 @@ def startup() -> None:
             StaticFiles(directory=_next_out / "subscribe", html=True),
             name="next-subscribe",
         )
+        portal_dir = _next_out / "portal"
+        if portal_dir.is_dir():
+            _ensure_spa_fallback(portal_dir)
+            log.info("Serving user portal from %s", portal_dir)
+            app.mount(
+                "/portal",
+                StaticFiles(directory=portal_dir, html=True),
+                name="next-portal",
+            )
         next_chunks = _next_out / "_next"
         if next_chunks.is_dir():
             app.mount(

@@ -47,6 +47,17 @@ def get_dbnode(node_id: int, db: Session = Depends(get_db)):
     return dbnode
 
 
+def get_scoped_node(
+    dbnode=Depends(get_dbnode),
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(require_permission("nodes:read")),
+):
+    """Return a node only if the current admin may access it."""
+    from app.tenant.reseller_ops import assert_owns_node
+    assert_owns_node(db, admin, dbnode)
+    return dbnode
+
+
 def validate_dates(start: Optional[Union[str, datetime]], end: Optional[Union[str, datetime]]) -> (datetime, datetime):
     """Validate if start and end dates are correct and if end is after start."""
     try:

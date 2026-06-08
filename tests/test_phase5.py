@@ -1,101 +1,63 @@
-from datetime import datetime, timedelta
+"""Phase 5: sub-resellers, MRR, onboarding."""
+import secrets
 
-from app import intelligence, marketplace
+from passlib.context import CryptContext
+
+from app.billing.mrr import compute_mrr
 from app.db import GetDB
-from app.db.models import NodeUserUsage, User
-from app.intelligence import detectors
-from app.models.user import UserStatus
+from app.db.models import Admin as DBAdmin
+from app.models.admin import Admin
+from app.tenant.sub_reseller import (
+    create_sub_reseller,
+    list_children,
+    onboarding_status,
+)
 
-# ---- Pure detectors ----
-
-def test_heavy_users_flags_outliers():
-    usage = {1: 10, 2: 12, 3: 11, 4: 500}
-    assert detectors.heavy_users(usage, factor=3.0) == [4]
-
-
-def test_heavy_users_needs_minimum_sample():
-    assert detectors.heavy_users({1: 100, 2: 1}, factor=3.0) == []
+pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
-def test_hours_to_exhaustion_math():
-    # 50 of 100 used, burning 10/h -> 5h left.
-    assert detectors.hours_to_exhaustion(50, 100, 10) == 5.0
-    assert detectors.hours_to_exhaustion(50, None, 10) is None
-    assert detectors.hours_to_exhaustion(50, 100, 0) is None
-    assert detectors.hours_to_exhaustion(200, 100, 10) == 0.0
+def _parent(db):
+    admin = DBAdmin(
+        username=f"p{secrets.token_hex(4)}",
+        hashed_password=pwd.hash("x"),
+        is_sudo=False,
+        role="reseller",
+        max_users=100,
+    )
+    db.add(admin)
+    db.commit()
+    db.refresh(admin)
+    return admin
 
 
-def test_anomaly_detection():
-    baseline = [10, 11, 9, 10, 10, 11]
-    assert detectors.is_anomalous(100, baseline, threshold=3.0)
-    assert not detectors.is_anomalous(11, baseline, threshold=3.0)
-
-
-def test_latency_trend_sign():
-    assert detectors.latency_trend([10, 20, 30]) > 0
-    assert detectors.latency_trend([30, 20, 10]) < 0
-
-
-# ---- Orchestration over DB ----
-
-def test_scan_exhaustion_risk_uses_recent_usage():
-    now = datetime.utcnow()
+def test_create_sub_reseller():
     with GetDB() as db:
-        user = User(
-            username="intel-user",
-            status=UserStatus.active,
-            used_traffic=900,
-            data_limit=1000,
+        parent = _parent(db)
+        child = create_sub_reseller(
+            db, parent, username=f"c{secrets.token_hex(4)}", password="secret",
         )
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-        # 100 bytes consumed over the last hour -> ~100 B/h -> ~1h to limit.
-        db.add(
-            NodeUserUsage(
-                created_at=now - timedelta(minutes=30), user_id=user.id, node_id=None,
-                used_traffic=100,
-            )
-        )
-        db.commit()
-
-        risk = intelligence.scan_exhaustion_risk(db, lookback_hours=1, within_hours=48)
-        assert any(r["username"] == "intel-user" for r in risk)
+        assert child.parent_admin_id == parent.id
+        assert child.tenant_id == parent.tenant_id
+        children = list_children(db, parent.id)
+        assert len(children) == 1
 
 
-def test_run_scan_returns_summary_without_publishing():
+def test_mrr_counts_revenue():
     with GetDB() as db:
-        summary = intelligence.run_scan(db, publish_events=False)
-    assert set(summary) >= {"heavy_users", "exhaustion_risk", "node_risk", "scanned_at"}
+        admin = _parent(db)
+        from app import billing
+
+        billing.add_transaction(db, admin.id, 5000, type="credit")
+        billing.add_transaction(db, admin.id, -2000, type="usage_billing")
+        mrr = compute_mrr(db, days=30)
+        assert mrr["total_revenue"] >= 2000
+        assert mrr["active_resellers"] >= 1
 
 
-# ---- Marketplace ----
-
-def test_catalog_sync_and_install():
+def test_onboarding_detects_steps():
     with GetDB() as db:
-        marketplace.sync_catalog(db)
-        plugins = marketplace.list_plugins(db)
-        names = {p.name for p in plugins}
-        assert {"event_log", "node_alert", "auto_heal"}.issubset(names)
-
-        plugin = marketplace.install(db, "auto_heal")
-        assert plugin.installed and plugin.enabled
-
-        plugin = marketplace.uninstall(db, "auto_heal")
-        assert not plugin.installed and not plugin.enabled
-
-
-def test_reviews_update_average_rating():
-    with GetDB() as db:
-        marketplace.sync_catalog(db)
-        plugin = marketplace.get_plugin(db, "event_log")
-
-        marketplace.add_review(db, plugin, admin_id=1, rating=4)
-        marketplace.add_review(db, plugin, admin_id=2, rating=2)
-        assert marketplace.average_rating(plugin) == 3.0
-        assert plugin.rating_count == 2
-
-        # Same admin re-reviews -> replaces, count stays 2.
-        marketplace.add_review(db, plugin, admin_id=1, rating=2)
-        assert plugin.rating_count == 2
-        assert marketplace.average_rating(plugin) == 2.0
+        parent = _parent(db)
+        pydantic = Admin(username=parent.username, is_sudo=False, role="reseller")
+        status = onboarding_status(db, pydantic)
+        assert "steps" in status
+        assert status["steps"]["user"] is False

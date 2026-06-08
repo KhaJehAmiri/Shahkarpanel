@@ -1,11 +1,13 @@
 import { createContext, FC, ReactNode, useContext, useEffect, useState } from "react";
 import { api, clearToken, getToken, setUnauthorizedHandler } from "../api/client";
-import { AdminInfo, FeatureFlag } from "../api/types";
+import { AdminInfo, Branding, FeatureFlag } from "../api/types";
+import { applyBranding } from "../lib/branding";
 
 const THEME_KEY = "nx_theme";
 
 interface AppState {
   admin: AdminInfo | null;
+  branding: Branding | null;
   flags: Record<string, boolean>;
   loadingAuth: boolean;
   theme: "dark" | "light";
@@ -21,6 +23,7 @@ export const useApp = () => useContext(Ctx);
 
 export const AppProvider: FC<{ children: ReactNode }> = ({ children }) => {
   const [admin, setAdmin] = useState<AdminInfo | null>(null);
+  const [branding, setBranding] = useState<Branding | null>(null);
   const [flags, setFlags] = useState<Record<string, boolean>>({});
   const [loadingAuth, setLoadingAuth] = useState(true);
   const [theme, setThemeState] = useState<"dark" | "light">(() => {
@@ -51,13 +54,30 @@ export const AppProvider: FC<{ children: ReactNode }> = ({ children }) => {
     }
   };
 
+  const loadBranding = async () => {
+    try {
+      const b = await api.get<Branding>("/branding/mine");
+      setBranding(b);
+      applyBranding(b);
+    } catch {
+      try {
+        const b = await api.get<Branding>("/branding");
+        setBranding(b);
+        applyBranding(b);
+      } catch {
+        setBranding(null);
+      }
+    }
+  };
+
   const loadAdmin = async () => {
     try {
       const me = await api.get<AdminInfo>("/admin");
       setAdmin(me);
-      await refreshFlags();
+      await Promise.all([refreshFlags(), loadBranding()]);
     } catch {
       setAdmin(null);
+      setBranding(null);
     } finally {
       setLoadingAuth(false);
     }
@@ -71,6 +91,7 @@ export const AppProvider: FC<{ children: ReactNode }> = ({ children }) => {
   const logout = () => {
     clearToken();
     setAdmin(null);
+    setBranding(null);
     setFlags({});
   };
 
@@ -95,7 +116,7 @@ export const AppProvider: FC<{ children: ReactNode }> = ({ children }) => {
 
   return (
     <Ctx.Provider
-      value={{ admin, flags, loadingAuth, theme, setTheme, isEnabled, refreshFlags, logout, onAuthenticated }}
+      value={{ admin, branding, flags, loadingAuth, theme, setTheme, isEnabled, refreshFlags, logout, onAuthenticated }}
     >
       {children}
     </Ctx.Provider>

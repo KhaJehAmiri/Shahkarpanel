@@ -36,6 +36,12 @@ KNOWN_FLAGS: Dict[str, FlagSpec] = {
         FlagSpec("rule_engine", False, "flags.rule_engine.desc", "Enable the rule engine."),
         FlagSpec("auto_healing", False, "flags.auto_healing.desc", "Auto-restart nodes on error or down."),
         FlagSpec("billing", False, "flags.billing.desc", "Enable billing features."),
+        FlagSpec(
+            "user_portal",
+            False,
+            "flags.user_portal.desc",
+            "End-user self-service portal for subscription renewal.",
+        ),
         FlagSpec("api_v2", False, "flags.api_v2.desc", "Expose the v2 API."),
         FlagSpec("smart_routing", False, "flags.smart_routing.desc", "Latency, geo, and load-based node routing."),
         FlagSpec("workflows", False, "flags.workflows.desc", "Multi-step workflow automation."),
@@ -66,6 +72,12 @@ KNOWN_FLAGS: Dict[str, FlagSpec] = {
             "Relay traffic from in-country node to foreign exit.",
         ),
         FlagSpec("setup_wizard", True, "flags.setup_wizard.desc", "First-run setup wizard."),
+        FlagSpec(
+            "reseller_onboarding_completed",
+            False,
+            "flags.reseller_onboarding.desc",
+            "Reseller has finished the onboarding wizard.",
+        ),
     ]
 }
 

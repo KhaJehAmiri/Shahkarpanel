@@ -51,6 +51,11 @@ def _sync_wireguard():
         sync_user_change()
     except Exception:
         logger.exception("WireGuard sync failed")
+    try:
+        from app.singbox.operations import sync_user_change as singbox_sync
+        singbox_sync()
+    except Exception:
+        logger.exception("sing-box sync failed")
 
 
 def _account_for_inbound(user: UserResponse, proxy_type, inbound_tag: str, email: str) -> "Account | None":

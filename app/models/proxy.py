@@ -52,6 +52,11 @@ class ProxyTypes(str, Enum):
     # on the node (not an Xray account). It shares the user's central
     # used_traffic; see docs/accounting-contract.md.
     WireGuard = "wireguard"
+    # Hysteria2 and TUIC are QUIC *product* protocols served by the node's
+    # sing-box engine (not Xray accounts). Like WireGuard they fold into the
+    # single used_traffic; see docs/accounting-contract.md.
+    Hysteria2 = "hysteria2"
+    TUIC = "tuic"
 
     @property
     def account_model(self):
@@ -63,8 +68,9 @@ class ProxyTypes(str, Enum):
             return TrojanAccount
         if self == self.Shadowsocks:
             return ShadowsocksAccount
-        # WireGuard has no Xray account; it is provisioned as a node peer.
-        if self == self.WireGuard:
+        # WireGuard / Hysteria2 / TUIC have no Xray account; they are
+        # provisioned on the node's native engine (WireGuard / sing-box).
+        if self in (self.WireGuard, self.Hysteria2, self.TUIC):
             return None
 
     @property
@@ -79,12 +85,21 @@ class ProxyTypes(str, Enum):
             return ShadowsocksSettings
         if self == self.WireGuard:
             return WireGuardSettings
+        if self == self.Hysteria2:
+            return Hysteria2Settings
+        if self == self.TUIC:
+            return TUICSettings
 
     @property
     def is_xray_account(self) -> bool:
         """True when this protocol is provisioned through the Xray handler
         (and therefore reports usage via the Xray Stats API)."""
-        return self != self.WireGuard
+        return self not in (self.WireGuard, self.Hysteria2, self.TUIC)
+
+    @property
+    def is_singbox_product(self) -> bool:
+        """True for protocols served by the node's sing-box engine."""
+        return self in (self.Hysteria2, self.TUIC)
 
 
 class ProxySettings(BaseModel, use_enum_values=True):
@@ -191,6 +206,32 @@ class WireGuardSettings(ProxySettings):
         priv, pub = generate_keypair()
         self.private_key = priv
         self.public_key = pub
+
+
+class Hysteria2Settings(ProxySettings):
+    """Per-user Hysteria2 credentials (served by the node's sing-box engine).
+
+    ``password`` is the per-user auth string sing-box checks against its
+    inbound user list. Auto-generated when absent so an empty ``{}`` from the
+    API yields a valid user.
+    """
+    password: str = Field(default_factory=random_password)
+
+    def revoke(self):
+        self.password = random_password()
+
+
+class TUICSettings(ProxySettings):
+    """Per-user TUIC credentials (served by the node's sing-box engine).
+
+    TUIC authenticates with a ``uuid`` + ``password`` pair.
+    """
+    uuid: UUID = Field(default_factory=uuid4)
+    password: str = Field(default_factory=random_password)
+
+    def revoke(self):
+        self.uuid = uuid4()
+        self.password = random_password()
 
 
 class ProxyHostSecurity(str, Enum):

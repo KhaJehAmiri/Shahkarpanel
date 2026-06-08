@@ -73,6 +73,11 @@ def _sync_wireguard():
         sync_user_change()
     except Exception:
         pass
+    try:
+        from app.singbox.operations import sync_user_change as singbox_sync
+        singbox_sync()
+    except Exception:
+        pass
 
 
 def _sync_wireguard_node(node_id: int, node_object):
@@ -85,6 +90,17 @@ def _sync_wireguard_node(node_id: int, node_object):
             dbnode = crud.get_node_by_id(db, node_id)
             if dbnode and dbnode.core_kind == CoreKind.wireguard.value:
                 sync_node(db, dbnode, node_object=node_object)
+    except Exception:
+        pass
+    # A normal Xray node may *also* carry a sing-box config (Hysteria2/TUIC);
+    # push it when the node connects.
+    try:
+        from app.singbox.operations import sync_node as singbox_sync_node
+
+        with GetDB() as db:
+            dbnode = crud.get_node_by_id(db, node_id)
+            if dbnode and dbnode.singbox is not None:
+                singbox_sync_node(db, dbnode, node_object=node_object)
     except Exception:
         pass
 

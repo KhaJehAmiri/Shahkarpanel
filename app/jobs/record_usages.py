@@ -301,6 +301,16 @@ def collect_user_usage_params() -> tuple:
     except Exception:
         pass
 
+    # Same for sing-box (Hysteria2/TUIC) usage — best-effort fold into the one
+    # central User.used_traffic.
+    try:
+        from app.singbox.usage import collect_singbox_usage_params, merge_singbox_usage
+
+        sb_params, sb_coefficient = collect_singbox_usage_params()
+        merge_singbox_usage(api_params, usage_coefficient, sb_params, sb_coefficient)
+    except Exception:
+        pass
+
     return api_params, usage_coefficient
 
 

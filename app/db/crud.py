@@ -20,6 +20,7 @@ from app.db.models import (
     NodeGroup,
     NodeUsage,
     NodeUserUsage,
+    NodeSingBox,
     NodeWireGuard,
     NotificationReminder,
     Plan,
@@ -1510,6 +1511,40 @@ def get_wireguard_nodes(db: Session, enabled_only: bool = True) -> List[Node]:
     if enabled_only:
         query = query.filter(Node.status != NodeStatus.disabled)
     return query.all()
+
+
+def get_singbox_nodes(db: Session, enabled_only: bool = True) -> List[Node]:
+    """Return nodes that carry a sing-box config (Hysteria2/TUIC).
+
+    Unlike WireGuard (a dedicated core_kind), sing-box runs *alongside* Xray on
+    a normal node, so membership is defined by the presence of a NodeSingBox
+    row with at least one protocol enabled.
+    """
+    query = db.query(Node).join(NodeSingBox, NodeSingBox.node_id == Node.id)
+    if enabled_only:
+        query = query.filter(
+            Node.status != NodeStatus.disabled,
+            or_(NodeSingBox.hysteria2_enabled.is_(True), NodeSingBox.tuic_enabled.is_(True)),
+        )
+    return query.all()
+
+
+def get_node_singbox(db: Session, dbnode: Node) -> Optional["NodeSingBox"]:
+    return db.query(NodeSingBox).filter(NodeSingBox.node_id == dbnode.id).one_or_none()
+
+
+def upsert_node_singbox(db: Session, dbnode: Node, **fields) -> "NodeSingBox":
+    """Create or update a node's sing-box config; only given fields are set."""
+    cfg = get_node_singbox(db, dbnode)
+    if cfg is None:
+        cfg = NodeSingBox(node_id=dbnode.id)
+        db.add(cfg)
+    for key, value in fields.items():
+        if value is not None and hasattr(cfg, key):
+            setattr(cfg, key, value)
+    db.commit()
+    db.refresh(cfg)
+    return cfg
 
 
 def update_node_health(db: Session, dbnode: Node, latency_ms: Optional[float]) -> Node:

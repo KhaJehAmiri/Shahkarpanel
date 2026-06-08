@@ -370,6 +370,12 @@ class Node(Base):
         uselist=False,
         cascade="all, delete-orphan",
     )
+    singbox = relationship(
+        "NodeSingBox",
+        back_populates="node",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
 
     # Clustering / reliability (phase 2)
     region = Column(String(64), nullable=True, index=True)
@@ -425,6 +431,41 @@ class NodeWireGuard(Base):
     awg_h2 = Column(BigInteger, nullable=True)
     awg_h3 = Column(BigInteger, nullable=True)
     awg_h4 = Column(BigInteger, nullable=True)
+
+
+class NodeSingBox(Base):
+    """Per-node sing-box server config for the QUIC product protocols
+    (Hysteria2 / TUIC), one-to-one with Node.
+
+    A node carries a row here only when the operator enables one of these
+    protocols on it. Both inbounds share the node's TLS material and a local
+    Clash API port the panel polls for per-user traffic.
+    """
+
+    __tablename__ = "node_singbox"
+
+    node_id = Column(Integer, ForeignKey("nodes.id"), primary_key=True)
+    node = relationship("Node", back_populates="singbox")
+
+    # Shared TLS material (paths on the node) + the public SNI/host clients use.
+    certificate_path = Column(String(512), nullable=True)
+    key_path = Column(String(512), nullable=True)
+    sni = Column(String(256), nullable=True)
+    # Local Clash API the panel polls for per-user traffic counters.
+    clash_api_port = Column(Integer, nullable=False, server_default=text("9095"), default=9095)
+    clash_api_secret = Column(String(128), nullable=True)
+
+    # Hysteria2 inbound
+    hysteria2_enabled = Column(Boolean, nullable=False, server_default=text("0"), default=False)
+    hysteria2_port = Column(Integer, nullable=True)
+    hysteria2_up_mbps = Column(Integer, nullable=True)
+    hysteria2_down_mbps = Column(Integer, nullable=True)
+    hysteria2_obfs_password = Column(String(128), nullable=True)
+
+    # TUIC inbound
+    tuic_enabled = Column(Boolean, nullable=False, server_default=text("0"), default=False)
+    tuic_port = Column(Integer, nullable=True)
+    tuic_congestion_control = Column(String(16), nullable=False, server_default=text("'bbr'"), default="bbr")
 
 
 class NodeUserUsage(Base):

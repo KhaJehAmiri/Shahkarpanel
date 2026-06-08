@@ -71,6 +71,7 @@
     "nodes": "服务器",
     "tunnels": "隧道",
     "wireguard": "WireGuard",
+    "dedip": "专用 IP",
     "xray": "Xray 配置",
     "hosts": "订阅主机"
   },
@@ -602,7 +603,7 @@
       "desc": "API v2"
     },
     "client_api": {
-      "desc": "SigmaGuard 客户端 API（登录、negotiate、config、probe）"
+      "desc": "客户端应用 API（登录、negotiate、config、probe）"
     },
     "client_ss2022": {
       "desc": "向客户端公布 Shadowsocks-2022（需节点 inbound）"
@@ -686,6 +687,37 @@
     "step2": "创建启用 WireGuard 的用户",
     "step3": "在用户页面下载 .conf",
     "addNode": "添加 WG 服务器",
-    "addUser": "添加 WG 用户"
+    "addUser": "添加 WG 用户",
+    "awgTitle": "AmneziaWG 混淆",
+    "awgDescription": "按服务器让 WireGuard 流量看起来像随机流量。留空则为普通 WireGuard。节点需安装 amneziawg-go。",
+    "awgOn": "已混淆",
+    "awgOff": "普通 WG",
+    "awgPreset": "填入推荐预设",
+    "awgClear": "清除（普通 WG）"
+  },
+  "dedip": {
+    "title": "专用 IP",
+    "subtitle": "面向 Trader 用户的静态 IP 池",
+    "description": "为用户固定一个公网 IP，使其出口地址永不改变。用于客户端应用的 Trader 配置。",
+    "total": "IP 总数",
+    "assignedCount": "已分配",
+    "free": "空闲",
+    "addTitle": "添加 IP 到池",
+    "address": "IP 地址",
+    "nodeId": "节点 ID",
+    "addBtn": "加入池",
+    "assignUser": "分配给用户",
+    "assignHint": "从池中选取下一个空闲 IP",
+    "assignBtn": "分配",
+    "poolTitle": "IP 池",
+    "empty": "池为空 — 请在上方添加 IP。",
+    "assignedTo": "分配给",
+    "assignedAt": "分配时间",
+    "unassigned": "空闲",
+    "releaseBtn": "释放",
+    "assigned": "IP 已分配",
+    "released": "IP 已释放",
+    "flagOffTitle": "客户端 API 已禁用",
+    "flagOffBody": "在 系统 → 功能开关 中启用 “client_api” 以管理专用 IP。"
   }
 }

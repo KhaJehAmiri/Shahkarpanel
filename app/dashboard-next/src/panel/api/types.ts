@@ -45,6 +45,37 @@ export interface UserItem {
   subscription_url?: string;
   public_subscription_url?: string;
   portal_enabled?: boolean;
+  client_profile?: string | null;
+}
+
+export type ClientProfile = "gamer" | "trader" | "normal";
+
+export interface DedicatedIPItem {
+  id: number;
+  address: string;
+  node_id?: number | null;
+  user_id?: number | null;
+  username?: string | null;
+  assigned_at?: string | null;
+}
+
+export interface DedicatedIPPool {
+  total: number;
+  assigned: number;
+  free: number;
+  items: DedicatedIPItem[];
+}
+
+export interface AmneziaWGParams {
+  awg_jc?: number | null;
+  awg_jmin?: number | null;
+  awg_jmax?: number | null;
+  awg_s1?: number | null;
+  awg_s2?: number | null;
+  awg_h1?: number | null;
+  awg_h2?: number | null;
+  awg_h3?: number | null;
+  awg_h4?: number | null;
 }
 
 export interface InboundInfo {
@@ -80,6 +111,11 @@ export interface NodeItem {
   provision_message?: string | null;
   provision_progress?: number | null;
   provision_step?: string | null;
+  wireguard?: ({
+    public_key?: string | null;
+    endpoint?: string | null;
+    listen_port?: number;
+  } & AmneziaWGParams) | null;
 }
 
 export interface Tenant {

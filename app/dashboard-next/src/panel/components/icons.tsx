@@ -76,6 +76,7 @@ export const navIcon = (key: string, cls = "nx-ico"): any => {
     nodes: IcServer,
     tunnels: IcLink,
     wireguard: IcShield,
+    dedip: IcGlobe,
     xray: IcBolt,
     hosts: IcGlobe,
     resellers: IcStore,

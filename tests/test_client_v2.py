@@ -280,3 +280,30 @@ def test_amnezia_params_from_node_extracts_set_fields():
 
     params = amnezia_params_from_node(_Cfg())
     assert params == {"Jc": 4, "Jmin": 40, "Jmax": 70, "S1": 50, "S2": 100}
+
+
+def test_client_profile_create_and_modify():
+    from app.db import GetDB
+    from app.models.user import UserModify
+
+    with GetDB() as db:
+        user = _make_trader(db)
+        # Default is "normal" when not specified.
+        assert user.client_profile == "normal"
+
+        crud.update_user(db, user, UserModify(client_profile="gamer"))
+        db.refresh(user)
+        assert user.client_profile == "gamer"
+
+        # Omitting the field on a patch leaves it unchanged.
+        crud.update_user(db, user, UserModify(note="hi"))
+        db.refresh(user)
+        assert user.client_profile == "gamer"
+
+
+def test_client_profile_rejects_invalid():
+    import pytest
+    from app.models.user import UserModify
+
+    with pytest.raises(Exception):
+        UserModify(client_profile="hacker")

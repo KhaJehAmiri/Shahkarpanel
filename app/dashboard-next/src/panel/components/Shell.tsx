@@ -11,7 +11,7 @@ import { IcGlobe, IcLogout, IcMenu, IcMoon, IcSun, navIcon } from "./icons";
 /** Clear, task-oriented navigation — each item is one job, not a junk drawer. */
 const NAV_SUDO = [
   { group: "work", items: ["overview", "users"] },
-  { group: "connect", items: ["inbounds", "nodes", "tunnels", "wireguard"] },
+  { group: "connect", items: ["inbounds", "nodes", "tunnels", "wireguard", "dedip"] },
   { group: "advanced", items: ["xray", "hosts"] },
   { group: "manage", items: ["analytics", "automation"] },
   { group: "business", items: ["resellers", "billing"] },
@@ -24,6 +24,7 @@ const PATHS: Record<string, string> = {
   nodes: "/nodes",
   tunnels: "/tunnels",
   wireguard: "/wireguard",
+  dedip: "/dedicated-ip",
   xray: "/xray",
   hosts: "/hosts",
   analytics: "/analytics",
@@ -47,24 +48,35 @@ const NavItem: FC<{ id: string; onNav: () => void }> = ({ id, onNav }) => {
 
 export const Shell: FC = () => {
   const { t, i18n } = useTranslation();
-  const { admin, branding, theme, setTheme, logout } = useApp();
+  const { admin, branding, theme, setTheme, logout, isEnabled } = useApp();
   const appTitle = brandingTitle(branding, t("common.appName"));
   const { setOpen: setCopilotOpen } = useCopilot();
   const [open, setOpen] = useState(false);
   const [langOpen, setLangOpen] = useState(false);
   const loc = useLocation();
 
+  // Items that only make sense alongside a branded client app. They stay hidden
+  // for plain panel operators until the client_api feature flag is enabled.
+  const clientApiOn = isEnabled("client_api");
+
   const nav = useMemo(() => {
-    if (admin?.is_sudo) return NAV_SUDO;
-    const role = admin?.role || "reseller";
-    const base = [{ group: "work", items: ["overview", "users"] }];
-    if (role !== "support") {
-      base.push({ group: "connect", items: ["nodes"] });
-      base.push({ group: "business", items: ["resellers", "billing"] });
-    }
-    base.push({ group: "manage", items: ["analytics"] });
-    return base;
-  }, [admin?.is_sudo, admin?.role]);
+    const sections = admin?.is_sudo
+      ? NAV_SUDO
+      : (() => {
+          const role = admin?.role || "reseller";
+          const base = [{ group: "work", items: ["overview", "users"] }];
+          if (role !== "support") {
+            base.push({ group: "connect", items: ["nodes"] });
+            base.push({ group: "business", items: ["resellers", "billing"] });
+          }
+          base.push({ group: "manage", items: ["analytics"] });
+          return base;
+        })();
+    const hidden = clientApiOn ? [] : ["dedip"];
+    return sections
+      .map((s) => ({ ...s, items: s.items.filter((id) => !hidden.includes(id)) }))
+      .filter((s) => s.items.length > 0);
+  }, [admin?.is_sudo, admin?.role, clientApiOn]);
 
   const currentId =
     Object.keys(PATHS).find((k) => loc.pathname.startsWith(PATHS[k])) || "overview";

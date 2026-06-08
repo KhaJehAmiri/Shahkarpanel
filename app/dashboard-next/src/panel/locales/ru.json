@@ -71,6 +71,7 @@
     "nodes": "Серверы",
     "tunnels": "Туннели",
     "wireguard": "WireGuard",
+    "dedip": "Выделенные IP",
     "xray": "Конфиг Xray",
     "hosts": "Хосты подписки"
   },
@@ -602,7 +603,7 @@
       "desc": "API v2"
     },
     "client_api": {
-      "desc": "Client API SigmaGuard (login, negotiate, config, probe)"
+      "desc": "API клиентского приложения (вход, negotiate, config, probe)"
     },
     "client_ss2022": {
       "desc": "Объявлять Shadowsocks-2022 клиентам (нужен inbound на ноде)"
@@ -686,6 +687,37 @@
     "step2": "Создайте пользователя с WireGuard",
     "step3": "Скачайте .conf на странице пользователя",
     "addNode": "Добавить WG-сервер",
-    "addUser": "Добавить WG-пользователя"
+    "addUser": "Добавить WG-пользователя",
+    "awgTitle": "Обфускация AmneziaWG",
+    "awgDescription": "Делает трафик WireGuard похожим на случайный для каждого сервера. Оставьте пустым для обычного WireGuard. Требуется бинарник amneziawg-go на ноде.",
+    "awgOn": "Обфусцировано",
+    "awgOff": "Обычный WG",
+    "awgPreset": "Заполнить рекомендуемый пресет",
+    "awgClear": "Очистить (обычный WG)"
+  },
+  "dedip": {
+    "title": "Выделенные IP",
+    "subtitle": "Пул статических IP для профиля Trader",
+    "description": "Закрепляет фиксированный публичный IP за пользователем, чтобы адрес выхода не менялся. Используется профилем Trader клиентского приложения.",
+    "total": "Всего IP",
+    "assignedCount": "Назначено",
+    "free": "Свободно",
+    "addTitle": "Добавить IP в пул",
+    "address": "IP-адрес",
+    "nodeId": "ID ноды",
+    "addBtn": "В пул",
+    "assignUser": "Назначить пользователю",
+    "assignHint": "Берётся следующий свободный IP из пула",
+    "assignBtn": "Назначить",
+    "poolTitle": "Пул IP",
+    "empty": "Пул пуст — добавьте IP выше.",
+    "assignedTo": "Назначен",
+    "assignedAt": "Время назначения",
+    "unassigned": "Свободен",
+    "releaseBtn": "Освободить",
+    "assigned": "IP назначен",
+    "released": "IP освобождён",
+    "flagOffTitle": "Client API отключён",
+    "flagOffBody": "Включите флаг «client_api» в Система → Флаги функций, чтобы управлять выделенными IP."
   }
 }

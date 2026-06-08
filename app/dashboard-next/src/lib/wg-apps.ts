@@ -29,6 +29,21 @@ const WG_APPS: WgClientApp[] = [
     hint: "Import tunnel from file or scan QR",
   },
   {
+    id: "amneziawg",
+    name: "AmneziaWG",
+    short: "AW",
+    color: "#2563eb",
+    platforms: ["android", "ios", "windows", "macos", "linux"],
+    download: {
+      android: "https://play.google.com/store/apps/details?id=org.amnezia.vpn",
+      ios: "https://apps.apple.com/app/amneziavpn/id1600529900",
+      windows: "https://amnezia.org/en/downloads",
+      macos: "https://amnezia.org/en/downloads",
+      linux: "https://amnezia.org/en/downloads",
+    },
+    hint: "Obfuscated WireGuard — import the same .conf (Jc/Jmin/S1/S2/H1–H4 supported)",
+  },
+  {
     id: "wireguard-android",
     name: "WireGuard (Android)",
     short: "WA",

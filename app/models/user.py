@@ -79,6 +79,16 @@ class User(BaseModel):
 
     next_plan: Optional[NextPlanModel] = Field(None, nullable=True)
 
+    # SigmaGuard client profile. None on a patch = leave unchanged.
+    client_profile: Optional[str] = Field(default=None, nullable=True)
+
+    @field_validator("client_profile")
+    @classmethod
+    def validate_client_profile(cls, v):
+        if v is not None and v not in ("gamer", "trader", "normal"):
+            raise ValueError("client_profile must be gamer, trader, or normal")
+        return v
+
     @field_validator('data_limit', mode='before')
     def cast_to_int(cls, v):
         if v is None:  # Allow None values

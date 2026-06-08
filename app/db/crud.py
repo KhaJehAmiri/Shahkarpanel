@@ -399,6 +399,7 @@ def create_user(db: Session, user: UserCreate, admin: Admin = None) -> User:
         on_hold_expire_duration=(user.on_hold_expire_duration or None),
         on_hold_timeout=(user.on_hold_timeout or None),
         auto_delete_in_days=user.auto_delete_in_days,
+        client_profile=(user.client_profile or "normal"),
         next_plan=NextPlan(
             data_limit=user.next_plan.data_limit,
             expire=user.next_plan.expire,
@@ -528,6 +529,9 @@ def update_user(db: Session, dbuser: User, modify: UserModify) -> User:
 
     if modify.note is not None:
         dbuser.note = modify.note or None
+
+    if modify.client_profile is not None:
+        dbuser.client_profile = modify.client_profile
 
     if modify.data_limit_reset_strategy is not None:
         dbuser.data_limit_reset_strategy = modify.data_limit_reset_strategy.value

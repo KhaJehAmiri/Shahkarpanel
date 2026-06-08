@@ -71,6 +71,7 @@
     "nodes": "سرورها",
     "tunnels": "تونل‌ها",
     "wireguard": "WireGuard",
+    "dedip": "IP اختصاصی",
     "xray": "کانفیگ Xray",
     "hosts": "هاست اشتراک"
   },
@@ -192,6 +193,13 @@
     "revokeSub": "ابطال اشتراک",
     "resetUsageConfirm": "مصرف این کاربر صفر شود؟",
     "revokeSubConfirm": "لینک اشتراک باطل شود؟ کاربر باید کلاینت را به‌روز کند.",
+    "clientProfile": "پروفایل اپ کلاینت",
+    "clientProfileHint": "ترتیب پروتکل و انتخاب نود را برای اپ‌های کلاینت سازگار تنظیم می‌کند. روی اپ‌های استاندارد اثری ندارد.",
+    "profile": {
+      "normal": "معمولی",
+      "gamer": "گیمر (تأخیر کم)",
+      "trader": "تریدر (IP ثابت)"
+    },
     "portalSection": "پنل کاربر (تمدید)",
     "portalEnabled": "دسترسی پنل کاربر فعال",
     "portalPassword": "گذرواژه پنل",
@@ -679,7 +687,7 @@
       "desc": "API نسخه‌دار /api/v2"
     },
     "client_api": {
-      "desc": "API کلاینت SigmaGuard (ورود، negotiate، config، probe)"
+      "desc": "API اپ کلاینت (ورود، negotiate، config، probe)"
     },
     "client_ss2022": {
       "desc": "معرفی Shadowsocks-2022 به کلاینت‌ها (نیازمند inbound نود)"
@@ -775,7 +783,38 @@
     "step2": "کاربر با پروتکل WireGuard بسازید",
     "step3": "فایل .conf را از صفحه کاربر دانلود کنید",
     "addNode": "افزودن سرور WG",
-    "addUser": "افزودن کاربر WG"
+    "addUser": "افزودن کاربر WG",
+    "awgTitle": "مبهم‌سازی AmneziaWG",
+    "awgDescription": "ترافیک WireGuard را روی هر سرور شبیه ترافیک تصادفی می‌کند. برای WireGuard ساده خالی بگذارید. به باینری amneziawg-go روی نود نیاز دارد.",
+    "awgOn": "مبهم‌سازی‌شده",
+    "awgOff": "WG ساده",
+    "awgPreset": "پر کردن مقادیر پیشنهادی",
+    "awgClear": "پاک کردن (WG ساده)"
+  },
+  "dedip": {
+    "title": "IP اختصاصی",
+    "subtitle": "مخزن IP ثابت برای کاربران پروفایل Trader",
+    "description": "یک IP عمومی ثابت به کاربر اختصاص می‌دهد تا آدرس خروجی‌اش هرگز تغییر نکند. در پروفایل Trader اپ کلاینت استفاده می‌شود.",
+    "total": "کل IPها",
+    "assignedCount": "اختصاص‌یافته",
+    "free": "آزاد",
+    "addTitle": "افزودن IP به مخزن",
+    "address": "آدرس IP",
+    "nodeId": "شناسه نود",
+    "addBtn": "افزودن به مخزن",
+    "assignUser": "اختصاص به کاربر",
+    "assignHint": "اولین IP آزاد از مخزن انتخاب می‌شود",
+    "assignBtn": "اختصاص",
+    "poolTitle": "مخزن IP",
+    "empty": "مخزن خالی است — یک IP از بالا اضافه کنید.",
+    "assignedTo": "اختصاص به",
+    "assignedAt": "زمان اختصاص",
+    "unassigned": "آزاد",
+    "releaseBtn": "آزادسازی",
+    "assigned": "IP اختصاص یافت",
+    "released": "IP آزاد شد",
+    "flagOffTitle": "Client API غیرفعال است",
+    "flagOffBody": "برای مدیریت IPهای اختصاصی، فلگ «client_api» را در سیستم ← فلگ‌های قابلیت فعال کنید."
   },
   "commercial": {
     "hint": "همه تنظیمات تجاری در پایگاه داده ذخیره می‌شوند. تغییرات فوری اعمال می‌شوند؛ برای تغییر فاصله job صورتحساب مصرف، سرویس پنل را ری‌استارت کنید.",

@@ -12,6 +12,7 @@ import { Infrastructure } from "./pages/Infrastructure";
 import { Nodes } from "./pages/Nodes";
 import { TunnelsPage } from "./pages/TunnelsPage";
 import { WireGuard } from "./pages/WireGuard";
+import { DedicatedIP } from "./pages/DedicatedIP";
 import { XrayConfig } from "./pages/XrayConfig";
 import { Hosts } from "./pages/Hosts";
 import { Resellers } from "./pages/Resellers";
@@ -53,6 +54,7 @@ export default function DashboardRoot() {
           <Route path="/nodes" element={<Nodes />} />
           <Route path="/tunnels" element={<TunnelsPage />} />
           <Route path="/wireguard" element={<WireGuard />} />
+          <Route path="/dedicated-ip" element={<DedicatedIP />} />
           <Route path="/xray" element={<XrayConfig />} />
           <Route path="/hosts" element={<Hosts />} />
           <Route path="/infrastructure" element={<Infrastructure />} />

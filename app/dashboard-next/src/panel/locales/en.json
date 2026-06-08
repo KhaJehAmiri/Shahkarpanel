@@ -63,6 +63,7 @@
     "nodes": "Servers",
     "tunnels": "Tunnels",
     "wireguard": "WireGuard",
+    "dedip": "Dedicated IPs",
     "xray": "Xray config",
     "hosts": "Subscription hosts",
     "infrastructure": "Infrastructure",
@@ -190,6 +191,13 @@
     "revokeSub": "Revoke subscription",
     "resetUsageConfirm": "Reset this user's traffic counter?",
     "revokeSubConfirm": "Revoke subscription links? The user must refresh clients.",
+    "clientProfile": "Client app profile",
+    "clientProfileHint": "Tunes protocol order and node selection for compatible client apps. No effect on standard apps.",
+    "profile": {
+      "normal": "Regular",
+      "gamer": "Gamer (low latency)",
+      "trader": "Trader (stable IP)"
+    },
     "portalSection": "User portal (renewal)",
     "portalEnabled": "Portal access enabled",
     "portalPassword": "Portal password",
@@ -327,7 +335,38 @@
     "step2": "Create a user with WireGuard enabled",
     "step3": "Download the .conf from the user page",
     "addNode": "Add WG server",
-    "addUser": "Add WG user"
+    "addUser": "Add WG user",
+    "awgTitle": "AmneziaWG obfuscation",
+    "awgDescription": "Make WireGuard look like random traffic on a per-server basis. Leave blank for plain WireGuard. Requires the amneziawg-go binary on the node.",
+    "awgOn": "Obfuscated",
+    "awgOff": "Plain WG",
+    "awgPreset": "Fill recommended preset",
+    "awgClear": "Clear (plain WG)"
+  },
+  "dedip": {
+    "title": "Dedicated IPs",
+    "subtitle": "Static IP pool for Trader-profile users",
+    "description": "Pin a fixed public IP to a user so their exit address never changes. Used by the Trader client-app profile.",
+    "total": "Total IPs",
+    "assignedCount": "Assigned",
+    "free": "Free",
+    "addTitle": "Add IP to pool",
+    "address": "IP address",
+    "nodeId": "Node ID",
+    "addBtn": "Add to pool",
+    "assignUser": "Assign to user",
+    "assignHint": "Picks the next free IP from the pool",
+    "assignBtn": "Assign",
+    "poolTitle": "IP pool",
+    "empty": "Pool is empty — add an IP above.",
+    "assignedTo": "Assigned to",
+    "assignedAt": "Assigned at",
+    "unassigned": "Free",
+    "releaseBtn": "Release",
+    "assigned": "IP assigned",
+    "released": "IP released",
+    "flagOffTitle": "Client API is disabled",
+    "flagOffBody": "Enable the 'client_api' feature flag in System → Feature flags to manage dedicated IPs."
   },
   "copilot": {
     "title": "Copilot",
@@ -711,7 +750,7 @@
       "desc": "Expose the versioned /api/v2 surface"
     },
     "client_api": {
-      "desc": "SigmaGuard client API (login, negotiate, config, probe)"
+      "desc": "Client app API (auth, negotiate, config, probe)"
     },
     "client_ss2022": {
       "desc": "Advertise Shadowsocks-2022 to clients (needs node inbound)"

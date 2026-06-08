@@ -167,7 +167,7 @@ type ProtoState = { enabled: boolean; tags: string[]; flow: string; method: stri
 
 const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireguard?: boolean; onClose: () => void; onDone: () => void }> = ({ mode, user, presetWireguard, onClose, onDone }) => {
   const { t } = useTranslation();
-  const { admin } = useApp();
+  const { admin, isEnabled } = useApp();
   const toast = useToast();
   const inbounds = useFetch<InboundsByProtocol>(() => api.get("/inbounds"), []);
   const templates = useFetch<{ id: number; name?: string }[]>(
@@ -190,6 +190,7 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
     user && ["active", "on_hold", "disabled", "limited", "expired"].includes(user.status) ? user.status : "active"
   );
   const [reset, setReset] = useState(user?.data_limit_reset_strategy || "no_reset");
+  const [clientProfile, setClientProfile] = useState(user?.client_profile || "normal");
   const [note, setNote] = useState(user?.note || "");
   const [portalEnabled, setPortalEnabled] = useState(!!user?.portal_enabled);
   const [portalPassword, setPortalPassword] = useState("");
@@ -289,6 +290,7 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
         data_limit: unlimited || !dataLimitValue ? 0 : dataLimitToBytes(dataLimitValue, dataLimitUnit),
         data_limit_reset_strategy: reset,
         note: note || "",
+        client_profile: clientProfile,
       };
       if (status === "on_hold") {
         body.status = "on_hold";
@@ -455,6 +457,15 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
               {["no_reset", "day", "week", "month", "year"].map((r) => <option key={r} value={r}>{r}</option>)}
             </Select>
           </Field>
+          {isEnabled("client_api") && (
+            <Field label={t("users.clientProfile")} hint={t("users.clientProfileHint")}>
+              <Select value={clientProfile} onChange={(e: any) => setClientProfile(e.target.value)}>
+                {["normal", "gamer", "trader"].map((p) => (
+                  <option key={p} value={p}>{t(`users.profile.${p}`)}</option>
+                ))}
+              </Select>
+            </Field>
+          )}
           <Field label={`Note (${t("common.optional")})`}><Input value={note} onChange={(e: any) => setNote(e.target.value)} /></Field>
           {mode === "edit" && (
             <Card style={{ padding: 14 }}>

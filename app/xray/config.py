@@ -173,6 +173,12 @@ class XRayConfig(dict):
                 "is_fallback": False
             }
 
+            # Shadowsocks-2022 multi-user needs the inbound's server PSK + method
+            # to assemble client links (password = serverKey:userKey).
+            if inbound['protocol'] == ProxyTypes.Shadowsocks.value:
+                settings['ss_method'] = inbound['settings'].get('method')
+                settings['ss_password'] = inbound['settings'].get('password')
+
             # port settings
             try:
                 settings['port'] = inbound['port']

@@ -123,6 +123,11 @@ def _push_user_to_nodes(dbuser: "DBUser"):
             except KeyError:
                 continue
             account = proxy_type.account_model(email=email, **proxy_settings)
+            # Shadowsocks-2022 accounts have no gRPC CipherType; they reach the
+            # node through full-config reload (schedule_core_sync / reconcile),
+            # so skip the hot-add handler call that would raise for them.
+            if getattr(account, "is_2022", False):
+                continue
             if getattr(account, 'flow', None) and (
                 inbound.get('network', 'tcp') not in ('tcp', 'kcp')
                 or (

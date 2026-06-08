@@ -148,12 +148,23 @@ class V2rayShareLink(str):
             )
 
         elif inbound["protocol"] == "shadowsocks":
+            method = settings["method"]
+            password = settings["password"]
+            # Shadowsocks-2022: the connecting password is serverKey:userKey and
+            # the inbound (operator-defined) carries the server PSK + method.
+            if str(method).startswith("2022-"):
+                server_key = inbound.get("ss_password")
+                inbound_method = inbound.get("ss_method") or method
+                if not server_key:
+                    return
+                method = inbound_method
+                password = f"{server_key}:{password}"
             link = self.shadowsocks(
                 remark=remark,
                 address=address,
                 port=inbound["port"],
-                password=settings["password"],
-                method=settings["method"],
+                password=password,
+                method=method,
             )
         else:
             return

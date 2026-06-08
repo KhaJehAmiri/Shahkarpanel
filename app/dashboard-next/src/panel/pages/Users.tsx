@@ -22,7 +22,14 @@ import { useCopilot } from "../copilot/CopilotContext";
 
 const PAGE = 12;
 const STATUSES = ["active", "disabled", "expired", "limited", "on_hold"];
-const SS_METHODS = ["chacha20-ietf-poly1305", "aes-256-gcm", "aes-128-gcm"];
+const SS_METHODS = [
+  "chacha20-ietf-poly1305",
+  "aes-256-gcm",
+  "aes-128-gcm",
+  "2022-blake3-aes-256-gcm",
+  "2022-blake3-aes-128-gcm",
+  "2022-blake3-chacha20-poly1305",
+];
 const FLOWS = [
   { v: "", label: "none (recommended)" },
   { v: "xtls-rprx-vision", label: "xtls-rprx-vision" },

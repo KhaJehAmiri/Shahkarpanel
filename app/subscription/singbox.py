@@ -330,7 +330,17 @@ class SingBoxConfiguration(str):
             outbound['password'] = settings['password']
 
         elif inbound['protocol'] == 'shadowsocks':
-            outbound['password'] = settings['password']
-            outbound['method'] = settings['method']
+            method = settings['method']
+            password = settings['password']
+            # Shadowsocks-2022: method is inbound-level and the connecting
+            # password is serverKey:userKey.
+            if str(method).startswith("2022-"):
+                server_key = inbound.get("ss_password")
+                if not server_key:
+                    return
+                method = inbound.get("ss_method") or method
+                password = f"{server_key}:{password}"
+            outbound['password'] = password
+            outbound['method'] = method
 
         self.add_outbound(outbound)

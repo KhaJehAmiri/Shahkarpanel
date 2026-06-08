@@ -6,8 +6,13 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+import base64
+import secrets
+
 from app.utils.system import random_password
 from xray_api.types.account import (
+    SS2022_KEY_BYTES,
+    SS2022_METHODS,
     ShadowsocksAccount,
     ShadowsocksMethods,
     TrojanAccount,
@@ -15,6 +20,20 @@ from xray_api.types.account import (
     VMessAccount,
     XTLSFlows,
 )
+
+
+def random_ss2022_key(method: ShadowsocksMethods) -> str:
+    """Return a base64 PSK of the exact byte-length the SS-2022 cipher needs."""
+    n = SS2022_KEY_BYTES.get(method, 32)
+    return base64.b64encode(secrets.token_bytes(n)).decode()
+
+
+def _is_valid_ss2022_key(value: str, method: ShadowsocksMethods) -> bool:
+    try:
+        raw = base64.b64decode(value, validate=True)
+    except Exception:
+        return False
+    return len(raw) == SS2022_KEY_BYTES.get(method, 32)
 
 FRAGMENT_PATTERN = re.compile(r'^((\d{1,4}-\d{1,4})|(\d{1,4})),((\d{1,3}-\d{1,3})|(\d{1,3})),(tlshello|\d|\d\-\d)$')
 
@@ -121,8 +140,22 @@ class ShadowsocksSettings(ProxySettings):
     password: str = Field(default_factory=random_password)
     method: ShadowsocksMethods = ShadowsocksMethods.CHACHA20_POLY1305
 
+    @model_validator(mode="after")
+    def _ensure_key_matches_method(self):
+        # SS-2022 ciphers need a base64 PSK of an exact length. If the method is
+        # 2022 but the stored password isn't a valid key (e.g. a legacy
+        # plain-text password or a method switch), mint a correct one.
+        method = self.method if isinstance(self.method, ShadowsocksMethods) else ShadowsocksMethods(self.method)
+        if method in SS2022_METHODS and not _is_valid_ss2022_key(self.password, method):
+            self.password = random_ss2022_key(method)
+        return self
+
     def revoke(self):
-        self.password = random_password()
+        method = self.method if isinstance(self.method, ShadowsocksMethods) else ShadowsocksMethods(self.method)
+        if method in SS2022_METHODS:
+            self.password = random_ss2022_key(method)
+        else:
+            self.password = random_password()
 
 
 class WireGuardSettings(ProxySettings):

@@ -288,8 +288,16 @@ class ClashConfiguration(object):
             node['password'] = settings['password']
 
         elif inbound['protocol'] == 'shadowsocks':
-            node['password'] = settings['password']
-            node['cipher'] = settings['method']
+            method = settings['method']
+            password = settings['password']
+            if str(method).startswith("2022-"):
+                server_key = inbound.get("ss_password")
+                if not server_key:
+                    return
+                method = inbound.get("ss_method") or method
+                password = f"{server_key}:{password}"
+            node['password'] = password
+            node['cipher'] = method
 
         else:
             return
@@ -388,8 +396,16 @@ class ClashMetaConfiguration(ClashConfiguration):
             node['password'] = settings['password']
 
         elif inbound['protocol'] == 'shadowsocks':
-            node['password'] = settings['password']
-            node['cipher'] = settings['method']
+            method = settings['method']
+            password = settings['password']
+            if str(method).startswith("2022-"):
+                server_key = inbound.get("ss_password")
+                if not server_key:
+                    return
+                method = inbound.get("ss_method") or method
+                password = f"{server_key}:{password}"
+            node['password'] = password
+            node['cipher'] = method
 
         else:
             return

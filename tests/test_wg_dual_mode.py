@@ -3,8 +3,8 @@ import uuid
 
 from app.db import GetDB, crud
 from app.models.node import CoreKind, NodeCreate
-from app.wireguard.sync import build_node_specs, plain_wg_enabled, amneziawg_enabled
 from app.wireguard import generate_keypair
+from app.wireguard.sync import amneziawg_enabled, build_node_specs, plain_wg_enabled
 
 
 def test_build_node_specs_plain_only():

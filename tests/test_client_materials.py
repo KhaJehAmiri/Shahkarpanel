@@ -1,5 +1,4 @@
 """Client API protocol material builder."""
-from app.client import materials as mats
 from app.subscription.quic import singbox_link_insecure
 
 

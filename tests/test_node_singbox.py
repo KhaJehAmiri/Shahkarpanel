@@ -99,7 +99,7 @@ def test_kill_stale_singbox_terminates_orphans(monkeypatch):
 
 
 def test_manager_restart_cleans_stale_before_start(tmp_path, monkeypatch):
-    from node.singbox import SingBoxManager, SingBoxSpec, SingBoxInbound
+    from node.singbox import SingBoxManager
 
     cleaned = {"n": 0}
     monkeypatch.setattr(
@@ -115,9 +115,6 @@ def test_manager_restart_cleans_stale_before_start(tmp_path, monkeypatch):
         "node.singbox.subprocess.Popen",
         lambda *a, **k: type("P", (), {"poll": lambda s: None})(),
     )
-    spec = SingBoxSpec(inbounds=[
-        SingBoxInbound(type="hysteria2", tag="h", listen_port=443),
-    ])
     mgr.restart()
     assert cleaned["n"] == 1
 

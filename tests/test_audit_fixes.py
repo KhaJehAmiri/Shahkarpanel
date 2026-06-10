@@ -6,8 +6,7 @@ from pydantic import ValidationError
 
 from app.models.proxy import ProxyTypes
 from app.models.user import UserCreate, UserStatusCreate
-from app.routers.user_import import _row_to_user_create
-from app.routers.user_import import ImportRow
+from app.routers.user_import import ImportRow, _row_to_user_create
 
 
 def test_user_create_rejects_empty_inbound_tags():

@@ -18,7 +18,7 @@ depends_on = None
 def upgrade():
     op.add_column(
         "node_singbox",
-        sa.Column("tls_trusted", sa.Boolean(), nullable=False, server_default=sa.text("0")),
+        sa.Column("tls_trusted", sa.Boolean(), nullable=False, server_default=sa.false()),
     )
     op.add_column("node_singbox", sa.Column("tls_issuer", sa.String(256), nullable=True))
     op.add_column("node_singbox", sa.Column("tls_expires_at", sa.DateTime(), nullable=True))

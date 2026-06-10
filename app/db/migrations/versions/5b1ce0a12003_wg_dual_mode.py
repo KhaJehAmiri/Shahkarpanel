@@ -18,10 +18,10 @@ depends_on = None
 def upgrade() -> None:
     with op.batch_alter_table("node_wireguard", schema=None) as batch_op:
         batch_op.add_column(
-            sa.Column("plain_enabled", sa.Boolean(), nullable=False, server_default=sa.text("1")),
+            sa.Column("plain_enabled", sa.Boolean(), nullable=False, server_default=sa.true()),
         )
         batch_op.add_column(
-            sa.Column("awg_enabled", sa.Boolean(), nullable=False, server_default=sa.text("0")),
+            sa.Column("awg_enabled", sa.Boolean(), nullable=False, server_default=sa.false()),
         )
         batch_op.add_column(
             sa.Column("awg_interface", sa.String(length=32), nullable=False, server_default=sa.text("'wg1'")),
@@ -39,7 +39,7 @@ def upgrade() -> None:
     # Nodes that already had AWG obfuscation params were single-mode AWG; enable
     # dual stack so plain WG can coexist on a separate port.
     op.execute(
-        "UPDATE node_wireguard SET awg_enabled = 1 "
+        "UPDATE node_wireguard SET awg_enabled = true "
         "WHERE awg_jc IS NOT NULL OR awg_jmin IS NOT NULL OR awg_jmax IS NOT NULL "
         "OR awg_s1 IS NOT NULL OR awg_s2 IS NOT NULL "
         "OR awg_h1 IS NOT NULL OR awg_h2 IS NOT NULL OR awg_h3 IS NOT NULL OR awg_h4 IS NOT NULL"

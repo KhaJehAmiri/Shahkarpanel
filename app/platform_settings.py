@@ -72,8 +72,9 @@ def get_setting(key: str, default: Any = None) -> Any:
         if key in _cache:
             return _cache[key]
 
+    from sqlalchemy.exc import SQLAlchemyError
+
     from app.db.models import PlatformSetting
-    from sqlalchemy.exc import OperationalError
 
     resolved: Any = None
     with GetDB() as db:
@@ -81,7 +82,7 @@ def get_setting(key: str, default: Any = None) -> Any:
             row = db.query(PlatformSetting).filter(PlatformSetting.key == key).first()
             if row is not None and row.value is not None:
                 resolved = row.value
-        except OperationalError:
+        except SQLAlchemyError:
             resolved = None
 
     if resolved is None:

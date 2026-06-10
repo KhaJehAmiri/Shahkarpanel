@@ -46,7 +46,7 @@ from app.models.user import (
     UserStatus,
     UserUsageResponse,
 )
-from app.models.user_template import UserTemplateCreate, UserTemplateModify
+from app.models.user_template import UserTemplateCreate, UserTemplateModify, NATIVE_TEMPLATE_PROTOCOLS, native_template_marker
 from app.utils.helpers import calculate_expiration_days, calculate_usage_percent
 from config import NOTIFY_DAYS_LEFT, NOTIFY_REACHED_USAGE_PERCENT, USERS_AUTODELETE_DAYS
 
@@ -1180,15 +1180,22 @@ def create_user_template(db: Session, user_template: UserTemplateCreate) -> User
         UserTemplate: The created user template object.
     """
     inbound_tags: List[str] = []
-    for _, i in user_template.inbounds.items():
-        inbound_tags.extend(i)
+    for proto, tags in user_template.inbounds.items():
+        proto_key = proto.value if hasattr(proto, "value") else str(proto)
+        if proto_key in NATIVE_TEMPLATE_PROTOCOLS and not tags:
+            inbound_tags.append(native_template_marker(proto_key))
+        else:
+            inbound_tags.extend(tags)
+    inbound_records: List[ProxyInbound] = []
+    for tag in inbound_tags:
+        inbound_records.append(get_or_create_inbound(db, tag))
     dbuser_template = UserTemplate(
         name=user_template.name,
         data_limit=user_template.data_limit,
         expire_duration=user_template.expire_duration,
         username_prefix=user_template.username_prefix,
         username_suffix=user_template.username_suffix,
-        inbounds=db.query(ProxyInbound).filter(ProxyInbound.tag.in_(inbound_tags)).all()
+        inbounds=inbound_records,
     )
     db.add(dbuser_template)
     db.commit()
@@ -1222,9 +1229,16 @@ def update_user_template(
 
     if modified_user_template.inbounds:
         inbound_tags: List[str] = []
-        for _, i in modified_user_template.inbounds.items():
-            inbound_tags.extend(i)
-        dbuser_template.inbounds = db.query(ProxyInbound).filter(ProxyInbound.tag.in_(inbound_tags)).all()
+        for proto, tags in modified_user_template.inbounds.items():
+            proto_key = proto.value if hasattr(proto, "value") else str(proto)
+            if proto_key in NATIVE_TEMPLATE_PROTOCOLS and not tags:
+                inbound_tags.append(native_template_marker(proto_key))
+            else:
+                inbound_tags.extend(tags)
+        inbound_records: List[ProxyInbound] = []
+        for tag in inbound_tags:
+            inbound_records.append(get_or_create_inbound(db, tag))
+        dbuser_template.inbounds = inbound_records
 
     db.commit()
     db.refresh(dbuser_template)

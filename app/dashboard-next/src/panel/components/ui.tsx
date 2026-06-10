@@ -1,6 +1,7 @@
 import {
   createContext, FC, InputHTMLAttributes, ReactNode, useCallback, useContext, useEffect, useRef, useState,
 } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { copyToClipboard } from "../lib/clipboard";
 import { IcCheck, IcClose } from "./icons";
@@ -244,11 +245,20 @@ export const Modal: FC<{
   open: boolean; title: ReactNode; onClose: () => void; children: ReactNode; footer?: ReactNode;
   wide?: boolean; formWide?: boolean;
 }> = ({ open, title, onClose, children, footer, wide, formWide }) => {
-  if (!open) return null;
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [open]);
+
+  if (!open || typeof document === "undefined") return null;
   const modalCls = ["nx-modal", wide && "wide", formWide && "form-wide"].filter(Boolean).join(" ");
-  return (
+  return createPortal(
     <div className="nx-overlay" onClick={onClose}>
-      <div className={modalCls} onClick={(e) => e.stopPropagation()}>
+      <div className={modalCls} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
         <div className="nx-modal-head">
           <div className="nx-card-title">{title}</div>
           <CloseButton onClose={onClose} />
@@ -256,24 +266,44 @@ export const Modal: FC<{
         <div className="nx-modal-body">{children}</div>
         {footer && <div className="nx-modal-foot">{footer}</div>}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 };
 
 /* ------------------------------- Drawer -------------------------------- */
-export const Drawer: FC<{ open: boolean; title: ReactNode; onClose: () => void; children: ReactNode }> = ({ open, title, onClose, children }) => {
-  if (!open) return null;
-  return (
-    <>
-      <div className="nx-drawer-overlay" onClick={onClose} />
-      <div className="nx-drawer">
+export const Drawer: FC<{
+  open: boolean;
+  title: ReactNode;
+  onClose: () => void;
+  children: ReactNode;
+  wide?: boolean;
+  overlayClassName?: string;
+  drawerClassName?: string;
+}> = ({ open, title, onClose, children, wide, overlayClassName = "", drawerClassName = "" }) => {
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [open]);
+
+  if (!open || typeof document === "undefined") return null;
+  const overlayCls = ["nx-drawer-overlay", overlayClassName].filter(Boolean).join(" ");
+  const drawerCls = ["nx-drawer", wide && "wide", drawerClassName].filter(Boolean).join(" ");
+  return createPortal(
+    <div className={overlayCls} onClick={onClose}>
+      <div className={drawerCls} role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
         <div className="nx-drawer-head">
           <div className="nx-card-title">{title}</div>
           <CloseButton onClose={onClose} />
         </div>
         <div className="nx-drawer-body">{children}</div>
       </div>
-    </>
+    </div>,
+    document.body,
   );
 };
 

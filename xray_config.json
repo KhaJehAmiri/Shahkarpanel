@@ -171,17 +171,6 @@
                 "network": "tcp,udp",
                 "clients": []
             }
-        },
-        {
-            "tag": "\u0633",
-            "listen": "0.0.0.0",
-            "port": 443,
-            "protocol": "wireguard",
-            "settings": {
-                "secretKey": "",
-                "mtu": 1420,
-                "peers": []
-            }
         }
     ],
     "outbounds": [

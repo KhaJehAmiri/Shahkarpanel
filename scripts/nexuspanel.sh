@@ -67,9 +67,18 @@ prepare_low_memory() {
 
 compose() {
   if docker compose version >/dev/null 2>&1; then
-    docker compose -f "${APP_DIR}/docker-compose.yml" "$@"
+    docker compose -f "${APP_DIR}/docker-compose.postgres.yml" "$@"
   else
-    docker-compose -f "${APP_DIR}/docker-compose.yml" "$@"
+    docker-compose -f "${APP_DIR}/docker-compose.postgres.yml" "$@"
+  fi
+}
+
+# Docker install must not compete with a host systemd unit on :8000.
+disable_conflicting_services() {
+  if systemctl is-enabled nexuspanel.service >/dev/null 2>&1; then
+    warn "Disabling host systemd unit (nexuspanel.service) — Docker owns the panel."
+    systemctl stop nexuspanel.service >/dev/null 2>&1 || true
+    systemctl disable nexuspanel.service >/dev/null 2>&1 || true
   fi
 }
 
@@ -330,6 +339,7 @@ cmd_install() {
   fetch_repo
   seed_data_dir
   write_env
+  disable_conflicting_services
   configure_firewall
   install_cli
   log "Building and starting panel (first run may take a few minutes)..."
@@ -484,6 +494,7 @@ cmd_update()  {
   fetch_repo
   seed_data_dir
   load_env_creds
+  disable_conflicting_services
   configure_firewall
   install_cli
   compose up -d --build

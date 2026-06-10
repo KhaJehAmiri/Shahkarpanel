@@ -5,6 +5,22 @@ from pydantic import field_validator, ConfigDict, BaseModel, Field
 from app import xray
 from app.models.proxy import ProxyTypes
 
+# Sentinel inbound tags persisted for native product protocols (no Xray inbound).
+NATIVE_TEMPLATE_MARKERS: Dict[str, ProxyTypes] = {
+    "__native:wireguard": ProxyTypes.WireGuard,
+    "__native:hysteria2": ProxyTypes.Hysteria2,
+    "__native:tuic": ProxyTypes.TUIC,
+}
+NATIVE_TEMPLATE_PROTOCOLS = frozenset(p.value for p in NATIVE_TEMPLATE_MARKERS.values())
+
+
+def native_template_marker(protocol: str) -> str:
+    return f"__native:{protocol}"
+
+
+def is_native_template_marker(tag: str) -> bool:
+    return tag in NATIVE_TEMPLATE_MARKERS
+
 
 class UserTemplate(BaseModel):
     name: Optional[str] = Field(None, nullable=True)
@@ -61,5 +77,9 @@ class UserTemplateResponse(UserTemplate):
                         final[protocol].append(inbound["tag"])
                     else:
                         final[protocol] = [inbound["tag"]]
+        for tag in inbound_tags:
+            proto = NATIVE_TEMPLATE_MARKERS.get(tag)
+            if proto is not None:
+                final[proto.value] = []
         return final
     model_config = ConfigDict(from_attributes=True)

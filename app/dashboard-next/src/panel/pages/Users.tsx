@@ -16,7 +16,7 @@ import { QR } from "../components/QR";
 import { absoluteUrl } from "../lib/url";
 import { resolveSubscribeBrowserUrl, resolveWgUrl } from "../../lib/subscribe-url";
 import { copyToClipboard } from "../lib/clipboard";
-import { IcClose, IcEdit, IcExternal, IcEye, IcPlus, IcRefresh, IcShare, IcTrash } from "../components/icons";
+import { IcEdit, IcExternal, IcEye, IcPlus, IcRefresh, IcShare, IcTrash } from "../components/icons";
 import { UserTemplatesPanel } from "../components/UserTemplates";
 import { useApp } from "../context/AppContext";
 import { useCopilot } from "../copilot/CopilotContext";
@@ -449,13 +449,14 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
   const showLimits = !useWizard || wizardStep === 3;
 
   return (
-    <div className={`nx-drawer-overlay ${useWizard ? "centered" : ""}`} onClick={onClose}>
-      <div className={`nx-drawer ${useWizard ? "wizard-mode" : "wide"}`} onClick={(e) => e.stopPropagation()}>
-        <div className="nx-drawer-head">
-          <div className="nx-card-title">{mode === "create" ? t("common.create") : `${t("common.edit")} — ${user?.username}`}</div>
-          <button type="button" className="nx-btn icon ghost" onClick={onClose}><IcClose /></button>
-        </div>
-        <div className="nx-drawer-body">
+    <Drawer
+      open
+      wide={!useWizard}
+      overlayClassName={useWizard ? "centered" : ""}
+      drawerClassName={useWizard ? "wizard-mode" : ""}
+      title={mode === "create" ? t("common.create") : `${t("common.edit")} — ${user?.username}`}
+      onClose={onClose}
+    >
       <div className={`nx-stack nx-user-form ${useWizard ? "compact" : ""}`}>
         {useWizard && (
           <div className="nx-wizard-steps">
@@ -758,9 +759,7 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
           <div className="nx-faint" style={{ fontSize: 11, textAlign: "center", marginTop: 8 }}>{t("users.wizardExpertLink")}</div>
         )}
       </div>
-        </div>
-      </div>
-    </div>
+    </Drawer>
   );
 };
 

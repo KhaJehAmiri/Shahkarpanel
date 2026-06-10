@@ -408,9 +408,21 @@ def create_user(db: Session, user: UserCreate, admin: Admin = None) -> User:
             fire_on_either=user.next_plan.fire_on_either,
         ) if user.next_plan else None
     )
+    if user.portal_enabled or user.portal_password:
+        from app.models.admin import pwd_context
+
+        if user.portal_password:
+            dbuser.hashed_portal_password = pwd_context.hash(user.portal_password)
+        dbuser.portal_enabled = user.portal_enabled or bool(user.portal_password)
+        dbuser.portal_password_reset_at = datetime.utcnow()
     db.add(dbuser)
     db.commit()
     db.refresh(dbuser)
+    if user.portal_enabled or user.portal_password:
+        from app.client.provision import ensure_app_proxies
+
+        ensure_app_proxies(db, dbuser)
+        db.refresh(dbuser)
     return dbuser
 
 
@@ -564,6 +576,11 @@ def update_user(db: Session, dbuser: User, modify: UserModify) -> User:
         dbuser.portal_enabled = True
         dbuser.portal_password_reset_at = datetime.utcnow()
 
+    if modify.portal_enabled or modify.portal_password:
+        from app.client.provision import ensure_app_proxies
+
+        ensure_app_proxies(db, dbuser)
+
     dbuser.edit_at = datetime.utcnow()
 
     db.commit()
@@ -652,13 +669,17 @@ def revoke_user_sub(db: Session, dbuser: User) -> User:
     Returns:
         User: The updated user object.
     """
+    from app.models.proxy import ProxySettings
+
     dbuser.sub_revoked_at = datetime.utcnow()
 
-    user = UserResponse.model_validate(dbuser)
-    for proxy_type, settings in user.proxies.copy().items():
+    # Rotate each proxy's credentials in place. We deliberately do NOT route this
+    # through update_user(): that expects a UserModify (it reads modify-only
+    # fields such as portal_password), whereas revoke only needs fresh secrets.
+    for dbproxy in dbuser.proxies:
+        settings = ProxySettings.from_dict(dbproxy.type, dbproxy.settings or {})
         settings.revoke()
-        user.proxies[proxy_type] = settings
-    dbuser = update_user(db, dbuser, user)
+        dbproxy.settings = settings.dict(no_obj=True)
 
     db.commit()
     db.refresh(dbuser)
@@ -1446,17 +1467,84 @@ def update_node(db: Session, dbnode: Node, modify: NodeModify) -> Node:
     return dbnode
 
 
-def provision_wireguard_defaults(db: Session, dbnode: Node, *, listen_port: int = 51820) -> "NodeWireGuard":
-    """Generate server keys and persist default WG settings for a new WG node."""
+def provision_wireguard_defaults(
+    db: Session,
+    dbnode: Node,
+    *,
+    listen_port: int = 51820,
+    plain_enabled: bool = True,
+    awg_enabled: bool = False,
+) -> "NodeWireGuard":
+    """Generate server keys and persist WG stack settings for a new WG node."""
     from app.wireguard import generate_keypair
+    from app.wireguard.awg import random_awg_preset
 
     priv, pub = generate_keypair()
     endpoint = f"{dbnode.address}:{listen_port}"
-    return set_node_wireguard(
+    cfg = set_node_wireguard(
         db, dbnode,
         private_key=priv, public_key=pub,
         endpoint=endpoint, listen_port=listen_port,
     )
+    cfg.plain_enabled = plain_enabled
+    cfg.awg_enabled = awg_enabled
+    if awg_enabled:
+        awg_priv, awg_pub = generate_keypair()
+        cfg.awg_private_key = awg_priv
+        cfg.awg_public_key = awg_pub
+        cfg.awg_endpoint = f"{dbnode.address}:{cfg.awg_listen_port}"
+        for field, value in random_awg_preset().items():
+            setattr(cfg, field, value)
+    db.commit()
+    db.refresh(cfg)
+    return cfg
+
+
+def ensure_awg_server_keys(db: Session, dbnode: Node) -> "NodeWireGuard":
+    """Ensure AmneziaWG server keys exist when the AWG listener is enabled."""
+    from app.wireguard import generate_keypair
+
+    cfg = dbnode.wireguard
+    if cfg is None or not cfg.awg_enabled:
+        return cfg
+    if cfg.awg_private_key and cfg.awg_public_key:
+        return cfg
+    priv, pub = generate_keypair()
+    cfg.awg_private_key = priv
+    cfg.awg_public_key = pub
+    if not cfg.awg_endpoint:
+        cfg.awg_endpoint = f"{dbnode.address}:{cfg.awg_listen_port}"
+    db.commit()
+    db.refresh(cfg)
+    return cfg
+
+
+def set_node_wg_stack(
+    db: Session,
+    dbnode: Node,
+    *,
+    plain_enabled: Optional[bool] = None,
+    awg_enabled: Optional[bool] = None,
+) -> "NodeWireGuard":
+    cfg = dbnode.wireguard
+    if cfg is None:
+        raise ValueError("Node has no WireGuard configuration")
+    if plain_enabled is not None:
+        cfg.plain_enabled = plain_enabled
+    if awg_enabled is not None:
+        cfg.awg_enabled = awg_enabled
+        if awg_enabled:
+            ensure_awg_server_keys(db, dbnode)
+            db.refresh(cfg)
+            if cfg.awg_jc is None:
+                from app.wireguard.awg import random_awg_preset
+                for field, value in random_awg_preset().items():
+                    setattr(cfg, field, value)
+    if not cfg.plain_enabled and not cfg.awg_enabled:
+        raise ValueError("At least one of plain WireGuard or AmneziaWG must stay enabled")
+    db.commit()
+    db.refresh(cfg)
+    return cfg
 
 
 def set_node_wireguard(db: Session, dbnode: Node, *, interface: str = "wg0",
@@ -1500,6 +1588,9 @@ def set_node_amnezia(db: Session, dbnode: Node, params: Dict[str, Optional[int]]
     for field in _AWG_FIELDS:
         if field in params:
             setattr(cfg, field, params[field])
+    if any(getattr(cfg, field, None) is not None for field in _AWG_FIELDS):
+        cfg.awg_enabled = True
+        ensure_awg_server_keys(db, dbnode)
     db.commit()
     db.refresh(cfg)
     return cfg
@@ -1531,6 +1622,31 @@ def get_singbox_nodes(db: Session, enabled_only: bool = True) -> List[Node]:
 
 def get_node_singbox(db: Session, dbnode: Node) -> Optional["NodeSingBox"]:
     return db.query(NodeSingBox).filter(NodeSingBox.node_id == dbnode.id).one_or_none()
+
+
+def provision_singbox_defaults(
+    db: Session,
+    dbnode: Node,
+    *,
+    hysteria2: bool = True,
+    tuic: bool = False,
+    sni: Optional[str] = None,
+) -> "NodeSingBox":
+    """Seed Hysteria2/TUIC paths and ports for a new node."""
+    from app.tls.acme import DEFAULT_CERT, DEFAULT_KEY
+
+    host = (sni or dbnode.address or "").strip()
+    return upsert_node_singbox(
+        db,
+        dbnode,
+        certificate_path=DEFAULT_CERT,
+        key_path=DEFAULT_KEY,
+        sni=host,
+        hysteria2_enabled=hysteria2,
+        hysteria2_port=44333 if hysteria2 else None,
+        tuic_enabled=tuic,
+        tuic_port=44334 if tuic else None,
+    )
 
 
 def upsert_node_singbox(db: Session, dbnode: Node, **fields) -> "NodeSingBox":

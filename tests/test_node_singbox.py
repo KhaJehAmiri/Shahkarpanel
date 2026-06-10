@@ -36,6 +36,7 @@ def test_render_hysteria2_inbound():
     assert inb["users"] == [{"name": "1.alice", "password": "pw"}]
     assert inb["tls"]["enabled"] is True
     assert inb["tls"]["certificate_path"] == "/c.pem"
+    assert inb["tls"]["alpn"] == ["h3"]
     assert inb["up_mbps"] == 100 and inb["down_mbps"] == 200
     assert inb["obfs"] == {"type": "salamander", "password": "salt"}
 
@@ -53,6 +54,7 @@ def test_render_tuic_inbound():
     assert inb["type"] == "tuic"
     assert inb["users"] == [{"name": "2.bob", "uuid": "uuid-1", "password": "pw2"}]
     assert inb["congestion_control"] == "bbr"
+    assert inb["tls"]["alpn"] == ["h3"]
 
 
 def test_render_includes_clash_api_for_stats():
@@ -81,6 +83,43 @@ def test_parse_clash_connections_sums_per_user():
 def test_parse_clash_connections_empty():
     assert parse_clash_connections({}) == {}
     assert parse_clash_connections({"connections": []}) == {}
+
+
+def test_kill_stale_singbox_terminates_orphans(monkeypatch):
+    from node import singbox as sb
+
+    killed = []
+    monkeypatch.setattr(sb.os, "kill", lambda pid, sig: killed.append(pid))
+    monkeypatch.setattr(
+        sb.subprocess, "check_output",
+        lambda *a, **k: "111\n222\n",
+    )
+    sb._kill_stale_singbox(keep_pid=111)
+    assert killed == [222]
+
+
+def test_manager_restart_cleans_stale_before_start(tmp_path, monkeypatch):
+    from node.singbox import SingBoxManager, SingBoxSpec, SingBoxInbound
+
+    cleaned = {"n": 0}
+    monkeypatch.setattr(
+        "node.singbox._kill_stale_singbox",
+        lambda **kw: cleaned.__setitem__("n", cleaned["n"] + 1),
+    )
+    mgr = SingBoxManager(config_path=str(tmp_path / "sb.json"))
+    mgr.stop = lambda: None
+    mgr._proc = None
+    monkeypatch.setattr(mgr, "_proc", None)
+    # Avoid actually spawning sing-box.
+    monkeypatch.setattr(
+        "node.singbox.subprocess.Popen",
+        lambda *a, **k: type("P", (), {"poll": lambda s: None})(),
+    )
+    spec = SingBoxSpec(inbounds=[
+        SingBoxInbound(type="hysteria2", tag="h", listen_port=443),
+    ])
+    mgr.restart()
+    assert cleaned["n"] == 1
 
 
 def test_manager_apply_stops_when_no_inbounds(tmp_path):

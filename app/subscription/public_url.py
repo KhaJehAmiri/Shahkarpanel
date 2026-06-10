@@ -12,7 +12,12 @@ from app.utils.system import get_public_ip
 
 if TYPE_CHECKING:
     from app.models.user import UserResponse
-from config import UVICORN_PORT, XRAY_SUBSCRIPTION_PATH, XRAY_SUBSCRIPTION_URL_PREFIX
+from config import (
+    PANEL_PUBLIC_ADDRESS,
+    UVICORN_PORT,
+    XRAY_SUBSCRIPTION_PATH,
+    XRAY_SUBSCRIPTION_URL_PREFIX,
+)
 
 
 def _extract_token(subscription_url: str) -> str:
@@ -40,6 +45,12 @@ def public_subscription_url(
     prefix = (XRAY_SUBSCRIPTION_URL_PREFIX or "").strip().rstrip("/")
     if prefix:
         return f"{prefix}/{XRAY_SUBSCRIPTION_PATH}/{token}/"
+
+    # Behind the HTTPS reverse proxy the app port is localhost-only, so the
+    # panel's public address is the only base reachable from user devices.
+    public_address = (PANEL_PUBLIC_ADDRESS or "").strip().rstrip("/")
+    if public_address:
+        return f"{public_address}/{XRAY_SUBSCRIPTION_PATH}/{token}/"
 
     ip = get_public_ip()
     if ip and ip != "127.0.0.1":

@@ -66,6 +66,36 @@ export interface DedicatedIPPool {
   items: DedicatedIPItem[];
 }
 
+export interface NodeSingBoxConfig {
+  certificate_path?: string | null;
+  key_path?: string | null;
+  sni?: string | null;
+  clash_api_port?: number;
+  clash_api_secret?: string | null;
+  hysteria2_enabled?: boolean;
+  hysteria2_port?: number | null;
+  hysteria2_up_mbps?: number | null;
+  hysteria2_down_mbps?: number | null;
+  hysteria2_obfs_password?: string | null;
+  tuic_enabled?: boolean;
+  tuic_port?: number | null;
+  tuic_congestion_control?: string;
+  tls_trusted?: boolean;
+  tls_issuer?: string | null;
+  tls_expires_at?: string | null;
+  tls_le_domain?: string | null;
+  tls_le_kind?: string | null;
+}
+
+export interface SingBoxTLSStatus {
+  present: boolean;
+  trusted: boolean;
+  issuer?: string | null;
+  expires_at?: string | null;
+  tls_le_domain?: string | null;
+  tls_le_kind?: string | null;
+}
+
 export interface AmneziaWGParams {
   awg_jc?: number | null;
   awg_jmin?: number | null;
@@ -84,6 +114,7 @@ export interface InboundInfo {
   network: string;
   tls: string;
   port: number | string;
+  ss_method?: string | null;
 }
 
 export type InboundsByProtocol = Record<string, InboundInfo[]>;
@@ -104,6 +135,7 @@ export interface NodeItem {
   message?: string | null;
   usage_coefficient: number;
   region?: string | null;
+  group_id?: number | null;
   capacity?: number | null;
   latency_ms?: number | null;
   core_kind?: string;
@@ -115,7 +147,13 @@ export interface NodeItem {
     public_key?: string | null;
     endpoint?: string | null;
     listen_port?: number;
+    plain_enabled?: boolean;
+    awg_enabled?: boolean;
+    awg_listen_port?: number;
+    awg_public_key?: string | null;
+    awg_endpoint?: string | null;
   } & AmneziaWGParams) | null;
+  singbox?: NodeSingBoxConfig | null;
 }
 
 export interface Tenant {

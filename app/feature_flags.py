@@ -55,6 +55,18 @@ KNOWN_FLAGS: Dict[str, FlagSpec] = {
             "flags.client_ss2022.desc",
             "Advertise Shadowsocks-2022 to clients (requires node-side inbound).",
         ),
+        FlagSpec(
+            "cdn_fallback",
+            False,
+            "flags.cdn_fallback.desc",
+            "Prioritise CDN (VLESS/ws) fallback in the SigmaGuard client negotiate path.",
+        ),
+        FlagSpec(
+            "client_push",
+            False,
+            "flags.client_push.desc",
+            "Deliver push notifications (FCM/APNs) to SigmaGuard app devices.",
+        ),
         FlagSpec("smart_routing", False, "flags.smart_routing.desc", "Latency, geo, and load-based node routing."),
         FlagSpec("workflows", False, "flags.workflows.desc", "Multi-step workflow automation."),
         FlagSpec(

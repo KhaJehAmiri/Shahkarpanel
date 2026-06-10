@@ -4,6 +4,7 @@ import { AdminInfo, Branding, FeatureFlag } from "../api/types";
 import { applyBranding } from "../lib/branding";
 
 const THEME_KEY = "nx_theme";
+const EXPERT_KEY = "nx_expert_mode";
 
 interface AppState {
   admin: AdminInfo | null;
@@ -11,7 +12,9 @@ interface AppState {
   flags: Record<string, boolean>;
   loadingAuth: boolean;
   theme: "dark" | "light";
+  expertMode: boolean;
   setTheme: (t: "dark" | "light") => void;
+  setExpertMode: (v: boolean) => void;
   isEnabled: (flag: string) => boolean;
   refreshFlags: () => Promise<void>;
   logout: () => void;
@@ -30,11 +33,20 @@ export const AppProvider: FC<{ children: ReactNode }> = ({ children }) => {
     if (typeof window === "undefined") return "dark";
     return (localStorage.getItem(THEME_KEY) as "dark" | "light") || "dark";
   });
+  const [expertMode, setExpertModeState] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem(EXPERT_KEY) === "1";
+  });
 
   const setTheme = (t: "dark" | "light") => {
     setThemeState(t);
     localStorage.setItem(THEME_KEY, t);
     document.documentElement.setAttribute("data-theme", t);
+  };
+
+  const setExpertMode = (v: boolean) => {
+    setExpertModeState(v);
+    localStorage.setItem(EXPERT_KEY, v ? "1" : "0");
   };
 
   useEffect(() => {
@@ -48,9 +60,8 @@ export const AppProvider: FC<{ children: ReactNode }> = ({ children }) => {
       data.forEach((f) => (map[f.name] = f.enabled));
       setFlags(map);
     } catch {
-      // Non-sudo admins cannot read flags; assume capabilities are available
-      // and let individual endpoints return 404 when disabled.
-      setFlags({});
+      // GET /feature-flags is readable by every authenticated admin, so this
+      // only happens on transient errors; keep the previous map.
     }
   };
 
@@ -109,14 +120,14 @@ export const AppProvider: FC<{ children: ReactNode }> = ({ children }) => {
   }, []);
 
   const isEnabled = (flag: string) => {
-    // Unknown flags (non-sudo) default to enabled so the UI shows the page;
-    // the API still enforces the real state.
-    return flag in flags ? flags[flag] : true;
+    if (flag in flags) return flags[flag];
+    // Unknown flags: only sudo sees experimental tabs; resellers/support avoid 404 tabs.
+    return !!admin?.is_sudo;
   };
 
   return (
     <Ctx.Provider
-      value={{ admin, branding, flags, loadingAuth, theme, setTheme, isEnabled, refreshFlags, logout, onAuthenticated }}
+      value={{ admin, branding, flags, loadingAuth, theme, expertMode, setTheme, setExpertMode, isEnabled, refreshFlags, logout, onAuthenticated }}
     >
       {children}
     </Ctx.Provider>

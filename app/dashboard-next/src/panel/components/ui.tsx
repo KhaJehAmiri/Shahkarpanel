@@ -1,5 +1,5 @@
 import {
-  createContext, FC, InputHTMLAttributes, ReactNode, useCallback, useContext, useState,
+  createContext, FC, InputHTMLAttributes, ReactNode, useCallback, useContext, useEffect, useRef, useState,
 } from "react";
 import { useTranslation } from "react-i18next";
 import { copyToClipboard } from "../lib/clipboard";
@@ -29,7 +29,7 @@ export const Button: FC<{
 
 /* -------------------------------- Card --------------------------------- */
 export const Card: FC<{ children: ReactNode; className?: string; pad0?: boolean; style?: React.CSSProperties }> = ({ children, className = "", pad0, style }) => (
-  <div className={`nx-card ${pad0 ? "pad0" : ""} ${className}`} style={style}>{children}</div>
+  <div className={`nx-card ${pad0 ? "pad0 nx-card-table" : "nx-glass-card"} ${className}`} style={style}>{children}</div>
 );
 
 export const CardHead: FC<{ title: string; desc?: string; actions?: ReactNode }> = ({ title, desc, actions }) => (
@@ -57,9 +57,13 @@ export const Pill: FC<{ children: ReactNode; tone?: "ok" | "danger" | "warn" | "
 );
 
 /* ------------------------------- Toggle -------------------------------- */
-export const Toggle: FC<{ on: boolean; onChange: (v: boolean) => void; disabled?: boolean }> = ({ on, onChange, disabled }) => (
+export const Toggle: FC<{ on: boolean; onChange: (v: boolean) => void; disabled?: boolean; label?: string }> = ({ on, onChange, disabled, label }) => (
   <button
     type="button"
+    role="switch"
+    aria-checked={on}
+    aria-label={label}
+    title={label}
     disabled={disabled}
     className={`nx-toggle ${on ? "on" : ""}`}
     onClick={() => !disabled && onChange(!on)}
@@ -78,13 +82,116 @@ export const Field: FC<{ label?: string; hint?: string; children: ReactNode }> =
   </div>
 );
 
-export const Input: FC<InputHTMLAttributes<HTMLInputElement>> = (props) => (
-  <input className="nx-input" {...props} />
+export const Input: FC<InputHTMLAttributes<HTMLInputElement>> = ({ className = "", ...props }) => (
+  <input className={`nx-input ${className}`.trim()} {...props} />
 );
-export const Textarea: FC<any> = (props) => <textarea className="nx-textarea" {...props} />;
+export const Textarea: FC<any> = ({ className = "", ...rest }) => (
+  <textarea className={`nx-textarea ${className}`.trim()} {...rest} />
+);
 export const Select: FC<any> = ({ children, ...rest }) => (
   <select className="nx-select" {...rest}>{children}</select>
 );
+
+/* --------------------------- MultiSelect ------------------------------- */
+export const MultiSelect: FC<{
+  values: string[];
+  options: string[];
+  onChange: (next: string[]) => void;
+  placeholder?: string;
+  allowCustom?: boolean;
+  customPlaceholder?: string;
+  missingOptions?: string[];
+  missingLabel?: string;
+}> = ({ values, options, onChange, placeholder = "", allowCustom = false, customPlaceholder = "", missingOptions = [], missingLabel = "needs inbound" }) => {
+  const [open, setOpen] = useState(false);
+  const [custom, setCustom] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+  const missing = new Set(missingOptions);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+
+  const toggle = (opt: string) =>
+    onChange(values.includes(opt) ? values.filter((v) => v !== opt) : [...values, opt]);
+
+  const addCustom = () => {
+    const v = custom.trim();
+    if (!v || values.includes(v)) {
+      setCustom("");
+      return;
+    }
+    onChange([...values, v]);
+    setCustom("");
+  };
+
+  const allOptions = [...new Set([...options, ...values])];
+
+  return (
+    <div className="nx-multiselect" ref={ref}>
+      <button type="button" className={`nx-ms-control ${open ? "open" : ""}`} onClick={() => setOpen((o) => !o)}>
+        {values.length === 0 ? (
+          <span className="nx-ms-ph">{placeholder}</span>
+        ) : (
+          <span className="nx-ms-tags">
+            {values.map((v) => (
+              <span key={v} className="nx-ms-tag">
+                {v}
+                <i
+                  role="button"
+                  aria-hidden
+                  onClick={(e) => { e.stopPropagation(); toggle(v); }}
+                >×</i>
+              </span>
+            ))}
+          </span>
+        )}
+        <span className="nx-ms-caret" aria-hidden>▾</span>
+      </button>
+      {open && (
+        <div className="nx-ms-panel">
+          {allOptions.length === 0 ? (
+            <div className="nx-ms-empty">—</div>
+          ) : (
+            allOptions.map((opt) => (
+              <div
+                key={opt}
+                className={`nx-ms-opt ${values.includes(opt) ? "active" : ""}`}
+                onClick={() => toggle(opt)}
+              >
+                <span className="nx-ms-check" aria-hidden>{values.includes(opt) ? "✓" : ""}</span>
+                <span>
+                  {opt}
+                  {missing.has(opt) && (
+                    <span className="nx-faint" style={{ marginInlineStart: 6, fontSize: 11 }}>
+                      ({missingLabel})
+                    </span>
+                  )}
+                </span>
+              </div>
+            ))
+          )}
+          {allowCustom && (
+            <div className="nx-ms-custom" style={{ display: "flex", gap: 6, padding: 8, borderTop: "1px solid var(--nx-border)" }}>
+              <Input
+                value={custom}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCustom(e.target.value)}
+                placeholder={customPlaceholder || "custom tag"}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addCustom(); } }}
+              />
+              <Button size="sm" type="button" onClick={addCustom} disabled={!custom.trim()}>+</Button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
 
 /* -------------------------------- Tabs --------------------------------- */
 export const Tabs: FC<{ tabs: { id: string; label: string }[]; active: string; onChange: (id: string) => void }> = ({ tabs, active, onChange }) => (
@@ -110,7 +217,7 @@ export const Callout: FC<{ tone?: "info" | "warn" | "danger" | "ok"; title?: str
 /* ------------------------------ EmptyState ----------------------------- */
 export const EmptyState: FC<{ title: string; desc?: string; steps?: string[]; action?: ReactNode }> = ({ title, desc, steps, action }) => (
   <div className="nx-empty">
-    <div className="nx-empty-icon" aria-hidden>·</div>
+    <div className="nx-empty-icon" aria-hidden>○</div>
     <div className="nx-empty-title">{title}</div>
     {desc && <div className="nx-empty-desc">{desc}</div>}
     {steps && steps.length > 0 && (
@@ -122,9 +229,19 @@ export const EmptyState: FC<{ title: string; desc?: string; steps?: string[]; ac
   </div>
 );
 
+/* Accessible icon-only close button shared by Modal and Drawer. */
+const CloseButton: FC<{ onClose: () => void }> = ({ onClose }) => {
+  const { t } = useTranslation();
+  return (
+    <button className="nx-btn icon ghost" onClick={onClose} title={t("common.close")} aria-label={t("common.close")}>
+      <IcClose />
+    </button>
+  );
+};
+
 /* -------------------------------- Modal -------------------------------- */
 export const Modal: FC<{
-  open: boolean; title: string; onClose: () => void; children: ReactNode; footer?: ReactNode;
+  open: boolean; title: ReactNode; onClose: () => void; children: ReactNode; footer?: ReactNode;
   wide?: boolean; formWide?: boolean;
 }> = ({ open, title, onClose, children, footer, wide, formWide }) => {
   if (!open) return null;
@@ -134,7 +251,7 @@ export const Modal: FC<{
       <div className={modalCls} onClick={(e) => e.stopPropagation()}>
         <div className="nx-modal-head">
           <div className="nx-card-title">{title}</div>
-          <button className="nx-btn icon ghost" onClick={onClose}><IcClose /></button>
+          <CloseButton onClose={onClose} />
         </div>
         <div className="nx-modal-body">{children}</div>
         {footer && <div className="nx-modal-foot">{footer}</div>}
@@ -152,7 +269,7 @@ export const Drawer: FC<{ open: boolean; title: ReactNode; onClose: () => void; 
       <div className="nx-drawer">
         <div className="nx-drawer-head">
           <div className="nx-card-title">{title}</div>
-          <button className="nx-btn icon ghost" onClick={onClose}><IcClose /></button>
+          <CloseButton onClose={onClose} />
         </div>
         <div className="nx-drawer-body">{children}</div>
       </div>
@@ -183,8 +300,21 @@ export const HelpTip: FC<{ text: ReactNode; placement?: "top" | "bottom" }> = ({
 };
 
 /* ----------------------------- Checkbox -------------------------------- */
-export const Checkbox: FC<{ checked: boolean; onChange?: () => void }> = ({ checked, onChange }) => (
-  <span className={`nx-checkbox ${checked ? "on" : ""}`} onClick={onChange}>
+export const Checkbox: FC<{ checked: boolean; onChange?: () => void; label?: string }> = ({ checked, onChange, label }) => (
+  <span
+    className={`nx-checkbox ${checked ? "on" : ""}`}
+    role="checkbox"
+    aria-checked={checked}
+    aria-label={label}
+    tabIndex={onChange ? 0 : -1}
+    onClick={onChange}
+    onKeyDown={(e) => {
+      if (onChange && (e.key === " " || e.key === "Enter")) {
+        e.preventDefault();
+        onChange();
+      }
+    }}
+  >
     <IcCheck size={13} />
   </span>
 );
@@ -254,10 +384,42 @@ export const UsageBar: FC<{ pct: number }> = ({ pct }) => {
   );
 };
 
+/* ------------------------------- Pager --------------------------------- */
+/**
+ * Client-side pagination for tables whose API returns the full list.
+ * Use with `usePagedList`; renders nothing when everything fits on one page.
+ */
+export function usePagedList<T>(items: T[] | null | undefined, pageSize = 20) {
+  const [page, setPage] = useState(0);
+  const list = items || [];
+  const pages = Math.max(1, Math.ceil(list.length / pageSize));
+  const safePage = Math.min(page, pages - 1);
+  return {
+    page: safePage,
+    pages,
+    total: list.length,
+    slice: list.slice(safePage * pageSize, (safePage + 1) * pageSize),
+    setPage,
+  };
+}
+
+export const Pager: FC<{ page: number; pages: number; onPage: (p: number) => void }> = ({ page, pages, onPage }) => {
+  const { t } = useTranslation();
+  if (pages <= 1) return null;
+  return (
+    <div className="nx-row" style={{ justifyContent: "flex-end", gap: 8, marginTop: 10 }}>
+      <Button size="sm" disabled={page === 0} onClick={() => onPage(page - 1)}>{t("users.prev")}</Button>
+      <span className="nx-faint" style={{ fontSize: 12 }}>{page + 1} / {pages}</span>
+      <Button size="sm" disabled={page + 1 >= pages} onClick={() => onPage(page + 1)}>{t("users.next")}</Button>
+    </div>
+  );
+};
+
 /* ------------------------------ Loading -------------------------------- */
-export const Loading: FC<{ label?: string }> = ({ label }) => (
-  <div className="nx-loading">{label || "Loading…"}</div>
-);
+export const Loading: FC<{ label?: string }> = ({ label }) => {
+  const { t } = useTranslation();
+  return <div className="nx-loading">{label || t("common.loading")}</div>;
+};
 
 export const SkeletonRows: FC<{ rows?: number; cols?: number }> = ({ rows = 5, cols = 4 }) => (
   <div className="nx-stack">

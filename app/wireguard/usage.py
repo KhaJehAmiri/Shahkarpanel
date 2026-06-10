@@ -102,12 +102,32 @@ def collect_wg_usage_params(db=None) -> Tuple[Dict[int, List[dict]], Dict[int, f
             client = client_for_node(_node_object(dbnode.id))
             if cfg is None or client is None:
                 continue
-            try:
-                transfer = client.transfer(cfg.interface)
-            except Exception as exc:
-                logger.warning("WireGuard transfer read from node %s failed: %s", dbnode.id, exc)
+            from app.wireguard.sync import amneziawg_enabled, plain_wg_enabled
+
+            combined: Dict[str, dict] = {}
+            interfaces = []
+            if plain_wg_enabled(cfg):
+                interfaces.append(cfg.interface)
+            if amneziawg_enabled(cfg):
+                interfaces.append(cfg.awg_interface)
+            for iface in interfaces:
+                try:
+                    part = client.transfer(iface)
+                except Exception as exc:
+                    logger.warning(
+                        "WireGuard transfer read from node %s iface %s failed: %s",
+                        dbnode.id, iface, exc,
+                    )
+                    continue
+                for pubkey, counters in (part or {}).items():
+                    prev = combined.get(pubkey, {"rx": 0, "tx": 0})
+                    combined[pubkey] = {
+                        "rx": int(prev.get("rx", 0)) + int(counters.get("rx", 0)),
+                        "tx": int(prev.get("tx", 0)) + int(counters.get("tx", 0)),
+                    }
+            if not combined:
                 continue
-            deltas_by_node[dbnode.id] = _tracker.deltas(dbnode.id, transfer)
+            deltas_by_node[dbnode.id] = _tracker.deltas(dbnode.id, combined)
             coefficient[dbnode.id] = dbnode.usage_coefficient
 
         return build_wg_usage_params(deltas_by_node, pubkey_map), coefficient

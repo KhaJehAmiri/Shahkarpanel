@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import { api } from "../../api/client";
-import { ensureConfigShape } from "../../lib/xrayHelpers";
+import { ensureConfigShape, sanitizeConfigOutbounds } from "../../lib/xrayHelpers";
 
 export function useXrayConfig() {
   const [config, setConfig] = useState<Record<string, unknown> | null>(null);
@@ -13,7 +13,7 @@ export function useXrayConfig() {
     setError(null);
     try {
       const data = await api.get<Record<string, unknown>>("/core/config");
-      setConfig(ensureConfigShape(data));
+      setConfig(sanitizeConfigOutbounds(ensureConfigShape(data)));
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to load config");
     } finally {
@@ -25,7 +25,7 @@ export function useXrayConfig() {
     async (next: Record<string, unknown>) => {
       setSaving(true);
       try {
-        const shaped = ensureConfigShape(next);
+        const shaped = sanitizeConfigOutbounds(ensureConfigShape(next));
         await api.put("/core/config", shaped);
         setConfig(shaped);
         return true;

@@ -10,12 +10,12 @@ import { useFetch } from "../lib/useFetch";
 import { formatBytes } from "../lib/format";
 import { PageHeader } from "../components/Shell";
 import {
-  Button, Callout, Card, EmptyState, Field, Input, Modal, Pill, Select, SkeletonRows, Stat, Tabs, useToast,
+  Button, Callout, Card, EmptyState, Field, Input, Modal, Pager, Pill, Select, SkeletonRows, Stat, Tabs, usePagedList, useToast,
 } from "../components/ui";
 import { CommercialSettings } from "../components/CommercialSettings";
 import { IcPlus, IcTrash, IcWallet, IcEdit } from "../components/icons";
 
-export const Billing: FC = () => {
+export const Billing: FC<{ embedded?: boolean }> = ({ embedded }) => {
   const { t } = useTranslation();
   const { admin, isEnabled } = useApp();
   const toast = useToast();
@@ -27,12 +27,14 @@ export const Billing: FC = () => {
   const canTopUp = !admin?.is_sudo && (providers.data?.length ?? 0) > 0;
 
   if (!isEnabled("billing"))
-    return (<div><PageHeader title={t("billing.title")} subtitle={t("billing.subtitle")} /><Callout tone="warn">{t("billing.billingDisabled")}</Callout></div>);
+    return (<div>{!embedded && <PageHeader title={t("billing.title")} subtitle={t("billing.subtitle")} />}<Callout tone="warn">{t("billing.billingDisabled")}</Callout></div>);
 
   return (
     <div>
-      <PageHeader title={t("billing.title")} subtitle={t("billing.subtitle")} description={t("billing.description")} />
-      {wallet.data && (
+      {!embedded && <PageHeader title={t("billing.title")} subtitle={t("billing.subtitle")} description={t("billing.description")} />}
+      {wallet.loading ? (
+        <div style={{ marginBottom: 16, maxWidth: 280 }}><SkeletonRows rows={1} cols={1} /></div>
+      ) : wallet.data && (
         <div className="nx-row" style={{ marginBottom: 16, gap: 12, alignItems: "flex-end" }}>
           <div style={{ maxWidth: 280, flex: 1 }}>
             <Stat label={t("billing.wallet")} value={wallet.data.balance.toLocaleString()} icon={<IcWallet className="nx-stat-ico" />} />
@@ -103,8 +105,8 @@ const PlansTab: FC<{ canWrite?: boolean }> = ({ canWrite = false }) => {
                   <tr key={p.id}>
                     <td style={{ fontWeight: 600 }}>{p.name}</td>
                     <td>{p.price.toLocaleString()}</td>
-                    <td>{p.data_limit ? formatBytes(p.data_limit) : "∞"}</td>
-                    <td>{p.duration_days ? `${p.duration_days}d` : "∞"}</td>
+                    <td>{p.data_limit ? formatBytes(p.data_limit) : t("users.unlimited")}</td>
+                    <td>{p.duration_days ? t("users.unitDays", { n: p.duration_days }) : t("users.unlimited")}</td>
                     <td><Pill tone={p.enabled ? "ok" : "default"} dot>{p.enabled ? t("common.enabled") : t("common.disabled")}</Pill></td>
                     <td>{canWrite ? (
                       <div className="nx-row" style={{ justifyContent: "flex-end", gap: 6 }}>
@@ -336,14 +338,24 @@ const InvoicesTab: FC = () => {
   const { t } = useTranslation();
   const { admin } = useApp();
   const toast = useToast();
+  const [showCreate, setShowCreate] = useState(false);
   const { data, loading, error, reload } = useFetch<Invoice[]>(() => api.get("/billing/invoices"), []);
+  const pager = usePagedList(data, 20);
 
   const pay = async (id: number) => {
-    try { await api.post(`/billing/invoices/${id}/pay`); toast.push(t("common.saved"), "success"); reload(); }
+    if (!confirm(t("billing.payConfirm", { id }))) return;
+    try { await api.post(`/billing/invoices/${id}/pay`); toast.push(t("billing.paidDone"), "success"); reload(); }
     catch (e: any) { toast.push(e.message, "error"); }
   };
 
   return (
+    <>
+      {admin?.is_sudo && (
+        <div className="nx-row" style={{ justifyContent: "flex-end", marginBottom: 14 }}>
+          <Button variant="primary" onClick={() => setShowCreate(true)}><IcPlus className="nx-ico" /> {t("billing.createInvoice")}</Button>
+        </div>
+      )}
+      {showCreate && <CreateInvoiceModal onClose={() => setShowCreate(false)} onDone={() => { setShowCreate(false); reload(); }} />}
     <Card pad0>
       {loading ? <div style={{ padding: 20 }}><SkeletonRows rows={3} cols={4} /></div>
         : error ? <EmptyState title={t("common.error")} desc={error} />
@@ -352,11 +364,11 @@ const InvoicesTab: FC = () => {
           <div className="nx-table-wrap"><table className="nx-table">
             <thead><tr><th>#</th><th>{t("billing.amount")}</th><th>{t("billing.invoiceStatus")}</th><th>{t("billing.provider")}</th><th style={{ textAlign: "end" }}>{t("common.actions")}</th></tr></thead>
             <tbody>
-              {data.map((inv) => (
+              {pager.slice.map((inv) => (
                 <tr key={inv.id}>
                   <td className="nx-faint">#{inv.id}</td>
                   <td style={{ fontWeight: 600 }}>{inv.amount.toLocaleString()}</td>
-                  <td><Pill tone={inv.status === "paid" ? "ok" : "warn"} dot>{inv.status}</Pill></td>
+                  <td><Pill tone={inv.status === "paid" ? "ok" : "warn"} dot>{t(`billing.status.${inv.status}`, inv.status)}</Pill></td>
                   <td>{inv.provider || "—"}</td>
                   <td><div className="nx-row" style={{ justifyContent: "flex-end" }}>
                     {admin?.is_sudo && inv.status !== "paid" && <Button size="sm" onClick={() => pay(inv.id)}>{t("billing.pay")}</Button>}
@@ -367,13 +379,55 @@ const InvoicesTab: FC = () => {
           </table></div>
         )}
     </Card>
+    <Pager page={pager.page} pages={pager.pages} onPage={pager.setPage} />
+    </>
+  );
+};
+
+const CreateInvoiceModal: FC<{ onClose: () => void; onDone: () => void }> = ({ onClose, onDone }) => {
+  const { t } = useTranslation();
+  const toast = useToast();
+  const [amount, setAmount] = useState("");
+  const [username, setUsername] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    setBusy(true);
+    try {
+      await api.post("/billing/invoices", {
+        amount: parseInt(amount, 10) || 0,
+        username: username.trim() || undefined,
+        provider: "manual",
+      });
+      toast.push(t("common.created"), "success");
+      onDone();
+    } catch (e: any) {
+      toast.push(e.message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal open title={t("billing.createInvoice")} onClose={onClose}
+      footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
+        <Button variant="primary" disabled={busy || !amount} onClick={submit}>{t("common.create")}</Button></>}>
+      <div className="nx-stack">
+        <Field label={t("billing.amount")}><Input type="number" min="1" value={amount} onChange={(e: any) => setAmount(e.target.value)} autoFocus /></Field>
+        <Field label={t("common.username")} hint={t("billing.invoiceUserHint")}>
+          <Input value={username} onChange={(e: any) => setUsername(e.target.value)} />
+        </Field>
+      </div>
+    </Modal>
   );
 };
 
 const TransactionsTab: FC = () => {
   const { t } = useTranslation();
   const { data, loading, error } = useFetch<Transaction[]>(() => api.get("/billing/transactions"), []);
+  const pager = usePagedList(data, 25);
   return (
+    <>
     <Card pad0>
       {loading ? <div style={{ padding: 20 }}><SkeletonRows rows={3} cols={4} /></div>
         : error ? <EmptyState title={t("common.error")} desc={error} />
@@ -382,7 +436,7 @@ const TransactionsTab: FC = () => {
           <div className="nx-table-wrap"><table className="nx-table">
             <thead><tr><th>#</th><th>{t("billing.type")}</th><th>{t("billing.amount")}</th><th>{t("billing.description")}</th></tr></thead>
             <tbody>
-              {data.map((tx) => (
+              {pager.slice.map((tx) => (
                 <tr key={tx.id}>
                   <td className="nx-faint">#{tx.id}</td>
                   <td><Pill tone={tx.amount >= 0 ? "ok" : "danger"}>{tx.type}</Pill></td>
@@ -394,5 +448,7 @@ const TransactionsTab: FC = () => {
           </table></div>
         )}
     </Card>
+    <Pager page={pager.page} pages={pager.pages} onPage={pager.setPage} />
+    </>
   );
 };

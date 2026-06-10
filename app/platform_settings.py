@@ -18,6 +18,8 @@ SETTING_SPECS: Dict[str, tuple] = {
     "billing.usage_rate_per_gb": ("USAGE_BILLING_RATE_PER_GB", "int"),
     "billing.wallet_low_threshold": ("WALLET_LOW_BALANCE_THRESHOLD", "int"),
     "billing.job_interval_seconds": ("JOB_BILL_USAGE_INTERVAL", "int"),
+    # Display label for prices in the portal/panel (e.g. "تومان", "USD").
+    "billing.currency_label": ("", "str"),
     "payment.demo_enabled": ("PAYMENT_DEMO_ENABLED", "bool"),
     "payment.min_amount": ("PAYMENT_MIN_AMOUNT", "int"),
     "payment.max_amount": ("PAYMENT_MAX_AMOUNT", "int"),

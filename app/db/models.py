@@ -168,13 +168,19 @@ class User(Base):
 
     @property
     def inbounds(self):
+        from app.xray.inbound_match import inbound_matches_proxy
+
         _ = {}
         for proxy in self.proxies:
             _[proxy.type] = []
             excluded_tags = [i.tag for i in proxy.excluded_inbounds]
             for inbound in xray.config.inbounds_by_protocol.get(proxy.type, []):
-                if inbound["tag"] not in excluded_tags:
-                    _[proxy.type].append(inbound["tag"])
+                tag = inbound["tag"]
+                if tag in excluded_tags:
+                    continue
+                if not inbound_matches_proxy(proxy.type, tag, proxy.settings, inbound_meta=inbound):
+                    continue
+                _[proxy.type].append(tag)
 
         return _
 
@@ -417,10 +423,19 @@ class NodeWireGuard(Base):
     endpoint = Column(String(256), nullable=True)
     mtu = Column(Integer, nullable=False, server_default=text("1420"), default=1420)
     dns = Column(String(256), nullable=True)
+    plain_enabled = Column(Boolean, nullable=False, server_default=text("1"), default=True)
 
-    # AmneziaWG obfuscation parameters (phase: protocols). When any are set the
-    # node serves AmneziaWG (obfuscated WireGuard) and client configs emit these
-    # under [Interface]. All-null = plain WireGuard. Jc/Jmin/Jmax are junk-packet
+    # Dual-stack AmneziaWG listener (separate interface + port from plain WG).
+    awg_enabled = Column(Boolean, nullable=False, server_default=text("0"), default=False)
+    awg_interface = Column(String(32), nullable=False, server_default=text("'wg1'"), default="wg1")
+    awg_listen_port = Column(Integer, nullable=False, server_default=text("51821"), default=51821)
+    awg_subnet = Column(String(64), nullable=False, server_default=text("'10.11.0.0/24'"), default="10.11.0.0/24")
+    awg_private_key = Column(String(64), nullable=True)
+    awg_public_key = Column(String(64), nullable=True)
+    awg_endpoint = Column(String(256), nullable=True)
+
+    # AmneziaWG obfuscation parameters. Used on the awg_interface listener when
+    # awg_enabled is true. Jc/Jmin/Jmax are junk-packet
     # counts/sizes; S1/S2 are init/response junk sizes; H1–H4 are magic headers.
     awg_jc = Column(Integer, nullable=True)
     awg_jmin = Column(Integer, nullable=True)
@@ -451,6 +466,12 @@ class NodeSingBox(Base):
     certificate_path = Column(String(512), nullable=True)
     key_path = Column(String(512), nullable=True)
     sni = Column(String(256), nullable=True)
+    # Let's Encrypt bookkeeping — set after a successful ACME issue/renew.
+    tls_trusted = Column(Boolean, nullable=False, server_default=text("0"), default=False)
+    tls_issuer = Column(String(256), nullable=True)
+    tls_expires_at = Column(DateTime, nullable=True)
+    tls_le_domain = Column(String(256), nullable=True)
+    tls_le_kind = Column(String(16), nullable=True)  # domain | ip
     # Local Clash API the panel polls for per-user traffic counters.
     clash_api_port = Column(Integer, nullable=False, server_default=text("9095"), default=9095)
     clash_api_secret = Column(String(128), nullable=True)

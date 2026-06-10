@@ -167,6 +167,7 @@ def user_subscription(
 def user_subscription_info(
     request: Request,
     dbuser: UserResponse = Depends(get_validated_sub),
+    db: Session = Depends(get_db),
 ):
     """Retrieves detailed information about the user's subscription."""
     user = UserResponse.model_validate(dbuser)
@@ -182,6 +183,26 @@ def user_subscription_info(
         payload["public_subscription_url"] = ""
     else:
         payload["subscription_url"] = pub_url
+        hy2_settings = _proxy_settings(dbuser, ProxyTypes.Hysteria2)
+        if hy2_settings:
+            hy2_nodes = [
+                n for n in crud.get_singbox_nodes(db)
+                if n.singbox and n.singbox.hysteria2_enabled
+            ]
+            if hy2_nodes:
+                payload["hysteria2_link"] = user_hysteria2_link(
+                    hy2_settings, hy2_nodes[0], remark=f"{dbuser.username}-{hy2_nodes[0].name}"
+                )
+        tuic_settings = _proxy_settings(dbuser, ProxyTypes.TUIC)
+        if tuic_settings:
+            tuic_nodes = [
+                n for n in crud.get_singbox_nodes(db)
+                if n.singbox and n.singbox.tuic_enabled
+            ]
+            if tuic_nodes:
+                payload["tuic_link"] = user_tuic_link(
+                    tuic_settings, tuic_nodes[0], remark=f"{dbuser.username}-{tuic_nodes[0].name}"
+                )
     return SubscriptionUserResponse.model_validate(payload)
 
 
@@ -216,6 +237,7 @@ def _wireguard_user_settings(dbuser) -> dict:
 def user_subscription_wireguard(
     dbuser=Depends(get_validated_sub),
     node_id: int = None,
+    variant: str = "plain",
     db: Session = Depends(get_db),
 ):
     """Return a wg-quick ``.conf`` for the user, tied to the same token and
@@ -234,25 +256,30 @@ def user_subscription_wireguard(
         raise HTTPException(status_code=404, detail="No WireGuard node available")
 
     dbnode = nodes[0]
+    cfg = dbnode.wireguard
+    variant = (variant or "plain").strip().lower()
+    if variant not in ("plain", "awg"):
+        raise HTTPException(status_code=422, detail="variant must be plain or awg")
 
-    # Lazily allocate a peer IP from the node subnet if the user has none yet,
-    # so the .conf is usable even before the node has synced.
-    if not settings.get("address"):
-        from app.wireguard.operations import ensure_user_address
-        for proxy in dbuser.proxies:
-            if proxy.type is ProxyTypes.WireGuard:
-                ensure_user_address(db, proxy, dbnode.wireguard.subnet)
-                settings = proxy.settings or {}
-                break
+    from app.wireguard.operations import ensure_user_address
+    from app.wireguard.sync import amneziawg_enabled, plain_wg_enabled
 
-    from app.wireguard.capabilities import node_amnezia_available
-    conf = build_wireguard_user_config(
-        settings, dbnode, amnezia_available=node_amnezia_available(dbnode)
-    )
+    for proxy in dbuser.proxies:
+        if proxy.type is ProxyTypes.WireGuard:
+            if variant == "awg" and amneziawg_enabled(cfg):
+                if not settings.get("awg_address"):
+                    ensure_user_address(db, proxy, cfg.awg_subnet, cfg=cfg)
+            elif plain_wg_enabled(cfg) and not settings.get("address"):
+                ensure_user_address(db, proxy, cfg.subnet, cfg=cfg)
+            settings = proxy.settings or {}
+            break
+
+    conf = build_wireguard_user_config(settings, dbnode, variant=variant)
     if conf is None:
         raise HTTPException(status_code=404, detail="No WireGuard configuration available")
 
-    filename = f"{dbuser.username}-{dbnode.name}.conf"
+    suffix = "-awg" if variant == "awg" else ""
+    filename = f"{dbuser.username}-{dbnode.name}{suffix}.conf"
     return Response(
         content=conf,
         media_type="text/plain",

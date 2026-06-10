@@ -37,7 +37,6 @@ export function SubAppTile({
   async function importInApp() {
     if (!subUrl) return;
     setBusy(true);
-
     const finish = () => setBusy(false);
 
     if (app.id === "streisand" || copyFirst) {
@@ -77,23 +76,20 @@ export function SubAppTile({
 
   return (
     <div className="sub-app-tile">
-      <div
-        className="grid h-9 w-9 flex-shrink-0 place-items-center rounded-lg text-[11px] font-extrabold text-white shadow-md"
-        style={{ background: `linear-gradient(135deg, ${app.color}, #312e81)` }}
-      >
+      <div className="sub-app-icon" style={{ background: `linear-gradient(135deg, ${app.color}, #312e81)` }}>
         {app.short}
       </div>
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-xs font-bold text-slate-800">{app.name}</div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="sub-app-name">{app.name}</div>
         {dl ? (
-          <a href={dl} target="_blank" rel="noopener noreferrer" className="text-[10px] font-semibold text-indigo-600 hover:underline">
+          <a href={dl} target="_blank" rel="noopener noreferrer" className="sub-app-link">
             {downloadLabel}
           </a>
         ) : (
-          <span className="text-[10px] text-slate-400">{importLabel}</span>
+          <span className="sub-app-hint">{importLabel}</span>
         )}
       </div>
-      <button type="button" disabled={busy || !subUrl} onClick={importInApp} className="sub-btn-primary flex-shrink-0 disabled:opacity-50">
+      <button type="button" disabled={busy || !subUrl} onClick={importInApp} className="sub-btn-primary" style={{ flexShrink: 0 }}>
         {busy ? "…" : importLabel}
       </button>
     </div>

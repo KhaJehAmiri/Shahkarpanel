@@ -1,13 +1,16 @@
 import { ChangeEvent, FC, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  ADVANCED_INBOUND_PROTOCOLS,
   FINGERPRINTS,
-  INBOUND_PROTOCOLS,
   KCP_HEADERS,
   NETWORKS,
+  PRODUCT_INBOUND_PROTOCOLS,
   PROXY_PROTOCOLS,
   SECURITIES,
   SNIFF_OVERRIDES,
+  SS_2022_METHODS,
+  SS_LEGACY_METHODS,
   SS_METHODS,
   SS_NETWORKS,
   VLESS_FLOWS,
@@ -15,6 +18,7 @@ import {
   emptyFallback,
   generateRealityKeypair,
   inboundToForm,
+  isSs2022,
   randomShortId,
   supportsFallback,
   supportsStream,
@@ -22,7 +26,7 @@ import {
   type InboundForm,
   buildInboundFromForm,
 } from "../../lib/xrayHelpers";
-import { Button, Checkbox, CopyButton, Field, Input, Modal, Select, useToast } from "../ui";
+import { Button, Callout, Checkbox, CopyButton, Field, Input, Modal, Select, useToast } from "../ui";
 
 const Section: FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
   <div>
@@ -112,6 +116,10 @@ export const InboundEditor: FC<{
   const hasStream = supportsStream(f.protocol);
   const isProxy = PROXY_PROTOCOLS.includes(f.protocol as (typeof PROXY_PROTOCOLS)[number]);
   const showSecurity = hasStream && (isProxy || f.protocol === "shadowsocks");
+  const isAdvanced = ADVANCED_INBOUND_PROTOCOLS.includes(
+    f.protocol as (typeof ADVANCED_INBOUND_PROTOCOLS)[number],
+  );
+  const ssMethods = isSs2022(f.method) ? SS_2022_METHODS : SS_LEGACY_METHODS;
 
   return (
     <Modal
@@ -129,6 +137,14 @@ export const InboundEditor: FC<{
       }
     >
       <div className="nx-stack" style={{ maxHeight: "72vh", overflow: "auto", gap: 20 }}>
+        <Callout tone="info" title={t("inbounds.allProtocolsTitle")}>
+          {t("inbounds.allProtocolsBody")}
+        </Callout>
+        {isAdvanced && (
+          <Callout tone="warn" title={t("inbounds.advancedWarnTitle")}>
+            {t("inbounds.advancedWarnBody")}
+          </Callout>
+        )}
         <Section title={t("inbounds.sectionBasic")}>
           <div className="nx-row" style={{ gap: 12, flexWrap: "wrap" }}>
             <Field label={t("infra.remark")}>
@@ -146,9 +162,16 @@ export const InboundEditor: FC<{
               value={f.protocol}
               onChange={(e: ChangeEvent<HTMLSelectElement>) => setProtocol(e.target.value)}
             >
-              {INBOUND_PROTOCOLS.map((p) => (
-                <option key={p} value={p}>{p}</option>
-              ))}
+              <optgroup label={t("inbounds.productProtocols")}>
+                {PRODUCT_INBOUND_PROTOCOLS.map((p) => (
+                  <option key={p} value={p}>{p}</option>
+                ))}
+              </optgroup>
+              <optgroup label={t("inbounds.advancedProtocols")}>
+                {ADVANCED_INBOUND_PROTOCOLS.map((p) => (
+                  <option key={p} value={p}>{p}</option>
+                ))}
+              </optgroup>
             </Select>
           </Field>
         </Section>
@@ -192,12 +215,97 @@ export const InboundEditor: FC<{
           </Section>
         )}
 
+        {f.protocol === "amneziawg" && (
+          <Section title={t("inbounds.amneziaSection")}>
+            <CalloutInline>{t("inbounds.amneziaInboundHint")}</CalloutInline>
+            <Field label={t("inbounds.wgSecretKey")}>
+              <Input value={f.wgSecretKey} onChange={upd("wgSecretKey")} />
+            </Field>
+            <div className="nx-row" style={{ gap: 12, flexWrap: "wrap" }}>
+              <Field label={t("inbounds.wgPeerKey")}>
+                <Input value={f.wgPeerPublicKey} onChange={upd("wgPeerPublicKey")} />
+              </Field>
+              <Field label={t("inbounds.wgAllowedIPs")}>
+                <Input value={f.wgAllowedIPs} onChange={upd("wgAllowedIPs")} />
+              </Field>
+              <Field label="MTU">
+                <Input type="number" value={f.wgMtu} onChange={upd("wgMtu")} />
+              </Field>
+            </div>
+          </Section>
+        )}
+
+        {f.protocol === "hysteria" && (
+          <Section title={t("inbounds.hysteriaSection")}>
+            <Field label={t("outbounds.hyAuth")}>
+              <Input value={f.hyAuth} onChange={upd("hyAuth")} className="nx-mono" />
+            </Field>
+            <div className="nx-row" style={{ gap: 12, flexWrap: "wrap" }}>
+              <Field label={t("outbounds.hyUp")}>
+                <Input value={f.hyUp} onChange={upd("hyUp")} placeholder="100 mbps" />
+              </Field>
+              <Field label={t("outbounds.hyDown")}>
+                <Input value={f.hyDown} onChange={upd("hyDown")} placeholder="100 mbps" />
+              </Field>
+              <Field label={t("outbounds.hyUdpIdle")}>
+                <Input type="number" value={f.hyUdpIdleTimeout} onChange={upd("hyUdpIdleTimeout")} />
+              </Field>
+            </div>
+            <div className="nx-row" style={{ gap: 12, flexWrap: "wrap" }}>
+              <Field label="SNI">
+                <Input value={f.sni} onChange={upd("sni")} />
+              </Field>
+              <Field label="ALPN">
+                <Input value={f.alpn} onChange={upd("alpn")} placeholder="h3" />
+              </Field>
+              <Field label="Fingerprint">
+                <Select value={f.fingerprint} onChange={upd("fingerprint")}>
+                  {FINGERPRINTS.filter(Boolean).map((fp) => <option key={fp} value={fp}>{fp}</option>)}
+                </Select>
+              </Field>
+            </div>
+            <label className="nx-row" style={{ gap: 8, cursor: "pointer" }}>
+              <Checkbox checked={f.allowInsecure} onChange={toggle("allowInsecure")} />
+              <span>{t("outbounds.allowInsecure")}</span>
+            </label>
+          </Section>
+        )}
+
+        {f.protocol === "tun" && (
+          <Section title={t("inbounds.tunSection")}>
+            <CalloutInline>{t("inbounds.tunHint")}</CalloutInline>
+            <div className="nx-row" style={{ gap: 12, flexWrap: "wrap" }}>
+              <Field label={t("inbounds.tunName")}>
+                <Input value={f.tunnelAddress} onChange={upd("tunnelAddress")} placeholder="xray0" />
+              </Field>
+              <Field label="MTU">
+                <Input type="number" value={f.wgMtu} onChange={upd("wgMtu")} placeholder="1500" />
+              </Field>
+            </div>
+          </Section>
+        )}
+
         {f.protocol === "shadowsocks" && (
           <Section title="Shadowsocks">
-            <div className="nx-row" style={{ gap: 12 }}>
+            <div className="nx-row" style={{ gap: 12, flexWrap: "wrap" }}>
               <Field label="Cipher">
-                <Select value={f.method} onChange={upd("method")}>
-                  {SS_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
+                <Select
+                  value={f.method}
+                  onChange={(e: ChangeEvent<HTMLSelectElement>) => {
+                    const method = e.target.value;
+                    setF((prev) => ({
+                      ...prev,
+                      method,
+                      ssPassword: isSs2022(method) !== isSs2022(prev.method) ? "" : prev.ssPassword,
+                    }));
+                  }}
+                >
+                  <optgroup label="Legacy">
+                    {SS_LEGACY_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
+                  </optgroup>
+                  <optgroup label="SS-2022">
+                    {SS_2022_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
+                  </optgroup>
                 </Select>
               </Field>
               <Field label={t("inbounds.network")}>
@@ -206,6 +314,19 @@ export const InboundEditor: FC<{
                 </Select>
               </Field>
             </div>
+            {isSs2022(f.method) && (
+              <Field label={t("inbounds.ssServerPsk")} hint={t("inbounds.ssServerPskHint")}>
+                <Input
+                  type="password"
+                  value={f.ssPassword}
+                  onChange={upd("ssPassword")}
+                  placeholder={t("inbounds.ssServerPskPlaceholder")}
+                />
+              </Field>
+            )}
+            {isSs2022(f.method) && (
+              <CalloutInline>{t("inbounds.ss2022RestartHint")}</CalloutInline>
+            )}
           </Section>
         )}
 
@@ -374,7 +495,7 @@ export const InboundEditor: FC<{
           </Section>
         )}
 
-        {f.protocol !== "wireguard" && f.protocol !== "dokodemo-door" && (
+        {f.protocol !== "wireguard" && f.protocol !== "amneziawg" && f.protocol !== "hysteria" && f.protocol !== "tun" && f.protocol !== "dokodemo-door" && (
           <Section title={t("inbounds.sectionSniffing")}>
             <label className="nx-row" style={{ gap: 8, cursor: "pointer" }}>
               <Checkbox checked={f.sniffing} onChange={toggle("sniffing")} />

@@ -151,6 +151,13 @@ class XrayService(rpyc.Service):
         self.wg.apply(WireGuardSpec.from_dict(json.loads(spec_json)))
 
     @rpyc.exposed
+    def wg_apply_specs_json(self, specs_json: str):
+        import json
+
+        specs = [WireGuardSpec.from_dict(item) for item in json.loads(specs_json)]
+        self.wg.apply_specs(specs)
+
+    @rpyc.exposed
     def wg_transfer(self, interface: str) -> str:
         import json
         return json.dumps(self.wg.get_transfer(interface))
@@ -180,6 +187,13 @@ class XrayService(rpyc.Service):
     @rpyc.exposed
     def singbox_down(self):
         self.singbox.stop()
+
+    @rpyc.exposed
+    def singbox_tls_status(self, certificate_path: str = "/var/lib/nexuspanel-node/tls/cert.pem") -> str:
+        import json
+        from tls_inspect import inspect_cert_file
+
+        return json.dumps(inspect_cert_file(certificate_path))
 
     @rpyc.exposed
     def fetch_xray_version(self):

@@ -26,6 +26,12 @@ class RESTWireGuardClient:
     def apply(self, spec: dict, timeout: int = 15) -> None:
         self._node.make_request("/wg/apply", timeout, spec=spec)
 
+    def apply_specs(self, specs: list, timeout: int = 30) -> None:
+        if len(specs) == 1:
+            self.apply(specs[0], timeout=timeout)
+            return
+        self._node.make_request("/wg/apply-specs", timeout, specs=specs)
+
     def transfer(self, interface: str, timeout: int = 10) -> dict:
         res = self._node.make_request("/wg/transfer", timeout, interface=interface)
         return (res or {}).get("transfer", {})
@@ -72,13 +78,25 @@ class RPyCWireGuardClient:
         self._node = node
 
     def apply(self, spec: dict, timeout: int = 15) -> None:
-        # Ship JSON text — RPyC netrefs break dict.get() inside the node agent.
-        plain = _plain_tree(spec)
+        self.apply_specs([spec], timeout=timeout)
+
+    def apply_specs(self, specs: list, timeout: int = 30) -> None:
+        plain_specs = [_plain_tree(s) for s in specs]
         remote = self._node.remote
-        if hasattr(remote, "wg_apply_json"):
-            remote.wg_apply_json(json.dumps(plain, separators=(",", ":")))
+        payload = json.dumps(plain_specs, separators=(",", ":"))
+        if hasattr(remote, "wg_apply_specs_json"):
+            remote.wg_apply_specs_json(payload)
+        elif len(plain_specs) == 1:
+            if hasattr(remote, "wg_apply_json"):
+                remote.wg_apply_json(json.dumps(plain_specs[0], separators=(",", ":")))
+            else:
+                remote.wg_apply(plain_specs[0])
         else:
-            remote.wg_apply(plain)
+            for spec in plain_specs:
+                if hasattr(remote, "wg_apply_json"):
+                    remote.wg_apply_json(json.dumps(spec, separators=(",", ":")))
+                else:
+                    remote.wg_apply(spec)
 
     def transfer(self, interface: str, timeout: int = 10) -> dict:
         try:

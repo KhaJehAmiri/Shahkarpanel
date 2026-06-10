@@ -44,6 +44,38 @@ export const BarChart: FC<{ data: { label: string; value: number }[]; height?: n
   );
 };
 
+/** Ranked horizontal bars (leaderboard style) — much denser than vertical bars for few items. */
+export const RankBars: FC<{
+  data: { label: string; value: number; sub?: string }[];
+  format?: (n: number) => string;
+}> = ({ data, format }) => {
+  if (!data.length) return null;
+  const sorted = [...data].sort((a, b) => b.value - a.value);
+  const max = Math.max(...sorted.map((d) => d.value), 1);
+  return (
+    <div className="nx-rankbars">
+      {sorted.map((d, i) => (
+        <div key={`${d.label}-${i}`} className={`nx-rankrow ${i === 0 ? "top" : ""}`}>
+          <span className={`nx-rank-badge ${i < 3 ? `r${i + 1}` : ""}`}>{i + 1}</span>
+          <div className="nx-rank-main">
+            <div className="nx-rank-head">
+              <span className="nx-rank-label" title={d.label}>{d.label}</span>
+              {d.sub && <span className="nx-rank-sub">{d.sub}</span>}
+              <span className="nx-rank-value">{format ? format(d.value) : d.value}</span>
+            </div>
+            <div className="nx-rank-track">
+              <div
+                className="nx-rank-fill"
+                style={{ width: `${Math.max((d.value / max) * 100, 1.5)}%`, animationDelay: `${i * 50}ms` }}
+              />
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+};
+
 export const Donut: FC<{ segments: { label: string; value: number; color: string }[]; size?: number }> = ({ segments, size = 150 }) => {
   const total = segments.reduce((a, s) => a + s.value, 0) || 1;
   const r = size / 2 - 14;

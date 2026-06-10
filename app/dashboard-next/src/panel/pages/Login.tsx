@@ -39,6 +39,7 @@ export const Login: FC = () => {
 
   return (
     <div className="nx-login">
+      <div className="nx-app-bg" aria-hidden />
       <div className="nx-login-card">
         <div className="nx-brand" style={{ padding: "0 0 22px", justifyContent: "center" }}>
           {branding?.logo_url ? (

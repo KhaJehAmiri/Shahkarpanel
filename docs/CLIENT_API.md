@@ -97,9 +97,39 @@ pipeline).
     { "priority": 1, "protocol": "vless-reality", "node_id": 2, "node_name": "nl", "region": "eu" }
   ],
   "subscription_url": "https://panel.example/sub/<token>",
-  "v2ray_links": ["vless://…", "ss://…"]
+  "v2ray_links": ["vless://…", "ss://…"],
+  "protocol_materials": {
+    "hysteria2": { "node_id": 1, "link": "hysteria2://…", "tls_trusted": true },
+    "amneziawg": { "node_id": 1, "conf": "[Interface]\n…" }
+  }
 }
 ```
+
+`protocol_materials` carries ready-to-use payloads per advertised protocol:
+
+| key | payload |
+|-----|---------|
+| `wireguard` / `amneziawg` | `conf` (wg-quick text) + `node_id` |
+| `hysteria2` / `tuic` | `link` + `tls_trusted` + `node_id` |
+| `vless-reality` | `outbounds[]` structured (address, port, uuid, reality, ws…) |
+| `shadowsocks-2022` | `outbounds[]` (2022 ciphers only) |
+| `cdn` | `outbounds[]` (VLESS/ws entries, separate from Reality) |
+
+Each entry in `protocols[]` has its own `node_id` (WG/H2 on node inventory;
+Xray protocols use `node_id: null` — hosts come from panel Xray).
+
+`country` (ISO code, e.g. `IR`) boosts region-matching nodes for **gamer**
+profile node ranking.
+
+`tunnel` summarises relay→exit topology when the `tunneling` flag is on.
+
+**Auto-provision.** When `portal_enabled` is set (or portal password assigned),
+the panel adds missing app proxies: `vless`, `wireguard`, `hysteria2`, and
+`shadowsocks` (2022) when `client_ss2022` is enabled. `config` also calls this
+on every fetch.
+
+When sing-box TLS is Let's Encrypt (`tls_trusted=true`), H2/TUIC links omit
+`insecure=1`.
 
 ## `POST /api/v2/client/probe`
 
@@ -107,7 +137,7 @@ The app pings candidate nodes and posts measurements. The panel stores them
 (`client_probes` table) and returns the best node/protocol.
 
 ```json
-// request  (?net=open&udp=true)
+// request  (?net=open&udp=true&country=IR)
 {
   "profile": "gamer",
   "results": [
@@ -219,6 +249,11 @@ the stored value is used.
   persistence. ✅
 - **Phase B** — device-token registration, telemetry ingestion, dedicated-IP
   pool + Trader node pinning. ✅
-- **Deferred** — actual push delivery (FCM/APNs sender), a telemetry analytics
-  dashboard, and native per-protocol config objects (today the app consumes
-  `subscription_url` / `v2ray_links`).
+- **Let's Encrypt** — `POST /api/node/{id}/singbox/tls/issue` (SSH + certbot on
+  the node host), auto-renew via node cron, `tls_trusted` drives link security.
+- **CDN fallback** — enable `cdn_fallback` feature flag to prioritise CDN in
+  `negotiate` for Regular users.
+- **Push delivery** — `app/push/sender.py` (FCM legacy/v1 + APNs JWT). Enable flag
+  `client_push` and set `FCM_SERVER_KEY` or `FCM_SERVICE_ACCOUNT_JSON` (+ APNs vars).
+- **Deferred** — telemetry analytics dashboard
+  dashboard.

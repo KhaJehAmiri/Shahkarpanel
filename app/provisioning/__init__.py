@@ -172,7 +172,7 @@ def build_install_command(
         # --cap-add=NET_ADMIN + host network let the agent manage the wg interface.
         # ip_forward is set on the host above; --sysctl is invalid with --network=host.
         "docker run -d --name nexusnode --restart=always --network=host "
-        "--cap-add=NET_ADMIN "
+        "--cap-add=NET_ADMIN --device /dev/net/tun:/dev/net/tun "
         "-v /var/lib/nexuspanel-node:/var/lib/nexuspanel-node "
         "-e SERVICE_PROTOCOL=rpyc "
         f"{secret_env}"

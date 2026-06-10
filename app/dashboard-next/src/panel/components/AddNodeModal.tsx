@@ -1,15 +1,21 @@
-import { FC, useState } from "react";
+import React, { FC, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import { useApp } from "../context/AppContext";
-import { isIranNode } from "../lib/region";
 import { Button, Callout, Field, Input, Modal, Select, useToast } from "./ui";
+import {
+  NodeServicesForm,
+  buildProvisionServicesPayload,
+  defaultNodeServices,
+  type NodeServicesState,
+} from "./NodeServicesForm";
 
 type ProvisionResult = {
   status: string;
   job_id?: string;
   node_id?: number;
   detail?: string;
+  install_command?: string;
 };
 
 export type AddNodePreset = {
@@ -35,12 +41,31 @@ export const AddNodeModal: FC<{
     username: "root",
     password: "",
     role: "direct",
-    makeTunnel: false,
-    tunnelPort: "443",
   });
+  const [services, setServices] = useState<NodeServicesState>(
+    defaultNodeServices(preset?.coreKind || "xray"),
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [manualCmd, setManualCmd] = useState<string | null>(null);
   const upd = (k: string) => (e: any) => setF({ ...f, [k]: e.target.value });
+
+  const patchServices = (patch: Partial<NodeServicesState>) => {
+    setServices((prev) => ({ ...prev, ...patch }));
+  };
+
+  const onCoreKindChange = (kind: "xray" | "wireguard") => {
+    setF({ ...f, core_kind: kind });
+    setServices(defaultNodeServices(kind));
+  };
+
+  const wantsQuic = services.enable_hysteria2 || services.enable_tuic;
+  const leOk = services.tls_mode !== "letsencrypt"
+    || (!!services.le_email.trim() && !!(services.le_target.trim() || f.address.trim()));
+
+  const valid = !!f.name && !!f.address && !!f.password
+    && (f.core_kind !== "wireguard" || services.enable_plain_wg || services.enable_awg)
+    && (!wantsQuic || services.tls_mode === "self_signed" || leOk);
 
   const submit = async () => {
     setBusy(true);
@@ -49,13 +74,14 @@ export const AddNodeModal: FC<{
       const res = await api.post<ProvisionResult>("/nodes/provision", {
         name: f.name.trim(),
         host: f.address.trim(),
-        ssh_port: parseInt(f.ssh_port),
+        ssh_port: parseInt(f.ssh_port, 10),
         username: f.username.trim() || "root",
         password: f.password,
         role: f.role,
         core_kind: f.core_kind,
         region: f.region.trim() || null,
         run: true,
+        ...buildProvisionServicesPayload({ ...services, core_kind: f.core_kind }, f.address),
       });
       if (res.status === "started") {
         toast.push(t("infra.provisionQueued"), "success");
@@ -70,14 +96,48 @@ export const AddNodeModal: FC<{
     }
   };
 
-  const valid = !!f.name && !!f.address && !!f.password;
-  const showTunnel = isEnabled("tunneling") && f.core_kind === "xray";
+  const fetchManual = async () => {
+    if (!f.name.trim()) {
+      toast.push(t("common.name"), "error");
+      return;
+    }
+    setBusy(true);
+    try {
+      const q = new URLSearchParams({
+        name: f.name.trim(),
+        role: f.role,
+        core_kind: f.core_kind,
+      });
+      if (f.region.trim()) q.set("region", f.region.trim());
+      const res = await api.get<ProvisionResult>(`/nodes/install-command?${q}`);
+      setManualCmd(res.install_command || "");
+    } catch (e: any) {
+      toast.push(e?.message || t("common.error"), "error");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   if (!canProvision) {
     return (
       <Modal open title={t("infra.addNode")} onClose={onClose}
-        footer={<Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>}>
-        <Callout tone="warn">{t("common.disabledFeature")}</Callout>
+        footer={<>
+          <Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
+          <Button variant="primary" disabled={busy || !f.name.trim()} onClick={fetchManual}>
+            {t("infra.manualInstallCmd")}
+          </Button>
+        </>}>
+        <div className="nx-stack" style={{ gap: 12 }}>
+          <Callout tone="warn">{t("infra.provisionDisabledHint")}</Callout>
+          <Field label={t("common.name")}>
+            <Input value={f.name} onChange={upd("name")} placeholder="de-node-1" />
+          </Field>
+          {manualCmd && (
+            <Callout tone="info">
+              <pre style={{ whiteSpace: "pre-wrap", fontSize: 11, margin: 0 }}>{manualCmd}</pre>
+            </Callout>
+          )}
+        </div>
       </Modal>
     );
   }
@@ -95,7 +155,7 @@ export const AddNodeModal: FC<{
 
         <div className="nx-form-grid">
           <Field label={t("infra.coreKind")}>
-            <Select value={f.core_kind} onChange={upd("core_kind")}>
+            <Select value={f.core_kind} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => onCoreKindChange(e.target.value as "xray" | "wireguard")}>
               <option value="xray">Xray (v2ray)</option>
               <option value="wireguard">WireGuard</option>
             </Select>
@@ -133,26 +193,12 @@ export const AddNodeModal: FC<{
             <Input type="password" value={f.password} onChange={upd("password")} autoComplete="new-password" />
           </Field>
 
-          {showTunnel && (
-            <div className="span-2 nx-stack" style={{ gap: 8 }}>
-              <label className="nx-row" style={{ gap: 8, fontSize: 13 }}>
-                <input type="checkbox" checked={f.makeTunnel} onChange={(e) => setF({ ...f, makeTunnel: e.target.checked })} />
-                {t("infra.makeTunnelWithPanel")}
-              </label>
-              {f.makeTunnel && (
-                <div className="nx-form-grid" style={{ marginTop: 2 }}>
-                  <div className="span-2">
-                    <Callout tone="info" className="compact">
-                      {isIranNode(f.region) ? t("infra.makeTunnelHintIran") : t("infra.makeTunnelHintForeign")}
-                    </Callout>
-                  </div>
-                  <Field label={t("infra.tunnelPort")} hint={t("infra.tunnelPortHint")}>
-                    <Input type="number" value={f.tunnelPort} onChange={upd("tunnelPort")} />
-                  </Field>
-                </div>
-              )}
-            </div>
-          )}
+          <NodeServicesForm
+            state={{ ...services, core_kind: f.core_kind }}
+            setState={patchServices}
+            serverAddress={f.address}
+            region={f.region}
+          />
         </div>
 
         {error && <Callout tone="danger" className="compact">{error}</Callout>}

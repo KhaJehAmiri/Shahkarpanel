@@ -15,7 +15,7 @@
 
 **English** · [فارسی](./README-fa.md) · [简体中文](./README-zh-cn.md) · [Русский](./README-ru.md)
 
-[Quick install](#-one-line-install-vps) · [Architecture](#-architecture) · [Features](#-feature-matrix) · [Security & tests](#-security-is-the-tests-folder-on-github) · [Repository](https://github.com/KhaJehAmiri/nexuspanel)
+[Quick install](#-one-line-install-vps) · [Architecture](#-architecture) · [Features](#-feature-matrix) · [Security & tests](#-security-is-the-tests-folder-on-github) · [**Central handoff (docs/CENTRAL-HANDOFF.md)**](docs/CENTRAL-HANDOFF.md) · [Repository](https://github.com/KhaJehAmiri/nexuspanel)
 
 </div>
 
@@ -33,6 +33,7 @@
 - [Development](#-development)
 - [Production Docker](#-production-docker)
 - [Configuration](#-configuration)
+- [Central handoff (AI / audit)](#-central-handoff)
 - [Security: is `tests/` on GitHub safe?](#-security-is-the-tests-folder-on-github)
 - [License](#-license)
 
@@ -236,6 +237,26 @@ Data: `/var/lib/nexuspanel`
 Commercial keys (Stripe, rates, commission) are stored in `platform_settings` and edited from the dashboard.
 
 See [`.env.example`](.env.example).
+
+---
+
+## Central handoff
+
+For AI-assisted audits, security reviews, app design, or resuming work in a new chat:
+
+**Dual product model:** one backend, two faces — (1) **public NexusPanel** via `/sub/` for standard apps (v2rayNG, WireGuard, …), (2) **SigmaGuard** via `/api/v2/client/*` (our proprietary Flutter+Rust app). See [`docs/PUBLIC_DEPLOYMENT.md`](docs/PUBLIC_DEPLOYMENT.md) and [`/opt/sigmaguard/SIGMAGUARD_APP_BRIEF.md`](../sigmaguard/SIGMAGUARD_APP_BRIEF.md).
+
+| Resource | Path |
+|----------|------|
+| **Unified README** | [`docs/CENTRAL-HANDOFF.md`](docs/CENTRAL-HANDOFF.md) |
+| **Visual map (Cursor Canvas)** | `nexuspanel-central.canvas.tsx` |
+| Layer 1 (operators) | [`docs/PUBLIC_DEPLOYMENT.md`](docs/PUBLIC_DEPLOYMENT.md) |
+| Layer 2 (SigmaGuard API) | [`docs/CLIENT_API.md`](docs/CLIENT_API.md) |
+| Layer 2 (app design) | `/opt/sigmaguard/SIGMAGUARD_APP_BRIEF.md` |
+| Phase history | [`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md) |
+| Security closure log | [`docs/AUDIT-CLOSURE.md`](docs/AUDIT-CLOSURE.md) |
+
+Older canvases (`master-status`, `full-audit`, etc.) redirect to **central**.
 
 ---
 

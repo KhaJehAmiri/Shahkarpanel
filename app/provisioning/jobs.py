@@ -11,6 +11,7 @@ from typing import Dict, Literal, Optional
 from app import provisioning
 from app.db import GetDB, crud
 from app.models.node import NodeStatus
+from app.provisioning.post_install import ProvisionExtras, run_post_provision
 
 logger = logging.getLogger("nexus-provision")
 
@@ -20,6 +21,7 @@ STEP_LABELS = ("queued", "ssh", "docker", "image", "agent", "register", "done")
 _lock = threading.Lock()
 _jobs: Dict[str, "ProvisionJob"] = {}
 _by_node: Dict[int, str] = {}
+_extras: Dict[str, ProvisionExtras] = {}
 
 
 @dataclass
@@ -151,12 +153,29 @@ def _run_job(job_id: str, creds: provisioning.SSHCredentials, command: str,
                 "Check that the node agent is running (docker ps) and the panel can reach its API ports."
             )
 
+        extras = _extras.get(job_id)
+        if extras:
+            with _lock:
+                job.progress = 94
+                job.step = "post"
+                job.message = "Configuring sing-box, TLS, and tunnel…"
+            _set_node_provision(job.node_id, status="provisioning", message=job.message)
+            try:
+                run_post_provision(job.node_id, creds, extras)
+            except Exception as exc:
+                logger.warning(
+                    "Post-provision steps failed for node %s (agent is up): %s",
+                    job.node_id,
+                    exc,
+                )
+
         with _lock:
             job.status = "success"
             job.progress = 100
             job.step = "done"
             job.message = None
             job.finished_at = time.time()
+            _extras.pop(job_id, None)
         _set_node_provision(job.node_id, status="registered", message=None)
     except Exception as exc:
         stop.set()
@@ -168,6 +187,7 @@ def _run_job(job_id: str, creds: provisioning.SSHCredentials, command: str,
             job.message = err
             job.step = "failed"
             job.finished_at = time.time()
+            _extras.pop(job_id, None)
         _set_node_provision(
             job.node_id,
             status="failed",
@@ -187,12 +207,15 @@ def start_job(
     command: str,
     ssh_timeout: int,
     exec_timeout: int,
+    extras: Optional[ProvisionExtras] = None,
 ) -> str:
     job_id = uuid.uuid4().hex
     job = ProvisionJob(id=job_id, node_id=node_id, node_name=node_name)
     with _lock:
         _jobs[job_id] = job
         _by_node[node_id] = job_id
+        if extras is not None:
+            _extras[job_id] = extras
     threading.Thread(
         target=_run_job,
         args=(job_id, creds, command, ssh_timeout, exec_timeout),

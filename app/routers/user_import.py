@@ -179,17 +179,31 @@ def _row_to_user_create(row: ImportRow) -> UserCreate:
     if not proxies:
         raise ValueError("No valid protocols in row")
 
+    from app.xray.inbound_match import filter_inbound_tags, inbound_matches_proxy
+
     inbounds: Dict[ProxyTypes, List[str]] = {}
     for key, tags in (row.inbounds or {}).items():
         try:
             pt = ProxyTypes(key)
         except ValueError:
             continue
-        inbounds[pt] = [t for t in tags if t in xray.config.inbounds_by_tag]
+        if pt not in proxies:
+            continue
+        proxy_settings = proxies[pt]
+        known = [t for t in tags if t in xray.config.inbounds_by_tag]
+        inbounds[pt] = filter_inbound_tags(pt, known, proxy_settings)
     if not inbounds:
         for pt in proxies:
-            ins = xray.config.inbounds_by_protocol.get(pt) or []
-            inbounds[pt] = [i.tag for i in ins]
+            if pt in (ProxyTypes.WireGuard, ProxyTypes.Hysteria2, ProxyTypes.TUIC):
+                inbounds[pt] = []
+                continue
+            ins = xray.config.inbounds_by_protocol.get(pt.value) or []
+            proxy_settings = proxies[pt]
+            inbounds[pt] = [
+                i["tag"]
+                for i in ins
+                if inbound_matches_proxy(pt, i["tag"], proxy_settings, inbound_meta=i)
+            ]
 
     status = UserStatusCreate.active
     if row.status.lower() == "on_hold":

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "@/panel/index.css";
+import "@/panel/design-pro.css";
 
 export const metadata: Metadata = {
   title: "NexusPanel",

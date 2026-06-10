@@ -40,6 +40,11 @@ class NodeSingBoxConfig(BaseModel):
     tuic_enabled: bool = False
     tuic_port: Optional[int] = None
     tuic_congestion_control: str = "bbr"
+    tls_trusted: bool = False
+    tls_issuer: Optional[str] = None
+    tls_expires_at: Optional[datetime] = None
+    tls_le_domain: Optional[str] = None
+    tls_le_kind: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -53,7 +58,14 @@ class NodeWireGuardConfig(BaseModel):
     endpoint: Optional[str] = None
     mtu: int = Field(default=1420, gt=0)
     dns: Optional[str] = None
-    # AmneziaWG obfuscation (null = plain WireGuard).
+    plain_enabled: bool = True
+    awg_enabled: bool = False
+    awg_interface: str = "wg1"
+    awg_listen_port: int = Field(default=51821, gt=0, lt=65536)
+    awg_subnet: str = "10.11.0.0/24"
+    awg_public_key: Optional[str] = None
+    awg_endpoint: Optional[str] = None
+    # AmneziaWG obfuscation params for the awg listener.
     awg_jc: Optional[int] = None
     awg_jmin: Optional[int] = None
     awg_jmax: Optional[int] = None

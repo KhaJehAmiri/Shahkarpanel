@@ -18,6 +18,7 @@ const SECTIONS: { id: string; keys: string[] }[] = [
   {
     id: "billing",
     keys: [
+      "billing.currency_label",
       "billing.usage_rate_per_gb",
       "billing.wallet_low_threshold",
       "billing.job_interval_seconds",

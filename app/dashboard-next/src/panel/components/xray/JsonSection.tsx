@@ -17,7 +17,7 @@ export const JsonSection: FC<{
       setErr(null);
       onSave(parsed);
     } catch (e: unknown) {
-      setErr(e instanceof Error ? e.message : "Invalid JSON");
+      setErr(e instanceof Error ? e.message : t("automation.invalidJson"));
     }
   };
 
@@ -31,11 +31,11 @@ export const JsonSection: FC<{
       <Callout tone="warn" title={t("xray.jsonTitle")}>{t("xray.jsonDesc")}</Callout>
       <Card>
         <textarea
-          className="nx-input"
+          className="nx-code-editor"
           rows={22}
           value={text}
           onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setText(e.target.value)}
-          style={{ fontFamily: "var(--nx-font-mono)", fontSize: 12, width: "100%" }}
+          dir="ltr"
           spellCheck={false}
         />
         {err && <div style={{ color: "var(--nx-danger)", fontSize: 12, marginTop: 8 }}>{err}</div>}

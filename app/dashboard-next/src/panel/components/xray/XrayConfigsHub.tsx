@@ -1,4 +1,4 @@
-import { FC, useEffect, useState } from "react";
+import { FC, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useXrayConfig } from "./useXrayConfig";
 import { BasicsSection } from "./BasicsSection";
@@ -9,23 +9,36 @@ import { JsonSection } from "./JsonSection";
 import { Button, Card, EmptyState, SkeletonRows, Tabs, useToast } from "../ui";
 import { IcRefresh } from "../icons";
 
-export const XrayConfigsHub: FC = () => {
+export const XrayConfigsHub: FC<{
+  /** When set, only these tabs are shown (ids: outbounds | routing | dns | basics | json). */
+  visibleTabs?: string[];
+  initialTab?: string;
+}> = ({ visibleTabs, initialTab }) => {
   const { t } = useTranslation();
   const toast = useToast();
   const { config, setConfig, loading, error, saving, reload, save } = useXrayConfig();
-  const [tab, setTab] = useState("outbounds");
-
-  useEffect(() => {
-    reload();
-  }, [reload]);
-
-  const tabs = [
+  const allTabs = useMemo(() => [
     { id: "outbounds", label: t("xray.tabOutbounds") },
     { id: "routing", label: t("xray.tabRouting") },
     { id: "dns", label: t("xray.tabDns") },
     { id: "basics", label: t("xray.tabBasics") },
     { id: "json", label: t("xray.tabJson") },
-  ];
+  ], [t]);
+  const tabs = useMemo(
+    () => (visibleTabs?.length ? allTabs.filter((x) => visibleTabs.includes(x.id)) : allTabs),
+    [allTabs, visibleTabs],
+  );
+  const [tab, setTab] = useState(() =>
+    initialTab && tabs.some((x) => x.id === initialTab) ? initialTab : tabs[0]?.id ?? "outbounds",
+  );
+
+  useEffect(() => {
+    reload();
+  }, [reload]);
+
+  useEffect(() => {
+    if (initialTab && tabs.some((x) => x.id === initialTab)) setTab(initialTab);
+  }, [initialTab, tabs]);
 
   const persist = async (next?: Record<string, unknown>) => {
     const payload = next ?? config;
@@ -34,7 +47,7 @@ export const XrayConfigsHub: FC = () => {
       await save(payload);
       toast.push(t("xray.savedRestart"), "success");
     } catch (e: unknown) {
-      toast.push(e instanceof Error ? e.message : "Save failed", "error");
+      toast.push(e instanceof Error ? e.message : t("common.saveFailed"), "error");
     }
   };
 
@@ -59,9 +72,9 @@ export const XrayConfigsHub: FC = () => {
           <IcRefresh className="nx-ico" /> {t("common.refresh")}
         </Button>
       </div>
-      <Tabs active={tab} onChange={setTab} tabs={tabs} />
+      {tabs.length > 1 && <Tabs active={tab} onChange={setTab} tabs={tabs} />}
       {tab === "outbounds" && (
-        <OutboundsSection config={config} onChange={onChange} onSave={() => persist()} saving={saving} />
+        <OutboundsSection config={config} onChange={onChange} onSave={(next) => persist(next)} saving={saving} />
       )}
       {tab === "routing" && (
         <RoutingSection config={config} onChange={onChange} onSave={() => persist()} saving={saving} />

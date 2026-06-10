@@ -28,6 +28,24 @@ export function relativeExpiry(expire: number | null | undefined): { text: strin
   return { text: `${days}d`, days };
 }
 
+/**
+ * Localized "time until expiry" label, e.g. "۵ روز مانده" / "5d left".
+ * `t` is the i18next translate function from the calling component.
+ */
+export function relativeExpiryLabel(
+  expire: number | null | undefined,
+  t: (key: string, opts?: Record<string, unknown>) => string,
+): string {
+  if (!expire) return "∞";
+  const diffSec = expire - Date.now() / 1000;
+  const abs = Math.abs(diffSec);
+  let value: string;
+  if (abs >= 86400) value = t("users.unitDays", { n: Math.ceil(abs / 86400) });
+  else if (abs >= 3600) value = t("users.unitHours", { n: Math.ceil(abs / 3600) });
+  else value = t("users.unitMinutes", { n: Math.max(1, Math.ceil(abs / 60)) });
+  return diffSec >= 0 ? t("users.expiresIn", { value }) : t("users.expiredAgo", { value });
+}
+
 export function usagePct(used: number, limit: number | null | undefined): number {
   if (!limit) return 0;
   return Math.min(100, (used / limit) * 100);

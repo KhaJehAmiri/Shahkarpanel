@@ -34,7 +34,7 @@ CAMOUFLAGED = frozenset({"vless-reality", "cdn"})
 
 # Per-profile priority (highest first), from the product brief.
 PROFILE_PRIORITY: Dict[str, List[str]] = {
-    "gamer": ["amneziawg", "hysteria2", "tuic", "vless-reality"],
+    "gamer": ["amneziawg", "hysteria2", "vless-reality"],
     "trader": ["vless-reality"],
     "normal": ["vless-reality", "shadowsocks-2022", "cdn"],
 }
@@ -68,6 +68,7 @@ def negotiate(
     net: str = "open",
     udp: bool = True,
     available: Optional[set] = None,
+    cdn_fallback: bool = False,
 ) -> dict:
     """Return usable/blocked protocols (ordered) for the network + profile.
 
@@ -86,6 +87,9 @@ def negotiate(
         ordered = ["vless-reality"]
     else:
         base = list(PROFILE_PRIORITY[profile])
+        cdn_ok = avail is None or "cdn" in avail
+        if cdn_fallback and profile == "normal" and cdn_ok:
+            base = ["vless-reality", "cdn"] + [p for p in base if p not in ("vless-reality", "cdn")]
         extras = _NETWORK_EXTRAS[net]
         ordered = base + [p for p in extras if p not in base]
 
@@ -116,7 +120,36 @@ def negotiate(
     }
 
 
-def _node_score(node: dict, probe_by_node: Dict[int, dict]) -> float:
+_REGION_HINTS = {
+    "IR": ("IR", "IRAN", "ME", "MIDDLE"),
+    "DE": ("DE", "EU", "EUROPE", "GER", "GERMANY"),
+    "NL": ("NL", "EU", "EUROPE", "NETHER"),
+    "US": ("US", "NA", "AMERICA"),
+    "TR": ("TR", "TURKEY", "TUR"),
+}
+
+
+def _country_region_bonus(node: dict, country: Optional[str]) -> float:
+    """Negative bonus lowers score (preferred) when region matches country."""
+    if not country:
+        return 0.0
+    cc = country.strip().upper()
+    region = (node.get("region") or "").upper()
+    if not region:
+        return 0.0
+    if cc in region or region.startswith(cc) or region.endswith(cc):
+        return -80.0
+    for hint in _REGION_HINTS.get(cc, (cc,)):
+        if hint in region:
+            return -80.0
+    return 0.0
+
+
+def _node_score(
+    node: dict,
+    probe_by_node: Dict[int, dict],
+    country: Optional[str] = None,
+) -> float:
     """Lower is better. Measured probe beats the node's last known latency."""
     probe = probe_by_node.get(node.get("id"))
     if probe is not None:
@@ -127,21 +160,23 @@ def _node_score(node: dict, probe_by_node: Dict[int, dict]) -> float:
         loss = 0.0
     if ping is None:
         ping = 9999.0
-    # Each 1% packet loss adds a 20ms-equivalent penalty.
-    return float(ping) + float(loss) * 20.0
+    return float(ping) + float(loss) * 20.0 + _country_region_bonus(node, country)
 
 
-def rank_nodes(nodes: List[dict], probe_results: Optional[List[dict]] = None) -> List[dict]:
-    """Order nodes best-first by measured/known latency and packet loss."""
+def rank_nodes(
+    nodes: List[dict],
+    probe_results: Optional[List[dict]] = None,
+    country: Optional[str] = None,
+) -> List[dict]:
+    """Order nodes best-first by latency, loss, and optional country/region."""
     probe_by_node: Dict[int, dict] = {}
     for r in probe_results or []:
         nid = r.get("node_id")
         if nid is not None:
-            # Keep the most favourable sample per node.
             prev = probe_by_node.get(nid)
             if prev is None or _sample_score(r) < _sample_score(prev):
                 probe_by_node[nid] = r
-    return sorted(nodes, key=lambda n: _node_score(n, probe_by_node))
+    return sorted(nodes, key=lambda n: _node_score(n, probe_by_node, country))
 
 
 def _sample_score(sample: dict) -> float:
@@ -157,6 +192,7 @@ def select_nodes(
     profile: str = "normal",
     probe_results: Optional[List[dict]] = None,
     bound_node_id: Optional[int] = None,
+    country: Optional[str] = None,
 ) -> dict:
     """Pick recommended + fallback node ids for a profile.
 
@@ -172,7 +208,8 @@ def select_nodes(
             "fallback_node": None,
         }
 
-    ranked = rank_nodes(nodes, probe_results)
+    use_country = country if (country or profile == "gamer") else None
+    ranked = rank_nodes(nodes, probe_results, country=use_country)
     if not ranked:
         return {"recommended_node": None, "fallback_node": None}
     return {

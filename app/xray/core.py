@@ -72,6 +72,14 @@ class XRayCore:
                     logger.debug(output)
 
                 elif not self.process or self.process.poll() is not None:
+                    rc = self.process.poll() if self.process else None
+                    if rc not in (None, 0):
+                        tail = list(self._logs_buffer)[-20:]
+                        logger.warning(
+                            "Xray core exited with code %s; recent logs: %s",
+                            rc,
+                            " | ".join(tail) if tail else "(empty)",
+                        )
                     break
 
         def capture_only():
@@ -84,6 +92,14 @@ class XRayCore:
                         buf.append(output)
 
                 elif not self.process or self.process.poll() is not None:
+                    rc = self.process.poll() if self.process else None
+                    if rc not in (None, 0):
+                        tail = list(self._logs_buffer)[-20:]
+                        logger.warning(
+                            "Xray core exited with code %s; recent logs: %s",
+                            rc,
+                            " | ".join(tail) if tail else "(empty)",
+                        )
                     break
 
         if DEBUG:
@@ -137,7 +153,7 @@ class XRayCore:
             cmd,
             env=self._env,
             stdin=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             stdout=subprocess.PIPE,
             universal_newlines=True
         )

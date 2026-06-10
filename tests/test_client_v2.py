@@ -19,6 +19,7 @@ def test_gamer_open_prefers_low_latency_udp():
     r = engine.negotiate(profile="gamer", net="open", udp=True)
     assert r["recommended"] == "amneziawg"
     assert r["usable_protocols"][:2] == ["amneziawg", "hysteria2"]
+    assert "tuic" not in r["usable_protocols"][:3]
     assert r["blocked_protocols"] == []
 
 
@@ -275,13 +276,16 @@ def test_amnezia_params_from_node_extracts_set_fields():
     from app.subscription.wireguard import amnezia_params_from_node
 
     class _Cfg:
+        awg_enabled = True
         awg_jc, awg_jmin, awg_jmax = 4, 40, 70
         awg_s1, awg_s2 = 50, 100
         awg_h1 = awg_h2 = awg_h3 = awg_h4 = None
 
-    assert amnezia_params_from_node(_Cfg()) == {}
-    params = amnezia_params_from_node(_Cfg(), amnezia_available=True)
-    assert params == {"Jc": 4, "Jmin": 40, "Jmax": 70, "S1": 50, "S2": 100}
+    assert amnezia_params_from_node(_Cfg()) == {"Jc": 4, "Jmin": 40, "Jmax": 70, "S1": 50, "S2": 100}
+    class _Off:
+        awg_enabled = False
+        awg_jc = 4
+    assert amnezia_params_from_node(_Off()) == {}
 
 
 def test_client_profile_create_and_modify():

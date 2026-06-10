@@ -50,6 +50,7 @@ class XRayConfig(dict):
         self.api_port = api_port
 
         super().__init__(config)
+        self._sanitize_outbounds()
         self._validate()
 
         self.inbounds = []
@@ -123,6 +124,20 @@ class XRayConfig(dict):
             self["routing"] = {"rules": []}
             self["routing"]["rules"].insert(0, rule)
 
+    def _sanitize_outbounds(self):
+        valid_wg_ds = {
+            "", "ForceIP", "ForceIPv4", "ForceIPv6", "ForceIPv6v4", "ForceIPv4v6",
+        }
+        for outbound in self.get("outbounds") or []:
+            if outbound.get("protocol") != "wireguard":
+                continue
+            settings = outbound.get("settings") or {}
+            ds = settings.get("domainStrategy")
+            if ds is not None and ds not in valid_wg_ds:
+                settings = dict(settings)
+                settings.pop("domainStrategy", None)
+                outbound["settings"] = settings
+
     def _validate(self):
         if not self.get("inbounds"):
             raise ValueError("config doesn't have inbounds")
@@ -138,6 +153,12 @@ class XRayConfig(dict):
         for outbound in self['outbounds']:
             if not outbound.get("tag"):
                 raise ValueError("all outbounds must have a unique tag")
+            if ',' in outbound.get("tag"):
+                raise ValueError("character «,» is not allowed in outbound tag")
+
+        tags = [o.get("tag") for o in self['outbounds']]
+        if len(tags) != len(set(tags)):
+            raise ValueError("duplicate outbound tags are not allowed")
 
     def _resolve_inbounds(self):
         for inbound in self['inbounds']:
@@ -428,6 +449,23 @@ class XRayConfig(dict):
                             "email": f"{user_id}.{username}",
                             **settings
                         }
+
+                        if inbound['protocol'] == ProxyTypes.Shadowsocks.value:
+                            from xray_api.types.account import is_ss2022
+                            raw_in = config.get_inbound(inbound['tag']) or {}
+                            in_method = (
+                                (raw_in.get('settings') or {}).get('method')
+                                or inbound.get('ss_method')
+                                or ''
+                            )
+                            user_method = settings.get('method') or ''
+                            in_is_2022 = is_ss2022(in_method)
+                            user_is_2022 = is_ss2022(user_method)
+                            # Never mix legacy SS users into a 2022 inbound (or vice versa).
+                            if in_is_2022 != user_is_2022:
+                                continue
+                            if in_is_2022:
+                                client.pop('method', None)
 
                         # XTLS currently only supports transmission methods of TCP and mKCP
                         if client.get('flow') and (

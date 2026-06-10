@@ -6,7 +6,7 @@ import { useApp } from "../context/AppContext";
 import { useFetch } from "../lib/useFetch";
 import { PageHeader } from "../components/Shell";
 import {
-  Button, Callout, Card, CardHead, EmptyState, Field, Input, Modal, Pill, SkeletonRows, Tabs, Textarea, useToast,
+  Button, Callout, Card, CardHead, EmptyState, Field, Input, Modal, Pager, Pill, SkeletonRows, Tabs, Textarea, usePagedList, useToast,
 } from "../components/ui";
 import { IcPlus, IcTrash, IcServer, IcEdit, IcWallet } from "../components/icons";
 
@@ -18,7 +18,7 @@ type ResellerAccount = {
   max_nodes?: number | null;
 };
 
-export const Resellers: FC = () => {
+export const Resellers: FC<{ embedded?: boolean }> = ({ embedded }) => {
   const { t } = useTranslation();
   const { admin } = useApp();
   const [tab, setTab] = useState(admin?.is_sudo ? "accounts" : "branding");
@@ -34,7 +34,7 @@ export const Resellers: FC = () => {
   ];
   return (
     <div>
-      <PageHeader title={t("resellers.title")} subtitle={t("resellers.subtitle")} description={t("resellers.description")} />
+      {!embedded && <PageHeader title={t("resellers.title")} subtitle={t("resellers.subtitle")} description={t("resellers.description")} />}
       <Tabs active={tab} onChange={setTab} tabs={tabs} />
       {tab === "accounts" && <ResellerAccountsTab />}
       {tab === "subaccounts" && <SubResellersTab />}
@@ -206,9 +206,13 @@ const ResellerAccountsTab: FC = () => {
   const [credit, setCredit] = useState<ResellerAccount | null>(null);
   const { data, loading, error, reload, status } = useFetch<ResellerAccount[]>(() => api.get("/admins"), []);
 
-  if (status === 403) return <Callout tone="warn">{t("common.sudoOnly")}</Callout>;
+  const [search, setSearch] = useState("");
+  const accounts = (data || []).filter(
+    (a) => !a.is_sudo && (!search.trim() || a.username.toLowerCase().includes(search.trim().toLowerCase())),
+  );
+  const pager = usePagedList(accounts, 20);
 
-  const accounts = (data || []).filter((a) => !a.is_sudo);
+  if (status === 403) return <Callout tone="warn">{t("common.sudoOnly")}</Callout>;
 
   const remove = async (a: ResellerAccount) => {
     if (!confirm(t("common.confirmDelete"))) return;
@@ -228,7 +232,10 @@ const ResellerAccountsTab: FC = () => {
           {t("resellers.accountsHint")}
         </Callout>
       </div>
-      <div className="nx-row" style={{ justifyContent: "flex-end", marginBottom: 14 }}>
+      <div className="nx-row" style={{ justifyContent: "flex-end", marginBottom: 14, gap: 8 }}>
+        {(data?.length ?? 0) > 8 && (
+          <Input value={search} onChange={(e: any) => { setSearch(e.target.value); pager.setPage(0); }} placeholder={t("common.search")} style={{ maxWidth: 220 }} />
+        )}
         <Button variant="primary" onClick={() => setShow(true)}><IcPlus className="nx-ico" /> {t("resellers.addAccount")}</Button>
       </div>
       <Card pad0>
@@ -251,7 +258,7 @@ const ResellerAccountsTab: FC = () => {
                   <th style={{ textAlign: "end" }}>{t("common.actions")}</th>
                 </tr></thead>
                 <tbody>
-                  {accounts.map((a) => (
+                  {pager.slice.map((a) => (
                     <tr key={a.username}>
                       <td><code>{a.username}</code></td>
                       <td><Pill tone="default">{a.role || "reseller"}</Pill></td>
@@ -260,8 +267,8 @@ const ResellerAccountsTab: FC = () => {
                       <td>
                         <div className="nx-row" style={{ justifyContent: "flex-end", gap: 6 }}>
                           <Button size="sm" variant="ghost" title={t("billing.addCredit")} onClick={() => setCredit(a)}><IcWallet className="nx-ico" /></Button>
-                          <Button size="sm" variant="ghost" onClick={() => setEdit(a)}><IcEdit className="nx-ico" /></Button>
-                          <Button size="sm" variant="danger" onClick={() => remove(a)}><IcTrash className="nx-ico" /></Button>
+                          <Button size="sm" variant="ghost" title={t("common.edit")} onClick={() => setEdit(a)}><IcEdit className="nx-ico" /></Button>
+                          <Button size="sm" variant="danger" title={t("common.delete")} onClick={() => remove(a)}><IcTrash className="nx-ico" /></Button>
                         </div>
                       </td>
                     </tr>
@@ -271,6 +278,7 @@ const ResellerAccountsTab: FC = () => {
             </div>
           )}
       </Card>
+      <Pager page={pager.page} pages={pager.pages} onPage={pager.setPage} />
       {show && <AddResellerAccount onClose={() => setShow(false)} onDone={() => { setShow(false); reload(); }} />}
       {edit && <EditResellerAccount account={edit} onClose={() => setEdit(null)} onDone={() => { setEdit(null); reload(); }} />}
       {credit && <CreditResellerAccount account={credit} onClose={() => setCredit(null)} onDone={() => setCredit(null)} />}
@@ -623,7 +631,7 @@ const ProvisionTab: FC = () => {
         password: f.password, role: f.role, run: true,
       });
       setResult(res);
-      toast.push(res.status === "provisioned" ? "OK" : (res.detail || "Manual"), res.status === "provisioned" ? "success" : "info");
+      toast.push(res.status === "provisioned" ? t("resellers.provisionStarted") : (res.detail || t("resellers.manualMode")), res.status === "provisioned" ? "success" : "info");
     } catch (e: any) { toast.push(e.message, "error"); } finally { setBusy(false); }
   };
 
@@ -637,19 +645,19 @@ const ProvisionTab: FC = () => {
 
   return (
     <Card style={{ maxWidth: 680 }}>
-      <CardHead title={t("infra.addNode")} desc="Provision a node on your own server via SSH, or copy the one-line install command." />
+      <CardHead title={t("infra.addNode")} desc={t("resellers.provisionDesc")} />
       <div className="nx-stack">
         <div className="nx-row" style={{ gap: 12 }}>
           <Field label={t("common.name")}><Input value={f.name} onChange={upd("name")} /></Field>
-          <Field label="Role"><select className="nx-select" value={f.role} onChange={upd("role")}>{["direct", "relay", "exit"].map((r) => <option key={r}>{r}</option>)}</select></Field>
+          <Field label={t("resellers.roleLabel")}><select className="nx-select" value={f.role} onChange={upd("role")}>{["direct", "relay", "exit"].map((r) => <option key={r}>{r}</option>)}</select></Field>
         </div>
-        <Field label={`${t("infra.address")} (SSH host)`}><Input value={f.host} onChange={upd("host")} placeholder="1.2.3.4" /></Field>
+        <Field label={`${t("infra.address")} (${t("resellers.sshHost")})`}><Input value={f.host} onChange={upd("host")} placeholder="1.2.3.4" /></Field>
         <div className="nx-row" style={{ gap: 12 }}>
-          <Field label="SSH user"><Input value={f.username} onChange={upd("username")} /></Field>
-          <Field label="SSH password"><Input type="password" value={f.password} onChange={upd("password")} /></Field>
+          <Field label={t("resellers.sshUser")}><Input value={f.username} onChange={upd("username")} /></Field>
+          <Field label={t("resellers.sshPassword")}><Input type="password" value={f.password} onChange={upd("password")} /></Field>
         </div>
         <div className="nx-row" style={{ justifyContent: "flex-end", gap: 8 }}>
-          <Button onClick={getCommand} disabled={busy}><IcServer className="nx-ico" /> {t("common.copy")} command</Button>
+          <Button onClick={getCommand} disabled={busy}><IcServer className="nx-ico" /> {t("resellers.copyCommand")}</Button>
           <Button variant="primary" onClick={provision} disabled={busy || !f.host || !f.name}>{t("common.create")}</Button>
         </div>
         {result && (

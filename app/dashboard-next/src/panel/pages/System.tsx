@@ -1,4 +1,4 @@
-import { FC, useEffect, useState } from "react";
+import { FC, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import { ApiKey, DeploymentInfo, FeatureFlag, SystemStats, UpdateCheck, UpdateJobInfo } from "../api/types";
@@ -15,24 +15,77 @@ import { IcPlus, IcDownload, IcTrash, IcKey, IcSun, IcMoon, IcEdit } from "../co
 export const System: FC = () => {
   const { t } = useTranslation();
   const { admin, isEnabled } = useApp();
-  const [tab, setTab] = useState(admin?.is_sudo ? "flags" : "apikeys");
-  const tabs = [
-    ...(admin?.is_sudo ? [
-      { id: "flags", label: t("system.tabFlags") },
-      ...(isEnabled("billing") ? [{ id: "commercial", label: t("system.tabCommercial") }] : []),
-      { id: "updates", label: t("system.tabUpdates") },
-      { id: "deployment", label: t("system.tabDeployment") },
-      { id: "xray", label: t("system.tabXray") },
-      { id: "backup", label: t("system.tabBackup") },
-      { id: "admins", label: t("system.tabAdmins") },
-    ] : []),
-    { id: "apikeys", label: t("system.tabApiKeys") },
-    { id: "about", label: t("system.tabAbout") },
-  ];
+  const groups = useMemo(() => {
+    const general = {
+      id: "general",
+      label: t("system.groupGeneral"),
+      tabs: [
+        { id: "about", label: t("system.tabAbout") },
+        { id: "apikeys", label: t("system.tabApiKeys") },
+      ],
+    };
+    if (!admin?.is_sudo) return [general];
+    return [
+      general,
+      {
+        id: "maintenance",
+        label: t("system.groupMaintenance"),
+        tabs: [
+          { id: "flags", label: t("system.tabFlags") },
+          { id: "updates", label: t("system.tabUpdates") },
+          { id: "deployment", label: t("system.tabDeployment") },
+          { id: "xray", label: t("system.tabXray") },
+          { id: "backup", label: t("system.tabBackup") },
+        ],
+      },
+      {
+        id: "access",
+        label: t("system.groupAccess"),
+        tabs: [
+          { id: "admins", label: t("system.tabAdmins") },
+          ...(isEnabled("billing") ? [{ id: "commercial", label: t("system.tabCommercial") }] : []),
+        ],
+      },
+    ];
+  }, [admin?.is_sudo, isEnabled, t]);
+
+  const [group, setGroup] = useState(groups[0]?.id || "general");
+  const activeGroup = groups.find((g) => g.id === group) || groups[0];
+  const [tab, setTab] = useState(activeGroup?.tabs[0]?.id || "about");
+
+  useEffect(() => {
+    if (!groups.some((g) => g.id === group)) setGroup(groups[0]?.id || "general");
+  }, [groups, group]);
+
+  useEffect(() => {
+    const g = groups.find((x) => x.id === group) || groups[0];
+    if (g && !g.tabs.some((x) => x.id === tab)) setTab(g.tabs[0]?.id || "about");
+  }, [group, groups, tab]);
+
+  const onGroup = (id: string) => {
+    setGroup(id);
+    const g = groups.find((x) => x.id === id);
+    if (g) setTab(g.tabs[0]?.id || "about");
+  };
+
   return (
-    <div>
+    <div className="nx-page">
       <PageHeader title={t("system.title")} subtitle={t("system.subtitle")} description={t("system.description")} />
-      <Tabs active={tab} onChange={setTab} tabs={tabs} />
+      {groups.length > 1 && (
+        <div className="nx-system-groups">
+          {groups.map((g) => (
+            <button
+              key={g.id}
+              type="button"
+              className={`nx-system-group-btn ${group === g.id ? "active" : ""}`}
+              onClick={() => onGroup(g.id)}
+            >
+              {g.label}
+            </button>
+          ))}
+        </div>
+      )}
+      <Tabs active={tab} onChange={setTab} tabs={activeGroup?.tabs || []} />
       {tab === "flags" && <FlagsTab />}
       {tab === "commercial" && <CommercialSettings />}
       {tab === "updates" && <UpdatesTab />}
@@ -73,7 +126,7 @@ const FlagsTab: FC = () => {
             <div style={{ flex: 1 }}>
               <div className="nx-row" style={{ gap: 8 }}>
                 <span className="nx-code">{flag.name}</span>
-                {flag.enabled !== flag.default && <Pill tone="accent">override</Pill>}
+                {flag.enabled !== flag.default && <Pill tone="accent">{t("system.flagOverride")}</Pill>}
               </div>
               <div className="nx-muted" style={{ fontSize: 12.5, marginTop: 8 }}>
                 {t(flag.label_key, { defaultValue: flag.description || flag.name })}
@@ -105,7 +158,7 @@ const DeploymentTab: FC = () => {
           <span className="nx-code">{data?.detected_by}</span>
         </div>
         <div className="nx-row" style={{ justifyContent: "space-between" }}>
-          <span className="nx-muted">IP</span>
+          <span className="nx-muted">{t("system.deployIp")}</span>
           <span className="nx-code">{data?.public_ip || "—"}</span>
         </div>
         <div className="nx-row" style={{ justifyContent: "space-between" }}>
@@ -179,7 +232,26 @@ const XrayCoreTab: FC = () => {
             {(releases.data || []).map((r) => <option key={r.tag} value={r.tag}>{r.tag}</option>)}
           </Select>
         </Field>
-        <div className="nx-row" style={{ justifyContent: "flex-end" }}>
+        <div className="nx-row" style={{ justifyContent: "flex-end", gap: 8 }}>
+          <Button
+            variant="ghost"
+            disabled={busy}
+            onClick={async () => {
+              if (!confirm(t("system.restartCoreConfirm"))) return;
+              setBusy(true);
+              try {
+                await api.post("/core/restart");
+                toast.push(t("system.restartCoreDone"), "success");
+                deploy.reload();
+              } catch (e: any) {
+                toast.push(e.message, "error");
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            {t("system.restartCore")}
+          </Button>
           <Button variant="primary" disabled={busy || !tag || (scope === "node" && !nodeId)} onClick={apply}>
             {t("infra.xraySetVersion")}
           </Button>
@@ -373,7 +445,7 @@ const ApiKeysTab: FC = () => {
                     <td style={{ fontWeight: 600 }}>{k.name}</td>
                     <td><span className="nx-code">{k.prefix}…</span></td>
                     <td className="nx-faint" style={{ fontSize: 12 }}>{k.scopes?.join(", ") || "—"}</td>
-                    <td><Pill tone={k.revoked ? "danger" : "ok"} dot>{k.revoked ? "revoked" : "active"}</Pill></td>
+                    <td><Pill tone={k.revoked ? "danger" : "ok"} dot>{k.revoked ? t("system.keyRevoked") : t("system.keyActive")}</Pill></td>
                     <td><div className="nx-row" style={{ justifyContent: "flex-end" }}>{!k.revoked && <Button variant="danger" size="sm" onClick={() => revoke(k.id)}>{t("system.revoke")}</Button>}</div></td>
                   </tr>
                 ))}
@@ -426,12 +498,23 @@ const CreateKey: FC<{ onClose: () => void; onDone: () => void }> = ({ onClose, o
 
 const AboutTab: FC = () => {
   const { t, i18n } = useTranslation();
-  const { theme, setTheme } = useApp();
+  const { admin, theme, setTheme, expertMode, setExpertMode } = useApp();
+  const toast = useToast();
   const sys = useFetch<SystemStats>(() => api.get("/system"), []);
+  const [rotating, setRotating] = useState(false);
+
+  const rotateJwt = async () => {
+    if (!confirm(t("system.jwtRotateConfirm"))) return;
+    setRotating(true);
+    try {
+      await api.post("/system/jwt/rotate");
+      toast.push(t("system.jwtRotated"), "success");
+    } catch (e: any) { toast.push(e.message, "error"); } finally { setRotating(false); }
+  };
 
   return (
     <div className="nx-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))" }}>
-      <Card>
+      <Card className="nx-glass-card">
         <CardHead title={t("system.appearance")} />
         <Field label={t("system.theme")}>
           <div className="nx-row">
@@ -447,6 +530,10 @@ const AboutTab: FC = () => {
             ))}
           </div>
         </Field>
+        <div style={{ height: 14 }} />
+        <Field label={t("system.expertMode")} hint={t("system.expertModeHint")}>
+          <Toggle on={expertMode} onChange={setExpertMode} />
+        </Field>
       </Card>
       <Card>
         <CardHead title={t("system.tabAbout")} />
@@ -456,6 +543,12 @@ const AboutTab: FC = () => {
           <span className="nx-code">{sys.data?.version || "…"}</span>
         </div>
       </Card>
+      {admin?.is_sudo && (
+        <Card>
+          <CardHead title={t("system.securityTitle")} desc={t("system.jwtRotateHint")} />
+          <Button variant="danger" size="sm" disabled={rotating} onClick={rotateJwt}>{t("system.jwtRotateBtn")}</Button>
+        </Card>
+      )}
     </div>
   );
 };
@@ -512,6 +605,7 @@ const AdminsTab: FC = () => {
         {loading ? <div style={{ padding: 20 }}><SkeletonRows rows={4} cols={4} /></div>
           : error ? <EmptyState title={t("common.error")} desc={error} />
           : (
+            <div className="nx-table-wrap">
             <table className="nx-table">
               <thead><tr>
                 <th>{t("common.username")}</th><th>{t("common.status")}</th><th>{t("system.role")}</th>
@@ -521,15 +615,15 @@ const AdminsTab: FC = () => {
                 {(data || []).map((a) => (
                   <tr key={a.username}>
                     <td><code>{a.username}</code></td>
-                    <td>{a.is_sudo ? "sudo" : "admin"}</td>
+                    <td>{a.is_sudo ? t("system.roleSudo") : t("system.roleAdmin")}</td>
                     <td>{a.role || "—"}</td>
                     <td>{a.max_users ?? "—"}</td>
                     <td>
                       <div className="nx-row" style={{ justifyContent: "flex-end", gap: 6 }}>
                         {!a.is_sudo && (
                           <>
-                            <Button size="sm" variant="ghost" onClick={() => setEdit(a)}><IcEdit className="nx-ico" /></Button>
-                            <Button size="sm" variant="danger" onClick={() => remove(a)}><IcTrash className="nx-ico" /></Button>
+                            <Button size="sm" variant="ghost" title={t("common.edit")} onClick={() => setEdit(a)}><IcEdit className="nx-ico" /></Button>
+                            <Button size="sm" variant="danger" title={t("common.delete")} onClick={() => remove(a)}><IcTrash className="nx-ico" /></Button>
                           </>
                         )}
                       </div>
@@ -538,6 +632,7 @@ const AdminsTab: FC = () => {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
       </Card>
       <Modal open={show} title={t("system.addAdmin")} onClose={() => setShow(false)}
@@ -548,8 +643,8 @@ const AdminsTab: FC = () => {
           <Field label={t("common.password")}><Input type="password" value={password} onChange={(e: any) => setPassword(e.target.value)} /></Field>
           <Field label={t("system.role")}>
             <select className="nx-input" value={role} onChange={(e) => setRole(e.target.value)}>
-              <option value="reseller">reseller</option>
-              <option value="support">support</option>
+              <option value="reseller">{t("resellers.roleReseller")}</option>
+              <option value="support">{t("resellers.roleSupport")}</option>
             </select>
           </Field>
           <Field label={`${t("system.maxUsers")} (${t("common.optional")})`}>
@@ -595,8 +690,8 @@ const EditAdminModal: FC<{ admin: AdminRow; onClose: () => void; onDone: () => v
       <div className="nx-stack">
         <Field label={t("system.role")}>
           <select className="nx-input" value={role} onChange={(e) => setRole(e.target.value)}>
-            <option value="reseller">reseller</option>
-            <option value="support">support</option>
+            <option value="reseller">{t("resellers.roleReseller")}</option>
+            <option value="support">{t("resellers.roleSupport")}</option>
           </select>
         </Field>
         <Field label={t("system.maxUsers")} hint={t("common.optional")}>

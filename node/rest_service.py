@@ -58,6 +58,7 @@ class Service(object):
         # WireGuard product endpoints (Phase 11). The panel pushes a declarative
         # spec and reads back per-peer transfer counters for central accounting.
         self.router.add_api_route("/wg/apply", self.wg_apply, methods=["POST"])
+        self.router.add_api_route("/wg/apply-specs", self.wg_apply_specs, methods=["POST"])
         self.router.add_api_route("/wg/transfer", self.wg_transfer, methods=["POST"])
         self.router.add_api_route("/wg/down", self.wg_down, methods=["POST"])
         self.router.add_api_route("/wg/amnezia-available", self.wg_amnezia_available, methods=["POST"])
@@ -66,6 +67,7 @@ class Service(object):
         self.router.add_api_route("/singbox/apply", self.singbox_apply, methods=["POST"])
         self.router.add_api_route("/singbox/transfer", self.singbox_transfer, methods=["POST"])
         self.router.add_api_route("/singbox/down", self.singbox_down, methods=["POST"])
+        self.router.add_api_route("/singbox/tls/status", self.singbox_tls_status, methods=["POST"])
         self.router.add_api_route("/xray/upgrade", self.xray_upgrade, methods=["POST"])
 
         self.router.add_websocket_route("/logs", self.logs)
@@ -264,6 +266,21 @@ class Service(object):
             raise HTTPException(status_code=503, detail=str(exc))
         return {"interface": wg_spec.interface, "peers": len(wg_spec.peers)}
 
+    def wg_apply_specs(self, session_id: UUID = Body(embed=True), specs: list = Body(embed=True)):
+        self.match_session_id(session_id)
+        try:
+            wg_specs = [WireGuardSpec.from_dict(item) for item in (specs or [])]
+        except (KeyError, ValueError, TypeError) as exc:
+            raise HTTPException(status_code=422, detail={"specs": f"Invalid WireGuard specs: {exc}"})
+        if not wg_specs:
+            raise HTTPException(status_code=422, detail="At least one WireGuard spec is required")
+        try:
+            self.wg.apply_specs(wg_specs)
+        except Exception as exc:
+            logger.error(f"Failed to apply WireGuard specs: {exc}")
+            raise HTTPException(status_code=503, detail=str(exc))
+        return {"interfaces": [s.interface for s in wg_specs], "peers": sum(len(s.peers) for s in wg_specs)}
+
     def wg_transfer(self, session_id: UUID = Body(embed=True), interface: str = Body(embed=True)):
         self.match_session_id(session_id)
         try:
@@ -316,6 +333,16 @@ class Service(object):
             logger.error(f"Failed to stop sing-box: {exc}")
             raise HTTPException(status_code=503, detail=str(exc))
         return {"down": True}
+
+    def singbox_tls_status(
+        self,
+        session_id: UUID = Body(embed=True),
+        certificate_path: str = Body(embed=True, default="/var/lib/nexuspanel-node/tls/cert.pem"),
+    ):
+        self.match_session_id(session_id)
+        from tls_inspect import inspect_cert_file
+
+        return inspect_cert_file(certificate_path)
 
     async def logs(self, websocket: WebSocket):
         session_id = websocket.query_params.get('session_id')

@@ -98,7 +98,15 @@ def my_wallet(
     admin: Admin = Depends(require_permission("billing:read")),
 ):
     _require_billing_enabled()
-    return billing.get_or_create_wallet(db, _admin_id(db, admin))
+    dbadmin = crud.get_admin(db, admin.username)
+    if dbadmin is None:
+        if admin.is_sudo:
+            return WalletResponse(admin_id=0, balance=0)
+        raise HTTPException(
+            status_code=400,
+            detail="Billing requires a database-backed admin (env SUDOERS have no wallet)",
+        )
+    return billing.get_or_create_wallet(db, dbadmin.id)
 
 
 @router.post("/credit", response_model=WalletResponse)

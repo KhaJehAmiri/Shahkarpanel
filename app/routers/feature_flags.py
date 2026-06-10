@@ -38,8 +38,13 @@ def _info(name: str) -> FeatureFlagInfo:
 
 
 @router.get("/feature-flags", response_model=List[FeatureFlagInfo])
-def list_feature_flags(_: Admin = Depends(Admin.check_sudo_admin)):
-    """List all known feature flags and their resolved global state."""
+def list_feature_flags(_: Admin = Depends(Admin.get_current)):
+    """List all known feature flags and their resolved global state.
+
+    Readable by any authenticated admin: flag states are not secrets and the
+    dashboard needs them to hide disabled features instead of showing tabs
+    that would 404. Mutation below stays sudo-only.
+    """
     return [_info(name) for name in feature_flags.KNOWN_FLAGS]
 
 

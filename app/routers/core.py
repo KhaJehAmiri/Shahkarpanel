@@ -3,14 +3,15 @@ import json
 import time
 
 import commentjson
-from fastapi import APIRouter, Depends, HTTPException, WebSocket
+from fastapi import APIRouter, Body, Depends, HTTPException, WebSocket
 from starlette.websockets import WebSocketDisconnect
 
 from app import xray
 from app.db import Session, get_db
 from app.models.admin import Admin
 from app.models.core import CoreStats
-from app.utils import responses
+from app.utils import responses, warp
+from app.utils.outbound_test import test_outbound
 from app.utils.ws_auth import ws_bearer_token
 from app.xray import XRayConfig
 from config import XRAY_JSON
@@ -129,3 +130,67 @@ def modify_core_config(
     xray.hosts.update()
 
     return payload
+
+
+@router.get("/core/warp", responses={403: responses._403})
+def get_warp_account(admin: Admin = Depends(Admin.check_sudo_admin)) -> dict:
+    """Return the registered Cloudflare WARP account, if any."""
+    data = warp.get_warp()
+    if not data:
+        return {"registered": False}
+    return data
+
+
+@router.post("/core/warp/register", responses={403: responses._403})
+def register_warp_account(
+    payload: dict = Body(default={}),
+    admin: Admin = Depends(Admin.check_sudo_admin),
+) -> dict:
+    """Register a fresh Cloudflare WARP device and return a ready outbound."""
+    tag = (payload or {}).get("tag") or "warp"
+    try:
+        return warp.register_warp(tag=tag)
+    except warp.WarpError as err:
+        raise HTTPException(status_code=502, detail=str(err))
+
+
+@router.post("/core/warp/license", responses={403: responses._403})
+def set_warp_license(
+    payload: dict = Body(...),
+    admin: Admin = Depends(Admin.check_sudo_admin),
+) -> dict:
+    """Apply a WARP+ license key to the registered device."""
+    license_key = (payload or {}).get("license", "").strip()
+    if not license_key:
+        raise HTTPException(status_code=400, detail="license is required")
+    try:
+        return warp.set_warp_license(license_key)
+    except warp.WarpError as err:
+        raise HTTPException(status_code=502, detail=str(err))
+
+
+@router.delete("/core/warp", responses={403: responses._403})
+def delete_warp_account(admin: Admin = Depends(Admin.check_sudo_admin)) -> dict:
+    """Forget the locally stored WARP credentials."""
+    warp.delete_warp_data()
+    return {"registered": False}
+
+
+@router.post("/core/outbounds/test", responses={403: responses._403})
+def test_core_outbound(
+    payload: dict = Body(...),
+    admin: Admin = Depends(Admin.check_sudo_admin),
+) -> dict:
+    """Measure latency through an outbound (TCP dial or HTTP burstObservatory probe)."""
+    outbound = payload.get("outbound")
+    if not isinstance(outbound, dict):
+        raise HTTPException(status_code=400, detail="outbound is required")
+
+    all_outbounds = payload.get("allOutbounds") or []
+    if not isinstance(all_outbounds, list):
+        all_outbounds = []
+
+    test_url = str(payload.get("testURL") or "")
+    mode = str(payload.get("mode") or "")
+    result = test_outbound(outbound, all_outbounds, test_url=test_url, mode=mode)
+    return result.to_dict()

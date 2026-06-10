@@ -386,7 +386,7 @@ button { font-family: inherit; }
 .nx-modal { background: var(--nx-surface); border: 1px solid var(--nx-border); border-radius: var(--nx-radius-lg); width: 100%; max-width: 600px; max-height: 92vh; overflow-y: auto; animation: nx-modal-in 0.22s var(--nx-ease); }
 .nx-modal.wide { max-width: 760px; }
 .nx-modal.form-wide { max-width: 880px; overflow-y: visible; }
-.nx-modal.form-wide .nx-modal-body { padding: 18px 22px; }
+.nx-modal.form-wide .nx-modal-body { padding: 16px 20px !important; }
 .nx-form-grid {
   display: grid; grid-template-columns: 1fr 1fr; gap: 12px 18px; align-items: start;
 }

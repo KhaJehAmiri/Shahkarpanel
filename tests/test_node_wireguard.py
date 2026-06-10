@@ -3,8 +3,10 @@ from node.wireguard import (
     WireGuardManager,
     WireGuardPeer,
     WireGuardSpec,
+    ensure_egress_forwarding,
     parse_transfer,
     render_syncconf,
+    subnets_from_specs,
 )
 
 
@@ -79,6 +81,19 @@ def test_render_syncconf_includes_interface_and_peers():
     assert "Address" not in conf
 
 
+def test_render_syncconf_omits_amnezia_when_disabled():
+    spec = WireGuardSpec(
+        interface="nxwg0",
+        listen_port=51820,
+        private_key="PRIV",
+        address=["10.10.0.1/24"],
+        amnezia={"Jc": 4, "Jmin": 50, "Jmax": 1000},
+    )
+    conf = render_syncconf(spec, include_amnezia=False)
+    assert "Jc" not in conf
+    assert render_syncconf(spec, include_amnezia=True).count("Jc = 4") == 1
+
+
 # --------------------------------------------------------------------------- #
 # spec from_dict
 # --------------------------------------------------------------------------- #
@@ -101,7 +116,10 @@ def test_spec_from_dict_normalizes_address_and_peers():
 # manager command sequencing with a fake runner (no root, no wg)
 # --------------------------------------------------------------------------- #
 def test_apply_creates_interface_when_missing_then_syncconf():
-    rec = _Recorder(results={"show": _FakeResult(returncode=1)})  # interface missing
+    rec = _Recorder(results={
+        "show": _FakeResult(returncode=1),  # interface missing
+        "pgrep": _FakeResult(returncode=1),
+    })
     mgr = WireGuardManager(run=rec)
     spec = WireGuardSpec(interface="nxwg0", listen_port=51820, private_key="PRIV",
                          address=["10.10.0.1/24"],
@@ -117,7 +135,10 @@ def test_apply_creates_interface_when_missing_then_syncconf():
 
 
 def test_apply_skips_link_add_when_interface_exists():
-    rec = _Recorder(results={"show": _FakeResult(returncode=0)})  # interface exists
+    rec = _Recorder(results={
+        "show": _FakeResult(returncode=0),  # interface exists
+        "pgrep": _FakeResult(returncode=1),  # plain kernel wg, not userspace AWG
+    })
     mgr = WireGuardManager(run=rec)
     spec = WireGuardSpec(interface="nxwg0", listen_port=51820, private_key="PRIV",
                          address=["10.10.0.1/24"])
@@ -144,3 +165,35 @@ def test_teardown_deletes_existing_interface():
     mgr.teardown("nxwg0")
     flat = [" ".join(c) for c in rec.calls]
     assert any("ip link del dev nxwg0" in c for c in flat)
+
+
+def test_subnets_from_specs_dedupes_networks():
+    specs = [
+        WireGuardSpec("wg0", 51820, "PRIV", ["10.10.0.1/24"]),
+        WireGuardSpec("wg1", 51821, "PRIV2", ["10.11.0.1/24"]),
+    ]
+    assert subnets_from_specs(specs) == ["10.10.0.0/24", "10.11.0.0/24"]
+
+
+def test_ensure_egress_forwarding_adds_nat_and_forward_rules(monkeypatch):
+    rec = _Recorder(
+        results={
+            "route": _FakeResult(
+                returncode=0,
+                stdout="8.8.8.8 via 1.2.3.4 dev eth0 src 1.2.3.5 uid 0\n",
+            ),
+            "-C": _FakeResult(returncode=1),
+            "-A": _FakeResult(returncode=0),
+        }
+    )
+    monkeypatch.setattr("node.wireguard.shutil.which", lambda _: "/sbin/iptables")
+    specs = [
+        WireGuardSpec("wg0", 51820, "PRIV", ["10.10.0.1/24"]),
+        WireGuardSpec("wg1", 51821, "PRIV2", ["10.11.0.1/24"]),
+    ]
+    ensure_egress_forwarding(specs, run=rec)
+    flat = [" ".join(c) for c in rec.calls]
+    assert any("-t nat -C POSTROUTING -s 10.10.0.0/24 -o eth0 -j MASQUERADE" in c for c in flat)
+    assert any("-t nat -A POSTROUTING -s 10.11.0.0/24 -o eth0 -j MASQUERADE" in c for c in flat)
+    assert any("FORWARD -i wg0 -j ACCEPT" in c for c in flat)
+    assert any("FORWARD -o wg1 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT" in c for c in flat)

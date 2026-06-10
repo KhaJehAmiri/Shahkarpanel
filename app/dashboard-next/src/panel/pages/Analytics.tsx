@@ -7,25 +7,26 @@ import { useFetch } from "../lib/useFetch";
 import { formatBytes, statusTone } from "../lib/format";
 import { PageHeader } from "../components/Shell";
 import { Button, Callout, Card, CardHead, EmptyState, Field, Pill, Select, SkeletonRows, useToast } from "../components/ui";
-import { BarChart } from "../components/charts";
+import { RankBars } from "../components/charts";
 
-export const Analytics: FC = () => {
+export const Analytics: FC<{ embedded?: boolean }> = ({ embedded }) => {
   const { t } = useTranslation();
   const { admin, isEnabled } = useApp();
   const top = useFetch<TopUser[]>(() => api.get("/analytics/top-users?limit=15"), []);
 
   return (
-    <div>
-      <PageHeader title={t("analytics.title")} subtitle={t("analytics.subtitle")} description={t("analytics.description")} />
+    <div className="nx-page">
+      {!embedded && <PageHeader title={t("analytics.title")} subtitle={t("analytics.subtitle")} description={t("analytics.description")} />}
 
-      <Card style={{ marginBottom: 16 }}>
+      <Card className="nx-mb-20">
         <CardHead title={t("analytics.topUsers")} />
         {top.loading ? <SkeletonRows rows={3} cols={2} />
+          : top.error ? <EmptyState title={t("common.error")} desc={top.error} action={<Button onClick={top.reload}>{t("common.retry")}</Button>} />
           : !top.data?.length ? <EmptyState title={t("common.noData")} />
           : (
             <>
-              <BarChart data={top.data.slice(0, 10).map((u) => ({ label: u.username, value: u.used_traffic }))} format={(n) => formatBytes(n, 0)} />
-              <div className="nx-table-wrap" style={{ marginTop: 16 }}>
+              <RankBars data={top.data.slice(0, 10).map((u) => ({ label: u.username, value: u.used_traffic }))} format={(n) => formatBytes(n, 0)} />
+              <div className="nx-table-wrap nx-table-inset">
                 <table className="nx-table">
                   <thead><tr><th>#</th><th>{t("common.username")}</th><th>{t("users.used")}</th><th>{t("common.status")}</th></tr></thead>
                   <tbody>
@@ -60,11 +61,13 @@ const SmartRoutingCard: FC = () => {
   const [nodes, setNodes] = useState<RoutedNode[]>([]);
   const [busy, setBusy] = useState(false);
 
+  const [strategiesError, setStrategiesError] = useState("");
   useEffect(() => {
     api.get<string[]>("/routing/strategies").then((s) => {
       setStrategies(s);
       if (s.length) setStrategy(s[0]);
-    }).catch(() => {});
+      setStrategiesError("");
+    }).catch((e: any) => setStrategiesError(e?.message || "error"));
   }, []);
 
   const load = async () => {
@@ -80,7 +83,7 @@ const SmartRoutingCard: FC = () => {
   };
 
   return (
-    <Card style={{ marginBottom: 16 }}>
+    <Card className="nx-mb-20">
       <CardHead title={t("analytics.smartRouting")} actions={
         <Button variant="primary" size="sm" disabled={busy} onClick={load}>{t("analytics.loadNodes")}</Button>
       } />
@@ -91,6 +94,7 @@ const SmartRoutingCard: FC = () => {
           </Select>
         </Field>
       </div>
+      {strategiesError ? <Callout tone="warn" title={t("common.error")}>{strategiesError}</Callout> : null}
       {!nodes.length ? <div className="nx-faint" style={{ fontSize: 13 }}>{t("analytics.routingHint")}</div>
         : (
           <div className="nx-table-wrap">
@@ -139,13 +143,13 @@ const IntelligenceCard: FC<{ enabled: boolean }> = ({ enabled }) => {
     <Card>
       <CardHead title={t("analytics.intelligence")} actions={<Button variant="primary" onClick={run} disabled={busy}>{t("analytics.run")}</Button>} />
       {!data ? (
-        <div className="nx-muted nx-center" style={{ padding: 20 }}>{t("analytics.run")}</div>
+        <div className="nx-muted nx-center" style={{ padding: 20 }}>{t("analytics.runHint")}</div>
       ) : (
-        <div className="nx-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
+        <div className="nx-intel-grid">
           {groups.map((g) => {
             const items = Array.isArray(data[g.key]) ? data[g.key] : data[g.key] ? [data[g.key]] : [];
             return (
-              <div key={g.key} className="nx-card" style={{ background: "var(--nx-surface-2)" }}>
+              <div key={g.key} className="nx-intel-card">
                 <div className="nx-row" style={{ justifyContent: "space-between", marginBottom: 10 }}>
                   <b>{g.label}</b><Pill tone={items.length ? "warn" : "ok"}>{items.length}</Pill>
                 </div>

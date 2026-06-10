@@ -7,7 +7,7 @@ import { useXrayConfig } from "../components/xray/useXrayConfig";
 import { Button, Callout, Card, EmptyState, SkeletonRows, useToast } from "../components/ui";
 import { IcRefresh } from "../components/icons";
 
-export const Inbounds: FC = () => {
+export const Inbounds: FC<{ embedded?: boolean }> = ({ embedded }) => {
   const { t } = useTranslation();
   const { admin } = useApp();
   const toast = useToast();
@@ -27,22 +27,24 @@ export const Inbounds: FC = () => {
       await save(config);
       toast.push(t("xray.savedRestart"), "success");
     } catch (e: unknown) {
-      toast.push(e instanceof Error ? e.message : "Save failed", "error");
+      toast.push(e instanceof Error ? e.message : t("common.saveFailed"), "error");
     }
   };
 
   return (
     <div>
-      <PageHeader
-        title={t("inbounds.title")}
-        subtitle={t("inbounds.subtitle")}
-        description={t("inbounds.description")}
-        actions={
-          <Button variant="ghost" onClick={reload} disabled={saving || loading}>
-            <IcRefresh className="nx-ico" /> {t("common.refresh")}
-          </Button>
-        }
-      />
+      {!embedded && (
+        <PageHeader
+          title={t("inbounds.title")}
+          subtitle={t("inbounds.subtitle")}
+          description={t("inbounds.description")}
+          actions={
+            <Button variant="ghost" onClick={reload} disabled={saving || loading}>
+              <IcRefresh className="nx-ico" /> {t("common.refresh")}
+            </Button>
+          }
+        />
+      )}
 
       {loading ? (
         <Card><SkeletonRows rows={6} cols={5} /></Card>

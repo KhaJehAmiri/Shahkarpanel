@@ -54,11 +54,23 @@ def core_health_check():
         logger.warning("Detected %s Xray stdin processes; killing extras", len(pids))
         xray.core._kill_stale_stdin_xray(keep_pid=keep_pid)
     elif not panel_running:
-        if len(pids) > 0:
-            logger.warning("Xray core not tracked but %s stdin process(es) found; reconciling", len(pids))
-        if not config:
-            config = xray.config.include_db_users()
-        xray.core.restart(config)
+        if len(pids) > 0 and keep_pid is None:
+            # Orphan from a crashed/replaced panel — clean once, then start tracked.
+            logger.warning("Untracked Xray stdin process(es) %s; reconciling once", pids)
+            xray.core._kill_stale_stdin_xray(keep_pid=None)
+            pids = []
+        if len(pids) == 0:
+            poll = xray.core.process.poll() if xray.core.process else None
+            logger.debug(
+                "Health check restarting main core (started=%s keep_pid=%s poll=%s stdin_pids=%s)",
+                xray.core.started,
+                keep_pid,
+                poll,
+                pids,
+            )
+            if not config:
+                config = xray.config.include_db_users()
+            xray.core.restart(config)
 
     # nodes' core
     for node_id, node in list(xray.nodes.items()):
@@ -93,7 +105,9 @@ def start_core():
     config = xray.config.include_db_users()
     logger.info(f"Xray core config generated in {(time.time() - start_time):.2f} seconds")
 
-    # main core
+    # main core — drop orphans from a prior panel instance before binding API.
+    xray.core._kill_stale_stdin_xray(keep_pid=None)
+
     logger.info("Starting main Xray core")
     try:
         xray.core.start(config)

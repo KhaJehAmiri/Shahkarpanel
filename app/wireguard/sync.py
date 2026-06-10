@@ -21,9 +21,10 @@ class WGUserPeer:
 
     user_id: int
     public_key: str
-    address: str                      # "<ip>/<prefix>" allocated from the node subnet
+    address: str                      # plain WG subnet address
     preshared_key: Optional[str] = None
     active: bool = True
+    awg_address: str = ""             # AmneziaWG subnet address (dual-stack nodes)
 
 
 def server_interface_address(subnet: str) -> str:
@@ -44,6 +45,19 @@ def _normalize_allowed(address: str) -> str:
     ip = ipaddress.ip_address(raw)
     prefix = 32 if ip.version == 4 else 128
     return f"{ip}/{prefix}"
+
+
+def plain_wg_enabled(cfg) -> bool:
+    if cfg is None:
+        return False
+    return bool(getattr(cfg, "plain_enabled", True))
+
+
+def amneziawg_enabled(cfg) -> bool:
+    """True when the AmneziaWG listener is enabled on this node."""
+    if cfg is None:
+        return False
+    return bool(getattr(cfg, "awg_enabled", False))
 
 
 def awg_params_from_cfg(cfg) -> dict:
@@ -101,6 +115,52 @@ def build_node_spec(
     if amnezia:
         spec["amnezia"] = amnezia
     return spec
+
+
+def build_node_specs(cfg, peers: List[WGUserPeer]) -> List[dict]:
+    """Build zero, one, or two specs for dual-stack WG nodes."""
+    if cfg is None:
+        return []
+    specs: List[dict] = []
+    if plain_wg_enabled(cfg):
+        specs.append(
+            build_node_spec(
+                interface=cfg.interface,
+                listen_port=cfg.listen_port,
+                private_key=cfg.private_key,
+                subnet=cfg.subnet,
+                peers=peers,
+                mtu=cfg.mtu,
+                amnezia=None,
+            )
+        )
+    if amneziawg_enabled(cfg):
+        awg_peers = [
+            WGUserPeer(
+                user_id=p.user_id,
+                public_key=p.public_key,
+                address=p.awg_address or "",
+                preshared_key=p.preshared_key,
+                active=p.active,
+            )
+            for p in peers
+        ]
+        if not cfg.awg_private_key or not cfg.awg_public_key:
+            raise ValueError("AmneziaWG enabled but server keys are missing")
+        from app.wireguard.awg import AWG_RECOMMENDED_MTU
+
+        specs.append(
+            build_node_spec(
+                interface=cfg.awg_interface,
+                listen_port=cfg.awg_listen_port,
+                private_key=cfg.awg_private_key,
+                subnet=cfg.awg_subnet,
+                peers=awg_peers,
+                mtu=AWG_RECOMMENDED_MTU,
+                amnezia=awg_params_from_cfg(cfg) or None,
+            )
+        )
+    return specs
 
 
 def build_pubkey_user_map(peers: List[WGUserPeer]) -> Dict[str, int]:

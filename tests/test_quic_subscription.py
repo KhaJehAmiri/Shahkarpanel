@@ -33,6 +33,8 @@ def test_hysteria2_link_with_obfs():
         sni="vpn.example.com", obfs_password="salt", remark="n1",
     )
     assert link.startswith("hysteria2://pw@vpn.example.com:443?")
+    assert "insecure=1" in link
+    assert "obfs=salamander" in link
     assert "obfs-password=salt" in link
     assert link.endswith("#n1")
 
@@ -44,6 +46,10 @@ def test_tuic_link_format():
     )
     assert link.startswith("tuic://")
     assert "congestion_control=bbr" in link
+    assert "insecure=1" in link
+    assert "allow_insecure=1" in link
+    assert "udp_relay_mode=native" in link
+    assert "alpn=h3" in link
     assert "@vpn.example.com:8443" in link
 
 

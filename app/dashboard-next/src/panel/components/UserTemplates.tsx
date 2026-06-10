@@ -1,9 +1,10 @@
-import { FC, useState } from "react";
+import { FC, useEffect, useState } from "react";
 import {
   bytesToDataLimitValue, dataLimitToBytes, detectDataLimitUnit, type DataLimitUnit,
 } from "../lib/data-limit";
 import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
+import { InboundsByProtocol } from "../api/types";
 import { useFetch } from "../lib/useFetch";
 import { formatBytes } from "../lib/format";
 import {
@@ -85,6 +86,7 @@ export const UserTemplatesPanel: FC = () => {
 const TemplateFormModal: FC<{ row?: UserTemplateRow; onClose: () => void; onDone: () => void }> = ({ row, onClose, onDone }) => {
   const { t } = useTranslation();
   const toast = useToast();
+  const inbounds = useFetch<InboundsByProtocol>(() => api.get("/inbounds"), []);
   const [name, setName] = useState(row?.name || "");
   const [dataLimitUnit, setDataLimitUnit] = useState<DataLimitUnit>(
     row?.data_limit ? detectDataLimitUnit(row.data_limit) : "MB",
@@ -93,16 +95,40 @@ const TemplateFormModal: FC<{ row?: UserTemplateRow; onClose: () => void; onDone
     row?.data_limit ? bytesToDataLimitValue(row.data_limit, detectDataLimitUnit(row.data_limit)) : "",
   );
   const [expireDays, setExpireDays] = useState(row?.expire_duration ? String(Math.round(row.expire_duration / 86400)) : "");
+  const [inbSel, setInbSel] = useState<Record<string, string[]>>({});
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!inbounds.data) return;
+    const base = row?.inbounds || {};
+    const next: Record<string, string[]> = {};
+    Object.keys(inbounds.data).forEach((proto) => {
+      const tags = inbounds.data![proto].map((i) => i.tag);
+      next[proto] = (base[proto] || []).filter((t) => tags.includes(t));
+    });
+    setInbSel(next);
+  }, [inbounds.data, row?.id]);
+
+  const toggleTag = (proto: string, tag: string) => {
+    setInbSel((s) => {
+      const cur = s[proto] || [];
+      const tags = cur.includes(tag) ? cur.filter((x) => x !== tag) : [...cur, tag];
+      return { ...s, [proto]: tags };
+    });
+  };
 
   const submit = async () => {
     setBusy(true);
     try {
+      const inboundsBody: Record<string, string[]> = {};
+      Object.entries(inbSel).forEach(([proto, tags]) => {
+        if (tags.length) inboundsBody[proto] = tags;
+      });
       const body: Record<string, unknown> = {
         name: name.trim(),
         data_limit: dataLimitValue ? dataLimitToBytes(dataLimitValue, dataLimitUnit) : 0,
         expire_duration: expireDays ? parseInt(expireDays, 10) * 86400 : 0,
-        inbounds: row?.inbounds || {},
+        inbounds: inboundsBody,
       };
       if (row) {
         await api.put(`/user_template/${row.id}`, body);
@@ -134,6 +160,29 @@ const TemplateFormModal: FC<{ row?: UserTemplateRow; onClose: () => void; onDone
           </div>
         </Field>
         <Field label={`${t("users.expire")} (days)`} hint="0 = none"><Input type="number" min="0" value={expireDays} onChange={(e: any) => setExpireDays(e.target.value)} /></Field>
+        <Field label={t("users.templateInbounds")} hint={t("users.templateInboundsHint")}>
+          {inbounds.loading ? <SkeletonRows rows={2} cols={1} /> : (
+            <div className="nx-stack" style={{ gap: 8 }}>
+              {Object.entries(inbounds.data || {}).map(([proto, list]) => (
+                <div key={proto}>
+                  <div className="nx-faint" style={{ fontSize: 11, marginBottom: 4 }}>{proto}</div>
+                  <div className="nx-row" style={{ gap: 6, flexWrap: "wrap" }}>
+                    {list.map((i) => (
+                      <button
+                        key={i.tag}
+                        type="button"
+                        className={`nx-btn sm ${(inbSel[proto] || []).includes(i.tag) ? "primary" : ""}`}
+                        onClick={() => toggleTag(proto, i.tag)}
+                      >
+                        {(inbSel[proto] || []).includes(i.tag) ? "✓ " : ""}{i.tag}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Field>
       </div>
     </Modal>
   );

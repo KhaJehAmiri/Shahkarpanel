@@ -123,8 +123,24 @@ def apply_proxy_patch(
     User edits often send only non-secret fields (e.g. VLESS ``flow``) while
     omitting ``id``/``password``.  Merging with the DB row first keeps existing
     credentials stable; only keys present in ``patch`` are updated.
+
+    ``existing``/``patch`` may be plain dicts (API edits, ``UserModify``) or
+    ``ProxySettings`` objects (e.g. ``revoke_user_sub`` passes a mutated
+    settings model). Both are coerced to mappings before merging so callers
+    never hit "X object is not a mapping".
     """
-    merged = {**(existing or {}), **(patch or {})}
+    def _as_mapping(value) -> dict:
+        if value is None:
+            return {}
+        if isinstance(value, ProxySettings):
+            return value.dict(no_obj=True)
+        if isinstance(value, dict):
+            return value
+        if hasattr(value, "model_dump"):
+            return value.model_dump(mode="json")
+        return dict(value)
+
+    merged = {**_as_mapping(existing), **_as_mapping(patch)}
     return ProxySettings.from_dict(proxy_type, merged).dict(no_obj=True)
 
 
@@ -344,3 +360,4 @@ class ProxyInbound(BaseModel):
     network: str
     tls: str
     port: Union[int, str]
+    ss_method: Optional[str] = None

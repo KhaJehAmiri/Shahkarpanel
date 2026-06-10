@@ -29,23 +29,23 @@ class XrayBackend(ProtocolBackend):
 
 class SingBoxBackend(ProtocolBackend):
     name = "sing-box"
-    available = False
-    protocols = ("vmess", "vless", "trojan", "shadowsocks", "hysteria2", "tuic")
-    transports = ("tcp", "ws", "grpc", "quic")
-    description = "Sing-box engine (planned)."
+    available = True
+    protocols = ("hysteria2", "tuic")
+    transports = ("quic",)
+    description = "Sing-box engine (Hysteria2 / TUIC on nodes)."
 
 
 class Hysteria2Backend(ProtocolBackend):
     name = "hysteria2"
-    available = False
+    available = True
     protocols = ("hysteria2",)
     transports = ("quic",)
-    description = "Hysteria2 (planned)."
+    description = "Hysteria2 via sing-box."
 
 
 class TuicBackend(ProtocolBackend):
     name = "tuic"
-    available = False
+    available = True
     protocols = ("tuic",)
     transports = ("quic",)
-    description = "TUIC v5 (planned)."
+    description = "TUIC v5 via sing-box."

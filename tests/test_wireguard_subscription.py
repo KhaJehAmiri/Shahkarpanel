@@ -28,7 +28,8 @@ def test_render_minimal_conf():
     assert "[Peer]" in conf
     assert "PublicKey = SRVPUB" in conf
     assert "Endpoint = vpn.example.com:51820" in conf
-    assert "AllowedIPs = 0.0.0.0/0, ::/0" in conf
+    assert "AllowedIPs = 0.0.0.0/0" in conf
+    assert "::/0" not in conf
     assert "PersistentKeepalive = 25" in conf
 
 
@@ -72,12 +73,52 @@ def test_user_config_none_without_address():
     assert user_config({"private_key": "P"}, node) is None  # no address
 
 
+def test_amnezia_params_emitted_when_node_has_awg_fields():
+    from app.subscription.wireguard import amnezia_params_from_node
+
+    cfg = _Cfg(
+        awg_enabled=True,
+        awg_jc=4, awg_jmin=50, awg_jmax=1000,
+        awg_s1=142, awg_s2=121, awg_h1=1, awg_h2=2, awg_h3=3, awg_h4=4,
+    )
+    assert amnezia_params_from_node(cfg)["Jc"] == 4
+    assert amnezia_params_from_node(_Cfg()) == {}
+
+
 def test_user_config_builds_conf():
-    node = _Node("1.2.3.4", _Cfg(endpoint=None, listen_port=51820, public_key="SRV", dns="8.8.8.8", mtu=1420))
+    node = _Node("1.2.3.4", _Cfg(endpoint=None, listen_port=51820, public_key="SRV", dns="8.8.8.8", mtu=1420, plain_enabled=True))
     conf = user_config({"private_key": "P", "address": "10.0.0.5/32", "preshared_key": "K"}, node)
     assert "Endpoint = 1.2.3.4:51820" in conf
     assert "PublicKey = SRV" in conf
     assert "PresharedKey = K" in conf
+
+
+def test_user_config_awg_sets_dns_mtu_and_ipv4_only_routes():
+    node = _Node(
+        "1.2.3.4",
+        _Cfg(
+            awg_enabled=True,
+            awg_endpoint=None,
+            awg_listen_port=51821,
+            awg_public_key="AWGPUB",
+            awg_jc=4,
+            awg_jmin=50,
+            awg_jmax=1000,
+            awg_s1=1,
+            awg_s2=2,
+            awg_h1=3,
+            awg_h2=4,
+            awg_h3=5,
+            awg_h4=6,
+            dns=None,
+            mtu=1420,
+        ),
+    )
+    conf = user_config({"private_key": "P", "awg_address": "10.11.0.5/32"}, node, variant="awg")
+    assert "DNS = 1.1.1.1, 8.8.8.8" in conf
+    assert "MTU = 1280" in conf
+    assert "AllowedIPs = 0.0.0.0/0" in conf
+    assert "::/0" not in conf
 
 
 # --------------------------------------------------------------------------- #

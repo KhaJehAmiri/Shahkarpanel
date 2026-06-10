@@ -31,7 +31,12 @@ ARCHIVE_PREFIX = "nexuspanel-backup-"
 
 
 def _ensure_dir() -> None:
-    os.makedirs(BACKUP_DIR, exist_ok=True)
+    # Backups hold the DB dump and TLS private key — keep the dir owner-only.
+    os.makedirs(BACKUP_DIR, mode=0o700, exist_ok=True)
+    try:
+        os.chmod(BACKUP_DIR, 0o700)
+    except OSError:
+        pass
 
 
 def _dump_database(workdir: str) -> None:
@@ -114,6 +119,12 @@ def create_backup() -> str:
         with tarfile.open(archive_path, "w:gz") as tar:
             for entry in os.listdir(workdir):
                 tar.add(os.path.join(workdir, entry), arcname=entry)
+
+    # The archive contains the DB dump and TLS private key — restrict to owner.
+    try:
+        os.chmod(archive_path, 0o600)
+    except OSError:
+        pass
 
     logger.info("Backup created: %s", archive_path)
     prune_backups()

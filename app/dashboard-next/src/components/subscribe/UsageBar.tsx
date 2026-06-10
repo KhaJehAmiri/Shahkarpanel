@@ -21,21 +21,15 @@ export function UsageBar({ used, total, usedLabel, totalLabel, pct, exhausted }:
   const displayPct = total ? pct : 0;
 
   return (
-    <div className="flex min-w-0 flex-1 flex-col justify-center gap-1.5">
-      <div className="flex items-baseline justify-between gap-3 text-sm">
-        <span className="font-semibold text-slate-500">{usedLabel}</span>
-        <span className="tabular-nums font-bold text-slate-800">
+    <div className="sub-usage-wrap">
+      <div className="sub-usage-labels">
+        <span className="sub-text-muted" style={{ fontWeight: 600 }}>{usedLabel}</span>
+        <span className="sub-usage-values">
           {fmt(used)}
-          <span className="mx-1 font-normal text-slate-400">/</span>
+          <span className="sub-usage-sep">/</span>
           {total ? fmt(total) : totalLabel}
         </span>
-        <span
-          className={`rounded-md px-2 py-0.5 text-[11px] font-extrabold tabular-nums ${
-            tone === "danger" ? "bg-rose-100 text-rose-700" :
-            tone === "warn" ? "bg-amber-100 text-amber-700" :
-            "bg-indigo-100 text-indigo-700"
-          }`}
-        >
+        <span className={`sub-usage-pct ${tone}`}>
           {total ? `${displayPct}%` : "∞"}
         </span>
       </div>

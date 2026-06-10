@@ -1,6 +1,6 @@
 import { FC, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { isUserInbound, networkLabel } from "../../lib/xrayHelpers";
+import { isUserInbound, inboundDisplayProtocol, inboundTransportLabel, defaultAmneziaInbound, defaultHysteriaInbound, appendInboundIfMissing, hasInboundTag, DEFAULT_HYSTERIA_INBOUND_TAG, DEFAULT_AMNEZIA_INBOUND_TAG } from "../../lib/xrayHelpers";
 import { Button, Callout, Card, EmptyState, Pill, useToast } from "../ui";
 import { IcEdit, IcPlus, IcTrash } from "../icons";
 import { InboundEditor } from "./InboundEditor";
@@ -39,10 +39,34 @@ export const InboundsSection: FC<{
     onChange({ ...config, inbounds: next });
   };
 
+  const addPreset = (kind: "hysteria" | "amnezia") => {
+    const ib = kind === "hysteria" ? defaultHysteriaInbound() : defaultAmneziaInbound();
+    if (hasInboundTag(config, String(ib.tag))) {
+      setEditInbound(allInbounds.find((i) => String(i.tag) === ib.tag) || null);
+      setShow(true);
+      return;
+    }
+    onChange(appendInboundIfMissing(config, ib));
+    setEditInbound(ib);
+    setShow(true);
+  };
+
+  const hasHy2 = hasInboundTag(config, DEFAULT_HYSTERIA_INBOUND_TAG);
+  const hasAwg = hasInboundTag(config, DEFAULT_AMNEZIA_INBOUND_TAG);
+
   return (
     <div className="nx-stack">
       <Callout tone="warn">{t("infra.inboundRestart")}</Callout>
-      <div className="nx-row" style={{ justifyContent: "flex-end", gap: 8 }}>
+      <Callout tone="info">{t("inbounds.allProtocolsBody")}</Callout>
+      <div className="nx-row" style={{ justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+        <div className="nx-row" style={{ gap: 8, flexWrap: "wrap" }}>
+          <Button variant="ghost" size="sm" onClick={() => addPreset("hysteria")}>
+            {hasHy2 ? t("inbounds.editHysteria") : t("inbounds.addHysteriaPreset")}
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => addPreset("amnezia")}>
+            {hasAwg ? t("inbounds.editAmnezia") : t("inbounds.addAmneziaPreset")}
+          </Button>
+        </div>
         <Button variant="primary" onClick={() => { setEditInbound(null); setShow(true); }}>
           <IcPlus className="nx-ico" /> {t("infra.addInbound")}
         </Button>
@@ -74,14 +98,14 @@ export const InboundsSection: FC<{
               <tbody>
                 {inbounds.map((i) => {
                   const ss = (i.streamSettings || {}) as Record<string, unknown>;
-                  const net = String(ss.network || (i.protocol === "shadowsocks" ? "tcp" : "—"));
+                  const displayProto = inboundDisplayProtocol(i);
                   return (
                     <tr key={String(i.tag)}>
                       <td style={{ fontWeight: 600 }}>{String(i.tag)}</td>
-                      <td><Pill tone="accent">{String(i.protocol)}</Pill></td>
+                      <td><Pill tone="accent">{displayProto}</Pill></td>
                       <td className="nx-mono">{String(i.port)}</td>
                       <td>
-                        <Pill tone="default">{networkLabel(net)}</Pill>
+                        <Pill tone="default">{inboundTransportLabel(i)}</Pill>
                       </td>
                       <td>
                         <Pill tone={ss.security === "reality" ? "warn" : "default"}>

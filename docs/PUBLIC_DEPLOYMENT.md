@@ -12,6 +12,28 @@ The golden rule: **everything the Client API serves is also expressible as a
 standard subscription.** A public operator never needs a custom app, and the
 smart layer (profiles, negotiation, dedicated IPs) is purely additive.
 
+## Install & secure (one line)
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/nexuspanel/master/scripts/nexuspanel.sh) install
+```
+
+The installer ships **secure by default**:
+
+- The admin password is **randomly generated** and stored only as a bcrypt hash
+  (`SUDO_PASSWORD_HASH`) — it is printed once at the end of the install.
+- The app binds to `127.0.0.1`; the raw app port is **never** exposed publicly.
+- **HTTPS is enabled automatically** via nginx + Let's Encrypt — an IP-address
+  certificate by default, or a domain certificate when you pass a domain:
+  ```bash
+  DOMAIN=panel.example.com EMAIL=you@example.com \
+    bash <(curl -fsSL .../scripts/nexuspanel.sh) install
+  ```
+- Auto-renewal and an nginx reload hook are configured.
+- Open the dashboard at **`https://<your-domain-or-ip>/dashboard/`** (not the
+  old `http://…:8000`). See [`HTTPS_SETUP.md`](./HTTPS_SETUP.md) for details and
+  to (re)run TLS setup with `nexuspanel https`.
+
 ## Layer 1 — selling configs with standard apps
 
 Every user gets a stable subscription URL (`subscription_url` on the user

@@ -10,7 +10,8 @@ import {
   portalLogin,
   portalPost,
 } from "@/lib/portal-api";
-import { detectPortalLang, PortalLang, pt } from "@/lib/portal-i18n";
+import { detectPortalLang, PortalLang, PORTAL_LANGS, pt } from "@/lib/portal-i18n";
+import { resolveSubscribeBrowserUrl } from "@/lib/subscribe-url";
 
 interface PortalProfile {
   username: string;
@@ -49,6 +50,7 @@ function PortalBody() {
   const [plans, setPlans] = useState<PortalPlan[]>([]);
   const [orders, setOrders] = useState<PortalOrder[]>([]);
   const [payProviders, setPayProviders] = useState<string[]>([]);
+  const [currencyLabel, setCurrencyLabel] = useState("");
   const [toast, setToast] = useState("");
 
   const showToast = (msg: string) => {
@@ -60,9 +62,10 @@ function PortalBody() {
     const me = await portalGet<PortalProfile>("/portal/me");
     setProfile(me);
     try {
-      const b = await portalGet<{ panel_title?: string; primary_color?: string; logo_url?: string }>("/portal/branding");
+      const b = await portalGet<{ panel_title?: string; primary_color?: string; logo_url?: string; currency_label?: string }>("/portal/branding");
       if (b?.primary_color) document.documentElement.style.setProperty("--nx-accent", b.primary_color);
       if (b?.panel_title) document.title = b.panel_title;
+      if (b?.currency_label) setCurrencyLabel(b.currency_label);
     } catch { /* optional */ }
     try {
       const p = await portalGet<PortalPlan[]>("/portal/plans");
@@ -88,6 +91,7 @@ function PortalBody() {
     const l = detectPortalLang();
     setLang(l);
     document.documentElement.lang = l;
+    document.documentElement.dir = l === "fa" ? "rtl" : "ltr";
     if (getPortalToken()) {
       loadDashboard()
         .then(() => setAuthed(true))
@@ -160,20 +164,39 @@ function PortalBody() {
   };
 
   const subUrl = profile?.public_subscription_url || profile?.subscription_url || "";
+  const subscribeBrowserUrl = resolveSubscribeBrowserUrl(subUrl);
+  const rtl = lang === "fa";
+
+  const pickLang = (code: PortalLang) => {
+    setLang(code);
+    document.documentElement.lang = code;
+    document.documentElement.dir = code === "fa" ? "rtl" : "ltr";
+    const u = new URL(window.location.href);
+    u.searchParams.set("lang", code);
+    window.history.replaceState({}, "", u.toString());
+  };
   const usagePct =
     profile?.data_limit && profile.data_limit > 0
       ? Math.min(100, (profile.used_traffic / profile.data_limit) * 100)
       : 0;
 
-  const formatPrice = (minor: number) =>
-    minor === 0 ? pt(lang, "free") : `${(minor / 100).toLocaleString()} ${lang === "fa" ? "تومان*" : "units*"}`;
+  const formatPrice = (minor: number) => {
+    if (minor === 0) return pt(lang, "free");
+    const label = currencyLabel || (lang === "fa" ? "تومان" : "");
+    return `${(minor / 100).toLocaleString(lang === "fa" ? "fa-IR" : undefined)}${label ? ` ${label}` : ""}`;
+  };
 
   if (!authed) {
     return (
-      <div className="portal-wrap">
+      <div className="portal-wrap" dir={rtl ? "rtl" : "ltr"} lang={lang}>
         <div className="portal-head">
-          <h1>{pt(lang, "title")}</h1>
-          <p>{pt(lang, "subtitle")}</p>
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <h1>{pt(lang, "title")}</h1>
+              <p>{pt(lang, "subtitle")}</p>
+            </div>
+            <PortalLangPicker lang={lang} onPick={pickLang} />
+          </div>
         </div>
         <form className="portal-login sub-card p-5" onSubmit={submitLogin}>
           {loginErr && <div className="portal-err">{loginErr}</div>}
@@ -206,7 +229,7 @@ function PortalBody() {
   }
 
   return (
-    <div className="portal-wrap">
+    <div className="portal-wrap" dir={rtl ? "rtl" : "ltr"} lang={lang}>
       <div className="portal-toolbar">
         <div>
           <h1 style={{ margin: 0, fontSize: "1.25rem" }}>{profile?.username}</h1>
@@ -214,9 +237,12 @@ function PortalBody() {
             {pt(lang, "status")}: {pt(lang, profile?.status || "active")}
           </span>
         </div>
-        <button type="button" className="portal-btn portal-btn-ghost" onClick={logout}>
-          {pt(lang, "logout")}
-        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <PortalLangPicker lang={lang} onPick={pickLang} />
+          <button type="button" className="portal-btn portal-btn-ghost" onClick={logout}>
+            {pt(lang, "logout")}
+          </button>
+        </div>
       </div>
 
       {profile && (
@@ -260,7 +286,8 @@ function PortalBody() {
           {subUrl ? (
             <div className="sub-card p-4 mb-5">
               <div className="font-semibold mb-2">{pt(lang, "subscription")}</div>
-              <a href={subUrl} className="text-indigo-600 text-sm break-all" target="_blank" rel="noreferrer">
+              <p className="text-sm text-sub-muted mb-2">{pt(lang, "subHint")}</p>
+              <a href={subscribeBrowserUrl || subUrl} className="text-indigo-600 text-sm break-all" target="_blank" rel="noreferrer">
                 {pt(lang, "openSub")}
               </a>
             </div>
@@ -331,6 +358,23 @@ function PortalBody() {
       </div>
 
       {toast ? <div className="portal-toast">{toast}</div> : null}
+    </div>
+  );
+}
+
+function PortalLangPicker({ lang, onPick }: { lang: PortalLang; onPick: (c: PortalLang) => void }) {
+  return (
+    <div className="flex gap-0.5 rounded-lg border border-slate-200 bg-white p-0.5 shadow-sm" role="group" aria-label={pt(lang, "lang")}>
+      {PORTAL_LANGS.map((l) => (
+        <button
+          key={l.code}
+          type="button"
+          onClick={() => onPick(l.code)}
+          className={`rounded-md px-2 py-1 text-[10px] font-bold transition ${lang === l.code ? "bg-indigo-100 text-indigo-700" : "text-slate-400 hover:text-slate-600"}`}
+        >
+          {l.label}
+        </button>
+      ))}
     </div>
   );
 }

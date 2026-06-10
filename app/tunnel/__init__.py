@@ -139,18 +139,21 @@ def _stream_settings(transport: str, params: Dict, *, server_side: bool) -> Dict
 
     if transport == "reality":
         stream["security"] = "reality"
+        sni = params.get("sni", "www.cloudflare.com")
+        short_id = params.get("short_id", "")
         reality = {
             "show": False,
             "fingerprint": params.get("fingerprint", "chrome"),
-            "serverNames": [params.get("sni", "www.cloudflare.com")],
-            "shortIds": [params.get("short_id", "")],
         }
         if server_side:
+            reality["serverNames"] = [sni]
+            reality["shortIds"] = [short_id]
             reality["privateKey"] = params.get("private_key", "")
-            reality["dest"] = f'{params.get("sni", "www.cloudflare.com")}:443'
+            reality["dest"] = f"{sni}:443"
         else:
             reality["publicKey"] = params.get("public_key", "")
-            reality["serverName"] = params.get("sni", "www.cloudflare.com")
+            reality["serverName"] = sni
+            reality["shortId"] = short_id
         stream["realitySettings"] = reality
     elif transport == "ws":
         stream["wsSettings"] = {

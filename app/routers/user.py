@@ -246,14 +246,16 @@ def remove_user(
     admin: Admin = Depends(require_permission("users:write")),
 ):
     """Remove a user"""
+    username = dbuser.username
+    user_admin = Admin.model_validate(dbuser.admin) if dbuser.admin else None
     crud.remove_user(db, dbuser)
     bg.add_task(xray.operations.remove_user, dbuser=dbuser)
 
     bg.add_task(
-        report.user_deleted, username=dbuser.username, user_admin=Admin.model_validate(dbuser.admin), by=admin
+        report.user_deleted, username=username, user_admin=user_admin, by=admin
     )
 
-    logger.info(f'User "{dbuser.username}" deleted')
+    logger.info(f'User "{username}" deleted')
     return {"detail": "User successfully deleted"}
 
 

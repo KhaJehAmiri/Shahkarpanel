@@ -263,6 +263,11 @@ def process_inbounds_and_tags(
             if not inbound:
                 continue
 
+            from app.xray.inbound_match import inbound_matches_proxy
+
+            if not inbound_matches_proxy(protocol, tag, settings, inbound_meta=inbound):
+                continue
+
             format_variables.update({"TRANSPORT": inbound["network"]})
             host_inbound = inbound.copy()
             for host in xray.hosts.get(tag, []):
@@ -273,7 +278,8 @@ def process_inbounds_and_tags(
                     sni = random.choice(sni_list).replace("*", salt)
 
                 if sids := inbound.get("sids"):
-                    inbound["sid"] = random.choice(sids)
+                    # Prefer a non-empty shortId so clients and subscription stay stable.
+                    inbound["sid"] = next((s for s in sids if s), sids[0] if sids else "")
 
                 req_host = ""
                 req_host_list = host["host"] or inbound["host"]

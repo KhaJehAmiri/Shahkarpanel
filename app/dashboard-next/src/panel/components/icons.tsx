@@ -70,12 +70,19 @@ export const IcExternal: FC<P> = (p) => (<S {...p}><path d="M18 13v6a2 2 0 0 1-2
 
 export const navIcon = (key: string, cls = "nx-ico"): any => {
   const m: Record<string, FC<P>> = {
+    home: IcDashboard,
     overview: IcDashboard,
-    inbounds: IcInbound,
     users: IcUsers,
+    servers: IcServer,
+    connection: IcInbound,
+    business: IcWallet,
+    system: IcCog,
+    // legacy / hub tabs
+    inbounds: IcInbound,
     nodes: IcServer,
     tunnels: IcLink,
     wireguard: IcShield,
+    singbox: IcBolt,
     dedip: IcGlobe,
     xray: IcBolt,
     hosts: IcGlobe,
@@ -83,8 +90,6 @@ export const navIcon = (key: string, cls = "nx-ico"): any => {
     automation: IcBolt,
     analytics: IcChart,
     billing: IcWallet,
-    system: IcCog,
-    // legacy
     infra: IcServer,
     infrastructure: IcServer,
   };

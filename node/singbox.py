@@ -16,6 +16,7 @@ import os
 import shutil
 import signal
 import subprocess
+import time
 import urllib.request
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
@@ -92,11 +93,16 @@ class SingBoxSpec:
 
 
 def _tls_block(inbound: SingBoxInbound) -> dict:
-    return {
+    # QUIC inbounds (TUIC / Hysteria2) must advertise h3 or clients that set
+    # alpn=h3 fail TLS handshake with "server did not select an ALPN protocol".
+    tls: dict = {
         "enabled": True,
         "certificate_path": inbound.certificate_path,
         "key_path": inbound.key_path,
     }
+    if inbound.type in SUPPORTED_TYPES:
+        tls["alpn"] = ["h3"]
+    return tls
 
 
 def _render_inbound(inbound: SingBoxInbound) -> dict:
@@ -139,6 +145,35 @@ def render_config(spec: SingBoxSpec) -> dict:
             "cache_file": {"enabled": True, "path": "/var/lib/nexusnode/singbox-cache.db"},
         },
     }
+
+
+def _kill_stale_singbox(
+    binary: str = "sing-box",
+    config_path: str = "/var/lib/nexusnode/singbox.json",
+    keep_pid: Optional[int] = None,
+) -> None:
+    """Terminate orphan ``sing-box run -c …`` processes after agent restarts."""
+    try:
+        out = subprocess.check_output(
+            ["pgrep", "-f", f"{binary} run -c {config_path}"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return
+    for line in out.strip().splitlines():
+        if not line.strip().isdigit():
+            continue
+        pid = int(line.strip())
+        if keep_pid and pid == keep_pid:
+            continue
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        except Exception:
+            pass
+    time.sleep(0.3)
 
 
 def parse_clash_connections(payload: dict) -> Dict[str, dict]:
@@ -214,6 +249,7 @@ class SingBoxManager:
 
     def restart(self) -> None:
         self.stop()
+        _kill_stale_singbox(binary=self._binary, config_path=self._config_path)
         self._proc = subprocess.Popen(
             [self._binary, "run", "-c", self._config_path],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,

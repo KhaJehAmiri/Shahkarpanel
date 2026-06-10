@@ -7,18 +7,9 @@ import { Shell } from "./components/Shell";
 import { Login } from "./pages/Login";
 import { Overview } from "./pages/Overview";
 import { Users } from "./pages/Users";
-import { Inbounds } from "./pages/Inbounds";
-import { Infrastructure } from "./pages/Infrastructure";
-import { Nodes } from "./pages/Nodes";
-import { TunnelsPage } from "./pages/TunnelsPage";
-import { WireGuard } from "./pages/WireGuard";
-import { DedicatedIP } from "./pages/DedicatedIP";
-import { XrayConfig } from "./pages/XrayConfig";
-import { Hosts } from "./pages/Hosts";
-import { Resellers } from "./pages/Resellers";
-import { Automation } from "./pages/Automation";
-import { Analytics } from "./pages/Analytics";
-import { Billing } from "./pages/Billing";
+import { ServersHub } from "./pages/ServersHub";
+import { ConnectionHub } from "./pages/ConnectionHub";
+import { BusinessHub } from "./pages/BusinessHub";
 import { System } from "./pages/System";
 import { SetupWizard } from "./components/SetupWizard";
 import { ResellerOnboardingWizard } from "./components/ResellerOnboardingWizard";
@@ -35,6 +26,8 @@ const Splash: FC = () => (
   </div>
 );
 
+const LegacyRedirect: FC<{ to: string }> = ({ to }) => <Navigate to={to} replace />;
+
 export default function DashboardRoot() {
   const { admin, loadingAuth } = useApp();
 
@@ -49,20 +42,27 @@ export default function DashboardRoot() {
         <Route element={<Shell />}>
           <Route index element={<Navigate to="/overview" replace />} />
           <Route path="/overview" element={<Overview />} />
-          <Route path="/inbounds" element={<Inbounds />} />
           <Route path="/users" element={<Users />} />
-          <Route path="/nodes" element={<Nodes />} />
-          <Route path="/tunnels" element={<TunnelsPage />} />
-          <Route path="/wireguard" element={<WireGuard />} />
-          <Route path="/dedicated-ip" element={<DedicatedIP />} />
-          <Route path="/xray" element={<XrayConfig />} />
-          <Route path="/hosts" element={<Hosts />} />
-          <Route path="/infrastructure" element={<Infrastructure />} />
-          <Route path="/resellers" element={<Resellers />} />
-          <Route path="/automation" element={<Automation />} />
-          <Route path="/analytics" element={<Analytics />} />
-          <Route path="/billing" element={<Billing />} />
+          <Route path="/servers" element={<ServersHub />} />
+          <Route path="/connection" element={<ConnectionHub />} />
+          <Route path="/business" element={<BusinessHub />} />
           <Route path="/system" element={<System />} />
+
+          {/* Legacy URLs → hubs */}
+          <Route path="/nodes" element={<LegacyRedirect to="/servers?tab=nodes" />} />
+          <Route path="/wireguard" element={<LegacyRedirect to="/servers?tab=wireguard" />} />
+          <Route path="/singbox" element={<LegacyRedirect to="/servers?tab=h2" />} />
+          <Route path="/tunnels" element={<LegacyRedirect to="/servers?tab=tunnels" />} />
+          <Route path="/dedicated-ip" element={<LegacyRedirect to="/servers?tab=dedip" />} />
+          <Route path="/inbounds" element={<LegacyRedirect to="/connection?tab=inbounds" />} />
+          <Route path="/hosts" element={<LegacyRedirect to="/connection?tab=hosts" />} />
+          <Route path="/xray" element={<LegacyRedirect to="/connection?tab=advanced" />} />
+          <Route path="/billing" element={<LegacyRedirect to="/business?tab=billing" />} />
+          <Route path="/resellers" element={<LegacyRedirect to="/business?tab=resellers" />} />
+          <Route path="/analytics" element={<LegacyRedirect to="/business?tab=analytics" />} />
+          <Route path="/automation" element={<LegacyRedirect to="/business?tab=automation" />} />
+          <Route path="/infrastructure" element={<LegacyRedirect to="/servers?tab=nodes" />} />
+
           <Route path="*" element={<Navigate to="/overview" replace />} />
         </Route>
       </Routes>

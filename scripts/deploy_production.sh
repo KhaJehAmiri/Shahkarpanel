@@ -24,4 +24,18 @@ else
   echo "    pip install -r requirements.txt && alembic upgrade head && python main.py"
 fi
 
-echo "==> Done. Open http://$(hostname -I | awk '{print $1}'):8000/dashboard/"
+# Terminate TLS with nginx and bind the app to localhost (IP or DOMAIN cert).
+# Set DOMAIN=panel.example.com EMAIL=you@example.com to use a domain cert.
+# Set SKIP_HTTPS=1 to skip (e.g. when fronted by an external load balancer).
+if [ "${SKIP_HTTPS:-0}" != "1" ]; then
+  echo "==> Enabling HTTPS (nginx reverse proxy + Let's Encrypt)"
+  HTTPS_ARGS=()
+  [ -n "${DOMAIN:-}" ] && HTTPS_ARGS+=(--domain "${DOMAIN}")
+  [ -n "${EMAIL:-}" ]  && HTTPS_ARGS+=(--email "${EMAIL}")
+  sudo -E bash ./scripts/setup_https.sh "${HTTPS_ARGS[@]}" || \
+    echo "    (HTTPS setup skipped/failed — re-run: sudo ./scripts/setup_https.sh)"
+fi
+
+BASE_URL="${DOMAIN:+https://${DOMAIN}}"
+[ -z "$BASE_URL" ] && BASE_URL="https://$(curl -fsSL --max-time 5 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')"
+echo "==> Done. Open ${BASE_URL}/dashboard/"

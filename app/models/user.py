@@ -1,6 +1,6 @@
 import re
 import secrets
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
@@ -67,7 +67,7 @@ class User(BaseModel):
     data_limit_reset_strategy: UserDataLimitResetStrategy = (
         UserDataLimitResetStrategy.no_reset
     )
-    inbounds: Dict[ProxyTypes, List[str]] = {}
+    inbounds: Dict[ProxyTypes, List[str]] = Field(default_factory=dict, validate_default=True)
     note: Optional[str] = Field(None, nullable=True)
     sub_updated_at: Optional[datetime] = Field(None, nullable=True)
     sub_last_user_agent: Optional[str] = Field(None, nullable=True)
@@ -136,6 +136,8 @@ class User(BaseModel):
 class UserCreate(User):
     username: str
     status: UserStatusCreate = None
+    portal_enabled: bool = False
+    portal_password: Optional[str] = Field(default=None, min_length=4)
     model_config = ConfigDict(json_schema_extra={
         "example": {
             "username": "user1234",
@@ -185,20 +187,34 @@ class UserCreate(User):
 
         # check by proxies to ensure that every protocol has inbounds set
         for proxy_type in proxies:
-            tags = inbounds.get(proxy_type)
+            ptype = proxy_type if isinstance(proxy_type, ProxyTypes) else ProxyTypes(str(proxy_type))
+            if ptype in (ProxyTypes.WireGuard, ProxyTypes.Hysteria2, ProxyTypes.TUIC):
+                inbounds[proxy_type] = inbounds.get(proxy_type) or []
+                continue
 
-            if tags:
+            if proxy_type in inbounds:
+                tags = inbounds[proxy_type]
+                if not tags:
+                    raise ValueError(f"{proxy_type} inbounds cannot be empty")
+
+                from app.xray.inbound_match import inbound_matches_proxy
+
+                proxy_settings = proxies.get(proxy_type)
                 for tag in tags:
                     if tag not in xray.config.inbounds_by_tag:
                         raise ValueError(f"Inbound {tag} doesn't exist")
-
-            # elif isinstance(tags, list) and not tags:
-            #     raise ValueError(f"{proxy_type} inbounds cannot be empty")
-
+                    if not inbound_matches_proxy(proxy_type, tag, proxy_settings):
+                        raise ValueError(
+                            f"Inbound {tag} is not compatible with {proxy_type} settings"
+                        )
             else:
+                from app.xray.inbound_match import inbound_matches_proxy
+
+                proxy_settings = proxies.get(proxy_type)
                 inbounds[proxy_type] = [
                     i["tag"]
-                    for i in xray.config.inbounds_by_protocol.get(proxy_type, [])
+                    for i in xray.config.inbounds_by_protocol.get(ptype.value, [])
+                    if inbound_matches_proxy(proxy_type, i["tag"], proxy_settings, inbound_meta=i)
                 ]
 
         return inbounds
@@ -265,14 +281,19 @@ class UserModify(User):
         # check with inbounds, "proxies" is optional on modifying
         # so inbounds particularly can be modified
         if inbounds:
+            from app.xray.inbound_match import inbound_matches_proxy
+
+            proxies = values.data.get("proxies") or {}
             for proxy_type, tags in inbounds.items():
-
-                # if not tags:
-                #     raise ValueError(f"{proxy_type} inbounds cannot be empty")
-
                 for tag in tags:
                     if tag not in xray.config.inbounds_by_tag:
                         raise ValueError(f"Inbound {tag} doesn't exist")
+                    if proxy_type in proxies and not inbound_matches_proxy(
+                        proxy_type, tag, proxies[proxy_type]
+                    ):
+                        raise ValueError(
+                            f"Inbound {tag} is not compatible with {proxy_type} settings"
+                        )
 
         return inbounds
 
@@ -304,6 +325,7 @@ class UserResponse(User):
     used_traffic: int
     lifetime_used_traffic: int = 0
     created_at: datetime
+    sub_revoked_at: Optional[datetime] = None
     portal_enabled: bool = False
     links: List[str] = []
     subscription_url: str = ""
@@ -328,7 +350,14 @@ class UserResponse(User):
             salt = secrets.token_hex(8)
             url_prefix = (XRAY_SUBSCRIPTION_URL_PREFIX).replace('*', salt)
             # One stable token per username — never changes between API calls.
-            token = create_subscription_token(self.username)
+            # After a revoke the epoch-0 stable token is rejected by
+            # get_validated_sub, so re-key deterministically from the
+            # revocation time (still stable until the next revoke).
+            issued_at = None
+            if self.sub_revoked_at:
+                revoked_utc = self.sub_revoked_at.replace(tzinfo=timezone.utc)
+                issued_at = int(revoked_utc.timestamp()) + 1
+            token = create_subscription_token(self.username, issued_at=issued_at)
             self.subscription_url = f"{url_prefix}/{XRAY_SUBSCRIPTION_PATH}/{token}"
         from app.subscription.public_url import public_subscription_url
         self.public_subscription_url = public_subscription_url(self)
@@ -360,6 +389,8 @@ class SubscriptionUserResponse(UserResponse):
     config_available: bool = True
     block_reason: str | None = None
     public_subscription_url: str | None = None
+    hysteria2_link: str | None = None
+    tuic_link: str | None = None
     model_config = ConfigDict(from_attributes=True)
 
 

@@ -259,12 +259,17 @@ def portal_branding(
     dbuser: User = Depends(get_current_portal_user),
 ):
     """Branding for the end-user portal (resolved via owning reseller)."""
+    from app import platform_settings
+
     tenant_id = None
     if dbuser.admin_id:
         dbadmin = crud.get_admin_by_id(db, dbuser.admin_id)
         if dbadmin:
             tenant_id = dbadmin.tenant_id
-    return tenant_svc.resolve_branding(db, tenant_id)
+    branding = dict(tenant_svc.resolve_branding(db, tenant_id))
+    # The portal renders plan prices; tell it what label to use ("تومان", "USD", …).
+    branding["currency_label"] = platform_settings.get_setting("billing.currency_label") or ""
+    return branding
 
 
 @router.get("/orders", response_model=List[PortalOrder])

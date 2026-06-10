@@ -8,7 +8,7 @@ import { useCopilot } from "../copilot/CopilotContext";
 import { useFetch, usePolling } from "../lib/useFetch";
 import { statusTone } from "../lib/format";
 import {
-  Button, Callout, Card, CopyField, EmptyState, Field, Input, Modal, Pill, Select, SkeletonRows, UsageBar, useToast,
+  Button, Callout, Card, CopyField, EmptyState, Field, Input, Modal, Pager, Pill, Select, SkeletonRows, UsageBar, usePagedList, useToast,
 } from "../components/ui";
 import { IcPlus, IcRefresh, IcTrash, IcLink, IcEdit, IcEye, IcBolt } from "../components/icons";
 import { AddNodeModal, AddNodePreset } from "../components/AddNodeModal";
@@ -21,11 +21,17 @@ export const NodesTab: FC<{ resellerMode?: boolean }> = ({ resellerMode }) => {
   const toast = useToast();
   const { consumeIntent } = useCopilot();
   const [show, setShow] = useState(false);
+  const [editNode, setEditNode] = useState<NodeItem | null>(null);
   const [xrayNode, setXrayNode] = useState<NodeItem | null>(null);
   const [preset, setPreset] = useState<AddNodePreset>({});
   const { data, loading, error, reload } = useFetch<NodeItem[]>(() => api.get("/nodes"), []);
   const provisioning = (data || []).some((n) => n.provision_status === "provisioning");
   usePolling(reload, 3000, provisioning);
+  const [nodeSearch, setNodeSearch] = useState("");
+  const filteredNodes = (data || []).filter((n) =>
+    !nodeSearch.trim() || `${n.name} ${n.address} ${n.region || ""}`.toLowerCase().includes(nodeSearch.trim().toLowerCase()),
+  );
+  const pager = usePagedList(filteredNodes, 20);
 
   const provisionLabel = (step?: string | null) => {
     if (!step) return t("infra.provisionStep.queued");
@@ -44,6 +50,7 @@ export const NodesTab: FC<{ resellerMode?: boolean }> = ({ resellerMode }) => {
   const openAdd = () => { setPreset({}); setShow(true); };
 
   const reconnect = async (n: NodeItem) => {
+    if (!confirm(t("infra.reconnectConfirm", { name: n.name }))) return;
     try { await api.post(`/node/${n.id}/reconnect`); toast.push(t("infra.reconnecting"), "success"); }
     catch (e: any) { toast.push(e.message, "error"); }
   };
@@ -56,18 +63,24 @@ export const NodesTab: FC<{ resellerMode?: boolean }> = ({ resellerMode }) => {
   return (
     <>
       {!resellerMode && (
-        <Callout tone="info" title={t("infra.xrayVersionHintTitle")}>
-          {t("infra.xrayVersionHint")}
-        </Callout>
+        <>
+          <Callout tone="info" title={t("infra.xrayVersionHintTitle")}>
+            {t("infra.xrayVersionHint")}
+          </Callout>
+          <NodeGroupsPanel />
+        </>
       )}
-      <div className="nx-row" style={{ justifyContent: "flex-end", margin: "14px 0", gap: 8 }}>
-        <Button variant="ghost" onClick={reload}><IcRefresh className="nx-ico" /></Button>
+      <div className="nx-page-actions">
+        {(data?.length ?? 0) > 8 && (
+          <Input value={nodeSearch} onChange={(e: any) => { setNodeSearch(e.target.value); pager.setPage(0); }} placeholder={t("common.search")} style={{ maxWidth: 220 }} />
+        )}
+        <Button variant="ghost" title={t("common.refresh")} onClick={reload}><IcRefresh className="nx-ico" /></Button>
         <Button variant="primary" onClick={openAdd}><IcPlus className="nx-ico" /> {t("infra.addNode")}</Button>
       </div>
       <Card pad0>
         {loading ? <div style={{ padding: 20 }}><SkeletonRows rows={4} cols={5} /></div>
           : error ? <EmptyState title={t("common.error")} desc={error} action={<Button onClick={reload}>{t("common.retry")}</Button>} />
-          : !data?.length ? <EmptyState title={t("common.noData")} action={<Button variant="primary" onClick={openAdd}><IcPlus className="nx-ico" /> {t("infra.addNode")}</Button>} />
+          : !filteredNodes.length ? <EmptyState title={t("common.noData")} action={<Button variant="primary" onClick={openAdd}><IcPlus className="nx-ico" /> {t("infra.addNode")}</Button>} />
           : (
             <div className="nx-table-wrap">
               <table className="nx-table">
@@ -79,7 +92,7 @@ export const NodesTab: FC<{ resellerMode?: boolean }> = ({ resellerMode }) => {
                   <th style={{ textAlign: "end" }}>{t("common.actions")}</th>
                 </tr></thead>
                 <tbody>
-                  {data.map((n) => (
+                  {pager.slice.map((n) => (
                     <tr key={n.id}>
                       <td style={{ fontWeight: 600 }}>{n.name}{n.core_kind === "wireguard" ? <span style={{ marginInlineStart: 8 }}><Pill tone="info">WG</Pill></span> : null}</td>
                       <td className="nx-mono" style={{ fontSize: 12 }}>{n.address}:{n.port}</td>
@@ -99,7 +112,7 @@ export const NodesTab: FC<{ resellerMode?: boolean }> = ({ resellerMode }) => {
                           </>
                         ) : (
                           <>
-                            <Pill tone={statusTone(n.status)} dot>{n.status}</Pill>
+                            <Pill tone={statusTone(n.status)} dot>{t(`users.status.${n.status}`, n.status)}</Pill>
                             {n.message ? <div className="nx-faint" style={{ fontSize: 11 }}>{n.message}</div> : null}
                           </>
                         )}
@@ -109,15 +122,21 @@ export const NodesTab: FC<{ resellerMode?: boolean }> = ({ resellerMode }) => {
                       <td>{n.latency_ms != null ? `${n.latency_ms.toFixed(0)} ms` : "—"}</td>
                       <td>
                         <div className="nx-row" style={{ justifyContent: "flex-end", gap: 6, flexWrap: "wrap" }}>
-                          {n.core_kind !== "wireguard" && (
+                          {/* Xray version endpoint is sudo-only — hide for resellers. */}
+                          {n.core_kind !== "wireguard" && !resellerMode && (
                             <Button size="sm" variant="primary" onClick={() => setXrayNode(n)} title={t("infra.xraySetVersion")}>
                               {t("infra.xraySetVersion")}
                             </Button>
                           )}
-                          {n.provision_status !== "provisioning" && (
-                            <Button size="sm" onClick={() => reconnect(n)}><IcRefresh className="nx-ico" /> {t("infra.reconnect")}</Button>
+                          {!resellerMode && (
+                            <Button size="sm" variant="ghost" onClick={() => setEditNode(n)} title={t("infra.editNode")}>
+                              <IcEdit className="nx-ico" />
+                            </Button>
                           )}
-                          <Button variant="danger" size="sm" onClick={() => remove(n)}><IcTrash className="nx-ico" /></Button>
+                          {n.provision_status !== "provisioning" && (
+                            <Button size="sm" onClick={() => reconnect(n)} title={t("infra.reconnect")}><IcRefresh className="nx-ico" /> {t("infra.reconnect")}</Button>
+                          )}
+                          <Button variant="danger" size="sm" title={t("common.delete")} onClick={() => remove(n)}><IcTrash className="nx-ico" /></Button>
                         </div>
                       </td>
                     </tr>
@@ -127,6 +146,7 @@ export const NodesTab: FC<{ resellerMode?: boolean }> = ({ resellerMode }) => {
             </div>
           )}
       </Card>
+      <Pager page={pager.page} pages={pager.pages} onPage={pager.setPage} />
       {show && (
         <AddNodeModal
           preset={preset}
@@ -137,7 +157,125 @@ export const NodesTab: FC<{ resellerMode?: boolean }> = ({ resellerMode }) => {
       {xrayNode && (
         <XrayVersionModal node={xrayNode} onClose={() => setXrayNode(null)} onDone={() => { setXrayNode(null); reload(); }} />
       )}
+      {editNode && (
+        <EditNodeModal node={editNode} onClose={() => setEditNode(null)} onDone={() => { setEditNode(null); reload(); }} />
+      )}
     </>
+  );
+};
+
+type NodeGroupRow = { id: number; name: string; region?: string | null };
+
+const NodeGroupsPanel: FC = () => {
+  const { t } = useTranslation();
+  const toast = useToast();
+  const { data, loading, reload } = useFetch<NodeGroupRow[]>(() => api.get("/node/groups"), []);
+  const [name, setName] = useState("");
+  const [region, setRegion] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const add = async () => {
+    if (!name.trim()) {
+      toast.push(t("infra.nameRequired"), "error");
+      return;
+    }
+    setBusy(true);
+    try {
+      await api.post("/node/groups", { name: name.trim(), region: region.trim() || null });
+      setName("");
+      setRegion("");
+      toast.push(t("common.created"), "success");
+      reload();
+    } catch (e: any) {
+      toast.push(e.message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (g: NodeGroupRow) => {
+    if (!confirm(t("common.confirmDelete"))) return;
+    try {
+      await api.del(`/node/groups/${g.id}`);
+      toast.push(t("common.deleted"), "success");
+      reload();
+    } catch (e: any) {
+      toast.push(e.message, "error");
+    }
+  };
+
+  return (
+    <Card style={{ marginBottom: 14, padding: 14 }}>
+      <div className="nx-card-title" style={{ marginBottom: 8 }}>{t("infra.nodeGroups")}</div>
+      <div className="nx-row" style={{ gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+        <Input value={name} onChange={(e: any) => setName(e.target.value)} placeholder={t("common.name")} style={{ maxWidth: 180 }} />
+        <Input value={region} onChange={(e: any) => setRegion(e.target.value)} placeholder={t("infra.region")} style={{ maxWidth: 140 }} />
+        <Button size="sm" variant="primary" disabled={busy || !name.trim()} onClick={add}><IcPlus className="nx-ico" /> {t("common.create")}</Button>
+      </div>
+      {loading ? (
+        <SkeletonRows rows={1} cols={3} />
+      ) : !data?.length ? (
+        <div className="nx-faint" style={{ fontSize: 12 }}>{t("common.noData")}</div>
+      ) : (
+        <div className="nx-row" style={{ gap: 8, flexWrap: "wrap" }}>
+          {data.map((g) => (
+            <Pill key={g.id} tone="accent">
+              {g.name}{g.region ? ` · ${g.region}` : ""}
+              <button type="button" className="nx-btn icon ghost sm" style={{ marginInlineStart: 6 }} title={t("common.delete")} aria-label={t("common.delete")} onClick={() => remove(g)}>×</button>
+            </Pill>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+};
+
+const EditNodeModal: FC<{ node: NodeItem; onClose: () => void; onDone: () => void }> = ({ node, onClose, onDone }) => {
+  const { t } = useTranslation();
+  const toast = useToast();
+  const groups = useFetch<NodeGroupRow[]>(() => api.get("/node/groups"), []);
+  const [name, setName] = useState(node.name);
+  const [address, setAddress] = useState(node.address);
+  const [region, setRegion] = useState(node.region || "");
+  const [groupId, setGroupId] = useState(node.group_id != null ? String(node.group_id) : "");
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    setBusy(true);
+    try {
+      await api.put(`/node/${node.id}`, {
+        name: name.trim(),
+        address: address.trim(),
+        region: region.trim() || null,
+        group_id: groupId ? parseInt(groupId, 10) : null,
+      });
+      toast.push(t("common.saved"), "success");
+      onDone();
+    } catch (e: any) {
+      toast.push(e.message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal open title={`${t("infra.editNode")} — ${node.name}`} onClose={onClose}
+      footer={<>
+        <Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
+        <Button variant="primary" disabled={busy || !name.trim() || !address.trim()} onClick={submit}>{t("common.save")}</Button>
+      </>}>
+      <div className="nx-stack">
+        <Field label={t("common.name")}><Input value={name} onChange={(e: any) => setName(e.target.value)} autoFocus /></Field>
+        <Field label={t("infra.address")}><Input value={address} onChange={(e: any) => setAddress(e.target.value)} /></Field>
+        <Field label={t("infra.region")}><Input value={region} onChange={(e: any) => setRegion(e.target.value)} /></Field>
+        <Field label={t("infra.nodeGroup")}>
+          <Select value={groupId} onChange={(e: any) => setGroupId(e.target.value)}>
+            <option value="">—</option>
+            {(groups.data || []).map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+          </Select>
+        </Field>
+      </div>
+    </Modal>
   );
 };
 
@@ -283,6 +421,7 @@ export const HostsTab: FC = () => {
     setDraft(copy);
   };
   const delHost = (tag: string, idx: number) => {
+    if (!confirm(t("common.confirmDelete"))) return;
     const copy: Record<string, any[]> = JSON.parse(JSON.stringify(hosts));
     copy[tag].splice(idx, 1);
     setDraft(copy);
@@ -316,23 +455,23 @@ export const HostsTab: FC = () => {
                     <div key={idx} className="nx-card" style={{ background: "var(--nx-surface-2)", padding: 12 }}>
                       <div className="nx-row" style={{ gap: 10, flexWrap: "wrap" }}>
                         <Field label={t("infra.remark")}><Input value={h.remark || ""} onChange={(e: any) => setHost(tag, idx, "remark", e.target.value)} style={{ maxWidth: 160 }} /></Field>
-                        <Field label={t("infra.address")}><Input value={h.address || ""} onChange={(e: any) => setHost(tag, idx, "address", e.target.value)} placeholder="domain or {SERVER_IP}" style={{ maxWidth: 200 }} /></Field>
+                        <Field label={t("infra.address")}><Input value={h.address || ""} onChange={(e: any) => setHost(tag, idx, "address", e.target.value)} placeholder={t("infra.hostAddressPlaceholder")} style={{ maxWidth: 200 }} /></Field>
                         <Field label={t("infra.port")}><Input type="number" value={h.port ?? ""} onChange={(e: any) => setHost(tag, idx, "port", e.target.value ? parseInt(e.target.value) : null)} style={{ maxWidth: 100 }} /></Field>
-                        <Field label="SNI"><Input value={h.sni || ""} onChange={(e: any) => setHost(tag, idx, "sni", e.target.value)} style={{ maxWidth: 160 }} /></Field>
-                        <Field label="Host"><Input value={h.host || ""} onChange={(e: any) => setHost(tag, idx, "host", e.target.value)} style={{ maxWidth: 160 }} /></Field>
-                        <Field label="Path"><Input value={h.path || ""} onChange={(e: any) => setHost(tag, idx, "path", e.target.value)} style={{ maxWidth: 140 }} /></Field>
-                        <Field label="TLS"><Select value={h.security || "inbound_default"} onChange={(e: any) => setHost(tag, idx, "security", e.target.value)}>
+                        <Field label={t("infra.hostSni")}><Input value={h.sni || ""} onChange={(e: any) => setHost(tag, idx, "sni", e.target.value)} style={{ maxWidth: 160 }} /></Field>
+                        <Field label={t("infra.hostHost")}><Input value={h.host || ""} onChange={(e: any) => setHost(tag, idx, "host", e.target.value)} style={{ maxWidth: 160 }} /></Field>
+                        <Field label={t("infra.hostPath")}><Input value={h.path || ""} onChange={(e: any) => setHost(tag, idx, "path", e.target.value)} style={{ maxWidth: 140 }} /></Field>
+                        <Field label={t("infra.hostTls")}><Select value={h.security || "inbound_default"} onChange={(e: any) => setHost(tag, idx, "security", e.target.value)}>
                           {["inbound_default", "none", "tls"].map((s) => <option key={s}>{s}</option>)}
                         </Select></Field>
-                        <Field label="ALPN"><Input value={h.alpn || ""} onChange={(e: any) => setHost(tag, idx, "alpn", e.target.value)} style={{ maxWidth: 120 }} /></Field>
-                        <Field label="FP"><Input value={h.fingerprint || ""} onChange={(e: any) => setHost(tag, idx, "fingerprint", e.target.value)} style={{ maxWidth: 100 }} /></Field>
-                        <label className="nx-row" style={{ gap: 6, fontSize: 12 }}><input type="checkbox" checked={!!h.allowinsecure} onChange={(e) => setHost(tag, idx, "allowinsecure", e.target.checked)} /> insecure</label>
-                        <label className="nx-row" style={{ gap: 6, fontSize: 12 }}><input type="checkbox" checked={!!h.is_disabled} onChange={(e) => setHost(tag, idx, "is_disabled", e.target.checked)} /> disabled</label>
-                        <label className="nx-row" style={{ gap: 6, fontSize: 12 }}><input type="checkbox" checked={!!h.mux_enable} onChange={(e) => setHost(tag, idx, "mux_enable", e.target.checked)} /> mux</label>
-                        <label className="nx-row" style={{ gap: 6, fontSize: 12 }}><input type="checkbox" checked={!!h.use_sni_as_host} onChange={(e) => setHost(tag, idx, "use_sni_as_host", e.target.checked)} /> sni→host</label>
-                        <Field label="Fragment"><Input value={h.fragment_setting || ""} onChange={(e: any) => setHost(tag, idx, "fragment_setting", e.target.value)} style={{ maxWidth: 140 }} /></Field>
-                        <Field label="Noise"><Input value={h.noise_setting || ""} onChange={(e: any) => setHost(tag, idx, "noise_setting", e.target.value)} style={{ maxWidth: 140 }} /></Field>
-                        <div style={{ alignSelf: "flex-end" }}><Button variant="danger" size="sm" onClick={() => delHost(tag, idx)}><IcTrash className="nx-ico" /></Button></div>
+                        <Field label={t("infra.hostAlpn")}><Input value={h.alpn || ""} onChange={(e: any) => setHost(tag, idx, "alpn", e.target.value)} style={{ maxWidth: 120 }} /></Field>
+                        <Field label={t("infra.hostFp")}><Input value={h.fingerprint || ""} onChange={(e: any) => setHost(tag, idx, "fingerprint", e.target.value)} style={{ maxWidth: 100 }} /></Field>
+                        <label className="nx-row" style={{ gap: 6, fontSize: 12 }}><input type="checkbox" checked={!!h.allowinsecure} onChange={(e) => setHost(tag, idx, "allowinsecure", e.target.checked)} /> {t("infra.hostInsecure")}</label>
+                        <label className="nx-row" style={{ gap: 6, fontSize: 12 }}><input type="checkbox" checked={!!h.is_disabled} onChange={(e) => setHost(tag, idx, "is_disabled", e.target.checked)} /> {t("infra.hostDisabled")}</label>
+                        <label className="nx-row" style={{ gap: 6, fontSize: 12 }}><input type="checkbox" checked={!!h.mux_enable} onChange={(e) => setHost(tag, idx, "mux_enable", e.target.checked)} /> {t("infra.hostMux")}</label>
+                        <label className="nx-row" style={{ gap: 6, fontSize: 12 }}><input type="checkbox" checked={!!h.use_sni_as_host} onChange={(e) => setHost(tag, idx, "use_sni_as_host", e.target.checked)} /> {t("infra.hostSniAsHost")}</label>
+                        <Field label={t("infra.hostFragment")}><Input value={h.fragment_setting || ""} onChange={(e: any) => setHost(tag, idx, "fragment_setting", e.target.value)} style={{ maxWidth: 140 }} /></Field>
+                        <Field label={t("infra.hostNoise")}><Input value={h.noise_setting || ""} onChange={(e: any) => setHost(tag, idx, "noise_setting", e.target.value)} style={{ maxWidth: 140 }} /></Field>
+                        <div style={{ alignSelf: "flex-end" }}><Button variant="danger" size="sm" title={t("common.delete")} onClick={() => delHost(tag, idx)}><IcTrash className="nx-ico" /></Button></div>
                       </div>
                     </div>
                   ))}

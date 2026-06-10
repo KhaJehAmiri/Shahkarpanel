@@ -24,12 +24,16 @@ def hysteria2_link(
     sni: Optional[str] = None,
     obfs_password: Optional[str] = None,
     remark: str = "",
+    insecure: bool = True,
 ) -> str:
     """Build a ``hysteria2://`` share link."""
     query = {}
+    if insecure:
+        query["insecure"] = "1"
     if sni:
         query["sni"] = sni
     if obfs_password:
+        query["obfs"] = "salamander"
         query["obfs-password"] = obfs_password
     q = f"?{parse.urlencode(query)}" if query else ""
     frag = f"#{parse.quote(remark)}" if remark else ""
@@ -46,9 +50,19 @@ def tuic_link(
     sni: Optional[str] = None,
     congestion_control: str = "bbr",
     remark: str = "",
+    insecure: bool = True,
 ) -> str:
     """Build a ``tuic://`` share link."""
-    query = {"congestion_control": congestion_control}
+    # TUIC has no official URI spec; clients disagree on TLS skip flags (insecure vs
+    # allow_insecure) and often expect udp_relay_mode + alpn for sing-box peers.
+    query = {
+        "congestion_control": congestion_control,
+        "udp_relay_mode": "native",
+        "alpn": "h3",
+    }
+    if insecure:
+        query["insecure"] = "1"
+        query["allow_insecure"] = "1"
     if sni:
         query["sni"] = sni
     q = f"?{parse.urlencode(query)}"
@@ -57,7 +71,25 @@ def tuic_link(
     return f"tuic://{auth}@{host}:{port}{q}{frag}"
 
 
-def user_hysteria2_link(user_settings: dict, dbnode, remark: str = "") -> Optional[str]:
+def singbox_link_insecure(cfg) -> bool:
+    """Whether share links must skip TLS verify for this node's sing-box TLS."""
+    from app.tls.inspect import cert_requires_insecure
+
+    if cfg is None:
+        return True
+    return cert_requires_insecure(
+        tls_trusted=getattr(cfg, "tls_trusted", False),
+        sni=cfg.sni,
+    )
+
+
+def user_hysteria2_link(
+    user_settings: dict,
+    dbnode,
+    remark: str = "",
+    *,
+    insecure: Optional[bool] = None,
+) -> Optional[str]:
     cfg = dbnode.singbox
     if cfg is None or not cfg.hysteria2_enabled or not cfg.hysteria2_port:
         return None
@@ -65,6 +97,8 @@ def user_hysteria2_link(user_settings: dict, dbnode, remark: str = "") -> Option
     if not password:
         return None
     host = node_host(dbnode)
+    if insecure is None:
+        insecure = singbox_link_insecure(cfg)
     return hysteria2_link(
         password=password,
         host=host,
@@ -72,10 +106,17 @@ def user_hysteria2_link(user_settings: dict, dbnode, remark: str = "") -> Option
         sni=cfg.sni or host,
         obfs_password=cfg.hysteria2_obfs_password,
         remark=remark,
+        insecure=insecure,
     )
 
 
-def user_tuic_link(user_settings: dict, dbnode, remark: str = "") -> Optional[str]:
+def user_tuic_link(
+    user_settings: dict,
+    dbnode,
+    remark: str = "",
+    *,
+    insecure: Optional[bool] = None,
+) -> Optional[str]:
     cfg = dbnode.singbox
     if cfg is None or not cfg.tuic_enabled or not cfg.tuic_port:
         return None
@@ -84,6 +125,8 @@ def user_tuic_link(user_settings: dict, dbnode, remark: str = "") -> Optional[st
     if not uuid or not password:
         return None
     host = node_host(dbnode)
+    if insecure is None:
+        insecure = singbox_link_insecure(cfg)
     return tuic_link(
         uuid=str(uuid),
         password=password,
@@ -92,4 +135,5 @@ def user_tuic_link(user_settings: dict, dbnode, remark: str = "") -> Optional[st
         sni=cfg.sni or host,
         congestion_control=cfg.tuic_congestion_control or "bbr",
         remark=remark,
+        insecure=insecure,
     )

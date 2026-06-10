@@ -47,13 +47,6 @@ export const Copilot: FC = () => {
 
   return (
     <>
-      {!open && (
-        <button className="nx-copilot-fab" onClick={() => setOpen(true)} aria-label={t("copilot.open")} title={t("copilot.open")}>
-          <IcSpark />
-          {!dismissed && <span className="nx-copilot-fab-pulse" aria-hidden />}
-        </button>
-      )}
-
       {open && (
         <>
           <div className="nx-copilot-scrim" onClick={() => setOpen(false)} />

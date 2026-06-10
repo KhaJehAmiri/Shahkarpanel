@@ -12,7 +12,7 @@ Auth reuses the end-user portal credentials (``portal_enabled`` users). Gated
 behind the ``client_api`` feature flag.
 """
 from datetime import datetime
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel
@@ -89,14 +89,12 @@ def _available_protocols(db: Session) -> set:
         .all()
     )
     if wg_nodes:
-        avail.add("wireguard")
-        from app.wireguard.capabilities import node_amnezia_available
-        from app.wireguard.sync import awg_params_from_cfg
+        from app.wireguard.sync import amneziawg_enabled, plain_wg_enabled
 
-        for n in wg_nodes:
-            if n.wireguard and awg_params_from_cfg(n.wireguard) and node_amnezia_available(n):
-                avail.add("amneziawg")
-                break
+        if any(n.wireguard and plain_wg_enabled(n.wireguard) for n in wg_nodes):
+            avail.add("wireguard")
+        if any(n.wireguard and amneziawg_enabled(n.wireguard) for n in wg_nodes):
+            avail.add("amneziawg")
 
     return avail
 
@@ -203,7 +201,13 @@ def client_negotiate(
     effective = client_engine.normalize_profile(profile or dbuser.client_profile)
     available = _available_protocols(db)
     return NegotiateResponse(
-        **client_engine.negotiate(profile=effective, net=net, udp=udp, available=available)
+        **client_engine.negotiate(
+            profile=effective,
+            net=net,
+            udp=udp,
+            available=available,
+            cdn_fallback=feature_flags.is_enabled("cdn_fallback"),
+        )
     )
 
 
@@ -246,6 +250,14 @@ class ProtocolEntry(BaseModel):
     region: Optional[str] = None
 
 
+class TunnelHint(BaseModel):
+    available: bool = False
+    active_count: int = 0
+    topology: str = "direct"
+    hint: str = ""
+    tunnels: List[dict] = []
+
+
 class ClientConfigResponse(BaseModel):
     profile: str
     country: Optional[str] = None
@@ -256,7 +268,9 @@ class ClientConfigResponse(BaseModel):
     protocols: List[ProtocolEntry]
     subscription_url: str = ""
     v2ray_links: List[str] = []
+    protocol_materials: Dict[str, dict] = {}
     dedicated_ip: Optional[str] = None
+    tunnel: TunnelHint = TunnelHint()
 
 
 @router.get("/client/config", response_model=ClientConfigResponse)
@@ -269,12 +283,24 @@ def client_config(
     dbuser: User = Depends(get_current_app_user),
 ):
     """Smart config: ordered protocols + best node + the user's real sub links."""
+    from app.client import materials as client_materials
+    from app.client.nodes import resolve_protocol_nodes, tunnel_hint
+    from app.client.provision import ensure_app_proxies
+    from app.client.xray_structured import build_structured_xray
+
+    ensure_app_proxies(db, dbuser)
+
     effective = client_engine.normalize_profile(profile or dbuser.client_profile)
     available = _available_protocols(db)
-    nego = client_engine.negotiate(profile=effective, net=net, udp=udp, available=available)
+    nego = client_engine.negotiate(
+        profile=effective,
+        net=net,
+        udp=udp,
+        available=available,
+        cdn_fallback=feature_flags.is_enabled("cdn_fallback"),
+    )
     nodes = _active_nodes(db)
 
-    # Trader is pinned to the node hosting its dedicated IP (never rotates).
     dedicated = None
     bound_node_id = None
     if effective == "trader":
@@ -282,24 +308,52 @@ def client_config(
         bound_node_id = dedicated.node_id if dedicated else None
 
     selection = client_engine.select_nodes(
-        nodes, profile=effective, bound_node_id=bound_node_id
+        nodes,
+        profile=effective,
+        bound_node_id=bound_node_id,
+        country=country,
+    )
+
+    proto_nodes = resolve_protocol_nodes(
+        db,
+        nego["usable_protocols"],
+        profile=effective,
+        bound_node_id=bound_node_id,
+        country=country,
     )
 
     rec_node_id = selection["recommended_node"]
-    rec_node = next((n for n in nodes if n["id"] == rec_node_id), None)
+    node_index = {n["id"]: n for n in nodes}
+
+    def _entry_node(proto: str) -> Optional[dict]:
+        nid = proto_nodes.get(proto)
+        if nid is None:
+            return None
+        return node_index.get(nid)
 
     protocols = [
         ProtocolEntry(
             priority=i + 1,
             protocol=proto,
-            node_id=rec_node_id,
-            node_name=rec_node["name"] if rec_node else None,
-            region=rec_node["region"] if rec_node else None,
+            node_id=proto_nodes.get(proto),
+            node_name=(_entry_node(proto) or {}).get("name"),
+            region=(_entry_node(proto) or {}).get("region"),
         )
         for i, proto in enumerate(nego["usable_protocols"])
     ]
 
     user = UserResponse.model_validate(dbuser)
+    links = _v2ray_links(user)
+    structured = build_structured_xray(user)
+    mats = client_materials.build_materials(
+        db,
+        dbuser,
+        protocols=nego["usable_protocols"],
+        protocol_nodes=proto_nodes,
+        structured_xray=structured,
+        v2ray_links=links,
+    )
+    th = tunnel_hint(db)
     return ClientConfigResponse(
         profile=effective,
         country=country,
@@ -309,8 +363,10 @@ def client_config(
         fallback_node=selection["fallback_node"],
         protocols=protocols,
         subscription_url=getattr(user, "subscription_url", "") or "",
-        v2ray_links=_v2ray_links(user),
+        v2ray_links=links,
+        protocol_materials=mats,
         dedicated_ip=dedicated.address if dedicated else None,
+        tunnel=TunnelHint(**th),
     )
 
 
@@ -342,6 +398,7 @@ def client_probe(
     body: ProbeBody,
     net: str = Query("open"),
     udp: bool = Query(True),
+    country: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     dbuser: User = Depends(get_current_app_user),
 ):
@@ -367,9 +424,18 @@ def client_probe(
         {"node_id": r.node_id, "ping_ms": r.ping_ms, "packet_loss_pct": r.packet_loss_pct}
         for r in body.results
     ]
-    selection = client_engine.select_nodes(nodes, profile=effective, probe_results=probe_dicts)
+    selection = client_engine.select_nodes(
+        nodes,
+        profile=effective,
+        probe_results=probe_dicts,
+        country=country,
+    )
     nego = client_engine.negotiate(
-        profile=effective, net=net, udp=udp, available=_available_protocols(db)
+        profile=effective,
+        net=net,
+        udp=udp,
+        available=_available_protocols(db),
+        cdn_fallback=feature_flags.is_enabled("cdn_fallback"),
     )
     usable = nego["usable_protocols"]
 

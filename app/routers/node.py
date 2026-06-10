@@ -349,7 +349,7 @@ def modify_node(
 
     publish(EventType.node_modified, {"node_id": updated_node.id, "name": updated_node.name})
     logger.info(f'Node "{dbnode.name}" modified')
-    return dbnode
+    return NodeResponse.model_validate(updated_node)
 
 
 class AmneziaWGConfig(BaseModel):
@@ -389,37 +389,326 @@ def set_node_singbox(
     db: Session = Depends(get_db),
     _: Admin = Depends(Admin.check_sudo_admin),
 ):
-    """Configure Hysteria2/TUIC on a normal Xray node (sudo only).
+    """Configure Hysteria2/TUIC on a node (sudo only).
 
-    sing-box runs alongside Xray on the node agent; enabling a protocol here
-    provisions the inbound and pushes the user list on save.
+    sing-box runs alongside Xray or native WireGuard on the node agent; enabling
+    a protocol here provisions the inbound and pushes the user list on save.
     """
-    from app.models.node import CoreKind
-
-    if dbnode.core_kind == CoreKind.wireguard.value:
-        raise HTTPException(status_code=400, detail="WireGuard nodes cannot run sing-box")
     crud.upsert_node_singbox(db, dbnode, **body.model_dump(exclude_unset=True))
     db.refresh(dbnode)
     bg.add_task(_sync_singbox_node, dbnode.id)
     return dbnode
 
 
-def _sync_singbox_node(node_id: int) -> None:
+def _sync_singbox_node(node_id: int) -> bool:
+    from app import logger
+
     try:
         from app.db import GetDB
         from app.singbox.operations import sync_node
 
         with GetDB() as db:
             dbnode = crud.get_node_by_id(db, node_id)
-            if dbnode:
-                sync_node(db, dbnode)
+            if not dbnode:
+                logger.warning("sing-box sync skipped: node %s not found", node_id)
+                return False
+            sync_node(db, dbnode)
+            return True
+    except Exception as exc:
+        logger.exception("sing-box sync failed for node %s: %s", node_id, exc)
+        return False
+
+
+@router.post("/node/{node_id}/singbox/sync")
+def sync_singbox_now(
+    dbnode=Depends(get_dbnode),
+    _: Admin = Depends(Admin.check_sudo_admin),
+):
+    """Push the current sing-box spec to the node immediately (awaited)."""
+    ok = _sync_singbox_node(dbnode.id)
+    if not ok:
+        raise HTTPException(status_code=502, detail="sing-box sync failed — see panel logs")
+    return {"synced": True}
+
+
+class SingBoxTLSStatus(BaseModel):
+    present: bool = False
+    trusted: bool = False
+    issuer: Optional[str] = None
+    expires_at: Optional[str] = None
+    tls_le_domain: Optional[str] = None
+    tls_le_kind: Optional[str] = None
+
+
+class SingBoxTLSIssueBody(BaseModel):
+    email: str
+    domain: Optional[str] = None
+    identifier: Optional[str] = None
+    tls_kind: str = "auto"
+    ssh_username: str = "root"
+    ssh_password: Optional[str] = None
+    ssh_port: int = 22
+
+    def resolved_target(self) -> str:
+        target = (self.identifier or self.domain or "").strip()
+        if not target:
+            raise ValueError("identifier or domain is required")
+        return target
+
+
+class SingBoxTLSRenewBody(BaseModel):
+    ssh_username: str = "root"
+    ssh_password: Optional[str] = None
+    ssh_port: int = 22
+
+
+@router.get("/node/{node_id}/singbox/tls/status", response_model=SingBoxTLSStatus)
+def get_singbox_tls_status(
+    dbnode=Depends(get_dbnode),
+    db: Session = Depends(get_db),
+    _: Admin = Depends(Admin.check_sudo_admin),
+):
+    """Return cached TLS metadata; refresh from the live node when connected."""
+    from app.singbox.tls import refresh_node_tls
+
+    cfg = dbnode.singbox
+    if cfg is None:
+        return SingBoxTLSStatus()
+    try:
+        status = refresh_node_tls(db, dbnode)
     except Exception:
-        pass
+        status = {}
+    return SingBoxTLSStatus(
+        present=bool(status.get("present")),
+        trusted=bool(cfg.tls_trusted),
+        issuer=cfg.tls_issuer,
+        expires_at=status.get("expires_at") or (
+            cfg.tls_expires_at.isoformat() if cfg.tls_expires_at else None
+        ),
+        tls_le_domain=cfg.tls_le_domain,
+        tls_le_kind=cfg.tls_le_kind,
+    )
+
+
+@router.post("/node/{node_id}/singbox/tls/issue", response_model=SingBoxTLSStatus)
+def issue_singbox_tls(
+    body: SingBoxTLSIssueBody,
+    bg: BackgroundTasks,
+    dbnode=Depends(get_dbnode),
+    db: Session = Depends(get_db),
+    _: Admin = Depends(Admin.check_sudo_admin),
+):
+    """Obtain a Let's Encrypt cert on the node host over SSH and sync sing-box."""
+    from app.provisioning import ProvisioningError, ProvisioningUnavailable, SSHCredentials
+    from app.singbox.tls import refresh_node_tls
+    from app.tls.acme import DEFAULT_CERT, DEFAULT_KEY, issue_certificate, normalize_tls_target
+
+    if dbnode.singbox is None:
+        raise HTTPException(status_code=400, detail="Configure sing-box on this node first")
+    if not body.ssh_password:
+        raise HTTPException(status_code=422, detail="ssh_password is required for remote issuance")
+    try:
+        target = body.resolved_target()
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    creds = SSHCredentials(
+        host=dbnode.address,
+        port=body.ssh_port,
+        username=body.ssh_username,
+        password=body.ssh_password,
+    )
+    cert_path = dbnode.singbox.certificate_path or DEFAULT_CERT
+    key_path = dbnode.singbox.key_path or DEFAULT_KEY
+    try:
+        identifier, kind = normalize_tls_target(target, body.tls_kind)
+        issue_certificate(
+            creds,
+            identifier,
+            body.email.strip(),
+            tls_kind=kind,
+            cert_path=cert_path,
+            key_path=key_path,
+        )
+    except ProvisioningUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ProvisioningError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    crud.upsert_node_singbox(
+        db,
+        dbnode,
+        sni=identifier,
+        tls_le_domain=identifier,
+        tls_le_kind=kind,
+        certificate_path=cert_path,
+        key_path=key_path,
+    )
+    db.refresh(dbnode)
+    try:
+        status = refresh_node_tls(db, dbnode)
+    except Exception:
+        status = {"present": True, "trusted": True}
+    bg.add_task(_sync_singbox_node, dbnode.id)
+    return SingBoxTLSStatus(
+        present=bool(status.get("present", True)),
+        trusted=bool(dbnode.singbox.tls_trusted),
+        issuer=dbnode.singbox.tls_issuer,
+        expires_at=status.get("expires_at"),
+        tls_le_domain=dbnode.singbox.tls_le_domain,
+        tls_le_kind=dbnode.singbox.tls_le_kind,
+    )
+
+
+@router.post("/node/{node_id}/singbox/tls/renew", response_model=SingBoxTLSStatus)
+def renew_singbox_tls(
+    body: SingBoxTLSRenewBody,
+    bg: BackgroundTasks,
+    dbnode=Depends(get_dbnode),
+    db: Session = Depends(get_db),
+    _: Admin = Depends(Admin.check_sudo_admin),
+):
+    """Renew an existing Let's Encrypt cert on the node (domain or IP)."""
+    from app.provisioning import ProvisioningError, ProvisioningUnavailable, SSHCredentials
+    from app.singbox.tls import refresh_node_tls
+    from app.tls.acme import DEFAULT_CERT, DEFAULT_KEY, renew_certificate
+
+    cfg = dbnode.singbox
+    if cfg is None:
+        raise HTTPException(status_code=400, detail="Configure sing-box on this node first")
+    if not cfg.tls_le_domain:
+        raise HTTPException(status_code=400, detail="No LE target recorded — issue a certificate first")
+    if not body.ssh_password:
+        raise HTTPException(status_code=422, detail="ssh_password is required for remote renewal")
+
+    creds = SSHCredentials(
+        host=dbnode.address,
+        port=body.ssh_port,
+        username=body.ssh_username,
+        password=body.ssh_password,
+    )
+    cert_path = cfg.certificate_path or DEFAULT_CERT
+    key_path = cfg.key_path or DEFAULT_KEY
+    kind = cfg.tls_le_kind or "auto"
+    try:
+        renew_certificate(
+            creds,
+            cfg.tls_le_domain,
+            tls_kind=kind,
+            cert_path=cert_path,
+            key_path=key_path,
+        )
+    except ProvisioningUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ProvisioningError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    db.refresh(dbnode)
+    try:
+        status = refresh_node_tls(db, dbnode)
+    except Exception:
+        status = {"present": True, "trusted": True}
+    bg.add_task(_sync_singbox_node, dbnode.id)
+    return SingBoxTLSStatus(
+        present=bool(status.get("present", True)),
+        trusted=bool(dbnode.singbox.tls_trusted),
+        issuer=dbnode.singbox.tls_issuer,
+        expires_at=status.get("expires_at"),
+        tls_le_domain=dbnode.singbox.tls_le_domain,
+        tls_le_kind=dbnode.singbox.tls_le_kind,
+    )
+
+
+@router.post("/node/{node_id}/singbox/tls/refresh", response_model=SingBoxTLSStatus)
+def refresh_singbox_tls(
+    dbnode=Depends(get_dbnode),
+    db: Session = Depends(get_db),
+    _: Admin = Depends(Admin.check_sudo_admin),
+):
+    from app.singbox.tls import refresh_node_tls
+
+    if dbnode.singbox is None:
+        raise HTTPException(status_code=400, detail="Configure sing-box on this node first")
+    status = refresh_node_tls(db, dbnode)
+    cfg = dbnode.singbox
+    return SingBoxTLSStatus(
+        present=bool(status.get("present")),
+        trusted=bool(cfg.tls_trusted),
+        issuer=cfg.tls_issuer,
+        expires_at=status.get("expires_at"),
+        tls_le_domain=cfg.tls_le_domain,
+        tls_le_kind=cfg.tls_le_kind,
+    )
+
+
+class WGStackConfig(BaseModel):
+    plain_enabled: Optional[bool] = None
+    awg_enabled: Optional[bool] = None
+
+
+class AmneziaWGStatus(BaseModel):
+    """Runtime + config state for AmneziaWG on a WireGuard node."""
+    plain_enabled: bool
+    awg_enabled: bool
+    runtime_ready: bool
+    node_connected: bool
+    needs_agent_upgrade: bool
+
+
+@router.get("/node/{node_id}/amneziawg/status", response_model=AmneziaWGStatus)
+def get_node_amneziawg_status(
+    dbnode=Depends(get_dbnode),
+    _: Admin = Depends(Admin.check_sudo_admin),
+):
+    from app.models.node import CoreKind
+    from app.wireguard.capabilities import node_amnezia_available
+    from app.wireguard.operations import _node_object
+    from app.wireguard.sync import amneziawg_enabled, plain_wg_enabled
+
+    if dbnode.core_kind != CoreKind.wireguard.value:
+        raise HTTPException(status_code=400, detail="Node is not a WireGuard node")
+    cfg = dbnode.wireguard
+    awg_on = amneziawg_enabled(cfg)
+    connected = _node_object(dbnode.id) is not None
+    runtime_ready = connected and node_amnezia_available(dbnode) if awg_on else False
+    return AmneziaWGStatus(
+        plain_enabled=plain_wg_enabled(cfg),
+        awg_enabled=awg_on,
+        runtime_ready=runtime_ready,
+        node_connected=connected,
+        needs_agent_upgrade=awg_on and not runtime_ready,
+    )
+
+
+@router.put("/node/{node_id}/wireguard/stack", response_model=NodeResponse)
+def set_node_wireguard_stack(
+    body: WGStackConfig,
+    bg: BackgroundTasks,
+    dbnode=Depends(get_dbnode),
+    db: Session = Depends(get_db),
+    _: Admin = Depends(Admin.check_sudo_admin),
+):
+    from app.models.node import CoreKind
+
+    if dbnode.core_kind != CoreKind.wireguard.value:
+        raise HTTPException(status_code=400, detail="Node is not a WireGuard node")
+    try:
+        crud.set_node_wg_stack(
+            db, dbnode,
+            plain_enabled=body.plain_enabled,
+            awg_enabled=body.awg_enabled,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    db.refresh(dbnode)
+    bg.add_task(_sync_wireguard_node, dbnode.id)
+    return dbnode
 
 
 @router.put("/node/{node_id}/amneziawg", response_model=NodeResponse)
 def set_node_amneziawg(
     body: AmneziaWGConfig,
+    bg: BackgroundTasks,
     dbnode=Depends(get_dbnode),
     db: Session = Depends(get_db),
     _: Admin = Depends(Admin.check_sudo_admin),
@@ -437,7 +726,22 @@ def set_node_amneziawg(
         crud.set_node_amnezia(db, dbnode, body.model_dump(exclude_unset=True))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    db.refresh(dbnode)
+    bg.add_task(_sync_wireguard_node, dbnode.id)
     return dbnode
+
+
+def _sync_wireguard_node(node_id: int) -> None:
+    try:
+        from app.db import GetDB
+        from app.wireguard.operations import sync_node
+
+        with GetDB() as db:
+            dbnode = crud.get_node_by_id(db, node_id)
+            if dbnode:
+                sync_node(db, dbnode)
+    except Exception:
+        pass
 
 
 @router.post("/node/{node_id}/reconnect")

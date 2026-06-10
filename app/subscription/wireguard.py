@@ -10,22 +10,21 @@ assembles the inputs from a user's WireGuard proxy settings and a WG node.
 """
 from typing import Dict, List, Optional
 
-DEFAULT_ALLOWED_IPS = "0.0.0.0/0, ::/0"
+# IPv6 is omitted until the node agent sets up v6 forwarding/NAT for WG clients.
+DEFAULT_ALLOWED_IPS = "0.0.0.0/0"
+DEFAULT_DNS = "1.1.1.1, 8.8.8.8"
 DEFAULT_KEEPALIVE = 25
 
 # AmneziaWG [Interface] keys, in canonical order. Values are integers.
 AWG_KEYS = ("Jc", "Jmin", "Jmax", "S1", "S2", "H1", "H2", "H3", "H4")
 
 
-def amnezia_params_from_node(cfg, *, amnezia_available: bool = False) -> Dict[str, int]:
-    """Extract AmneziaWG params from a NodeWireGuard row into wg-quick keys.
+def amnezia_params_from_node(cfg) -> Dict[str, int]:
+    """Extract AmneziaWG params when the operator enabled AWG mode on the node."""
+    from app.wireguard.sync import amneziawg_enabled, awg_params_from_cfg
 
-    Only emitted when the node agent actually runs amneziawg-go; otherwise
-    returns an empty dict so clients get plain WireGuard that matches the server.
-    """
-    if not amnezia_available:
+    if not amneziawg_enabled(cfg):
         return {}
-    from app.wireguard.sync import awg_params_from_cfg
     return awg_params_from_cfg(cfg)
 
 
@@ -76,35 +75,58 @@ def render_wireguard_conf(
     return "\n".join(interface) + "\n\n" + "\n".join(peer) + "\n"
 
 
-def node_endpoint(dbnode) -> str:
-    """Resolve the peer ``Endpoint`` (``host:port``) for a WG node.
+def node_endpoint(dbnode, *, variant: str = "plain") -> str:
+    """Resolve the peer ``Endpoint`` (``host:port``) for a WG node variant."""
+    from app.wireguard.sync import amneziawg_enabled
 
-    Prefers the explicitly configured ``endpoint``; otherwise derives it from
-    the node address and the WireGuard listen port.
-    """
     cfg = dbnode.wireguard
+    if variant == "awg" and amneziawg_enabled(cfg):
+        if cfg.awg_endpoint:
+            return cfg.awg_endpoint
+        return f"{dbnode.address}:{cfg.awg_listen_port}"
     if cfg.endpoint:
         return cfg.endpoint
     return f"{dbnode.address}:{cfg.listen_port}"
 
 
-def user_config(user_settings: dict, dbnode, *, amnezia_available: bool = False) -> Optional[str]:
+def user_config(user_settings: dict, dbnode, *, variant: str = "plain") -> Optional[str]:
     """Build the ``.conf`` for one user on one WG node, or ``None`` when the
     user has no usable WireGuard credentials / address for that node."""
+    from app.wireguard.sync import amneziawg_enabled, plain_wg_enabled
+
     cfg = dbnode.wireguard
     if cfg is None:
         return None
     private_key = user_settings.get("private_key")
-    address = user_settings.get("address")
-    if not private_key or not address:
+    if not private_key:
         return None
+    if variant == "awg":
+        if not amneziawg_enabled(cfg):
+            return None
+        address = user_settings.get("awg_address")
+        server_public_key = cfg.awg_public_key
+        amnezia = amnezia_params_from_node(cfg)
+    else:
+        if not plain_wg_enabled(cfg):
+            return None
+        address = user_settings.get("address")
+        server_public_key = cfg.public_key
+        amnezia = None
+    if not address or not server_public_key:
+        return None
+    from app.wireguard.awg import AWG_RECOMMENDED_MTU
+
+    if variant == "awg":
+        mtu = AWG_RECOMMENDED_MTU
+    else:
+        mtu = cfg.mtu
     return render_wireguard_conf(
         private_key=private_key,
         address=address,
-        server_public_key=cfg.public_key,
-        endpoint=node_endpoint(dbnode),
-        dns=cfg.dns,
+        server_public_key=server_public_key,
+        endpoint=node_endpoint(dbnode, variant=variant),
+        dns=cfg.dns or DEFAULT_DNS,
         preshared_key=user_settings.get("preshared_key"),
-        mtu=cfg.mtu,
-        amnezia=amnezia_params_from_node(cfg, amnezia_available=amnezia_available),
+        mtu=mtu,
+        amnezia=amnezia,
     )

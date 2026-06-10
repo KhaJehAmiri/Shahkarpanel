@@ -1,4 +1,4 @@
-export type PortalLang = "fa" | "en";
+export type PortalLang = "fa" | "en" | "ru" | "zh";
 
 const STRINGS: Record<PortalLang, Record<string, string>> = {
   fa: {
@@ -31,6 +31,7 @@ const STRINGS: Record<PortalLang, Record<string, string>> = {
     noOrders: "هنوز خریدی ثبت نشده",
     subscription: "صفحه اتصال",
     openSub: "باز کردن لینک اشتراک",
+    subHint: "اپ VPN باید لینک /sub/… را import کند؛ /subscribe/ فقط برای مرورگر است.",
     walletError: "موجودی نماینده کافی نیست — با پشتیبانی تماس بگیرید",
     daysLeft: "روز مانده",
     price: "قیمت",
@@ -39,6 +40,7 @@ const STRINGS: Record<PortalLang, Record<string, string>> = {
     free: "رایگان",
     loading: "در حال بارگذاری…",
     error: "خطا",
+    lang: "زبان",
   },
   en: {
     title: "Subscription portal",
@@ -70,6 +72,7 @@ const STRINGS: Record<PortalLang, Record<string, string>> = {
     noOrders: "No purchases yet",
     subscription: "Connection page",
     openSub: "Open subscription link",
+    subHint: "VPN apps import /sub/… — /subscribe/ is for browsers only.",
     walletError: "Provider wallet insufficient — contact support",
     daysLeft: "days left",
     price: "Price",
@@ -78,15 +81,110 @@ const STRINGS: Record<PortalLang, Record<string, string>> = {
     free: "Free",
     loading: "Loading…",
     error: "Error",
+    lang: "Language",
+  },
+  ru: {
+    title: "Портал подписки",
+    subtitle: "Статус, продление и аккаунт",
+    login: "Войти",
+    username: "Имя пользователя",
+    password: "Пароль",
+    loginFailed: "Неверное имя или пароль",
+    logout: "Выйти",
+    used: "Использовано",
+    total: "Лимит",
+    expire: "Истекает",
+    unlimited: "Без лимита",
+    never: "Без срока",
+    status: "Статус",
+    active: "Активен",
+    expired: "Истёк",
+    limited: "Лимит",
+    disabled: "Отключён",
+    on_hold: "Приостановлен",
+    plans: "Планы продления",
+    renew: "Продлить",
+    pay: "Оплатить",
+    paying: "Оплата…",
+    renewing: "Продление…",
+    renewed: "Подписка успешно продлена",
+    noPlans: "Нет доступных планов — свяжитесь с поддержкой",
+    orders: "История покупок",
+    noOrders: "Покупок пока нет",
+    subscription: "Страница подключения",
+    openSub: "Открыть ссылку подписки",
+    subHint: "Клиенты импортируют /sub/… — /subscribe/ только для браузера.",
+    walletError: "Недостаточно средств у провайдера — свяжитесь с поддержкой",
+    daysLeft: "дней осталось",
+    price: "Цена",
+    duration: "Срок",
+    days: "дн.",
+    free: "Бесплатно",
+    loading: "Загрузка…",
+    error: "Ошибка",
+    lang: "Язык",
+  },
+  zh: {
+    title: "订阅门户",
+    subtitle: "状态、续费与账户",
+    login: "登录",
+    username: "用户名",
+    password: "密码",
+    loginFailed: "用户名或密码错误",
+    logout: "退出",
+    used: "已用",
+    total: "总量",
+    expire: "到期",
+    unlimited: "不限",
+    never: "永不过期",
+    status: "状态",
+    active: "正常",
+    expired: "已过期",
+    limited: "已达限额",
+    disabled: "已禁用",
+    on_hold: "暂停",
+    plans: "续费套餐",
+    renew: "续费",
+    pay: "支付",
+    paying: "支付中…",
+    renewing: "续费中…",
+    renewed: "续费成功",
+    noPlans: "暂无可用套餐 — 请联系支持",
+    orders: "购买记录",
+    noOrders: "暂无购买记录",
+    subscription: "连接页面",
+    openSub: "打开订阅链接",
+    subHint: "VPN 客户端导入 /sub/… — /subscribe/ 仅供浏览器。",
+    walletError: "代理商余额不足 — 请联系支持",
+    daysLeft: "天剩余",
+    price: "价格",
+    duration: "时长",
+    days: "天",
+    free: "免费",
+    loading: "加载中…",
+    error: "错误",
+    lang: "语言",
   },
 };
 
+export const PORTAL_LANGS: { code: PortalLang; label: string }[] = [
+  { code: "fa", label: "فارسی" },
+  { code: "en", label: "English" },
+  { code: "ru", label: "Русский" },
+  { code: "zh", label: "中文" },
+];
+
 export function detectPortalLang(): PortalLang {
-  if (typeof navigator === "undefined") return "fa";
-  const lang = navigator.language || "";
-  return lang.startsWith("fa") ? "fa" : "en";
+  if (typeof window === "undefined") return "fa";
+  const q = new URLSearchParams(window.location.search).get("lang");
+  if (q === "fa" || q === "en" || q === "ru" || q === "zh") return q;
+  const lang = (navigator.language || "").toLowerCase();
+  if (lang.startsWith("fa")) return "fa";
+  if (lang.startsWith("ru")) return "ru";
+  if (lang.startsWith("zh")) return "zh";
+  return "en";
 }
 
 export function pt(lang: PortalLang, key: string): string {
-  return STRINGS[lang][key] ?? key;
+  return STRINGS[lang][key] ?? STRINGS.en[key] ?? key;
 }

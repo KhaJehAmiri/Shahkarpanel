@@ -135,6 +135,7 @@ VITE_BASE_API = f"http://127.0.0.1:{UVICORN_PORT}/api/" \
     else config("VITE_BASE_API", default="/api/")
 
 XRAY_JSON = config("XRAY_JSON", default="./xray_config.json")
+WARP_DATA = config("WARP_DATA", default="./warp_account.json")
 XRAY_FALLBACKS_INBOUND_TAG = config("XRAY_FALLBACKS_INBOUND_TAG", cast=str, default="") or config(
     "XRAY_FALLBACK_INBOUND_TAG", cast=str, default=""
 )
@@ -263,6 +264,15 @@ SUB_PROFILE_TITLE = config("SUB_PROFILE_TITLE", default="NexusPanel")
 
 # discord webhook log
 DISCORD_WEBHOOK_URL = config("DISCORD_WEBHOOK_URL", default="")
+
+# SigmaGuard push (FCM / APNs). Leave empty to skip delivery (tokens still stored).
+FCM_SERVER_KEY = config("FCM_SERVER_KEY", default="")
+FCM_SERVICE_ACCOUNT_JSON = config("FCM_SERVICE_ACCOUNT_JSON", default="")
+APNS_KEY_PATH = config("APNS_KEY_PATH", default="")
+APNS_KEY_ID = config("APNS_KEY_ID", default="")
+APNS_TEAM_ID = config("APNS_TEAM_ID", default="")
+APNS_BUNDLE_ID = config("APNS_BUNDLE_ID", default="")
+APNS_USE_SANDBOX = config("APNS_USE_SANDBOX", cast=bool, default=True)
 
 
 # Interval jobs, all values are in seconds

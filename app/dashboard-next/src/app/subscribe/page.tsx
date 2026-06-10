@@ -4,16 +4,19 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { ConnectCard } from "@/components/subscribe/ConnectCard";
 import { SubAppTile } from "@/components/subscribe/SubAppTile";
 import { SubWgAppTile } from "@/components/subscribe/SubWgAppTile";
+import { SubQuicAppTile } from "@/components/subscribe/SubQuicAppTile";
 import { UsageBar } from "@/components/subscribe/UsageBar";
 import { QR } from "@/components/QR";
 import { PLATFORMS, type Platform, appsFor, detectPlatform } from "@/lib/apps";
 import { wgAppsFor } from "@/lib/wg-apps";
+import { quicAppsFor, type QuicProtocol } from "@/lib/quic-apps";
 import { copyToClipboard } from "@/lib/clipboard";
 import { bytes, formatDate, relativeDays } from "@/lib/format";
 import { SUB_LANGS, SubLang, detectSubLang, t as subT } from "@/lib/subscribe-i18n";
 import { resolvePublicSubUrl, resolveWgUrl } from "@/lib/subscribe-url";
+import { applySubTheme, detectSubTheme, type SubTheme } from "@/lib/sub-theme";
 
-type ProtocolTab = "proxy" | "wireguard";
+type ProtocolTab = "proxy" | "wireguard" | "quic";
 
 interface SubInfo {
   username: string;
@@ -26,6 +29,8 @@ interface SubInfo {
   config_available?: boolean;
   block_reason?: string | null;
   public_subscription_url?: string;
+  hysteria2_link?: string | null;
+  tuic_link?: string | null;
 }
 
 function getToken(): string {
@@ -55,6 +60,11 @@ function SubscribeBody() {
   const [toast, setToast] = useState<{ msg: string; kind: "ok" | "error" } | null>(null);
   const [copiedProxy, setCopiedProxy] = useState(false);
   const [copiedWg, setCopiedWg] = useState(false);
+  const [copiedAwg, setCopiedAwg] = useState(false);
+  const [copiedHy2, setCopiedHy2] = useState(false);
+  const [copiedTuic, setCopiedTuic] = useState(false);
+  const [hy2Fetched, setHy2Fetched] = useState("");
+  const [tuicFetched, setTuicFetched] = useState("");
 
   const loadInfo = useCallback((tok: string) => {
     if (!tok) return;
@@ -74,17 +84,54 @@ function SubscribeBody() {
   }, [loadInfo]);
 
   const subUrl = useMemo(() => resolvePublicSubUrl(info, token), [info, token]);
-  const wgUrl = useMemo(() => resolveWgUrl(subUrl), [subUrl]);
+  const wgUrl = useMemo(() => resolveWgUrl(subUrl, "plain"), [subUrl]);
+  const awgUrl = useMemo(() => resolveWgUrl(subUrl, "awg"), [subUrl]);
+  const hy2ShareLink = (info?.hysteria2_link || hy2Fetched || "").trim();
+  const tuicShareLink = (info?.tuic_link || tuicFetched || "").trim();
+
+  useEffect(() => {
+    if (!token || !info || info.config_available === false) {
+      setHy2Fetched("");
+      setTuicFetched("");
+      return;
+    }
+    const hasHy2 = !!info.proxies && "hysteria2" in info.proxies;
+    const hasT = !!info.proxies && "tuic" in info.proxies;
+    if (hasHy2 && !info.hysteria2_link) {
+      fetch(`/sub/${token}/hysteria2`)
+        .then(async (r) => (r.ok ? r.text() : ""))
+        .then((t) => setHy2Fetched(t.trim()))
+        .catch(() => setHy2Fetched(""));
+    } else {
+      setHy2Fetched("");
+    }
+    if (hasT && !info.tuic_link) {
+      fetch(`/sub/${token}/tuic`)
+        .then(async (r) => (r.ok ? r.text() : ""))
+        .then((t) => setTuicFetched(t.trim()))
+        .catch(() => setTuicFetched(""));
+    } else {
+      setTuicFetched("");
+    }
+  }, [token, info]);
 
   const hasWireguard = !!info?.proxies && "wireguard" in info.proxies;
-  const hasProxy = (info?.proxies ? Object.keys(info.proxies).filter((k) => k !== "wireguard").length > 0 : false)
-    || !!(info?.links?.length);
+  const hasHysteria2 = !!info?.proxies && "hysteria2" in info.proxies;
+  const hasTuic = !!info?.proxies && "tuic" in info.proxies;
+  const hasQuic = hasHysteria2 || hasTuic;
+  const hasProxy = (info?.proxies
+    ? Object.keys(info.proxies).filter((k) => !["wireguard", "hysteria2", "tuic"].includes(k)).length > 0
+    : false) || !!(info?.links?.length);
 
   useEffect(() => {
     if (!info) return;
-    if (hasWireguard && !hasProxy) setProtocol("wireguard");
-    else if (hasProxy && !hasWireguard) setProtocol("proxy");
-  }, [info, hasWireguard, hasProxy]);
+    const modes = [hasProxy, hasWireguard, hasQuic].filter(Boolean).length;
+    if (modes === 1) {
+      if (hasWireguard) setProtocol("wireguard");
+      else if (hasQuic) setProtocol("quic");
+      else setProtocol("proxy");
+    }
+  }, [info, hasWireguard, hasProxy, hasQuic]);
 
   const configAvailable = info?.config_available !== false;
   const blockReason = info?.block_reason;
@@ -119,8 +166,32 @@ function SubscribeBody() {
     else showToast(subT(lang, "copyFailed"), "error");
   }
 
+  async function copyAwg() {
+    const ok = await copyToClipboard(awgUrl);
+    if (ok) { setCopiedAwg(true); showToast(subT(lang, "copied")); setTimeout(() => setCopiedAwg(false), 1500); }
+    else showToast(subT(lang, "copyFailed"), "error");
+  }
+
+  async function copyHy2() {
+    const ok = await copyToClipboard(hy2ShareLink);
+    if (ok) { setCopiedHy2(true); showToast(subT(lang, "copied")); setTimeout(() => setCopiedHy2(false), 1500); }
+    else showToast(subT(lang, "copyFailed"), "error");
+  }
+
+  async function copyTuic() {
+    const ok = await copyToClipboard(tuicShareLink);
+    if (ok) { setCopiedTuic(true); showToast(subT(lang, "copied")); setTimeout(() => setCopiedTuic(false), 1500); }
+    else showToast(subT(lang, "copyFailed"), "error");
+  }
+
   const proxyApps = appsFor(platform);
   const wgApps = wgAppsFor(platform);
+  const quicProtocols: QuicProtocol[] = [
+    ...(hasHysteria2 ? (["hysteria2"] as QuicProtocol[]) : []),
+    ...(hasTuic ? (["tuic"] as QuicProtocol[]) : []),
+  ];
+  const quicApps = quicAppsFor(platform, quicProtocols);
+  const quicImportUrl = hasHysteria2 ? hy2ShareLink : tuicShareLink;
   const pasteFallback = (n: string) => subT(lang, "pasteFallback").replace("{app}", n);
 
   if (!token) {
@@ -130,9 +201,9 @@ function SubscribeBody() {
     return (
       <Shell rtl={rtl} lang={lang} onPick={pickLang}>
         <div className="sub-card sub-card-accent-rose p-6 text-center">
-          <p className="font-bold text-rose-700">{subT(lang, "fetchError")}</p>
-          <p className="mt-1 text-sm text-slate-500">{err}</p>
-          <button type="button" onClick={() => loadInfo(token)} className="sub-btn-primary mt-4">{subT(lang, "refresh")}</button>
+          <p className="sub-heading" style={{ color: "#be123c" }}>{subT(lang, "fetchError")}</p>
+          <p className="sub-text-muted" style={{ marginTop: 4, fontSize: 13 }}>{err}</p>
+          <button type="button" onClick={() => loadInfo(token)} className="sub-btn-primary" style={{ marginTop: 16 }}>{subT(lang, "refresh")}</button>
         </div>
       </Shell>
     );
@@ -149,33 +220,31 @@ function SubscribeBody() {
     );
   }
 
-  const showProxy = hasProxy && (protocol === "proxy" || !hasWireguard);
-  const showWg = hasWireguard && (protocol === "wireguard" || !hasProxy);
+  const tabCount = [hasProxy, hasWireguard, hasQuic].filter(Boolean).length;
+  const showProxy = hasProxy && (protocol === "proxy" || tabCount === 1);
+  const showWg = hasWireguard && (protocol === "wireguard" || (tabCount === 1 && !hasProxy));
+  const showQuic = hasQuic && (protocol === "quic" || (tabCount === 1 && !hasProxy && !hasWireguard));
 
   return (
     <Shell rtl={rtl} lang={lang} onPick={pickLang}>
       {/* ── Top bar: brand + account + usage (one compact row) ── */}
-      <header className="sub-card sub-card-accent-indigo mb-3 flex flex-wrap items-center gap-4 px-4 py-4 sm:px-5">
+      <header className="sub-card sub-card-accent-indigo sub-hero-card">
         <div className="flex items-center gap-3">
-          <div className="grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-br from-indigo-500 via-violet-500 to-cyan-500 text-base font-black text-white shadow-lg shadow-indigo-200/80">
-            {info.username.slice(0, 2).toUpperCase()}
-          </div>
+          <div className="sub-avatar">{info.username.slice(0, 2).toUpperCase()}</div>
           <div>
-            <h1 className="sub-mobile-title text-lg font-extrabold leading-tight text-slate-800 sm:text-xl">{info.username}</h1>
-            <div className="mt-0.5 flex flex-wrap items-center gap-2">
+            <h1 className="sub-mobile-title sub-hero-name">{info.username}</h1>
+            <div className="sub-hero-meta">
               <span className={`sub-chip ${chip.cls}`}>
-                <span className={`h-1.5 w-1.5 rounded-full bg-current ${configAvailable ? "animate-pulse" : ""}`} />
+                <span className={`inline-block h-1.5 w-1.5 rounded-full bg-current ${configAvailable ? "animate-pulse" : ""}`} />
                 {chip.label}
               </span>
-              <span className="text-[10px] text-slate-400">
+              <span className="sub-text-dim" style={{ fontSize: 10 }}>
                 {info.expire ? formatDate(info.expire) : subT(lang, "noExpiry")}
                 {expiry ? ` · ${expiry.text}` : ""}
               </span>
             </div>
           </div>
         </div>
-
-        <div className="hidden h-8 w-px bg-slate-200 lg:block" />
 
         <UsageBar
           used={used}
@@ -186,10 +255,16 @@ function SubscribeBody() {
           exhausted={!configAvailable && blockReason === "data_limit"}
         />
 
-        <div className="hidden items-center gap-2 text-[10px] font-semibold text-slate-400 xl:flex">
-          <span className="rounded-md bg-indigo-50 px-2 py-1 text-indigo-600">◆ {subT(lang, "unifiedQuota")}</span>
-        </div>
+        <span className="sub-badge-inline">◆ {subT(lang, "unifiedQuota")}</span>
       </header>
+
+      {configAvailable && hasProxy && subUrl && (
+        <div className="sub-callout-info" role="note">
+          <strong>{subT(lang, "clientImportTitle")}</strong>
+          <p style={{ margin: "6px 0 0", opacity: 0.9 }}>{subT(lang, "clientImportHint")}</p>
+          <code dir="ltr">{subUrl}</code>
+        </div>
+      )}
 
       {!configAvailable && (
         <div className={`sub-alert mb-3 ${blockReason === "expired" ? "expired" : "danger"}`}>
@@ -211,18 +286,27 @@ function SubscribeBody() {
 
       {configAvailable && (
         <>
-          {hasProxy && hasWireguard && (
-            <div className="mb-3 flex gap-1.5 rounded-2xl border border-slate-200/80 bg-white/90 p-1.5 shadow-sm backdrop-blur-sm">
-              <button type="button" onClick={() => setProtocol("proxy")} className={`sub-tab flex-1 ${protocol === "proxy" ? "active-proxy" : ""}`}>
-                {subT(lang, "tabProxy")}
-              </button>
-              <button type="button" onClick={() => setProtocol("wireguard")} className={`sub-tab flex-1 ${protocol === "wireguard" ? "active-wg" : ""}`}>
-                {subT(lang, "tabWireguard")}
-              </button>
+          {tabCount > 1 && (
+            <div className="sub-tabs">
+              {hasProxy && (
+                <button type="button" onClick={() => setProtocol("proxy")} className={`sub-tab ${protocol === "proxy" ? "active-proxy" : ""}`}>
+                  {subT(lang, "tabProxy")}
+                </button>
+              )}
+              {hasWireguard && (
+                <button type="button" onClick={() => setProtocol("wireguard")} className={`sub-tab ${protocol === "wireguard" ? "active-wg" : ""}`}>
+                  {subT(lang, "tabWireguard")}
+                </button>
+              )}
+              {hasQuic && (
+                <button type="button" onClick={() => setProtocol("quic")} className={`sub-tab ${protocol === "quic" ? "active-quic" : ""}`}>
+                  {subT(lang, "tabQuic")}
+                </button>
+              )}
             </div>
           )}
 
-          <div className={`sub-card sub-unified-panel ${showWg && !showProxy ? "sub-card-accent-rose" : "sub-card-accent-cyan"}`}>
+          <div className={`sub-card sub-unified-panel ${showWg && !showProxy && !showQuic ? "sub-card-accent-rose" : showQuic && !showProxy && !showWg ? "sub-card-accent-violet" : "sub-card-accent-cyan"}`}>
             <div className="sub-panel-equal">
               {showProxy && (
                 <>
@@ -262,6 +346,71 @@ function SubscribeBody() {
                 </>
               )}
 
+              {showQuic && (
+                <>
+                  <div className="sub-panel-apps">
+                    <AppsPanel
+                      title={subT(lang, "quicAppsTitle")}
+                      count={quicApps.length}
+                      countLabel={subT(lang, "appsSuggested")}
+                      platform={platform}
+                      onPlatform={setPlatform}
+                      embedded
+                    >
+                      <div className="sub-apps-grid">
+                        {quicApps.map((a) => (
+                          <SubQuicAppTile
+                            key={a.id}
+                            app={a}
+                            platform={platform}
+                            shareUrl={quicImportUrl}
+                            importLabel={subT(lang, "import")}
+                            downloadLabel={subT(lang, "downloadApp")}
+                            pasteFallback={pasteFallback}
+                            clipboardHint={subT(lang, "clipboardHint")}
+                            noResponse={subT(lang, "noAppResponse")}
+                            onToast={showToast}
+                          />
+                        ))}
+                      </div>
+                    </AppsPanel>
+                  </div>
+                  <div className="sub-panel-connect sub-stack" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    {hasHysteria2 && (
+                      <ConnectCard
+                        title={subT(lang, "hy2Title")}
+                        hint={`${subT(lang, "hy2Hint")} ${subT(lang, "hy2InsecureHint")}`}
+                        url={hy2ShareLink}
+                        copyLabel={subT(lang, "copy")}
+                        copiedLabel={subT(lang, "copied")}
+                        copied={copiedHy2}
+                        onCopy={copyHy2}
+                        accent="indigo"
+                        embedded
+                      />
+                    )}
+                    {hasTuic && (
+                      <div className="sub-callout-warn">
+                        {subT(lang, "tuicIranWarning")}
+                      </div>
+                    )}
+                    {hasTuic && (
+                      <ConnectCard
+                        title={subT(lang, "tuicTitle")}
+                        hint={subT(lang, "tuicHint")}
+                        url={tuicShareLink}
+                        copyLabel={subT(lang, "copy")}
+                        copiedLabel={subT(lang, "copied")}
+                        copied={copiedTuic}
+                        onCopy={copyTuic}
+                        accent="indigo"
+                        embedded
+                      />
+                    )}
+                  </div>
+                </>
+              )}
+
               {showWg && (
                 <>
                   <div className="sub-panel-apps">
@@ -281,7 +430,7 @@ function SubscribeBody() {
                       </div>
                     </AppsPanel>
                   </div>
-                  <div className="sub-panel-connect">
+                  <div className="sub-panel-connect sub-stack" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                     <ConnectCard
                       title={subT(lang, "wgTitle")}
                       hint={subT(lang, "wgHint")}
@@ -292,6 +441,19 @@ function SubscribeBody() {
                       onCopy={copyWg}
                       accent="rose"
                       downloadHref={wgUrl}
+                      downloadLabel={subT(lang, "wgDownload")}
+                      embedded
+                    />
+                    <ConnectCard
+                      title={subT(lang, "wgAwgTitle")}
+                      hint={subT(lang, "wgAwgHint")}
+                      url={awgUrl}
+                      copyLabel={subT(lang, "copy")}
+                      copiedLabel={subT(lang, "copied")}
+                      copied={copiedAwg}
+                      onCopy={copyAwg}
+                      accent="rose"
+                      downloadHref={awgUrl}
                       downloadLabel={subT(lang, "wgDownload")}
                       embedded
                     />
@@ -306,8 +468,8 @@ function SubscribeBody() {
       {!configAvailable && (
         <div className="sub-card sub-status-only">
           <div className="icon">{blockReason === "expired" ? "⌛" : "🪫"}</div>
-          <p className="sub-mobile-title text-base font-bold text-slate-700">{subT(lang, "configsPaused")}</p>
-          <p className="sub-mobile-text mt-2 text-sm text-slate-500">{subT(lang, "configsPausedHint")}</p>
+          <p className="sub-mobile-title sub-heading" style={{ fontSize: 16 }}>{subT(lang, "configsPaused")}</p>
+          <p className="sub-mobile-text sub-text-muted" style={{ marginTop: 8, fontSize: 13 }}>{subT(lang, "configsPausedHint")}</p>
         </div>
       )}
 
@@ -319,24 +481,24 @@ function SubscribeBody() {
       </div>
 
       {configAvailable && showProxy && info.links && info.links.length > 0 && (
-        <section className="sub-card sub-card-accent-cyan mt-3 p-3">
-          <div className="mb-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">
+        <section className="sub-card sub-card-accent-cyan" style={{ marginTop: 12, padding: 12 }}>
+          <div className="sub-text-muted" style={{ marginBottom: 8, fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>
             {subT(lang, "separateConfigs")} ({info.links.length})
           </div>
           <div className="flex flex-col gap-1.5">
             {info.links.map((link, i) => (
-              <ConfigRow key={i} link={link} copyLabel={subT(lang, "copy")} closeLabel={subT(lang, "close")} onToast={showToast} />
+              <ConfigRow key={i} link={link} copyLabel={subT(lang, "copy")} closeLabel={subT(lang, "close")} qrLabel={subT(lang, "qrLabel")} onToast={showToast} />
             ))}
           </div>
         </section>
       )}
 
-      <footer className="mt-4 text-center text-[10px] text-slate-400">
+      <footer className="sub-footer">
         {subT(lang, "footer")} · {subT(lang, "footerHint")}
       </footer>
 
       {toast && (
-        <div role="status" className={`fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-xl border px-4 py-2.5 text-sm font-semibold shadow-xl ${toast.kind === "ok" ? "border-emerald-200 bg-white text-emerald-700" : "border-rose-200 bg-white text-rose-700"}`}>
+        <div role="status" className={`sub-toast ${toast.kind === "ok" ? "ok" : "error"}`}>
           {toast.msg}
         </div>
       )}
@@ -345,21 +507,40 @@ function SubscribeBody() {
 }
 
 function Shell({ children, rtl, lang, onPick }: { children: React.ReactNode; rtl: boolean; lang: SubLang; onPick: (c: SubLang) => void }) {
+  const [subTheme, setSubTheme] = useState<SubTheme>("light");
+
+  useEffect(() => {
+    setSubTheme(detectSubTheme());
+  }, []);
+
+  const toggleTheme = () => {
+    const next = subTheme === "dark" ? "light" : "dark";
+    setSubTheme(next);
+    applySubTheme(next);
+  };
+
   return (
-    <main className="mx-auto w-full max-w-7xl px-3 py-4 sm:px-5 lg:py-5" dir={rtl ? "rtl" : "ltr"} lang={lang}>
-      <div className="mb-3 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="h-7 w-7 rounded-lg bg-gradient-to-br from-indigo-500 to-violet-500 shadow-md" />
-          <span className="text-sm font-extrabold tracking-tight text-slate-700">NexusPanel</span>
-          <span className="hidden text-[10px] font-medium text-slate-400 sm:inline">{subT(lang, "personalSub")}</span>
+    <main className="sub-shell" dir={rtl ? "rtl" : "ltr"} lang={lang}>
+      <div className="sub-brand-row">
+        <div className="sub-brand">
+          <div className="sub-brand-mark" />
+          <div>
+            <div className="sub-brand-name">NexusPanel</div>
+            <div className="sub-brand-tag">{subT(lang, "personalSub")}</div>
+          </div>
         </div>
-        <div className="flex gap-0.5 rounded-lg border border-slate-200 bg-white p-0.5 shadow-sm">
-          {SUB_LANGS.map((l) => (
-            <button key={l.code} type="button" onClick={() => onPick(l.code)}
-              className={`rounded-md px-2 py-1 text-[10px] font-bold transition ${lang === l.code ? "bg-indigo-100 text-indigo-700" : "text-slate-400 hover:text-slate-600"}`}>
-              {l.label}
-            </button>
-          ))}
+        <div className="sub-toolbar">
+          <button type="button" className="sub-theme-btn" onClick={toggleTheme} aria-label="Theme">
+            {subTheme === "dark" ? "☀" : "☾"}
+          </button>
+          <div className="sub-lang-switch">
+            {SUB_LANGS.map((l) => (
+              <button key={l.code} type="button" onClick={() => onPick(l.code)}
+                className={`sub-lang-btn ${lang === l.code ? "active" : ""}`}>
+                {l.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
       {children}
@@ -374,8 +555,8 @@ function AppsPanel({ title, count, countLabel, platform, onPlatform, children, a
   return (
     <div className={embedded ? "" : `sub-card p-3 sm:p-4 ${accent === "rose" ? "sub-card-accent-rose" : "sub-card-accent-cyan"}`}>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <span className="sub-mobile-title text-sm font-extrabold text-slate-800">{title}</span>
-        <span className="text-[10px] font-medium text-slate-400">{count} {countLabel}</span>
+        <span className="sub-mobile-title sub-heading" style={{ fontSize: 14 }}>{title}</span>
+        <span className="sub-text-dim" style={{ fontSize: 10 }}>{count} {countLabel}</span>
       </div>
       <div className="mb-2 flex flex-wrap gap-1">
         {PLATFORMS.map((p) => (
@@ -392,18 +573,18 @@ function AppsPanel({ title, count, countLabel, platform, onPlatform, children, a
 
 function MiniStat({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
   return (
-    <div className={`sub-card px-4 py-3 text-center ${highlight ? "border-rose-200 bg-rose-50/60" : ""}`}>
-      <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 sm:text-xs">{label}</div>
-      <div className={`mt-1 text-sm font-extrabold tabular-nums sm:text-base ${highlight ? "text-rose-600" : "text-slate-800"}`}>{value}</div>
+    <div className={`sub-card sub-ministat ${highlight ? "highlight" : ""}`}>
+      <div className="sub-ministat-k">{label}</div>
+      <div className="sub-ministat-v">{value}</div>
     </div>
   );
 }
 
 function EmptyState({ msg }: { msg: string }) {
-  return <div className="sub-card p-6 text-center text-sm text-slate-500">{msg}</div>;
+  return <div className="sub-card sub-ministat"><p className="sub-text-muted" style={{ fontSize: 13 }}>{msg}</p></div>;
 }
 
-function ConfigRow({ link, copyLabel, closeLabel, onToast }: { link: string; copyLabel: string; closeLabel: string; onToast: (m: string, k?: "ok" | "error") => void }) {
+function ConfigRow({ link, copyLabel, closeLabel, qrLabel, onToast }: { link: string; copyLabel: string; closeLabel: string; qrLabel: string; onToast: (m: string, k?: "ok" | "error") => void }) {
   const [copied, setCopied] = useState(false);
   const [showQr, setShowQr] = useState(false);
   const proto = link.includes("://") ? link.split("://")[0] : "link";
@@ -415,18 +596,18 @@ function ConfigRow({ link, copyLabel, closeLabel, onToast }: { link: string; cop
   }
 
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-slate-100 bg-slate-50 px-2 py-1.5">
-      <span className="rounded-md bg-indigo-100 px-2 py-0.5 text-[10px] font-bold uppercase text-indigo-700">{proto}</span>
-      <div dir="ltr" className="min-w-0 flex-1 truncate text-[10px] text-slate-600">{link}</div>
-      <button type="button" onClick={() => setShowQr(true)} className="rounded-md bg-white px-2 py-1 text-[10px] font-bold text-slate-500 shadow-sm">QR</button>
-      <button type="button" onClick={copy} className={`rounded-md px-2 py-1 text-[10px] font-bold ${copied ? "bg-emerald-100 text-emerald-700" : "bg-white text-indigo-600 shadow-sm"}`}>
+    <div className="sub-config-row">
+      <span className="sub-config-proto">{proto}</span>
+      <div dir="ltr" className="sub-config-link">{link}</div>
+      <button type="button" onClick={() => setShowQr(true)} className="sub-config-btn">{qrLabel}</button>
+      <button type="button" onClick={copy} className={`sub-config-btn copy ${copied ? "copied" : ""}`}>
         {copied ? "✓" : copyLabel}
       </button>
       {showQr && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-900/40 p-4 backdrop-blur-sm" onClick={() => setShowQr(false)}>
-          <div className="rounded-2xl bg-white p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <div className="rounded-xl border p-2"><QR value={link} size={180} /></div>
-            <button type="button" onClick={() => setShowQr(false)} className="sub-btn-primary mt-3 w-full">{closeLabel}</button>
+        <div className="sub-qr-modal" onClick={() => setShowQr(false)}>
+          <div className="sub-qr-modal-inner" onClick={(e) => e.stopPropagation()}>
+            <div className="sub-connect-qr-box"><QR value={link} size={180} /></div>
+            <button type="button" onClick={() => setShowQr(false)} className="sub-btn-primary" style={{ marginTop: 12, width: "100%" }}>{closeLabel}</button>
           </div>
         </div>
       )}

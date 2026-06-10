@@ -25,3 +25,15 @@ export const SudoGate: FC<{
     </div>
   );
 };
+
+/**
+ * Headerless sudo gate for pages embedded inside hub tabs (hubs render their
+ * own header). Prevents non-sudo admins from seeing UI whose every API call
+ * would return 403.
+ */
+export const SudoOnly: FC<{ children: ReactNode }> = ({ children }) => {
+  const { t } = useTranslation();
+  const { admin } = useApp();
+  if (!admin?.is_sudo) return <Callout tone="warn">{t("common.sudoOnly")}</Callout>;
+  return <>{children}</>;
+};

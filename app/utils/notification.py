@@ -106,6 +106,40 @@ class UserSubscriptionRevoked(UserNotification):
     user: UserResponse
 
 
+_PUSH_COPY = {
+    "user_limited": ("Data limit reached", "Your account has reached its data limit."),
+    "user_expired": ("Subscription expired", "Your subscription has expired."),
+    "reached_usage_percent": ("Usage warning", "You have used most of your data allowance."),
+    "reached_days_left": ("Expiry reminder", "Your subscription is ending soon."),
+    "subscription_revoked": ("Subscription revoked", "Your subscription link was revoked."),
+    "user_enabled": ("Account enabled", "Your account is active again."),
+    "user_disabled": ("Account disabled", "Your account has been disabled."),
+}
+
+
+def _dispatch_app_push(message: Notification) -> None:
+    try:
+        from app import feature_flags
+        from app.db import GetDB
+        from app.db import crud
+        from app.push.sender import send_to_user
+
+        if not feature_flags.is_enabled("client_push"):
+            return
+        username = getattr(message, "username", None)
+        if not username:
+            return
+        action = getattr(message, "action", None)
+        key = action.value if action else None
+        title, body = _PUSH_COPY.get(key, ("NexusPanel", "Account update"))
+        with GetDB() as db:
+            dbuser = crud.get_user(db, username)
+            if dbuser and dbuser.portal_enabled:
+                send_to_user(db, dbuser.id, title, body, data={"event": key or "update"})
+    except Exception:
+        pass
+
+
 def notify(message: Type[Notification]) -> None:
     # Publish to the event bus first so all consumers (plugins, rules, audit
     # log, Redis fan-out) receive the event regardless of webhook config.
@@ -114,6 +148,8 @@ def notify(message: Type[Notification]) -> None:
         publish_notification(message)
     except Exception:
         pass
+
+    _dispatch_app_push(message)
 
     # Preserve legacy webhook delivery behaviour.
     if WEBHOOK_ADDRESS:

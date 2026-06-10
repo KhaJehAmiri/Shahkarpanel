@@ -67,10 +67,12 @@ def test_xray_backend_is_available_and_serves_vless():
     assert protocols.backend_for_protocol("vless").name == "xray"
 
 
-def test_planned_backends_registered_but_unavailable():
+def test_singbox_backends_registered_and_available():
     names = {b.name for b in protocols.all_backends()}
     assert {"sing-box", "hysteria2", "tuic"}.issubset(names)
-    assert protocols.get_backend("sing-box").available is False
+    assert protocols.get_backend("sing-box").available is True
+    assert protocols.get_backend("hysteria2").available is True
+    assert protocols.get_backend("tuic").available is True
 
 
 # ---- Workflow engine ----

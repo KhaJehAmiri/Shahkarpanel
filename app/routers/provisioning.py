@@ -62,6 +62,21 @@ class ProvisionRequest(BaseModel):
     region: Optional[str] = None
     run: bool = True
     refresh_agent: bool = False
+    enable_plain_wg: bool = True
+    enable_awg_wg: bool = False
+    # sing-box stack (xray nodes)
+    enable_hysteria2: bool = True
+    enable_tuic: bool = False
+    tls_mode: str = "self_signed"  # self_signed | letsencrypt | none
+    tls_self_signed: bool = True
+    le_target: Optional[str] = None
+    le_email: Optional[str] = None
+    le_kind: str = "auto"
+    # tunnel (xray nodes, requires tunneling flag)
+    create_tunnel: bool = False
+    tunnel_port: int = 443
+    enable_plain_wg_on_xray: bool = False
+    enable_awg_on_xray: bool = False
 
 
 class ProvisionResponse(BaseModel):
@@ -118,6 +133,7 @@ def install_command(
     role: str = "direct",
     core_kind: str = "xray",
     region: Optional[str] = None,
+    rebuild: bool = False,
     db: Session = Depends(get_db),
     admin: Admin = Depends(require_permission("nodes:provision")),
 ):
@@ -135,6 +151,7 @@ def install_command(
             image=NODE_AGENT_IMAGE,
             node_port=NODE_DEFAULT_PORT, node_api_port=NODE_DEFAULT_API_PORT,
             control_secret=NODE_CONTROL_SECRET or None,
+            force_image_rebuild=rebuild,
         )
     except provisioning.ProvisioningError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
@@ -156,6 +173,8 @@ def provision_node(
         raise HTTPException(status_code=422, detail="invalid role")
     if body.core_kind not in ("xray", "wireguard"):
         raise HTTPException(status_code=422, detail="invalid core_kind")
+    if body.core_kind == "wireguard" and not body.enable_plain_wg and not body.enable_awg_wg:
+        raise HTTPException(status_code=422, detail="enable at least one of plain WireGuard or AmneziaWG")
     if not body.password and not body.private_key:
         raise HTTPException(status_code=422, detail="password or private_key is required")
 
@@ -225,6 +244,19 @@ def provision_node(
         dbnode.status = NodeStatus.connecting
         db.commit()
         db.refresh(dbnode)
+        if dbnode.core_kind == CoreKind.wireguard.value:
+            if dbnode.wireguard is None:
+                crud.provision_wireguard_defaults(
+                    db, dbnode,
+                    plain_enabled=body.enable_plain_wg,
+                    awg_enabled=body.enable_awg_wg,
+                )
+            else:
+                crud.set_node_wg_stack(
+                    db, dbnode,
+                    plain_enabled=body.enable_plain_wg,
+                    awg_enabled=body.enable_awg_wg,
+                )
     else:
         try:
             dbnode = crud.create_node(
@@ -254,10 +286,41 @@ def provision_node(
         dbnode.status = NodeStatus.connecting
         db.commit()
         db.refresh(dbnode)
+        if dbnode.core_kind == CoreKind.wireguard.value:
+            if dbnode.wireguard is None:
+                crud.provision_wireguard_defaults(
+                    db, dbnode,
+                    plain_enabled=body.enable_plain_wg,
+                    awg_enabled=body.enable_awg_wg,
+                )
+            else:
+                crud.set_node_wg_stack(
+                    db, dbnode,
+                    plain_enabled=body.enable_plain_wg,
+                    awg_enabled=body.enable_awg_wg,
+                )
 
     creds = provisioning.SSHCredentials(
         host=body.host.strip(), port=body.ssh_port, username=body.username,
         password=body.password, private_key=body.private_key,
+    )
+    from app.provisioning.post_install import ProvisionExtras
+
+    tls_mode = (body.tls_mode or "self_signed").strip().lower()
+    if tls_mode not in ("self_signed", "letsencrypt", "none"):
+        tls_mode = "self_signed"
+    extras = ProvisionExtras(
+        enable_hysteria2=body.enable_hysteria2,
+        enable_tuic=body.enable_tuic,
+        tls_mode=tls_mode,
+        le_target=(body.le_target or "").strip() or None,
+        le_email=(body.le_email or "").strip() or None,
+        le_kind=body.le_kind,
+        create_tunnel=body.create_tunnel and feature_flags.is_enabled("tunneling"),
+        tunnel_port=body.tunnel_port,
+        region=body.region or dbnode.region,
+        enable_plain_wg_on_xray=body.enable_plain_wg_on_xray,
+        enable_awg_on_xray=body.enable_awg_on_xray,
     )
     job_id = provision_jobs.start_job(
         node_id=dbnode.id,
@@ -266,6 +329,7 @@ def provision_node(
         command=cmd,
         ssh_timeout=NODE_PROVISION_SSH_TIMEOUT,
         exec_timeout=NODE_PROVISION_EXEC_TIMEOUT,
+        extras=extras,
     )
 
     return ProvisionResponse(

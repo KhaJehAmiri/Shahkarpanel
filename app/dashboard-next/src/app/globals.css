@@ -42,15 +42,11 @@
 
 html, body { padding: 0; margin: 0; }
 body {
-  background:
-    radial-gradient(800px 480px at 50% -8%, rgba(46,224,196,0.10), transparent 60%),
-    radial-gradient(600px 360px at 90% 110%, rgba(99,102,241,0.10), transparent 60%),
-    #07090d;
-  color: #eef2f8;
   font-family: "Vazirmatn", "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   font-feature-settings: "ss01";
   -webkit-font-smoothing: antialiased;
   min-height: 100vh;
+  transition: background 0.25s ease, color 0.25s ease;
 }
 
 html[lang="en"] body, html[lang="ru"] body, html[lang="zh"] body {
@@ -59,7 +55,7 @@ html[lang="en"] body, html[lang="ru"] body, html[lang="zh"] body {
 
 /* Smooth focus ring */
 :where(button, input, [tabindex]):focus-visible {
-  outline: 2px solid #2ee0c4;
+  outline: 2px solid #6366f1;
   outline-offset: 2px;
   border-radius: 6px;
 }

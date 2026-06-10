@@ -8,38 +8,44 @@ import { Copilot } from "../copilot/Copilot";
 import { LANGUAGES, setLanguage } from "../i18n";
 import { IcGlobe, IcLogout, IcMenu, IcMoon, IcSun, navIcon } from "./icons";
 
-/** Clear, task-oriented navigation — each item is one job, not a junk drawer. */
+/** Simplified 5-item navigation + settings footer. */
 const NAV_SUDO = [
-  { group: "work", items: ["overview", "users"] },
-  { group: "connect", items: ["inbounds", "nodes", "tunnels", "wireguard", "dedip"] },
-  { group: "advanced", items: ["xray", "hosts"] },
-  { group: "manage", items: ["analytics", "automation"] },
-  { group: "business", items: ["resellers", "billing"] },
+  { group: "main", items: ["home", "users", "servers", "connection", "business"] },
 ];
 
 const PATHS: Record<string, string> = {
+  home: "/overview",
   overview: "/overview",
   users: "/users",
-  inbounds: "/inbounds",
-  nodes: "/nodes",
-  tunnels: "/tunnels",
-  wireguard: "/wireguard",
-  dedip: "/dedicated-ip",
-  xray: "/xray",
-  hosts: "/hosts",
-  analytics: "/analytics",
-  automation: "/automation",
-  resellers: "/resellers",
-  billing: "/billing",
+  servers: "/servers",
+  connection: "/connection",
+  business: "/business",
   system: "/system",
-  // Legacy bookmark
-  infrastructure: "/nodes",
+  // Legacy redirects handled in DashboardRoot
+  inbounds: "/connection",
+  nodes: "/servers",
+  tunnels: "/servers",
+  wireguard: "/servers",
+  singbox: "/servers",
+  dedip: "/servers",
+  xray: "/connection",
+  hosts: "/connection",
+  analytics: "/business",
+  automation: "/business",
+  resellers: "/business",
+  billing: "/business",
+  infrastructure: "/servers",
 };
 
 const NavItem: FC<{ id: string; onNav: () => void }> = ({ id, onNav }) => {
   const { t } = useTranslation();
+  const path = PATHS[id];
   return (
-    <NavLink to={PATHS[id]} onClick={onNav} className={({ isActive }) => `nx-nav-item ${isActive ? "active" : ""}`}>
+    <NavLink
+      to={path}
+      onClick={onNav}
+      className={({ isActive }) => `nx-nav-item ${isActive ? "active" : ""}`}
+    >
       {navIcon(id)}
       <span>{t(`nav.${id}`)}</span>
     </NavLink>
@@ -48,50 +54,44 @@ const NavItem: FC<{ id: string; onNav: () => void }> = ({ id, onNav }) => {
 
 export const Shell: FC = () => {
   const { t, i18n } = useTranslation();
-  const { admin, branding, theme, setTheme, logout, isEnabled } = useApp();
+  const { admin, branding, theme, setTheme, logout } = useApp();
   const appTitle = brandingTitle(branding, t("common.appName"));
   const { setOpen: setCopilotOpen } = useCopilot();
   const [open, setOpen] = useState(false);
   const [langOpen, setLangOpen] = useState(false);
   const loc = useLocation();
 
-  // Items that only make sense alongside a branded client app. They stay hidden
-  // for plain panel operators until the client_api feature flag is enabled.
-  const clientApiOn = isEnabled("client_api");
-
   const nav = useMemo(() => {
-    const sections = admin?.is_sudo
-      ? NAV_SUDO
-      : (() => {
-          const role = admin?.role || "reseller";
-          const base = [{ group: "work", items: ["overview", "users"] }];
-          if (role !== "support") {
-            base.push({ group: "connect", items: ["nodes"] });
-            base.push({ group: "business", items: ["resellers", "billing"] });
-          }
-          base.push({ group: "manage", items: ["analytics"] });
-          return base;
-        })();
-    const hidden = clientApiOn ? [] : ["dedip"];
-    return sections
-      .map((s) => ({ ...s, items: s.items.filter((id) => !hidden.includes(id)) }))
-      .filter((s) => s.items.length > 0);
-  }, [admin?.is_sudo, admin?.role, clientApiOn]);
+    if (admin?.is_sudo) return NAV_SUDO;
+    const role = admin?.role || "reseller";
+    const items = ["home", "users"];
+    if (role !== "support") items.push("servers", "business");
+    else items.push("business");
+    return [{ group: "main", items }];
+  }, [admin?.is_sudo, admin?.role]);
 
-  const currentId =
-    Object.keys(PATHS).find((k) => loc.pathname.startsWith(PATHS[k])) || "overview";
-  const navTitle = t(`nav.${currentId}`, { defaultValue: t("nav.overview") });
+  const currentId = (() => {
+    if (loc.pathname.startsWith("/overview")) return "home";
+    if (loc.pathname.startsWith("/users")) return "users";
+    if (loc.pathname.startsWith("/servers")) return "servers";
+    if (loc.pathname.startsWith("/connection")) return "connection";
+    if (loc.pathname.startsWith("/business")) return "business";
+    if (loc.pathname.startsWith("/system")) return "system";
+    return "home";
+  })();
+  const navTitle = t(`nav.${currentId}`, { defaultValue: t("nav.home") });
   const roleLabel = admin?.is_sudo ? t("common.roleOwner") : t("common.roleReseller");
 
   const closeNav = () => setOpen(false);
 
   return (
     <div className="nx-app">
+      <div className="nx-app-bg" aria-hidden />
       <div className={`nx-scrim ${open ? "show" : ""}`} onClick={closeNav} />
       <aside className={`nx-sidebar ${open ? "open" : ""}`}>
         <div className="nx-brand">
           {branding?.logo_url ? (
-            <img src={branding.logo_url} alt="" className="nx-brand-logo" style={{ objectFit: "contain" }} />
+            <img src={branding.logo_url} alt="" className="nx-brand-logo nx-brand-logo-img" />
           ) : (
             <div className="nx-brand-logo">N</div>
           )}
@@ -111,13 +111,37 @@ export const Shell: FC = () => {
         ))}
 
         <div className="nx-spacer" />
+
+        <button
+          type="button"
+          className="nx-side-assist"
+          onClick={() => { setCopilotOpen(true); closeNav(); }}
+        >
+          <span className="nx-side-assist-ico" aria-hidden>✦</span>
+          <span className="nx-side-assist-body">
+            <b>{t("copilot.title")}</b>
+            <small>{t("overview.openGuide")}</small>
+          </span>
+        </button>
+
         <NavItem id="system" onNav={closeNav} />
+
+        <div className="nx-side-profile">
+          <span className="nx-side-avatar">{(admin?.username || "?").slice(0, 1).toUpperCase()}</span>
+          <span className="nx-side-profile-body">
+            <b>{admin?.username}</b>
+            <small>{roleLabel}</small>
+          </span>
+          <button className="nx-btn icon ghost" title={t("common.logout")} aria-label={t("common.logout")} onClick={logout}>
+            <IcLogout />
+          </button>
+        </div>
       </aside>
 
       <div className="nx-main">
         <header className="nx-topbar">
           <div className="nx-row" style={{ gap: 10 }}>
-            <button className="nx-btn icon ghost nx-hamburger" onClick={() => setOpen((o) => !o)}>
+            <button className="nx-btn icon ghost nx-hamburger" title={t("common.menu")} aria-label={t("common.menu")} onClick={() => setOpen((o) => !o)}>
               <IcMenu />
             </button>
             <div>
@@ -167,14 +191,11 @@ export const Shell: FC = () => {
               </>
             )}
 
-            <div className="nx-row" style={{ gap: 8, marginInlineStart: 6 }}>
+            <div className="nx-topbar-user nx-row" style={{ gap: 8, marginInlineStart: 6 }}>
               <div style={{ textAlign: "end" }}>
                 <div style={{ fontSize: 13, fontWeight: 600 }}>{admin?.username}</div>
                 <div className="nx-faint" style={{ fontSize: 11 }}>{roleLabel}</div>
               </div>
-              <button className="nx-btn icon ghost" title={t("common.logout")} onClick={logout}>
-                <IcLogout />
-              </button>
             </div>
           </div>
         </header>

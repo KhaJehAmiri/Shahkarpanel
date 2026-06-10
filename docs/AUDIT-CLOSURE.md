@@ -33,24 +33,37 @@ All planned audit phases **13–16** and UI parity items are implemented in `mas
 ## Deploy
 
 ```bash
-./scripts/setup_env.sh          # once
-# edit .env
+./scripts/setup_env.sh          # once — random admin password + bcrypt hash
 ./build_dashboard.sh
-./scripts/deploy_production.sh
+./scripts/deploy_production.sh  # builds, then runs scripts/setup_https.sh
 ```
+
+## P0 hardening — now built into install (2026-06-10)
+
+These were previously "operator tasks"; they are now automated and secure by
+default so every fresh install gets them:
+
+| Item | Where it's handled |
+|------|--------------------|
+| No default password (`changeme` removed) | `scripts/setup_env.sh` + `nexuspanel.sh write_env` generate a random password, store only the bcrypt `SUDO_PASSWORD_HASH` |
+| HTTPS reverse proxy | `scripts/setup_https.sh` (nginx + Let's Encrypt **IP or domain** cert, auto-renew) — invoked by the installer and `deploy_production.sh` |
+| App port not public | `UVICORN_HOST=127.0.0.1` by default; firewall opens 80/443 (and detected SSH port), never the app port |
+| Dashboard URL | `https://<domain-or-ip>/dashboard/` everywhere (installer output, doctor, docs) |
+| Secret rotation | `POST /api/system/jwt/rotate` (SEC-016) invalidates leaked admin/subscription tokens |
 
 ## Tests
 
-`pytest` — 155+ passed. CI: ruff on security modules + full test suite.
+`pytest` — 306 passed, 1 skipped. CI: ruff on security modules + full test suite.
 
 ## Remaining operator tasks (not code)
 
-1. Set production secrets in `.env` (never commit).
-2. Install panel TLS (reverse proxy).
-3. Configure node mTLS:
+1. **Node mTLS** (the one P0 step needing node access). Materials are generated
+   on the panel by:
    ```bash
    sudo ./scripts/generate_node_mtls.sh /var/lib/nexuspanel/certs/mtls
-   # On each node: SSL_CLIENT_CERT_FILE=/var/lib/nexuspanel/certs/mtls/ca.pem
    ```
-4. PostgreSQL restore: import `restore-db.sql` manually after backup restore API on non-SQLite.
-5. Local run (no Docker): `./scripts/run_local.sh`
+   Then on each node set `SSL_CLIENT_CERT_FILE=/var/lib/nexuspanel/certs/mtls/ca.pem`,
+   restart the agent, and finally set `NODE_SSL_VERIFY=True` on the panel.
+   (Do not flip `NODE_SSL_VERIFY` before the node has the CA, or live nodes drop.)
+2. PostgreSQL restore: import `restore-db.sql` manually after backup restore API on non-SQLite.
+3. Local run (no Docker): `./scripts/run_local.sh`

@@ -1,15 +1,28 @@
 /** Helpers for NexusPanel Xray config UI (3x-ui parity). */
 
-export const INBOUND_PROTOCOLS = [
+/** Inbounds that panel users can be assigned to. */
+export const PRODUCT_INBOUND_PROTOCOLS = [
   "vless",
   "vmess",
   "trojan",
   "shadowsocks",
+] as const;
+
+/** Xray-only listeners — no user assignment; use Tunnels page for dokodemo relay. */
+export const ADVANCED_INBOUND_PROTOCOLS = [
   "http",
   "socks",
   "mixed",
   "wireguard",
+  "hysteria",
+  "amneziawg",
+  "tun",
   "dokodemo-door",
+] as const;
+
+export const INBOUND_PROTOCOLS = [
+  ...PRODUCT_INBOUND_PROTOCOLS,
+  ...ADVANCED_INBOUND_PROTOCOLS,
 ] as const;
 
 export const PROXY_PROTOCOLS = ["vless", "vmess", "trojan"] as const;
@@ -24,18 +37,28 @@ export const NETWORKS = [
   "splithttp",
   "quic",
 ] as const;
-export const SS_METHODS = [
+export const SS_LEGACY_METHODS = [
   "chacha20-ietf-poly1305",
   "aes-256-gcm",
   "aes-128-gcm",
-  "aes-128-ctr",
   "aes-192-gcm",
-  "chacha20-poly1305",
-];
+] as const;
+
+export const SS_2022_METHODS = [
+  "2022-blake3-aes-256-gcm",
+  "2022-blake3-aes-128-gcm",
+  "2022-blake3-chacha20-poly1305",
+] as const;
+
+export const SS_METHODS = [...SS_LEGACY_METHODS, ...SS_2022_METHODS];
+
+export function isSs2022(method: string): boolean {
+  return method.startsWith("2022-blake3");
+}
 export const SS_NETWORKS = ["tcp", "udp", "tcp,udp"] as const;
 export const LOG_LEVELS = ["none", "debug", "info", "warning", "error"];
 export const DOMAIN_STRATEGIES = ["AsIs", "IPIfNonMatch", "IPOnDemand"];
-export const VLESS_FLOWS = ["", "xtls-rprx-vision", "xtls-rprx-vision-udp443"];
+export const VLESS_FLOWS = ["", "xtls-rprx-vision"];
 export const SECURITIES = ["none", "tls", "reality"] as const;
 export const FINGERPRINTS = [
   "",
@@ -51,18 +74,6 @@ export const FINGERPRINTS = [
 ];
 export const SNIFF_OVERRIDES = ["http", "tls", "quic", "fakedns"];
 export const KCP_HEADERS = ["none", "srtp", "utp", "wechat-video", "dtls", "wireguard"];
-export const OUTBOUND_PROTOCOLS = [
-  "freedom",
-  "blackhole",
-  "socks",
-  "http",
-  "vless",
-  "vmess",
-  "trojan",
-  "shadowsocks",
-  "wireguard",
-] as const;
-
 const SYSTEM_TAGS = new Set(["API_INBOUND", "API", "TUN_IN", "metrics_in"]);
 
 export function supportsStream(protocol: string): boolean {
@@ -77,6 +88,26 @@ export function isUserInbound(i: { protocol?: string; tag?: string }): boolean {
   if (i.tag && SYSTEM_TAGS.has(i.tag)) return false;
   if (i.protocol === "dokodemo-door" && i.tag === "API_INBOUND") return false;
   return INBOUND_PROTOCOLS.includes(i.protocol as (typeof INBOUND_PROTOCOLS)[number]);
+}
+
+/** Label for inbound table/UI (amneziawg stored as wireguard in JSON). */
+export function inboundDisplayProtocol(i: { protocol?: string; tag?: string }): string {
+  const proto = String(i.protocol || "");
+  const tag = String(i.tag || "");
+  if (proto === "wireguard" && /amnezia|awg/i.test(tag)) return "amneziawg";
+  return proto;
+}
+
+export function inboundTransportLabel(i: Record<string, unknown>): string {
+  const ss = (i.streamSettings || {}) as Record<string, unknown>;
+  const proto = String(i.protocol || "");
+  if (proto === "hysteria" || ss.network === "hysteria") return "HYSTERIA";
+  if (proto === "wireguard" || proto === "amneziawg") return "WG";
+  if (proto === "tun") return "TUN";
+  if (proto === "dokodemo-door") return "TUNNEL";
+  if (proto === "http" || proto === "socks" || proto === "mixed") return proto.toUpperCase();
+  const net = String(ss.network || (proto === "shadowsocks" ? "tcp" : "—"));
+  return networkLabel(net);
 }
 
 export function networkLabel(network: string): string {
@@ -124,8 +155,62 @@ export function ensureConfigShape(cfg: Record<string, unknown>): Record<string, 
     ];
   }
   if (!c.inbounds) c.inbounds = [];
-  if (!c.dns) c.dns = { servers: [] };
+  if (!c.dns) {
+    c.dns = {
+      servers: ["https://1.1.1.1/dns-query", "1.1.1.1", "8.8.8.8"],
+      queryStrategy: "UseIPv4",
+    };
+  } else {
+    const dns = c.dns as Record<string, unknown>;
+    const servers = dns.servers as unknown[] | undefined;
+    if (!servers || servers.length === 0) {
+      dns.servers = ["https://1.1.1.1/dns-query", "1.1.1.1", "8.8.8.8"];
+      dns.queryStrategy = dns.queryStrategy || "UseIPv4";
+    }
+  }
   return c;
+}
+
+/** DNS + Cloudflare bypass rules required for stable WARP routing. */
+export const WARP_BYPASS_RULE: Record<string, unknown> = {
+  type: "field",
+  domain: [
+    "domain:engage.cloudflareclient.com",
+    "domain:cloudflareclient.com",
+    "domain:cloudflare.com",
+  ],
+  outboundTag: "DIRECT",
+};
+
+export function usesWarpRouting(cfg: Record<string, unknown>): boolean {
+  const routing = (cfg.routing || {}) as Record<string, unknown>;
+  const rules = (routing.rules || []) as Record<string, unknown>[];
+  return rules.some((r) => String(r.outboundTag || "") === "warp");
+}
+
+export function applyWarpSafeRouting(cfg: Record<string, unknown>): Record<string, unknown> {
+  const next = ensureConfigShape(cfg);
+  const routing = next.routing as Record<string, unknown>;
+  routing.domainStrategy = routing.domainStrategy || "IPIfNonMatch";
+  const rules = [...((routing.rules || []) as Record<string, unknown>[])];
+  const hasBypass = rules.some((r) => {
+    const dom = r.domain as string[] | undefined;
+    return Array.isArray(dom) && dom.some((d) => String(d).includes("cloudflareclient"));
+  });
+  if (!hasBypass) {
+    const warpIdx = rules.findIndex((r) => String(r.outboundTag || "") === "warp");
+    const insertAt = warpIdx >= 0 ? warpIdx : rules.length;
+    rules.splice(insertAt, 0, { ...WARP_BYPASS_RULE });
+  }
+  routing.rules = rules;
+  const outbounds = (next.outbounds || []) as Record<string, unknown>[];
+  next.outbounds = outbounds.map((ob) => {
+    if (String(ob.tag || "") !== "warp" || ob.protocol !== "wireguard") return ob;
+    const settings = { ...((ob.settings || {}) as Record<string, unknown>) };
+    if (settings.workers == null) settings.workers = 2;
+    return { ...ob, settings };
+  });
+  return next;
 }
 
 export type FallbackForm = {
@@ -145,6 +230,7 @@ export type InboundForm = {
   path: string;
   host: string;
   method: string;
+  ssPassword: string;
   ssNetwork: string;
   security: string;
   sni: string;
@@ -173,6 +259,10 @@ export type InboundForm = {
   wgPeerPublicKey: string;
   wgAllowedIPs: string;
   wgMtu: string;
+  hyAuth: string;
+  hyUp: string;
+  hyDown: string;
+  hyUdpIdleTimeout: string;
   fallbacks: FallbackForm[];
 };
 
@@ -190,7 +280,8 @@ export const defaultInboundForm = (): InboundForm => ({
   network: "tcp",
   path: "/",
   host: "",
-  method: SS_METHODS[0],
+  method: SS_LEGACY_METHODS[0],
+  ssPassword: "",
   ssNetwork: "tcp,udp",
   security: "none",
   sni: "",
@@ -219,6 +310,10 @@ export const defaultInboundForm = (): InboundForm => ({
   wgPeerPublicKey: "",
   wgAllowedIPs: "0.0.0.0/0",
   wgMtu: "1420",
+  hyAuth: "",
+  hyUp: "",
+  hyDown: "",
+  hyUdpIdleTimeout: "60",
   fallbacks: [],
 });
 
@@ -298,7 +393,8 @@ export function inboundToForm(i: Record<string, unknown>): InboundForm {
   f.host = stream.host;
   f.kcpSeed = stream.kcpSeed;
   f.kcpHeader = stream.kcpHeader;
-  f.method = String(settings.method || settings.cipher || SS_METHODS[0]);
+  f.method = String(settings.method || settings.cipher || SS_LEGACY_METHODS[0]);
+  f.ssPassword = String(settings.password || "");
   f.ssNetwork = String(settings.network || "tcp,udp");
   f.security = sec;
   f.sni = String(
@@ -343,7 +439,12 @@ export function inboundToForm(i: Record<string, unknown>): InboundForm {
     f.tunnelNetwork = String(settings.network || "tcp,udp");
     f.tunnelFollowRedirect = Boolean(settings.followRedirect);
   }
-  if (f.protocol === "wireguard") {
+  if (f.protocol === "tun") {
+    f.tunnelAddress = String(settings.name || "xray0");
+    f.wgMtu = String(settings.mtu || "1500");
+    f.sniffing = false;
+  }
+  if (f.protocol === "wireguard" || f.protocol === "amneziawg") {
     const peers = (settings.peers as Record<string, unknown>[]) || [];
     f.wgSecretKey = String(settings.secretKey || "");
     f.wgMtu = String(settings.mtu || "1420");
@@ -353,6 +454,19 @@ export function inboundToForm(i: Record<string, unknown>): InboundForm {
         ? (peers[0].allowedIPs as string[]).join(",")
         : "0.0.0.0/0";
     }
+    if (f.protocol === "wireguard" && /amnezia|awg/i.test(String(i.tag || ""))) {
+      f.protocol = "amneziawg";
+    }
+  }
+  if (f.protocol === "hysteria") {
+    const hs = (ss.hysteriaSettings || {}) as Record<string, unknown>;
+    const hyClients = (settings.clients as Record<string, unknown>[]) || [];
+    f.hyAuth = String(hyClients[0]?.auth || hs.auth || "");
+    f.hyUp = String(hs.up || "");
+    f.hyDown = String(hs.down || "");
+    f.hyUdpIdleTimeout = hs.udpIdleTimeout != null ? String(hs.udpIdleTimeout) : "60";
+    if (!f.alpn) f.alpn = "h3";
+    if (!f.security || f.security === "none") f.security = "tls";
   }
   return f;
 }
@@ -448,11 +562,13 @@ export function buildInboundFromForm(f: InboundForm): Record<string, unknown> {
   } else if (f.protocol === "trojan") {
     inbound.settings = { clients: [] };
   } else if (f.protocol === "shadowsocks") {
-    inbound.settings = {
+    const settings: Record<string, unknown> = {
       clients: [],
       method: f.method,
       network: f.ssNetwork,
     };
+    if (f.ssPassword.trim()) settings.password = f.ssPassword.trim();
+    inbound.settings = settings;
   } else if (f.protocol === "http") {
     inbound.settings = { accounts: [] };
   } else if (f.protocol === "socks") {
@@ -466,7 +582,7 @@ export function buildInboundFromForm(f: InboundForm): Record<string, unknown> {
       network: f.tunnelNetwork || "tcp,udp",
       followRedirect: f.tunnelFollowRedirect,
     };
-  } else if (f.protocol === "wireguard") {
+  } else if (f.protocol === "wireguard" || f.protocol === "amneziawg") {
     const peers: Record<string, unknown>[] = [];
     if (f.wgPeerPublicKey.trim()) {
       peers.push({
@@ -476,10 +592,44 @@ export function buildInboundFromForm(f: InboundForm): Record<string, unknown> {
           : ["0.0.0.0/0"],
       });
     }
+    inbound.protocol = "wireguard";
     inbound.settings = {
       secretKey: f.wgSecretKey,
       mtu: parseInt(f.wgMtu, 10) || 1420,
       peers,
+    };
+  } else if (f.protocol === "hysteria") {
+    const auth = f.hyAuth.trim();
+    inbound.settings = {
+      version: 2,
+      clients: auth ? [{ auth }] : [],
+    };
+    const alpn = f.alpn
+      ? f.alpn.split(",").map((s) => s.trim()).filter(Boolean)
+      : ["h3"];
+    inbound.streamSettings = {
+      network: "hysteria",
+      security: "tls",
+      tlsSettings: {
+        serverName: f.sni.trim() || undefined,
+        alpn,
+        fingerprint: f.fingerprint && f.fingerprint !== "none" ? f.fingerprint : undefined,
+        allowInsecure: f.allowInsecure || undefined,
+      },
+      hysteriaSettings: {
+        version: 2,
+        ...(auth ? { auth } : {}),
+        ...(f.hyUp.trim() ? { up: f.hyUp.trim() } : {}),
+        ...(f.hyDown.trim() ? { down: f.hyDown.trim() } : {}),
+        ...(parseInt(f.hyUdpIdleTimeout, 10) > 0
+          ? { udpIdleTimeout: parseInt(f.hyUdpIdleTimeout, 10) }
+          : {}),
+      },
+    };
+  } else if (f.protocol === "tun") {
+    inbound.settings = {
+      name: f.tunnelAddress.trim() || "xray0",
+      mtu: parseInt(f.wgMtu, 10) || 1500,
     };
   }
 
@@ -510,7 +660,7 @@ export function buildInboundFromForm(f: InboundForm): Record<string, unknown> {
     inbound.streamSettings = stream;
   }
 
-  if (f.sniffing && f.protocol !== "wireguard" && f.protocol !== "dokodemo-door") {
+  if (f.sniffing && f.protocol !== "wireguard" && f.protocol !== "amneziawg" && f.protocol !== "hysteria" && f.protocol !== "tun" && f.protocol !== "dokodemo-door") {
     const overrides = f.sniffDestOverride
       .split(",")
       .map((s) => s.trim())
@@ -524,65 +674,169 @@ export function buildInboundFromForm(f: InboundForm): Record<string, unknown> {
   return inbound;
 }
 
+const toStrArray = (v: unknown): string[] => {
+  if (Array.isArray(v)) return v.map((x) => String(x));
+  if (typeof v === "string" && v) return [v];
+  return [];
+};
+
+export const DEFAULT_HYSTERIA_INBOUND_TAG = "Hysteria2";
+export const DEFAULT_AMNEZIA_INBOUND_TAG = "AmneziaWG";
+
+function routingRuleInboundTags(config: Record<string, unknown>): string[] {
+  const routing = (config.routing || {}) as Record<string, unknown>;
+  const rules = (routing.rules || []) as Record<string, unknown>[];
+  const out: string[] = [];
+  for (const r of rules) {
+    out.push(...toStrArray(r.inboundTag));
+  }
+  return out;
+}
+
+/** Inbound tags available for routing rules (actual Xray inbounds + tags already used in rules). */
+export function listRoutingInboundTags(config: Record<string, unknown>): string[] {
+  const tags = new Set<string>();
+
+  const inbounds = (config.inbounds || []) as Record<string, unknown>[];
+  for (const i of inbounds) {
+    const tag = String(i.tag || "").trim();
+    if (!tag || SYSTEM_TAGS.has(tag)) continue;
+    tags.add(tag);
+  }
+
+  for (const t of routingRuleInboundTags(config)) {
+    if (t.trim()) tags.add(t.trim());
+  }
+
+  return [...tags].sort((a, b) => a.localeCompare(b));
+}
+
+export function hasInboundTag(config: Record<string, unknown>, tag: string): boolean {
+  const inbounds = (config.inbounds || []) as Record<string, unknown>[];
+  return inbounds.some((i) => String(i.tag || "") === tag);
+}
+
+export function defaultHysteriaInbound(
+  tag = DEFAULT_HYSTERIA_INBOUND_TAG,
+  port = "44333",
+): Record<string, unknown> {
+  const f = defaultInboundForm();
+  f.tag = tag;
+  f.port = port;
+  f.protocol = "hysteria";
+  f.alpn = "h3";
+  f.security = "tls";
+  f.sniffing = false;
+  return buildInboundFromForm(f);
+}
+
+export function defaultAmneziaInbound(
+  tag = DEFAULT_AMNEZIA_INBOUND_TAG,
+  port = "51821",
+): Record<string, unknown> {
+  const f = defaultInboundForm();
+  f.tag = tag;
+  f.port = port;
+  f.protocol = "amneziawg";
+  f.sniffing = false;
+  return buildInboundFromForm(f);
+}
+
+export function appendInboundIfMissing(
+  config: Record<string, unknown>,
+  inbound: Record<string, unknown>,
+): Record<string, unknown> {
+  const tag = String(inbound.tag || "");
+  if (!tag || hasInboundTag(config, tag)) return config;
+  const inbounds = [...((config.inbounds || []) as Record<string, unknown>[]), inbound];
+  return { ...config, inbounds };
+}
+
 export const RULE_PROTOCOLS = ["http", "tls", "quic", "bittorrent"] as const;
+export const RULE_NETWORKS = ["", "tcp", "udp", "tcp,udp"] as const;
+
+export type RuleAttr = { key: string; value: string };
 
 export type RoutingRuleForm = {
   type: string;
   outboundTag: string;
   balancerTag: string;
-  inboundTag: string;
+  inboundTag: string[];
   ip: string;
   domain: string;
   port: string;
+  sourcePort: string;
   network: string;
-  protocol: string;
-  source: string;
+  protocol: string[];
+  sourceIP: string;
+  user: string;
+  vlessRoute: string;
+  attrs: RuleAttr[];
+  ruleTag: string;
 };
 
 export const defaultRule = (): RoutingRuleForm => ({
   type: "field",
-  outboundTag: "BLOCK",
+  outboundTag: "",
   balancerTag: "",
-  inboundTag: "",
+  inboundTag: [],
   ip: "",
   domain: "",
   port: "",
+  sourcePort: "",
   network: "",
-  protocol: "",
-  source: "",
+  protocol: [],
+  sourceIP: "",
+  user: "",
+  vlessRoute: "",
+  attrs: [],
+  ruleTag: "",
 });
 
 export function ruleToForm(r: Record<string, unknown>): RoutingRuleForm {
-  const protocol = r.protocol;
+  const attrsObj = (r.attrs && typeof r.attrs === "object" && !Array.isArray(r.attrs))
+    ? (r.attrs as Record<string, unknown>)
+    : {};
   return {
     type: String(r.type || "field"),
     outboundTag: String(r.outboundTag || ""),
     balancerTag: String(r.balancerTag || ""),
-    inboundTag: Array.isArray(r.inboundTag) ? (r.inboundTag as string[]).join(",") : String(r.inboundTag || ""),
-    ip: Array.isArray(r.ip) ? (r.ip as string[]).join(",") : "",
-    domain: Array.isArray(r.domain) ? (r.domain as string[]).join(",") : "",
-    port: String(r.port || ""),
+    inboundTag: toStrArray(r.inboundTag),
+    ip: toStrArray(r.ip).join(","),
+    domain: toStrArray(r.domain).join(","),
+    port: r.port != null ? String(r.port) : "",
+    sourcePort: r.sourcePort != null ? String(r.sourcePort) : "",
     network: String(r.network || ""),
-    protocol: Array.isArray(protocol) ? (protocol as string[]).join(",") : String(protocol || ""),
-    source: Array.isArray(r.source) ? (r.source as string[]).join(",") : "",
+    protocol: toStrArray(r.protocol),
+    sourceIP: toStrArray(r.sourceIP ?? r.source).join(","),
+    user: toStrArray(r.user).join(","),
+    vlessRoute: r.vlessRoute != null ? String(r.vlessRoute) : "",
+    attrs: Object.entries(attrsObj).map(([key, value]) => ({ key, value: String(value) })),
+    ruleTag: String(r.ruleTag || ""),
   };
 }
 
 export function buildRuleFromForm(f: RoutingRuleForm): Record<string, unknown> {
   const r: Record<string, unknown> = { type: f.type || "field" };
   const splitList = (s: string) => s.split(/[\n,]/).map((x) => x.trim()).filter(Boolean);
+
+  if (f.ruleTag.trim()) r.ruleTag = f.ruleTag.trim();
+  if (f.sourceIP.trim()) r.sourceIP = splitList(f.sourceIP);
+  if (f.sourcePort.trim()) r.sourcePort = f.sourcePort.trim();
+  if (f.vlessRoute.trim()) r.vlessRoute = f.vlessRoute.trim();
+  if (f.network) r.network = f.network;
+  if (f.protocol.length) r.protocol = [...f.protocol];
+  const attrEntries = f.attrs.filter((a) => a.key.trim());
+  if (attrEntries.length) {
+    r.attrs = Object.fromEntries(attrEntries.map((a) => [a.key.trim(), a.value]));
+  }
+  if (f.inboundTag.length) r.inboundTag = [...f.inboundTag];
+  if (f.ip.trim()) r.ip = splitList(f.ip);
+  if (f.domain.trim()) r.domain = splitList(f.domain);
+  if (f.user.trim()) r.user = splitList(f.user);
+  if (f.port.trim()) r.port = f.port.trim();
   if (f.balancerTag.trim()) r.balancerTag = f.balancerTag.trim();
   else if (f.outboundTag) r.outboundTag = f.outboundTag;
-  if (f.inboundTag) {
-    const tags = f.inboundTag.split(",").map((s) => s.trim()).filter(Boolean);
-    r.inboundTag = tags.length === 1 ? tags[0] : tags;
-  }
-  if (f.ip) r.ip = splitList(f.ip);
-  if (f.domain) r.domain = splitList(f.domain);
-  if (f.source) r.source = splitList(f.source);
-  if (f.port) r.port = f.port;
-  if (f.network) r.network = f.network;
-  if (f.protocol) r.protocol = splitList(f.protocol);
   return r;
 }
 
@@ -596,215 +850,22 @@ export function socksEndpointFromSettings(settings: unknown): { address: string;
   return { address: String(s.address || ""), port: String(s.port ?? "1080") };
 }
 
-/* ---- Outbound builders (proxy chaining + WARP) ------------------------- */
-
-export const OUTBOUND_NETWORKS = ["tcp", "ws", "grpc", "http", "httpupgrade", "splithttp"] as const;
-export const OUTBOUND_SECURITIES = ["none", "tls", "reality"] as const;
-
-export type OutboundForm = {
-  tag: string;
-  protocol: string;
-  address: string;
-  port: string;
-  user: string;
-  pass: string;
-  id: string;
-  flow: string;
-  method: string;
-  network: string;
-  security: string;
-  sni: string;
-  path: string;
-  hostHeader: string;
-  fingerprint: string;
-  realityPublicKey: string;
-  realityShortId: string;
-  wgSecretKey: string;
-  wgAddress: string;
-  wgPeerPublicKey: string;
-  wgEndpoint: string;
-  wgReserved: string;
-};
-
-export const defaultOutboundForm = (): OutboundForm => ({
-  tag: "",
-  protocol: "freedom",
-  address: "",
-  port: "443",
-  user: "",
-  pass: "",
-  id: "",
-  flow: "",
-  method: SS_METHODS[0],
-  network: "tcp",
-  security: "none",
-  sni: "",
-  path: "/",
-  hostHeader: "",
-  fingerprint: "chrome",
-  realityPublicKey: "",
-  realityShortId: "",
-  wgSecretKey: "",
-  wgAddress: "172.16.0.2/32",
-  wgPeerPublicKey: "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
-  wgEndpoint: "engage.cloudflareclient.com:2408",
-  wgReserved: "",
-});
-
-/** Cloudflare WARP scaffold (admin still pastes their registered secretKey/reserved). */
-export const warpOutboundForm = (): OutboundForm => ({
-  ...defaultOutboundForm(),
-  tag: "warp",
-  protocol: "wireguard",
-});
-
-function streamFromOutboundForm(f: OutboundForm): Record<string, unknown> | undefined {
-  if (f.network === "tcp" && f.security === "none") return undefined;
-  const stream: Record<string, unknown> = { network: f.network };
-  if (f.network === "ws") {
-    stream.wsSettings = { path: f.path || "/", headers: f.hostHeader ? { Host: f.hostHeader } : undefined };
-  } else if (f.network === "grpc") {
-    stream.grpcSettings = { serviceName: f.path || "" };
-  } else if (f.network === "httpupgrade") {
-    stream.httpupgradeSettings = { path: f.path || "/", host: f.hostHeader || undefined };
-  } else if (f.network === "splithttp") {
-    stream.splithttpSettings = { path: f.path || "/", host: f.hostHeader || undefined };
-  } else if (f.network === "http") {
-    stream.httpSettings = { path: f.path || "/", host: f.hostHeader ? [f.hostHeader] : undefined };
-  }
-  if (f.security === "tls") {
-    stream.security = "tls";
-    stream.tlsSettings = { serverName: f.sni || undefined, fingerprint: f.fingerprint || undefined };
-  } else if (f.security === "reality") {
-    stream.security = "reality";
-    stream.realitySettings = {
-      serverName: f.sni || undefined,
-      fingerprint: f.fingerprint || "chrome",
-      publicKey: f.realityPublicKey || undefined,
-      shortId: f.realityShortId || undefined,
-    };
-  }
-  return stream;
-}
-
-export function buildOutboundFromForm(f: OutboundForm): Record<string, unknown> {
-  const ob: Record<string, unknown> = { tag: f.tag.trim(), protocol: f.protocol };
-  const port = parseInt(f.port, 10) || 443;
-  const addr = f.address.trim();
-
-  if (f.protocol === "freedom" || f.protocol === "blackhole") {
-    ob.settings = {};
-    return ob;
-  }
-  if (f.protocol === "socks" || f.protocol === "http") {
-    const server: Record<string, unknown> = { address: addr, port };
-    if (f.user) server.users = [{ user: f.user, pass: f.pass }];
-    ob.settings = { servers: [server] };
-    const stream = streamFromOutboundForm(f);
-    if (stream) ob.streamSettings = stream;
-    return ob;
-  }
-  if (f.protocol === "shadowsocks") {
-    ob.settings = {
-      servers: [{ address: addr, port, method: f.method, password: f.pass }],
-    };
-    return ob;
-  }
-  if (f.protocol === "trojan") {
-    ob.settings = { servers: [{ address: addr, port, password: f.pass }] };
-    const stream = streamFromOutboundForm({ ...f, security: f.security === "none" ? "tls" : f.security });
-    if (stream) ob.streamSettings = stream;
-    return ob;
-  }
-  if (f.protocol === "vless" || f.protocol === "vmess") {
-    const user: Record<string, unknown> = { id: f.id };
-    if (f.protocol === "vless") {
-      user.encryption = "none";
-      if (f.flow) user.flow = f.flow;
-    } else {
-      user.security = "auto";
-    }
-    ob.settings = { vnext: [{ address: addr, port, users: [user] }] };
-    const stream = streamFromOutboundForm(f);
-    if (stream) ob.streamSettings = stream;
-    return ob;
-  }
-  if (f.protocol === "wireguard") {
-    const peer: Record<string, unknown> = {
-      publicKey: f.wgPeerPublicKey.trim(),
-      endpoint: f.wgEndpoint.trim(),
-      allowedIPs: ["0.0.0.0/0", "::/0"],
-    };
-    const settings: Record<string, unknown> = {
-      secretKey: f.wgSecretKey.trim(),
-      address: f.wgAddress.split(",").map((s) => s.trim()).filter(Boolean),
-      peers: [peer],
-    };
-    const reserved = f.wgReserved
-      .split(",")
-      .map((s) => parseInt(s.trim(), 10))
-      .filter((n) => !Number.isNaN(n));
-    if (reserved.length) settings.reserved = reserved;
-    ob.settings = settings;
-    return ob;
-  }
-  ob.settings = {};
-  return ob;
-}
-
-export function outboundToForm(o: Record<string, unknown>): OutboundForm {
-  const f = defaultOutboundForm();
-  f.tag = String(o.tag || "");
-  f.protocol = String(o.protocol || "freedom");
-  const settings = (o.settings || {}) as Record<string, unknown>;
-  const ss = (o.streamSettings || {}) as Record<string, unknown>;
-  const servers = settings.servers as Record<string, unknown>[] | undefined;
-  const vnext = settings.vnext as Record<string, unknown>[] | undefined;
-
-  if (servers && servers[0]) {
-    const s0 = servers[0];
-    f.address = String(s0.address || "");
-    f.port = String(s0.port ?? "443");
-    f.method = String(s0.method || SS_METHODS[0]);
-    f.pass = String(s0.password || "");
-    const users = s0.users as Record<string, unknown>[] | undefined;
-    if (users && users[0]) {
-      f.user = String(users[0].user || "");
-      f.pass = String(users[0].pass || f.pass);
-    }
-  }
-  if (vnext && vnext[0]) {
-    f.address = String(vnext[0].address || "");
-    f.port = String(vnext[0].port ?? "443");
-    const users = vnext[0].users as Record<string, unknown>[] | undefined;
-    if (users && users[0]) {
-      f.id = String(users[0].id || "");
-      f.flow = String(users[0].flow || "");
-    }
-  }
-  if (f.protocol === "wireguard") {
-    f.wgSecretKey = String(settings.secretKey || "");
-    f.wgAddress = Array.isArray(settings.address) ? (settings.address as string[]).join(",") : "";
-    f.wgReserved = Array.isArray(settings.reserved) ? (settings.reserved as number[]).join(",") : "";
-    const peers = settings.peers as Record<string, unknown>[] | undefined;
-    if (peers && peers[0]) {
-      f.wgPeerPublicKey = String(peers[0].publicKey || "");
-      f.wgEndpoint = String(peers[0].endpoint || "");
-    }
-  }
-  f.network = String(ss.network || "tcp");
-  f.security = String(ss.security || "none");
-  const tls = (ss.tlsSettings || ss.realitySettings || {}) as Record<string, unknown>;
-  f.sni = String(tls.serverName || "");
-  f.fingerprint = String(tls.fingerprint || "chrome");
-  f.realityPublicKey = String((ss.realitySettings as Record<string, unknown>)?.publicKey || "");
-  f.realityShortId = String((ss.realitySettings as Record<string, unknown>)?.shortId || "");
-  return f;
-}
-
-export function outboundSupportsStream(protocol: string): boolean {
-  return protocol === "vless" || protocol === "vmess" || protocol === "trojan" || protocol === "socks" || protocol === "http";
-}
+/* ---- Outbound builders — see outboundHelpers.ts (3x-ui parity) ---- */
+export {
+  OUTBOUND_NETWORKS,
+  OUTBOUND_PROTOCOLS,
+  OUTBOUND_SECURITIES,
+  buildOutboundFromForm,
+  defaultOutboundForm,
+  finalizeOutboundFromForm,
+  outboundSummary,
+  outboundSupportsStream,
+  outboundToForm,
+  sanitizeConfigOutbounds,
+  validateOutboundTag,
+  warpOutboundForm,
+  type OutboundForm,
+} from "./outboundHelpers";
 
 /** @deprecated use INBOUND_PROTOCOLS */
 export const USER_PROTOCOLS = INBOUND_PROTOCOLS;

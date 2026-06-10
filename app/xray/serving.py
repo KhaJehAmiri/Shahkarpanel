@@ -58,6 +58,17 @@ def _sync_wireguard():
         logger.exception("sing-box sync failed")
 
 
+def _inbound_supports_hot_sync(inbound_tag: str) -> bool:
+    """SS-2022 users are config-reload only; gRPC AddUser panics the core."""
+    inbound = xray.config.inbounds_by_tag.get(inbound_tag, {})
+    if inbound.get("protocol") != "shadowsocks":
+        return True
+    from xray_api.types.account import is_ss2022
+
+    method = inbound.get("ss_method") or ""
+    return not is_ss2022(method)
+
+
 def _account_for_inbound(user: UserResponse, proxy_type, inbound_tag: str, email: str) -> "Account | None":
     inbound = xray.config.inbounds_by_tag.get(inbound_tag, {})
     try:
@@ -168,6 +179,8 @@ def hot_sync_main_core() -> bool:
 
         # Add every desired user the core is missing (idempotent: EmailExists ok).
         for tag, accounts in desired.items():
+            if not _inbound_supports_hot_sync(tag):
+                continue
             have = snapshot.get(tag, set())
             for email, account in accounts.items():
                 if email not in have:
@@ -175,6 +188,8 @@ def hot_sync_main_core() -> bool:
 
         # Remove anything we previously pushed that is no longer billable.
         for tag, have in snapshot.items():
+            if not _inbound_supports_hot_sync(tag):
+                continue
             keep = set(desired.get(tag, {}).keys())
             for email in have - keep:
                 _api_remove_user(tag, email)
@@ -192,6 +207,8 @@ def sync_main_core_user(dbuser) -> None:
         _ensure_registry_current()
         for proxy_type, inbound_tags in user.inbounds.items():
             for inbound_tag in inbound_tags:
+                if not _inbound_supports_hot_sync(inbound_tag):
+                    continue
                 account = _account_for_inbound(user, proxy_type, inbound_tag, email)
                 if account is None:
                     continue
@@ -225,11 +242,13 @@ def sync_core_users_now() -> None:
 
 def reconcile_core_users() -> None:
     """Periodic safety net: ensure no billable user is missing from the core."""
+    if not xray.core.started or xray.core.restarting:
+        return
     try:
         if not hot_sync_main_core():
             return
     except Exception:
-        logger.exception("Periodic core reconcile failed")
+        logger.debug("Periodic core reconcile skipped (core API unavailable)")
 
 
 def schedule_core_sync(delay: float = _DEBOUNCE_SEC) -> None:

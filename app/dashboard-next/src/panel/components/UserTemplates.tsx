@@ -4,8 +4,9 @@ import {
 } from "../lib/data-limit";
 import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
-import { InboundsByProtocol } from "../api/types";
+import { InboundsByProtocol, NodeItem } from "../api/types";
 import { useFetch } from "../lib/useFetch";
+import { protocolAssignable } from "../lib/userHelpers";
 import { formatBytes } from "../lib/format";
 import {
   Button, Card, EmptyState, Field, Input, Modal, Select, SkeletonRows, useToast,
@@ -104,6 +105,7 @@ const TemplateFormModal: FC<{ row?: UserTemplateRow; onClose: () => void; onDone
   const { t } = useTranslation();
   const toast = useToast();
   const inbounds = useFetch<InboundsByProtocol>(() => api.get("/inbounds"), []);
+  const nodes = useFetch<NodeItem[]>(() => api.get("/nodes"), []);
   const [name, setName] = useState(row?.name || "");
   const [dataLimitUnit, setDataLimitUnit] = useState<DataLimitUnit>(
     row?.data_limit ? detectDataLimitUnit(row.data_limit) : "MB",
@@ -183,7 +185,10 @@ const TemplateFormModal: FC<{ row?: UserTemplateRow; onClose: () => void; onDone
   const xrayProtos = PROTO_ORDER
     .map((proto) => [proto, inbounds.data?.[proto] || []] as const)
     .filter(([, list]) => list.length > 0);
-  const nativeProtos = NATIVE_PROTOCOLS.filter((p) => !inbounds.data?.[p]?.length);
+  const nativeProtos = NATIVE_PROTOCOLS.filter((p) => {
+    if ((inbounds.data?.[p]?.length || 0) > 0) return false;
+    return protocolAssignable(p, inbounds.data ?? undefined, nodes.data ?? undefined);
+  });
 
   return (
     <Modal open wide title={row ? t("users.editTemplate") : t("users.addTemplate")} onClose={onClose}

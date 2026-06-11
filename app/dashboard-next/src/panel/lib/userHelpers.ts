@@ -1,3 +1,4 @@
+import { InboundsByProtocol, NodeItem } from "../api/types";
 import { NXPANEL_INBOUND_KIND } from "./xrayHelpers";
 
 type WgSettings = {
@@ -39,6 +40,29 @@ export function wgKindForSubmit(wireguardOn: boolean, amneziaOn: boolean): strin
   if (amneziaOn) return "amneziawg";
   if (wireguardOn) return "wireguard";
   return undefined;
+}
+
+/** True when the panel can assign users on this protocol (Xray inbound or native node). */
+export function protocolAssignable(
+  proto: string,
+  inbounds: InboundsByProtocol | undefined,
+  nodes: NodeItem[] | undefined,
+): boolean {
+  const nodeList = nodes || [];
+  switch (proto) {
+    case "wireguard":
+      return (inbounds?.wireguard?.length || 0) > 0
+        || nodeList.some((n) => n.core_kind === "wireguard" && n.wireguard?.plain_enabled !== false);
+    case "amneziawg":
+      return (inbounds?.amneziawg?.length || 0) > 0
+        || nodeList.some((n) => n.core_kind === "wireguard" && !!n.wireguard?.awg_enabled);
+    case "hysteria2":
+      return nodeList.some((n) => !!n.singbox?.hysteria2_enabled);
+    case "tuic":
+      return nodeList.some((n) => !!n.singbox?.tuic_enabled);
+    default:
+      return (inbounds?.[proto]?.length || 0) > 0;
+  }
 }
 
 export { NXPANEL_INBOUND_KIND as NXPANEL_WG_KIND };

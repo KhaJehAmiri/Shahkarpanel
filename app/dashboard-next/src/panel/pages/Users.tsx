@@ -20,7 +20,7 @@ import { IcEdit, IcExternal, IcEye, IcPlus, IcRefresh, IcShare, IcTrash } from "
 import { UserTemplatesPanel } from "../components/UserTemplates";
 import { useApp } from "../context/AppContext";
 import { useCopilot } from "../copilot/CopilotContext";
-import { NXPANEL_WG_KIND, userDisplayProtocols, userWgStackLabels, wgKindForSubmit } from "../lib/userHelpers";
+import { NXPANEL_WG_KIND, protocolAssignable, userDisplayProtocols, userWgStackLabels, wgKindForSubmit } from "../lib/userHelpers";
 
 const PAGE = 12;
 const STATUSES = ["active", "disabled", "expired", "limited", "on_hold"];
@@ -242,10 +242,11 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
   const hasHy2Node = (nodes.data || []).some((n) => n.singbox?.hysteria2_enabled);
   const hasTuicNode = (nodes.data || []).some((n) => n.singbox?.tuic_enabled);
   const hasPlainWgNode = (nodes.data || []).some(
-    (n) => n.core_kind === "wireguard" || (n.wireguard && n.wireguard.plain_enabled !== false),
+    (n) => n.core_kind === "wireguard" && n.wireguard?.plain_enabled !== false,
   );
-  const hasAwgNode = (nodes.data || []).some((n) => n.wireguard?.awg_enabled);
-  const hasWgNode = hasPlainWgNode || hasAwgNode;
+  const hasAwgNode = (nodes.data || []).some(
+    (n) => n.core_kind === "wireguard" && !!n.wireguard?.awg_enabled,
+  );
   const templates = useFetch<{ id: number; name?: string }[]>(
     () => (admin?.is_sudo ? api.get("/user_template") : Promise.resolve([])),
     [admin?.is_sudo],
@@ -487,12 +488,8 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
 
   const availableProtos = PROTO_ORDER.filter((p) => {
     if (!protos[p]) return false;
-    if (p === "wireguard") return hasPlainWgNode || protos[p]?.enabled;
-    if (p === "amneziawg") {
-      return hasAwgNode || (inbounds.data?.amneziawg?.length || 0) > 0 || protos[p]?.enabled;
-    }
-    if (p === "hysteria2" || p === "tuic") return true;
-    return (inbounds.data?.[p]?.length || 0) > 0;
+    if (protos[p].enabled) return true;
+    return protocolAssignable(p, inbounds.data ?? undefined, nodes.data ?? undefined);
   });
 
   const toggleWizardProto = (p: string) => {

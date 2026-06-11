@@ -19,7 +19,8 @@ if [ -f "$ROOT/app/dashboard-next/out/dashboard/index.html" ]; then
   cp "$ROOT/app/dashboard-next/out/dashboard/index.html" \
     "$ROOT/app/dashboard-next/out/dashboard/404.html"
 fi
-if [ -f "$ROOT/app/dashboard-next/out/index.html" ]; then
+# Keep Next.js not-found.tsx output for site-wide 404 (do not overwrite with index).
+if [ ! -f "$ROOT/app/dashboard-next/out/404.html" ] && [ -f "$ROOT/app/dashboard-next/out/index.html" ]; then
   cp "$ROOT/app/dashboard-next/out/index.html" "$ROOT/app/dashboard-next/out/404.html"
 fi
 

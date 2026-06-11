@@ -5,8 +5,10 @@ from fastapi import FastAPI, Request, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.routing import APIRoute
+
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from config import ALLOWED_ORIGINS, CORS_ALLOW_CREDENTIALS, DOCS, LOG_JSON, XRAY_SUBSCRIPTION_PATH
 from app.utils.logging import RequestContextMiddleware, setup_structured_logging
@@ -128,3 +130,18 @@ def validation_exception_handler(request: Request, exc: RequestValidationError):
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content=jsonable_encoder({"detail": details}),
     )
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    if exc.status_code != 404:
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    path = request.url.path
+    accept = request.headers.get("accept", "")
+    if path.startswith("/api") or "application/json" in accept:
+        return JSONResponse(status_code=404, content={"detail": exc.detail})
+    try:
+        from app.templates import render_template
+        return HTMLResponse(render_template("errors/404.html"), status_code=404)
+    except Exception:
+        return JSONResponse(status_code=404, content={"detail": exc.detail})

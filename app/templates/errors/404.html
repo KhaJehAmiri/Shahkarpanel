@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>404 — NexusPanel</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop stop-color='%235b8cff'/%3E%3Cstop offset='1' stop-color='%237c5cff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='8' fill='url(%23g)'/%3E%3Ctext x='16' y='22' text-anchor='middle' fill='white' font-size='16' font-weight='800' font-family='system-ui'%3EN%3C/text%3E%3C/svg%3E" />
+  <style>
+    :root { --bg:#07090f; --text:#eef2f8; --dim:#8b95a8; --accent:#5b8cff; --accent2:#7c5cff; --border:rgba(255,255,255,0.08); }
+    *,*::before,*::after{box-sizing:border-box;margin:0}
+    html,body{min-height:100%}
+    body{font-family:"Inter",system-ui,sans-serif;background:var(--bg);color:var(--text);overflow:hidden}
+    .nx-bg{position:fixed;inset:0;background:radial-gradient(ellipse 60% 50% at 50% 20%,rgba(124,92,255,0.18),transparent),var(--bg)}
+    .nx-wrap{position:relative;z-index:1;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px 20px;text-align:center}
+    .nx-code{font-size:clamp(5rem,18vw,8rem);font-weight:900;line-height:1;letter-spacing:-0.05em;background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;opacity:0.9}
+    .nx-mascot{width:min(180px,45vw);margin:16px 0;animation:nx-wobble 3s ease-in-out infinite}
+    @keyframes nx-wobble{0%,100%{transform:rotate(-3deg)}50%{transform:rotate(3deg)}}
+    .nx-title{font-size:1.5rem;font-weight:700;margin-bottom:8px}
+    .nx-desc{color:var(--dim);max-width:34ch;line-height:1.55;margin-bottom:24px;font-size:0.95rem}
+    .nx-btn{display:inline-flex;align-items:center;gap:8px;padding:12px 22px;border-radius:12px;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;text-decoration:none;font-weight:600;font-size:0.95rem;box-shadow:0 8px 28px rgba(91,140,255,0.35);transition:transform 0.15s,box-shadow 0.15s}
+    .nx-btn:hover{transform:translateY(-2px);box-shadow:0 12px 36px rgba(91,140,255,0.45)}
+    .nx-brand-foot{margin-top:48px;font-size:0.75rem;color:var(--dim);opacity:0.7}
+  </style>
+</head>
+<body>
+  <div class="nx-bg" aria-hidden="true"></div>
+  <main class="nx-wrap">
+    <div class="nx-code">404</div>
+    <svg class="nx-mascot" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <defs>
+        <linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#5b8cff"/><stop offset="1" stop-color="#7c5cff"/></linearGradient>
+      </defs>
+      <rect x="45" y="50" width="110" height="90" rx="24" fill="#1a2234" stroke="url(#g)" stroke-width="2"/>
+      <rect x="60" y="72" width="80" height="32" rx="10" fill="#07090f"/>
+      <circle cx="85" cy="88" r="8" fill="#ff6b6b"/>
+      <circle cx="115" cy="88" r="8" fill="#ff6b6b"/>
+      <path d="M75 108 Q100 95 125 108" stroke="#ff6b6b" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+      <text x="100" y="175" text-anchor="middle" fill="#8b95a8" font-size="11" font-family="system-ui">?</text>
+      <path d="M30 120 Q15 140 20 165" stroke="url(#g)" stroke-width="6" stroke-linecap="round" fill="none"/>
+      <path d="M170 120 Q185 140 180 165" stroke="url(#g)" stroke-width="6" stroke-linecap="round" fill="none"/>
+    </svg>
+    <h1 class="nx-title" id="title">Page not found</h1>
+    <p class="nx-desc" id="desc">The path you requested doesn't exist or has been moved.</p>
+    <a class="nx-btn" href="/" id="home">← Back to home</a>
+    <p class="nx-brand-foot">NexusPanel</p>
+  </main>
+  <script>
+    var nav=(navigator.language||"en").slice(0,2);
+    var L={
+      en:{title:"Page not found",desc:"The path you requested doesn't exist or has been moved.",home:"← Back to home"},
+      fa:{title:"صفحه پیدا نشد",desc:"مسیر درخواستی وجود ندارد یا جابه‌جا شده.",home:"→ بازگشت به خانه"},
+      ru:{title:"Страница не найдена",desc:"Запрошенный путь не существует.",home:"← На главную"},
+      zh:{title:"页面未找到",desc:"您请求的路径不存在或已移动。",home:"← 返回首页"}
+    };
+    var d=L[nav]||L.en;
+    if(nav==="fa"){document.documentElement.lang="fa";document.documentElement.dir="rtl";}
+    document.getElementById("title").textContent=d.title;
+    document.getElementById("desc").textContent=d.desc;
+    document.getElementById("home").textContent=d.home;
+  </script>
+</body>
+</html>

@@ -1,1942 +1,262 @@
-<style>
-    html,
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NexusPanel</title>
+  <meta name="description" content="NexusPanel — Professional VPN Control Plane" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop stop-color='%235b8cff'/%3E%3Cstop offset='1' stop-color='%237c5cff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='8' fill='url(%23g)'/%3E%3Ctext x='16' y='22' text-anchor='middle' fill='white' font-size='16' font-weight='800' font-family='system-ui'%3EN%3C/text%3E%3C/svg%3E" />
+  <style>
+    :root {
+      --bg: #07090f;
+      --text: #eef2f8;
+      --dim: #8b95a8;
+      --accent: #5b8cff;
+      --accent2: #7c5cff;
+      --card: rgba(16, 21, 28, 0.85);
+      --border: rgba(255, 255, 255, 0.08);
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; }
+    html, body { min-height: 100%; }
     body {
-        height: 100%;
-    }
-
-    body {
-        overflow: hidden;
-        margin: 0;
-        perspective: 80em;
-        perspective-origin: 50% 0%;
-        background: black;
-        color: cyan;
-    }
-
-    .scene {
-        transform: translate(-15em, 15em) rotateX(75deg) rotate(22.5deg);
-    }
-
-    .scene,
-    .scene * {
-        box-sizing: border-box;
-        position: absolute;
-        top: 50%;
-        left: 50%;
-        transform-style: preserve-3d;
-    }
-
-    .assembly:nth-child(1) {
-        z-index: -1;
-        transform: translate(0, -5em);
-        animation: slide1 1s ease-in-out infinite;
-    }
-
-    @keyframes slide1 {
-        to {
-            transform: translate(3em, -5em);
-        }
-    }
-
-    .assembly:nth-child(1) .roller {
-        transform: rotateY(90deg) translateZ(1.5em) rotateY(-270deg);
-        animation: inherit;
-        animation-name: roll1a;
-    }
-
-    .assembly:nth-child(1) .roller:last-child {
-        z-index: -1;
-        margin: 0 12em;
-        transform: rotateY(-90deg) translateZ(-1.5em) rotateY(-90deg);
-        animation-name: roll1b;
-    }
-
-    @keyframes roll1a {
-        to {
-            transform: rotateY(-90deg) translateZ(1.5em) rotateY(-270deg);
-        }
-    }
-
-    @keyframes roll1b {
-        to {
-            transform: rotateY(90deg) translateZ(-1.5em) rotateY(-90deg);
-        }
-    }
-
-    .assembly:nth-child(1) .side {
-        margin: -2em -1.5em;
-        width: 3em;
-        height: 4em;
-    }
-
-    .assembly:nth-child(1) .side:nth-child(1) {
-        transform: rotateY(0deg);
-    }
-
-    .assembly:nth-child(1) .side:nth-child(2) {
-        transform: rotateY(180deg);
-    }
-
-    .assembly:nth-child(2) {
-        z-index: -2;
-        transform: translate(0, -10em);
-        animation: slide2 1s ease-in-out infinite;
-    }
-
-    @keyframes slide2 {
-        to {
-            transform: translate(3em, -10em);
-        }
-    }
-
-    .assembly:nth-child(2) .roller {
-        transform: rotateY(60deg) translateZ(1.73205em) rotateY(-120deg);
-        animation: inherit;
-        animation-name: roll2a;
-    }
-
-    .assembly:nth-child(2) .roller:last-child {
-        z-index: -1;
-        margin: 0 12em;
-        transform: rotateY(-60deg) translateZ(-1.73205em) rotateY(-60deg);
-        animation-name: roll2b;
-    }
-
-    @keyframes roll2a {
-        to {
-            transform: rotateY(-60deg) translateZ(1.73205em) rotateY(-120deg);
-        }
-    }
-
-    @keyframes roll2b {
-        to {
-            transform: rotateY(60deg) translateZ(-1.73205em) rotateY(-60deg);
-        }
-    }
-
-    .assembly:nth-child(2) .side {
-        margin: -2em -1.5em;
-        width: 3em;
-        height: 4em;
-    }
-
-    .assembly:nth-child(2) .side:nth-child(1) {
-        transform: rotateY(0deg) translateZ(0.86603em);
-    }
-
-    .assembly:nth-child(2) .side:nth-child(2) {
-        transform: rotateY(120deg) translateZ(0.86603em);
-    }
-
-    .assembly:nth-child(2) .side:nth-child(3) {
-        transform: rotateY(240deg) translateZ(0.86603em);
-    }
-
-    .assembly:nth-child(3) {
-        z-index: -3;
-        transform: translate(0, -15em);
-        animation: slide3 1s ease-in-out infinite;
-    }
-
-    @keyframes slide3 {
-        to {
-            transform: translate(3em, -15em);
-        }
-    }
-
-    .assembly:nth-child(3) .roller {
-        transform: rotateY(45deg) translateZ(2.12132em) rotateY(-135deg);
-        animation: inherit;
-        animation-name: roll3a;
-    }
-
-    .assembly:nth-child(3) .roller:last-child {
-        z-index: -1;
-        margin: 0 12em;
-        transform: rotateY(-45deg) translateZ(-2.12132em) rotateY(-45deg);
-        animation-name: roll3b;
-    }
-
-    @keyframes roll3a {
-        to {
-            transform: rotateY(-45deg) translateZ(2.12132em) rotateY(-135deg);
-        }
-    }
-
-    @keyframes roll3b {
-        to {
-            transform: rotateY(45deg) translateZ(-2.12132em) rotateY(-45deg);
-        }
-    }
-
-    .assembly:nth-child(3) .side {
-        margin: -2em -1.5em;
-        width: 3em;
-        height: 4em;
-    }
-
-    .assembly:nth-child(3) .side:nth-child(1) {
-        transform: rotateY(0deg) translateZ(1.5em);
-    }
-
-    .assembly:nth-child(3) .side:nth-child(1):before {
-        height: 1.5em;
-        left: .125em;
-        width: calc(3em - .125em);
-    }
-
-    .assembly:nth-child(3) .side:nth-child(2) {
-        transform: rotateY(90deg) translateZ(1.5em);
-    }
-
-    .assembly:nth-child(3) .side:nth-child(2):before {
-        height: 1.5em;
-        left: .125em;
-        width: calc(3em - .125em);
-    }
-
-    .assembly:nth-child(3) .side:nth-child(3) {
-        transform: rotateY(180deg) translateZ(1.5em);
-    }
-
-    .assembly:nth-child(3) .side:nth-child(3):before {
-        height: 1.5em;
-        left: .125em;
-        width: calc(3em - .125em);
-    }
-
-    .assembly:nth-child(3) .side:nth-child(4) {
-        transform: rotateY(270deg) translateZ(1.5em);
-    }
-
-    .assembly:nth-child(3) .side:nth-child(4):before {
-        height: 1.5em;
-        left: .125em;
-        width: calc(3em - .125em);
-    }
-
-    .assembly:nth-child(4) {
-        z-index: -4;
-        transform: translate(0, -20em);
-        animation: slide4 1s ease-in-out infinite;
-    }
-
-    @keyframes slide4 {
-        to {
-            transform: translate(3em, -20em);
-        }
-    }
-
-    .assembly:nth-child(4) .roller {
-        transform: rotateY(36deg) translateZ(2.55195em) rotateY(-72deg);
-        animation: inherit;
-        animation-name: roll4a;
-    }
-
-    .assembly:nth-child(4) .roller:last-child {
-        z-index: -1;
-        margin: 0 12em;
-        transform: rotateY(-36deg) translateZ(-2.55195em) rotateY(-36deg);
-        animation-name: roll4b;
-    }
-
-    @keyframes roll4a {
-        to {
-            transform: rotateY(-36deg) translateZ(2.55195em) rotateY(-72deg);
-        }
-    }
-
-    @keyframes roll4b {
-        to {
-            transform: rotateY(36deg) translateZ(-2.55195em) rotateY(-36deg);
-        }
-    }
-
-    .assembly:nth-child(4) .side {
-        margin: -2em -1.5em;
-        width: 3em;
-        height: 4em;
-    }
-
-    .assembly:nth-child(4) .side:nth-child(1) {
-        transform: rotateY(0deg) translateZ(2.06457em);
-    }
-
-    .assembly:nth-child(4) .side:nth-child(1):before {
-        height: 2.06457em;
-    }
-
-    .assembly:nth-child(4) .side:nth-child(2) {
-        transform: rotateY(72deg) translateZ(2.06457em);
-    }
-
-    .assembly:nth-child(4) .side:nth-child(2):before {
-        height: 2.06457em;
-    }
-
-    .assembly:nth-child(4) .side:nth-child(3) {
-        transform: rotateY(144deg) translateZ(2.06457em);
-    }
-
-    .assembly:nth-child(4) .side:nth-child(3):before {
-        height: 2.06457em;
-    }
-
-    .assembly:nth-child(4) .side:nth-child(4) {
-        transform: rotateY(216deg) translateZ(2.06457em);
-    }
-
-    .assembly:nth-child(4) .side:nth-child(4):before {
-        height: 2.06457em;
-    }
-
-    .assembly:nth-child(4) .side:nth-child(5) {
-        transform: rotateY(288deg) translateZ(2.06457em);
-    }
-
-    .assembly:nth-child(4) .side:nth-child(5):before {
-        height: 2.06457em;
-    }
-
-    .assembly:nth-child(5) {
-        z-index: -5;
-        transform: translate(0, -25em);
-        animation: slide5 1s ease-in-out infinite;
-    }
-
-    @keyframes slide5 {
-        to {
-            transform: translate(3em, -25em);
-        }
-    }
-
-    .assembly:nth-child(5) .roller {
-        transform: rotateY(30deg) translateZ(3em) rotateY(-90deg);
-        animation: inherit;
-        animation-name: roll5a;
-    }
-
-    .assembly:nth-child(5) .roller:last-child {
-        z-index: -1;
-        margin: 0 12em;
-        transform: rotateY(-30deg) translateZ(-3em) rotateY(-30deg);
-        animation-name: roll5b;
-    }
-
-    @keyframes roll5a {
-        to {
-            transform: rotateY(-30deg) translateZ(3em) rotateY(-90deg);
-        }
-    }
-
-    @keyframes roll5b {
-        to {
-            transform: rotateY(30deg) translateZ(-3em) rotateY(-30deg);
-        }
-    }
-
-    .assembly:nth-child(5) .side {
-        margin: -2em -1.5em;
-        width: 3em;
-        height: 4em;
-    }
-
-    .assembly:nth-child(5) .side:nth-child(1) {
-        transform: rotateY(0deg) translateZ(2.59808em);
-    }
-
-    .assembly:nth-child(5) .side:nth-child(1):before {
-        height: 2.59808em;
-    }
-
-    .assembly:nth-child(5) .side:nth-child(2) {
-        transform: rotateY(60deg) translateZ(2.59808em);
-    }
-
-    .assembly:nth-child(5) .side:nth-child(2):before {
-        height: 2.59808em;
-    }
-
-    .assembly:nth-child(5) .side:nth-child(3) {
-        transform: rotateY(120deg) translateZ(2.59808em);
-    }
-
-    .assembly:nth-child(5) .side:nth-child(3):before {
-        height: 2.59808em;
-    }
-
-    .assembly:nth-child(5) .side:nth-child(4) {
-        transform: rotateY(180deg) translateZ(2.59808em);
-    }
-
-    .assembly:nth-child(5) .side:nth-child(4):before {
-        height: 2.59808em;
-    }
-
-    .assembly:nth-child(5) .side:nth-child(5) {
-        transform: rotateY(240deg) translateZ(2.59808em);
-    }
-
-    .assembly:nth-child(5) .side:nth-child(5):before {
-        height: 2.59808em;
-    }
-
-    .assembly:nth-child(5) .side:nth-child(6) {
-        transform: rotateY(300deg) translateZ(2.59808em);
-    }
-
-    .assembly:nth-child(5) .side:nth-child(6):before {
-        height: 2.59808em;
-    }
-
-    .assembly:nth-child(6) {
-        z-index: -6;
-        transform: translate(0, -30em);
-        animation: slide6 1s ease-in-out infinite;
-    }
-
-    @keyframes slide6 {
-        to {
-            transform: translate(3em, -30em);
-        }
-    }
-
-    .assembly:nth-child(6) .roller {
-        transform: rotateY(25.71429deg) translateZ(3.45715em) rotateY(-51.42857deg);
-        animation: inherit;
-        animation-name: roll6a;
-    }
-
-    .assembly:nth-child(6) .roller:last-child {
-        z-index: -1;
-        margin: 0 12em;
-        transform: rotateY(-25.71429deg) translateZ(-3.45715em) rotateY(-25.71429deg);
-        animation-name: roll6b;
-    }
-
-    @keyframes roll6a {
-        to {
-            transform: rotateY(-25.71429deg) translateZ(3.45715em) rotateY(-51.42857deg);
-        }
-    }
-
-    @keyframes roll6b {
-        to {
-            transform: rotateY(25.71429deg) translateZ(-3.45715em) rotateY(-25.71429deg);
-        }
-    }
-
-    .assembly:nth-child(6) .side {
-        margin: -2em -1.5em;
-        width: 3em;
-        height: 4em;
-    }
-
-    .assembly:nth-child(6) .side:nth-child(1) {
-        transform: rotateY(0deg) translateZ(3.11478em);
-    }
-
-    .assembly:nth-child(6) .side:nth-child(1):before {
-        height: 3.11478em;
-    }
-
-    .assembly:nth-child(6) .side:nth-child(2) {
-        transform: rotateY(51.42857deg) translateZ(3.11478em);
-    }
-
-    .assembly:nth-child(6) .side:nth-child(2):before {
-        height: 3.11478em;
-    }
-
-    .assembly:nth-child(6) .side:nth-child(3) {
-        transform: rotateY(102.85714deg) translateZ(3.11478em);
-    }
-
-    .assembly:nth-child(6) .side:nth-child(3):before {
-        height: 3.11478em;
-    }
-
-    .assembly:nth-child(6) .side:nth-child(4) {
-        transform: rotateY(154.28571deg) translateZ(3.11478em);
-    }
-
-    .assembly:nth-child(6) .side:nth-child(4):before {
-        height: 3.11478em;
-    }
-
-    .assembly:nth-child(6) .side:nth-child(5) {
-        transform: rotateY(205.71429deg) translateZ(3.11478em);
-    }
-
-    .assembly:nth-child(6) .side:nth-child(5):before {
-        height: 3.11478em;
-    }
-
-    .assembly:nth-child(6) .side:nth-child(6) {
-        transform: rotateY(257.14286deg) translateZ(3.11478em);
-    }
-
-    .assembly:nth-child(6) .side:nth-child(6):before {
-        height: 3.11478em;
-    }
-
-    .assembly:nth-child(6) .side:nth-child(7) {
-        transform: rotateY(308.57143deg) translateZ(3.11478em);
-    }
-
-    .assembly:nth-child(6) .side:nth-child(7):before {
-        height: 3.11478em;
-    }
-
-    .assembly:nth-child(7) {
-        z-index: -7;
-        transform: translate(0, -35em);
-        animation: slide7 1s ease-in-out infinite;
-    }
-
-    @keyframes slide7 {
-        to {
-            transform: translate(3em, -35em);
-        }
-    }
-
-    .assembly:nth-child(7) .roller {
-        transform: rotateY(22.5deg) translateZ(3.91969em) rotateY(-67.5deg);
-        animation: inherit;
-        animation-name: roll7a;
-    }
-
-    .assembly:nth-child(7) .roller:last-child {
-        z-index: -1;
-        margin: 0 12em;
-        transform: rotateY(-22.5deg) translateZ(-3.91969em) rotateY(-22.5deg);
-        animation-name: roll7b;
-    }
-
-    @keyframes roll7a {
-        to {
-            transform: rotateY(-22.5deg) translateZ(3.91969em) rotateY(-67.5deg);
-        }
-    }
-
-    @keyframes roll7b {
-        to {
-            transform: rotateY(22.5deg) translateZ(-3.91969em) rotateY(-22.5deg);
-        }
-    }
-
-    .assembly:nth-child(7) .side {
-        margin: -2em -1.5em;
-        width: 3em;
-        height: 4em;
-    }
-
-    .assembly:nth-child(7) .side:nth-child(1) {
-        transform: rotateY(0deg) translateZ(3.62132em);
-    }
-
-    .assembly:nth-child(7) .side:nth-child(1):before {
-        height: 3.62132em;
-    }
-
-    .assembly:nth-child(7) .side:nth-child(2) {
-        transform: rotateY(45deg) translateZ(3.62132em);
-    }
-
-    .assembly:nth-child(7) .side:nth-child(2):before {
-        height: 3.62132em;
-    }
-
-    .assembly:nth-child(7) .side:nth-child(3) {
-        transform: rotateY(90deg) translateZ(3.62132em);
-    }
-
-    .assembly:nth-child(7) .side:nth-child(3):before {
-        height: 3.62132em;
-    }
-
-    .assembly:nth-child(7) .side:nth-child(4) {
-        transform: rotateY(135deg) translateZ(3.62132em);
-    }
-
-    .assembly:nth-child(7) .side:nth-child(4):before {
-        height: 3.62132em;
-    }
-
-    .assembly:nth-child(7) .side:nth-child(5) {
-        transform: rotateY(180deg) translateZ(3.62132em);
-    }
-
-    .assembly:nth-child(7) .side:nth-child(5):before {
-        height: 3.62132em;
-    }
-
-    .assembly:nth-child(7) .side:nth-child(6) {
-        transform: rotateY(225deg) translateZ(3.62132em);
-    }
-
-    .assembly:nth-child(7) .side:nth-child(6):before {
-        height: 3.62132em;
-    }
-
-    .assembly:nth-child(7) .side:nth-child(7) {
-        transform: rotateY(270deg) translateZ(3.62132em);
-    }
-
-    .assembly:nth-child(7) .side:nth-child(7):before {
-        height: 3.62132em;
-    }
-
-    .assembly:nth-child(7) .side:nth-child(8) {
-        transform: rotateY(315deg) translateZ(3.62132em);
-    }
-
-    .assembly:nth-child(7) .side:nth-child(8):before {
-        height: 3.62132em;
-    }
-
-    .assembly:nth-child(8) {
-        z-index: -8;
-        transform: translate(0, -40em);
-        animation: slide8 1s ease-in-out infinite;
-    }
-
-    @keyframes slide8 {
-        to {
-            transform: translate(3em, -40em);
-        }
-    }
-
-    .assembly:nth-child(8) .roller {
-        transform: rotateY(20deg) translateZ(4.38571em) rotateY(-40deg);
-        animation: inherit;
-        animation-name: roll8a;
-    }
-
-    .assembly:nth-child(8) .roller:last-child {
-        z-index: -1;
-        margin: 0 12em;
-        transform: rotateY(-20deg) translateZ(-4.38571em) rotateY(-20deg);
-        animation-name: roll8b;
-    }
-
-    @keyframes roll8a {
-        to {
-            transform: rotateY(-20deg) translateZ(4.38571em) rotateY(-40deg);
-        }
-    }
-
-    @keyframes roll8b {
-        to {
-            transform: rotateY(20deg) translateZ(-4.38571em) rotateY(-20deg);
-        }
-    }
-
-    .assembly:nth-child(8) .side {
-        margin: -2em -1.5em;
-        width: 3em;
-        height: 4em;
-    }
-
-    .assembly:nth-child(8) .side:nth-child(1) {
-        transform: rotateY(0deg) translateZ(4.12122em);
-    }
-
-    .assembly:nth-child(8) .side:nth-child(1):before {
-        height: 4.12122em;
-    }
-
-    .assembly:nth-child(8) .side:nth-child(2) {
-        transform: rotateY(40deg) translateZ(4.12122em);
-    }
-
-    .assembly:nth-child(8) .side:nth-child(2):before {
-        height: 4.12122em;
-    }
-
-    .assembly:nth-child(8) .side:nth-child(3) {
-        transform: rotateY(80deg) translateZ(4.12122em);
-    }
-
-    .assembly:nth-child(8) .side:nth-child(3):before {
-        height: 4.12122em;
-    }
-
-    .assembly:nth-child(8) .side:nth-child(4) {
-        transform: rotateY(120deg) translateZ(4.12122em);
-    }
-
-    .assembly:nth-child(8) .side:nth-child(4):before {
-        height: 4.12122em;
-    }
-
-    .assembly:nth-child(8) .side:nth-child(5) {
-        transform: rotateY(160deg) translateZ(4.12122em);
-    }
-
-    .assembly:nth-child(8) .side:nth-child(5):before {
-        height: 4.12122em;
-    }
-
-    .assembly:nth-child(8) .side:nth-child(6) {
-        transform: rotateY(200deg) translateZ(4.12122em);
-    }
-
-    .assembly:nth-child(8) .side:nth-child(6):before {
-        height: 4.12122em;
-    }
-
-    .assembly:nth-child(8) .side:nth-child(7) {
-        transform: rotateY(240deg) translateZ(4.12122em);
-    }
-
-    .assembly:nth-child(8) .side:nth-child(7):before {
-        height: 4.12122em;
-    }
-
-    .assembly:nth-child(8) .side:nth-child(8) {
-        transform: rotateY(280deg) translateZ(4.12122em);
-    }
-
-    .assembly:nth-child(8) .side:nth-child(8):before {
-        height: 4.12122em;
-    }
-
-    .assembly:nth-child(8) .side:nth-child(9) {
-        transform: rotateY(320deg) translateZ(4.12122em);
-    }
-
-    .assembly:nth-child(8) .side:nth-child(9):before {
-        height: 4.12122em;
-    }
-
-    .assembly:nth-child(9) {
-        z-index: -9;
-        transform: translate(0, -45em);
-        animation: slide9 1s ease-in-out infinite;
-    }
-
-    @keyframes slide9 {
-        to {
-            transform: translate(3em, -45em);
-        }
-    }
-
-    .assembly:nth-child(9) .roller {
-        transform: rotateY(18deg) translateZ(4.8541em) rotateY(-54deg);
-        animation: inherit;
-        animation-name: roll9a;
-    }
-
-    .assembly:nth-child(9) .roller:last-child {
-        z-index: -1;
-        margin: 0 12em;
-        transform: rotateY(-18deg) translateZ(-4.8541em) rotateY(-18deg);
-        animation-name: roll9b;
-    }
-
-    @keyframes roll9a {
-        to {
-            transform: rotateY(-18deg) translateZ(4.8541em) rotateY(-54deg);
-        }
-    }
-
-    @keyframes roll9b {
-        to {
-            transform: rotateY(18deg) translateZ(-4.8541em) rotateY(-18deg);
-        }
-    }
-
-    .assembly:nth-child(9) .side {
-        margin: -2em -1.5em;
-        width: 3em;
-        height: 4em;
-    }
-
-    .assembly:nth-child(9) .side:nth-child(1) {
-        transform: rotateY(0deg) translateZ(4.61653em);
-    }
-
-    .assembly:nth-child(9) .side:nth-child(1):before {
-        height: 4.61653em;
-    }
-
-    .assembly:nth-child(9) .side:nth-child(2) {
-        transform: rotateY(36deg) translateZ(4.61653em);
-    }
-
-    .assembly:nth-child(9) .side:nth-child(2):before {
-        height: 4.61653em;
-    }
-
-    .assembly:nth-child(9) .side:nth-child(3) {
-        transform: rotateY(72deg) translateZ(4.61653em);
-    }
-
-    .assembly:nth-child(9) .side:nth-child(3):before {
-        height: 4.61653em;
-    }
-
-    .assembly:nth-child(9) .side:nth-child(4) {
-        transform: rotateY(108deg) translateZ(4.61653em);
-    }
-
-    .assembly:nth-child(9) .side:nth-child(4):before {
-        height: 4.61653em;
-    }
-
-    .assembly:nth-child(9) .side:nth-child(5) {
-        transform: rotateY(144deg) translateZ(4.61653em);
-    }
-
-    .assembly:nth-child(9) .side:nth-child(5):before {
-        height: 4.61653em;
-    }
-
-    .assembly:nth-child(9) .side:nth-child(6) {
-        transform: rotateY(180deg) translateZ(4.61653em);
-    }
-
-    .assembly:nth-child(9) .side:nth-child(6):before {
-        height: 4.61653em;
-    }
-
-    .assembly:nth-child(9) .side:nth-child(7) {
-        transform: rotateY(216deg) translateZ(4.61653em);
-    }
-
-    .assembly:nth-child(9) .side:nth-child(7):before {
-        height: 4.61653em;
-    }
-
-    .assembly:nth-child(9) .side:nth-child(8) {
-        transform: rotateY(252deg) translateZ(4.61653em);
-    }
-
-    .assembly:nth-child(9) .side:nth-child(8):before {
-        height: 4.61653em;
-    }
-
-    .assembly:nth-child(9) .side:nth-child(9) {
-        transform: rotateY(288deg) translateZ(4.61653em);
-    }
-
-    .assembly:nth-child(9) .side:nth-child(9):before {
-        height: 4.61653em;
-    }
-
-    .assembly:nth-child(9) .side:nth-child(10) {
-        transform: rotateY(324deg) translateZ(4.61653em);
-    }
-
-    .assembly:nth-child(9) .side:nth-child(10):before {
-        height: 4.61653em;
-    }
-
-    .assembly:nth-child(10) {
-        z-index: -10;
-        transform: translate(0, -50em);
-        animation: slide10 1s ease-in-out infinite;
-    }
-
-    @keyframes slide10 {
-        to {
-            transform: translate(3em, -50em);
-        }
-    }
-
-    .assembly:nth-child(10) .roller {
-        transform: rotateY(16.36364deg) translateZ(5.3242em) rotateY(-32.72727deg);
-        animation: inherit;
-        animation-name: roll10a;
-    }
-
-    .assembly:nth-child(10) .roller:last-child {
-        z-index: -1;
-        margin: 0 12em;
-        transform: rotateY(-16.36364deg) translateZ(-5.3242em) rotateY(-16.36364deg);
-        animation-name: roll10b;
-    }
-
-    @keyframes roll10a {
-        to {
-            transform: rotateY(-16.36364deg) translateZ(5.3242em) rotateY(-32.72727deg);
-        }
-    }
-
-    @keyframes roll10b {
-        to {
-            transform: rotateY(16.36364deg) translateZ(-5.3242em) rotateY(-16.36364deg);
-        }
-    }
-
-    .assembly:nth-child(10) .side {
-        margin: -2em -1.5em;
-        width: 3em;
-        height: 4em;
-    }
-
-    .assembly:nth-child(10) .side:nth-child(1) {
-        transform: rotateY(0deg) translateZ(5.10853em);
-    }
-
-    .assembly:nth-child(10) .side:nth-child(1):before {
-        height: 5.10853em;
-    }
-
-    .assembly:nth-child(10) .side:nth-child(2) {
-        transform: rotateY(32.72727deg) translateZ(5.10853em);
-    }
-
-    .assembly:nth-child(10) .side:nth-child(2):before {
-        height: 5.10853em;
-    }
-
-    .assembly:nth-child(10) .side:nth-child(3) {
-        transform: rotateY(65.45455deg) translateZ(5.10853em);
-    }
-
-    .assembly:nth-child(10) .side:nth-child(3):before {
-        height: 5.10853em;
-    }
-
-    .assembly:nth-child(10) .side:nth-child(4) {
-        transform: rotateY(98.18182deg) translateZ(5.10853em);
-    }
-
-    .assembly:nth-child(10) .side:nth-child(4):before {
-        height: 5.10853em;
-    }
-
-    .assembly:nth-child(10) .side:nth-child(5) {
-        transform: rotateY(130.90909deg) translateZ(5.10853em);
-    }
-
-    .assembly:nth-child(10) .side:nth-child(5):before {
-        height: 5.10853em;
-    }
-
-    .assembly:nth-child(10) .side:nth-child(6) {
-        transform: rotateY(163.63636deg) translateZ(5.10853em);
-    }
-
-    .assembly:nth-child(10) .side:nth-child(6):before {
-        height: 5.10853em;
-    }
-
-    .assembly:nth-child(10) .side:nth-child(7) {
-        transform: rotateY(196.36364deg) translateZ(5.10853em);
-    }
-
-    .assembly:nth-child(10) .side:nth-child(7):before {
-        height: 5.10853em;
-    }
-
-    .assembly:nth-child(10) .side:nth-child(8) {
-        transform: rotateY(229.09091deg) translateZ(5.10853em);
-    }
-
-    .assembly:nth-child(10) .side:nth-child(8):before {
-        height: 5.10853em;
-    }
-
-    .assembly:nth-child(10) .side:nth-child(9) {
-        transform: rotateY(261.81818deg) translateZ(5.10853em);
-    }
-
-    .assembly:nth-child(10) .side:nth-child(9):before {
-        height: 5.10853em;
-    }
-
-    .assembly:nth-child(10) .side:nth-child(10) {
-        transform: rotateY(294.54545deg) translateZ(5.10853em);
-    }
-
-    .assembly:nth-child(10) .side:nth-child(10):before {
-        height: 5.10853em;
-    }
-
-    .assembly:nth-child(10) .side:nth-child(11) {
-        transform: rotateY(327.27273deg) translateZ(5.10853em);
-    }
-
-    .assembly:nth-child(10) .side:nth-child(11):before {
-        height: 5.10853em;
-    }
-
-    .assembly:nth-child(11) {
-        z-index: -11;
-        transform: translate(0, -55em);
-        animation: slide11 1s ease-in-out infinite;
-    }
-
-    @keyframes slide11 {
-        to {
-            transform: translate(3em, -55em);
-        }
-    }
-
-    .assembly:nth-child(11) .roller {
-        transform: rotateY(15deg) translateZ(5.79555em) rotateY(-45deg);
-        animation: inherit;
-        animation-name: roll11a;
-    }
-
-    .assembly:nth-child(11) .roller:last-child {
-        z-index: -1;
-        margin: 0 12em;
-        transform: rotateY(-15deg) translateZ(-5.79555em) rotateY(-15deg);
-        animation-name: roll11b;
-    }
-
-    @keyframes roll11a {
-        to {
-            transform: rotateY(-15deg) translateZ(5.79555em) rotateY(-45deg);
-        }
-    }
-
-    @keyframes roll11b {
-        to {
-            transform: rotateY(15deg) translateZ(-5.79555em) rotateY(-15deg);
-        }
-    }
-
-    .assembly:nth-child(11) .side {
-        margin: -2em -1.5em;
-        width: 3em;
-        height: 4em;
-    }
-
-    .assembly:nth-child(11) .side:nth-child(1) {
-        transform: rotateY(0deg) translateZ(5.59808em);
-    }
-
-    .assembly:nth-child(11) .side:nth-child(1):before {
-        height: 5.59808em;
-    }
-
-    .assembly:nth-child(11) .side:nth-child(2) {
-        transform: rotateY(30deg) translateZ(5.59808em);
-    }
-
-    .assembly:nth-child(11) .side:nth-child(2):before {
-        height: 5.59808em;
-    }
-
-    .assembly:nth-child(11) .side:nth-child(3) {
-        transform: rotateY(60deg) translateZ(5.59808em);
-    }
-
-    .assembly:nth-child(11) .side:nth-child(3):before {
-        height: 5.59808em;
-    }
-
-    .assembly:nth-child(11) .side:nth-child(4) {
-        transform: rotateY(90deg) translateZ(5.59808em);
-    }
-
-    .assembly:nth-child(11) .side:nth-child(4):before {
-        height: 5.59808em;
-    }
-
-    .assembly:nth-child(11) .side:nth-child(5) {
-        transform: rotateY(120deg) translateZ(5.59808em);
-    }
-
-    .assembly:nth-child(11) .side:nth-child(5):before {
-        height: 5.59808em;
-    }
-
-    .assembly:nth-child(11) .side:nth-child(6) {
-        transform: rotateY(150deg) translateZ(5.59808em);
-    }
-
-    .assembly:nth-child(11) .side:nth-child(6):before {
-        height: 5.59808em;
-    }
-
-    .assembly:nth-child(11) .side:nth-child(7) {
-        transform: rotateY(180deg) translateZ(5.59808em);
-    }
-
-    .assembly:nth-child(11) .side:nth-child(7):before {
-        height: 5.59808em;
-    }
-
-    .assembly:nth-child(11) .side:nth-child(8) {
-        transform: rotateY(210deg) translateZ(5.59808em);
-    }
-
-    .assembly:nth-child(11) .side:nth-child(8):before {
-        height: 5.59808em;
-    }
-
-    .assembly:nth-child(11) .side:nth-child(9) {
-        transform: rotateY(240deg) translateZ(5.59808em);
-    }
-
-    .assembly:nth-child(11) .side:nth-child(9):before {
-        height: 5.59808em;
-    }
-
-    .assembly:nth-child(11) .side:nth-child(10) {
-        transform: rotateY(270deg) translateZ(5.59808em);
-    }
-
-    .assembly:nth-child(11) .side:nth-child(10):before {
-        height: 5.59808em;
-    }
-
-    .assembly:nth-child(11) .side:nth-child(11) {
-        transform: rotateY(300deg) translateZ(5.59808em);
-    }
-
-    .assembly:nth-child(11) .side:nth-child(11):before {
-        height: 5.59808em;
-    }
-
-    .assembly:nth-child(11) .side:nth-child(12) {
-        transform: rotateY(330deg) translateZ(5.59808em);
-    }
-
-    .assembly:nth-child(11) .side:nth-child(12):before {
-        height: 5.59808em;
-    }
-
-    .assembly:nth-child(12) {
-        z-index: -12;
-        transform: translate(0, -60em);
-        animation: slide12 1s ease-in-out infinite;
-    }
-
-    @keyframes slide12 {
-        to {
-            transform: translate(3em, -60em);
-        }
-    }
-
-    .assembly:nth-child(12) .roller {
-        transform: rotateY(13.84615deg) translateZ(6.26787em) rotateY(-27.69231deg);
-        animation: inherit;
-        animation-name: roll12a;
-    }
-
-    .assembly:nth-child(12) .roller:last-child {
-        z-index: -1;
-        margin: 0 12em;
-        transform: rotateY(-13.84615deg) translateZ(-6.26787em) rotateY(-13.84615deg);
-        animation-name: roll12b;
-    }
-
-    @keyframes roll12a {
-        to {
-            transform: rotateY(-13.84615deg) translateZ(6.26787em) rotateY(-27.69231deg);
-        }
-    }
-
-    @keyframes roll12b {
-        to {
-            transform: rotateY(13.84615deg) translateZ(-6.26787em) rotateY(-13.84615deg);
-        }
-    }
-
-    .assembly:nth-child(12) .side {
-        margin: -2em -1.5em;
-        width: 3em;
-        height: 4em;
-    }
-
-    .assembly:nth-child(12) .side:nth-child(1) {
-        transform: rotateY(0deg) translateZ(6.08574em);
-    }
-
-    .assembly:nth-child(12) .side:nth-child(1):before {
-        height: 6.08574em;
-    }
-
-    .assembly:nth-child(12) .side:nth-child(2) {
-        transform: rotateY(27.69231deg) translateZ(6.08574em);
-    }
-
-    .assembly:nth-child(12) .side:nth-child(2):before {
-        height: 6.08574em;
-    }
-
-    .assembly:nth-child(12) .side:nth-child(3) {
-        transform: rotateY(55.38462deg) translateZ(6.08574em);
-    }
-
-    .assembly:nth-child(12) .side:nth-child(3):before {
-        height: 6.08574em;
-    }
-
-    .assembly:nth-child(12) .side:nth-child(4) {
-        transform: rotateY(83.07692deg) translateZ(6.08574em);
-    }
-
-    .assembly:nth-child(12) .side:nth-child(4):before {
-        height: 6.08574em;
-    }
-
-    .assembly:nth-child(12) .side:nth-child(5) {
-        transform: rotateY(110.76923deg) translateZ(6.08574em);
-    }
-
-    .assembly:nth-child(12) .side:nth-child(5):before {
-        height: 6.08574em;
-    }
-
-    .assembly:nth-child(12) .side:nth-child(6) {
-        transform: rotateY(138.46154deg) translateZ(6.08574em);
-    }
-
-    .assembly:nth-child(12) .side:nth-child(6):before {
-        height: 6.08574em;
-    }
-
-    .assembly:nth-child(12) .side:nth-child(7) {
-        transform: rotateY(166.15385deg) translateZ(6.08574em);
-    }
-
-    .assembly:nth-child(12) .side:nth-child(7):before {
-        height: 6.08574em;
-    }
-
-    .assembly:nth-child(12) .side:nth-child(8) {
-        transform: rotateY(193.84615deg) translateZ(6.08574em);
-    }
-
-    .assembly:nth-child(12) .side:nth-child(8):before {
-        height: 6.08574em;
-    }
-
-    .assembly:nth-child(12) .side:nth-child(9) {
-        transform: rotateY(221.53846deg) translateZ(6.08574em);
-    }
-
-    .assembly:nth-child(12) .side:nth-child(9):before {
-        height: 6.08574em;
-    }
-
-    .assembly:nth-child(12) .side:nth-child(10) {
-        transform: rotateY(249.23077deg) translateZ(6.08574em);
-    }
-
-    .assembly:nth-child(12) .side:nth-child(10):before {
-        height: 6.08574em;
-    }
-
-    .assembly:nth-child(12) .side:nth-child(11) {
-        transform: rotateY(276.92308deg) translateZ(6.08574em);
-    }
-
-    .assembly:nth-child(12) .side:nth-child(11):before {
-        height: 6.08574em;
-    }
-
-    .assembly:nth-child(12) .side:nth-child(12) {
-        transform: rotateY(304.61538deg) translateZ(6.08574em);
-    }
-
-    .assembly:nth-child(12) .side:nth-child(12):before {
-        height: 6.08574em;
-    }
-
-    .assembly:nth-child(12) .side:nth-child(13) {
-        transform: rotateY(332.30769deg) translateZ(6.08574em);
-    }
-
-    .assembly:nth-child(12) .side:nth-child(13):before {
-        height: 6.08574em;
-    }
-
-    .assembly:nth-child(13) {
-        z-index: -13;
-        transform: translate(0, -65em);
-        animation: slide13 1s ease-in-out infinite;
-    }
-
-    @keyframes slide13 {
-        to {
-            transform: translate(3em, -65em);
-        }
-    }
-
-    .assembly:nth-child(13) .roller {
-        transform: rotateY(12.85714deg) translateZ(6.74094em) rotateY(-38.57143deg);
-        animation: inherit;
-        animation-name: roll13a;
-    }
-
-    .assembly:nth-child(13) .roller:last-child {
-        z-index: -1;
-        margin: 0 12em;
-        transform: rotateY(-12.85714deg) translateZ(-6.74094em) rotateY(-12.85714deg);
-        animation-name: roll13b;
-    }
-
-    @keyframes roll13a {
-        to {
-            transform: rotateY(-12.85714deg) translateZ(6.74094em) rotateY(-38.57143deg);
-        }
-    }
-
-    @keyframes roll13b {
-        to {
-            transform: rotateY(12.85714deg) translateZ(-6.74094em) rotateY(-12.85714deg);
-        }
-    }
-
-    .assembly:nth-child(13) .side {
-        margin: -2em -1.5em;
-        width: 3em;
-        height: 4em;
-    }
-
-    .assembly:nth-child(13) .side:nth-child(1) {
-        transform: rotateY(0deg) translateZ(6.57193em);
-    }
-
-    .assembly:nth-child(13) .side:nth-child(1):before {
-        height: 6.57193em;
-    }
-
-    .assembly:nth-child(13) .side:nth-child(2) {
-        transform: rotateY(25.71429deg) translateZ(6.57193em);
-    }
-
-    .assembly:nth-child(13) .side:nth-child(2):before {
-        height: 6.57193em;
-    }
-
-    .assembly:nth-child(13) .side:nth-child(3) {
-        transform: rotateY(51.42857deg) translateZ(6.57193em);
-    }
-
-    .assembly:nth-child(13) .side:nth-child(3):before {
-        height: 6.57193em;
-    }
-
-    .assembly:nth-child(13) .side:nth-child(4) {
-        transform: rotateY(77.14286deg) translateZ(6.57193em);
-    }
-
-    .assembly:nth-child(13) .side:nth-child(4):before {
-        height: 6.57193em;
-    }
-
-    .assembly:nth-child(13) .side:nth-child(5) {
-        transform: rotateY(102.85714deg) translateZ(6.57193em);
-    }
-
-    .assembly:nth-child(13) .side:nth-child(5):before {
-        height: 6.57193em;
-    }
-
-    .assembly:nth-child(13) .side:nth-child(6) {
-        transform: rotateY(128.57143deg) translateZ(6.57193em);
-    }
-
-    .assembly:nth-child(13) .side:nth-child(6):before {
-        height: 6.57193em;
-    }
-
-    .assembly:nth-child(13) .side:nth-child(7) {
-        transform: rotateY(154.28571deg) translateZ(6.57193em);
-    }
-
-    .assembly:nth-child(13) .side:nth-child(7):before {
-        height: 6.57193em;
-    }
-
-    .assembly:nth-child(13) .side:nth-child(8) {
-        transform: rotateY(180deg) translateZ(6.57193em);
-    }
-
-    .assembly:nth-child(13) .side:nth-child(8):before {
-        height: 6.57193em;
-    }
-
-    .assembly:nth-child(13) .side:nth-child(9) {
-        transform: rotateY(205.71429deg) translateZ(6.57193em);
-    }
-
-    .assembly:nth-child(13) .side:nth-child(9):before {
-        height: 6.57193em;
-    }
-
-    .assembly:nth-child(13) .side:nth-child(10) {
-        transform: rotateY(231.42857deg) translateZ(6.57193em);
-    }
-
-    .assembly:nth-child(13) .side:nth-child(10):before {
-        height: 6.57193em;
-    }
-
-    .assembly:nth-child(13) .side:nth-child(11) {
-        transform: rotateY(257.14286deg) translateZ(6.57193em);
-    }
-
-    .assembly:nth-child(13) .side:nth-child(11):before {
-        height: 6.57193em;
-    }
-
-    .assembly:nth-child(13) .side:nth-child(12) {
-        transform: rotateY(282.85714deg) translateZ(6.57193em);
-    }
-
-    .assembly:nth-child(13) .side:nth-child(12):before {
-        height: 6.57193em;
-    }
-
-    .assembly:nth-child(13) .side:nth-child(13) {
-        transform: rotateY(308.57143deg) translateZ(6.57193em);
-    }
-
-    .assembly:nth-child(13) .side:nth-child(13):before {
-        height: 6.57193em;
-    }
-
-    .assembly:nth-child(13) .side:nth-child(14) {
-        transform: rotateY(334.28571deg) translateZ(6.57193em);
-    }
-
-    .assembly:nth-child(13) .side:nth-child(14):before {
-        height: 6.57193em;
-    }
-
-    .assembly:nth-child(14) {
-        z-index: -14;
-        transform: translate(0, -70em);
-        animation: slide14 1s ease-in-out infinite;
-    }
-
-    @keyframes slide14 {
-        to {
-            transform: translate(3em, -70em);
-        }
-    }
-
-    .assembly:nth-child(14) .roller {
-        transform: rotateY(12deg) translateZ(7.2146em) rotateY(-24deg);
-        animation: inherit;
-        animation-name: roll14a;
-    }
-
-    .assembly:nth-child(14) .roller:last-child {
-        z-index: -1;
-        margin: 0 12em;
-        transform: rotateY(-12deg) translateZ(-7.2146em) rotateY(-12deg);
-        animation-name: roll14b;
-    }
-
-    @keyframes roll14a {
-        to {
-            transform: rotateY(-12deg) translateZ(7.2146em) rotateY(-24deg);
-        }
-    }
-
-    @keyframes roll14b {
-        to {
-            transform: rotateY(12deg) translateZ(-7.2146em) rotateY(-12deg);
-        }
-    }
-
-    .assembly:nth-child(14) .side {
-        margin: -2em -1.5em;
-        width: 3em;
-        height: 4em;
-    }
-
-    .assembly:nth-child(14) .side:nth-child(1) {
-        transform: rotateY(0deg) translateZ(7.05695em);
-    }
-
-    .assembly:nth-child(14) .side:nth-child(1):before {
-        height: 7.05695em;
-    }
-
-    .assembly:nth-child(14) .side:nth-child(2) {
-        transform: rotateY(24deg) translateZ(7.05695em);
-    }
-
-    .assembly:nth-child(14) .side:nth-child(2):before {
-        height: 7.05695em;
-    }
-
-    .assembly:nth-child(14) .side:nth-child(3) {
-        transform: rotateY(48deg) translateZ(7.05695em);
-    }
-
-    .assembly:nth-child(14) .side:nth-child(3):before {
-        height: 7.05695em;
-    }
-
-    .assembly:nth-child(14) .side:nth-child(4) {
-        transform: rotateY(72deg) translateZ(7.05695em);
-    }
-
-    .assembly:nth-child(14) .side:nth-child(4):before {
-        height: 7.05695em;
-    }
-
-    .assembly:nth-child(14) .side:nth-child(5) {
-        transform: rotateY(96deg) translateZ(7.05695em);
-    }
-
-    .assembly:nth-child(14) .side:nth-child(5):before {
-        height: 7.05695em;
-    }
-
-    .assembly:nth-child(14) .side:nth-child(6) {
-        transform: rotateY(120deg) translateZ(7.05695em);
-    }
-
-    .assembly:nth-child(14) .side:nth-child(6):before {
-        height: 7.05695em;
-    }
-
-    .assembly:nth-child(14) .side:nth-child(7) {
-        transform: rotateY(144deg) translateZ(7.05695em);
-    }
-
-    .assembly:nth-child(14) .side:nth-child(7):before {
-        height: 7.05695em;
-    }
-
-    .assembly:nth-child(14) .side:nth-child(8) {
-        transform: rotateY(168deg) translateZ(7.05695em);
-    }
-
-    .assembly:nth-child(14) .side:nth-child(8):before {
-        height: 7.05695em;
-    }
-
-    .assembly:nth-child(14) .side:nth-child(9) {
-        transform: rotateY(192deg) translateZ(7.05695em);
-    }
-
-    .assembly:nth-child(14) .side:nth-child(9):before {
-        height: 7.05695em;
-    }
-
-    .assembly:nth-child(14) .side:nth-child(10) {
-        transform: rotateY(216deg) translateZ(7.05695em);
-    }
-
-    .assembly:nth-child(14) .side:nth-child(10):before {
-        height: 7.05695em;
-    }
-
-    .assembly:nth-child(14) .side:nth-child(11) {
-        transform: rotateY(240deg) translateZ(7.05695em);
-    }
-
-    .assembly:nth-child(14) .side:nth-child(11):before {
-        height: 7.05695em;
-    }
-
-    .assembly:nth-child(14) .side:nth-child(12) {
-        transform: rotateY(264deg) translateZ(7.05695em);
-    }
-
-    .assembly:nth-child(14) .side:nth-child(12):before {
-        height: 7.05695em;
-    }
-
-    .assembly:nth-child(14) .side:nth-child(13) {
-        transform: rotateY(288deg) translateZ(7.05695em);
-    }
-
-    .assembly:nth-child(14) .side:nth-child(13):before {
-        height: 7.05695em;
-    }
-
-    .assembly:nth-child(14) .side:nth-child(14) {
-        transform: rotateY(312deg) translateZ(7.05695em);
-    }
-
-    .assembly:nth-child(14) .side:nth-child(14):before {
-        height: 7.05695em;
-    }
-
-    .assembly:nth-child(14) .side:nth-child(15) {
-        transform: rotateY(336deg) translateZ(7.05695em);
-    }
-
-    .assembly:nth-child(14) .side:nth-child(15):before {
-        height: 7.05695em;
-    }
-
-    .strip {
-        margin: -2em -1px;
-        width: 12em;
-        height: 4em;
-        border: solid 0.125em cyan;
-        background: linear-gradient(90deg, #00ffff 0.125em, rgba(0, 0, 0, 0) 0%) black;
-        background-size: 3em 100%;
-    }
-
-    .side:before,
-    .side:after {
-        box-sizing: border-box;
-        position: absolute;
-        left: 0;
-        width: inherit;
-        backface-visibility: hidden;
-        content: '';
-    }
-
-    .side:before {
-        top: 100%;
-        height: .125em;
-        transform-origin: 50% 0;
-        transform: rotateX(-90deg);
-        border-top: solid 0.125em cyan;
-        background: black;
-    }
-
-    .side:after {
-        height: inherit;
-        border: solid 0.125em cyan;
-        background: black;
-    }
-</style>
-<div class='scene'>
-    <div class='assembly'>
-        <div class='strip'></div>
-        <div class='roller'>
-            <div class='side'></div>
-            <div class='side'></div>
-        </div>
-        <div class='roller'>
-            <div class='side'></div>
-            <div class='side'></div>
-        </div>
+      font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      overflow-x: hidden;
+    }
+    .nx-bg {
+      position: fixed; inset: 0; z-index: 0;
+      background:
+        radial-gradient(ellipse 70% 50% at 15% -5%, rgba(91, 140, 255, 0.22), transparent),
+        radial-gradient(ellipse 55% 45% at 85% 15%, rgba(124, 92, 255, 0.16), transparent),
+        radial-gradient(ellipse 40% 30% at 50% 100%, rgba(46, 224, 196, 0.08), transparent),
+        var(--bg);
+    }
+    .nx-grid {
+      position: fixed; inset: 0; z-index: 0; opacity: 0.35;
+      background-image:
+        linear-gradient(rgba(91, 140, 255, 0.06) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(91, 140, 255, 0.06) 1px, transparent 1px);
+      background-size: 48px 48px;
+      mask-image: radial-gradient(ellipse 80% 70% at 50% 40%, black, transparent);
+    }
+    .nx-wrap {
+      position: relative; z-index: 1;
+      min-height: 100vh;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      padding: 32px 20px 48px;
+      text-align: center;
+    }
+    .nx-mascot {
+      width: min(280px, 72vw);
+      height: auto;
+      margin-bottom: 8px;
+      filter: drop-shadow(0 24px 48px rgba(91, 140, 255, 0.25));
+      animation: nx-float 4s ease-in-out infinite;
+    }
+    @keyframes nx-float {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-10px); }
+    }
+    .nx-mascot .nx-eye { animation: nx-blink 4s step-end infinite; }
+    @keyframes nx-blink {
+      0%, 92%, 100% { opacity: 1; }
+      94%, 96% { opacity: 0.15; }
+    }
+    .nx-mascot .nx-glow { animation: nx-pulse 2.5s ease-in-out infinite; }
+    @keyframes nx-pulse {
+      0%, 100% { opacity: 0.6; }
+      50% { opacity: 1; }
+    }
+    .nx-brand {
+      font-size: clamp(2rem, 6vw, 2.75rem);
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      background: linear-gradient(90deg, #fff 20%, #a8c4ff 60%, #c4b5fd);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 8px;
+    }
+    .nx-tagline {
+      font-size: 1.05rem;
+      color: var(--dim);
+      max-width: 36ch;
+      line-height: 1.55;
+      margin-bottom: 28px;
+    }
+    .nx-cards {
+      display: flex; flex-wrap: wrap; gap: 12px;
+      justify-content: center; max-width: 520px;
+    }
+    .nx-card {
+      display: flex; align-items: center; gap: 12px;
+      padding: 14px 18px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      text-decoration: none;
+      color: inherit;
+      min-width: 200px;
+      backdrop-filter: blur(12px);
+      transition: border-color 0.2s, transform 0.15s, box-shadow 0.2s;
+    }
+    .nx-card:hover {
+      border-color: rgba(91, 140, 255, 0.45);
+      transform: translateY(-2px);
+      box-shadow: 0 12px 40px rgba(91, 140, 255, 0.12);
+    }
+    .nx-card-ico {
+      width: 40px; height: 40px; border-radius: 10px;
+      display: grid; place-items: center; font-size: 1.2rem;
+      background: linear-gradient(135deg, rgba(91, 140, 255, 0.2), rgba(124, 92, 255, 0.15));
+    }
+    .nx-card b { display: block; font-size: 0.95rem; text-align: start; }
+    .nx-card small { color: var(--dim); font-size: 0.78rem; text-align: start; display: block; }
+    .nx-foot {
+      margin-top: 40px;
+      font-size: 0.78rem;
+      color: var(--dim);
+    }
+    .nx-lang {
+      margin-top: 20px;
+      display: flex; gap: 6px; flex-wrap: wrap; justify-content: center;
+    }
+    .nx-lang button {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--dim);
+      border-radius: 999px;
+      padding: 5px 12px;
+      font: inherit; font-size: 0.75rem;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .nx-lang button.active, .nx-lang button:hover {
+      color: var(--text);
+      border-color: rgba(91, 140, 255, 0.5);
+      background: rgba(91, 140, 255, 0.1);
+    }
+    html[dir="rtl"] .nx-card b, html[dir="rtl"] .nx-card small { text-align: end; }
+  </style>
+</head>
+<body>
+  <div class="nx-bg" aria-hidden="true"></div>
+  <div class="nx-grid" aria-hidden="true"></div>
+
+  <main class="nx-wrap">
+    <svg class="nx-mascot" viewBox="0 0 320 360" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <defs>
+        <linearGradient id="bodyGrad" x1="60" y1="80" x2="260" y2="320" gradientUnits="userSpaceOnUse">
+          <stop stop-color="#1a2234"/><stop offset="1" stop-color="#0d1118"/>
+        </linearGradient>
+        <linearGradient id="accentGrad" x1="0" y1="0" x2="1" y2="1">
+          <stop stop-color="#5b8cff"/><stop offset="1" stop-color="#7c5cff"/>
+        </linearGradient>
+        <filter id="glow"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+      </defs>
+      <!-- Antenna -->
+      <line x1="160" y1="48" x2="160" y2="78" stroke="url(#accentGrad)" stroke-width="3" stroke-linecap="round"/>
+      <circle class="nx-glow" cx="160" cy="40" r="8" fill="#5b8cff" filter="url(#glow)"/>
+      <!-- Head -->
+      <rect x="95" y="78" width="130" height="110" rx="28" fill="url(#bodyGrad)" stroke="url(#accentGrad)" stroke-width="2.5"/>
+      <!-- Visor -->
+      <rect x="110" y="108" width="100" height="44" rx="14" fill="#07090f" stroke="rgba(91,140,255,0.4)" stroke-width="1.5"/>
+      <ellipse class="nx-eye" cx="135" cy="130" rx="10" ry="12" fill="#5b8cff" filter="url(#glow)"/>
+      <ellipse class="nx-eye" cx="185" cy="130" rx="10" ry="12" fill="#7c5cff" filter="url(#glow)"/>
+      <!-- Smile -->
+      <path d="M130 158 Q160 172 190 158" stroke="#5b8cff" stroke-width="2.5" stroke-linecap="round" fill="none" opacity="0.7"/>
+      <!-- Body -->
+      <path d="M75 200 Q160 185 245 200 L260 290 Q160 310 60 290 Z" fill="url(#bodyGrad)" stroke="url(#accentGrad)" stroke-width="2.5"/>
+      <!-- N badge -->
+      <circle cx="160" cy="248" r="32" fill="url(#accentGrad)" filter="url(#glow)"/>
+      <text x="160" y="258" text-anchor="middle" fill="white" font-size="32" font-weight="800" font-family="system-ui,sans-serif">N</text>
+      <!-- Arms -->
+      <path d="M75 210 Q40 230 35 270" stroke="url(#accentGrad)" stroke-width="10" stroke-linecap="round" fill="none"/>
+      <path d="M245 210 Q280 230 285 270" stroke="url(#accentGrad)" stroke-width="10" stroke-linecap="round" fill="none"/>
+      <!-- Hands / nodes -->
+      <circle cx="35" cy="275" r="12" fill="#1a2234" stroke="#5b8cff" stroke-width="2"/>
+      <circle cx="285" cy="275" r="12" fill="#1a2234" stroke="#7c5cff" stroke-width="2"/>
+      <circle cx="35" cy="275" r="4" fill="#5b8cff" class="nx-glow"/>
+      <circle cx="285" cy="275" r="4" fill="#7c5cff" class="nx-glow"/>
+      <!-- Legs -->
+      <rect x="120" y="295" width="28" height="50" rx="10" fill="#1a2234" stroke="rgba(91,140,255,0.35)" stroke-width="1.5"/>
+      <rect x="172" y="295" width="28" height="50" rx="10" fill="#1a2234" stroke="rgba(91,140,255,0.35)" stroke-width="1.5"/>
+      <!-- Shadow -->
+      <ellipse cx="160" cy="352" rx="70" ry="8" fill="rgba(91,140,255,0.15)"/>
+    </svg>
+
+    <h1 class="nx-brand">NexusPanel</h1>
+    <p class="nx-tagline" id="tagline">Professional VPN Control Plane — multi-tenant, white-label, Xray-powered.</p>
+
+    <div class="nx-cards">
+      <a class="nx-card" href="/portal/">
+        <div class="nx-card-ico">👤</div>
+        <div><b id="lbl-portal">User Portal</b><small id="desc-portal">Manage subscription &amp; account</small></div>
+      </a>
+      <a class="nx-card" href="/subscribe/">
+        <div class="nx-card-ico">🔗</div>
+        <div><b id="lbl-sub">Subscription</b><small id="desc-sub">Personal VPN profile page</small></div>
+      </a>
     </div>
-    <div class='assembly'>
-        <div class='strip'></div>
-        <div class='roller'>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-        </div>
-        <div class='roller'>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-        </div>
+
+    <div class="nx-lang" role="group" aria-label="Language">
+      <button type="button" data-lang="en" class="active">English</button>
+      <button type="button" data-lang="fa">فارسی</button>
+      <button type="button" data-lang="ru">Русский</button>
+      <button type="button" data-lang="zh">中文</button>
     </div>
-    <div class='assembly'>
-        <div class='strip'></div>
-        <div class='roller'>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-        </div>
-        <div class='roller'>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-        </div>
-    </div>
-    <div class='assembly'>
-        <div class='strip'></div>
-        <div class='roller'>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-        </div>
-        <div class='roller'>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-        </div>
-    </div>
-    <div class='assembly'>
-        <div class='strip'></div>
-        <div class='roller'>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-        </div>
-        <div class='roller'>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-        </div>
-    </div>
-    <div class='assembly'>
-        <div class='strip'></div>
-        <div class='roller'>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-        </div>
-        <div class='roller'>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-        </div>
-    </div>
-    <div class='assembly'>
-        <div class='strip'></div>
-        <div class='roller'>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-        </div>
-        <div class='roller'>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-        </div>
-    </div>
-    <div class='assembly'>
-        <div class='strip'></div>
-        <div class='roller'>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-        </div>
-        <div class='roller'>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-        </div>
-    </div>
-    <div class='assembly'>
-        <div class='strip'></div>
-        <div class='roller'>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-        </div>
-        <div class='roller'>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-        </div>
-    </div>
-    <div class='assembly'>
-        <div class='strip'></div>
-        <div class='roller'>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-        </div>
-        <div class='roller'>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-        </div>
-    </div>
-    <div class='assembly'>
-        <div class='strip'></div>
-        <div class='roller'>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-        </div>
-        <div class='roller'>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-        </div>
-    </div>
-    <div class='assembly'>
-        <div class='strip'></div>
-        <div class='roller'>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-        </div>
-        <div class='roller'>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-        </div>
-    </div>
-    <div class='assembly'>
-        <div class='strip'></div>
-        <div class='roller'>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-        </div>
-        <div class='roller'>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-        </div>
-    </div>
-    <div class='assembly'>
-        <div class='strip'></div>
-        <div class='roller'>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-        </div>
-        <div class='roller'>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-            <div class='side'></div>
-        </div>
-    </div>
-</div>
+
+    <p class="nx-foot" id="foot">Admin dashboard access is provided by your operator.</p>
+  </main>
+
+  <script>
+    var T = {
+      en: {
+        tagline: "Professional VPN Control Plane — multi-tenant, white-label, Xray-powered.",
+        portal: "User Portal", descPortal: "Manage subscription & account",
+        sub: "Subscription", descSub: "Personal VPN profile page",
+        foot: "Admin dashboard access is provided by your operator."
+      },
+      fa: {
+        tagline: "کنترل‌پنل حرفه‌ای VPN — چندمستاجری، وایت‌لیبل، مبتنی بر Xray.",
+        portal: "پورتال کاربر", descPortal: "مدیریت اشتراک و حساب",
+        sub: "صفحه اشتراک", descSub: "پروفایل VPN شخصی",
+        foot: "دسترسی به داشبورد ادمین توسط اپراتور شما ارائه می‌شود."
+      },
+      ru: {
+        tagline: "Профессиональная VPN-панель — мультитenant, white-label, Xray.",
+        portal: "Портал пользователя", descPortal: "Подписка и аккаунт",
+        sub: "Подписка", descSub: "Личный VPN-профиль",
+        foot: "Доступ к админ-панели предоставляет оператор."
+      },
+      zh: {
+        tagline: "专业 VPN 控制面板 — 多租户、白标、Xray 驱动。",
+        portal: "用户门户", descPortal: "管理订阅与账户",
+        sub: "订阅页面", descSub: "个人 VPN 配置",
+        foot: "管理面板访问权限由运营商提供。"
+      }
+    };
+    function setLang(code) {
+      var d = T[code] || T.en;
+      document.documentElement.lang = code;
+      document.documentElement.dir = code === "fa" ? "rtl" : "ltr";
+      document.getElementById("tagline").textContent = d.tagline;
+      document.getElementById("lbl-portal").textContent = d.portal;
+      document.getElementById("desc-portal").textContent = d.descPortal;
+      document.getElementById("lbl-sub").textContent = d.sub;
+      document.getElementById("desc-sub").textContent = d.descSub;
+      document.getElementById("foot").textContent = d.foot;
+      document.querySelectorAll(".nx-lang button").forEach(function(b) {
+        b.classList.toggle("active", b.getAttribute("data-lang") === code);
+      });
+    }
+    var nav = (navigator.language || "en").slice(0, 2);
+    setLang(["en","fa","ru","zh"].indexOf(nav) >= 0 ? nav : "en");
+    document.querySelectorAll(".nx-lang button").forEach(function(b) {
+      b.addEventListener("click", function() { setLang(b.getAttribute("data-lang")); });
+    });
+  </script>
+</body>
+</html>

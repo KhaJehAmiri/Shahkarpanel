@@ -5,10 +5,10 @@
 # One-line install (run as root):
 #   bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/nexuspanel/master/scripts/nexuspanel.sh) install
 #
-# Opens a WEB installer in your browser (not in the terminal):
-#   http://YOUR_SERVER_IP:8765/
-# Configure language, HTTPS, admin, branding — then click Install.
-# CLI-only: SKIP_WIZARD=1 bash <(curl …) install
+# Opens an interactive TUI wizard in this terminal (default).
+#   bash <(curl -fsSL …/scripts/nexuspanel.sh) install
+# Web browser wizard: WEB_WIZARD=1 install
+# Plain CLI prompts:  SKIP_WIZARD=1 install
 #
 # After install, manage with:  nexuspanel <command>
 #   install | update | up | down | restart | status | logs
@@ -54,6 +54,7 @@ gen_dashboard_path() {
 
 INSTALLER_PORT="${INSTALLER_PORT:-8765}"
 SKIP_WIZARD="${SKIP_WIZARD:-0}"
+WEB_WIZARD="${WEB_WIZARD:-0}"
 INSTALL_CONFIG_FILE="${DATA_DIR}/.install-config.json"
 INSTALL_PROGRESS_FILE="${DATA_DIR}/.install-progress.json"
 WIZARD_PID=""
@@ -83,6 +84,28 @@ step, pct, msg, done = sys.argv[1:5]
 print(json.dumps({"step": step, "pct": int(pct), "msg": msg, "done": done.lower() == "true"}, ensure_ascii=False))
 PY
   fi > "${INSTALL_PROGRESS_FILE}"
+  print_install_progress "$pct" "$msg" "$done"
+}
+
+print_install_progress() {
+  local pct="${1:-0}" msg="${2:-}" done="${3:-false}"
+  local bar_w=32 filled=$(( pct * bar_w / 100 )) empty=$(( bar_w - filled ))
+  local bar="" i
+  for ((i = 0; i < filled; i++)); do bar+="█"; done
+  for ((i = 0; i < empty; i++)); do bar+="░"; done
+  if [ "$done" = "true" ]; then
+    echo -e "  ${GREEN}[${pct}%]${NC} ${bar}  ${msg}"
+  else
+    printf "  ${BLUE}[%3s%%]${NC} ${bar}  %s\r" "$pct" "$msg"
+  fi
+}
+
+print_install_phase_banner() {
+  echo
+  echo "${BOLD}${GREEN}╔══════════════════════════════════════════════════════════════╗${NC}"
+  echo "${BOLD}${GREEN}║           NexusPanel — Installing…                           ║${NC}"
+  echo "${BOLD}${GREEN}╚══════════════════════════════════════════════════════════════╝${NC}"
+  echo
 }
 
 load_install_config() {
@@ -136,6 +159,49 @@ print_wizard_banner() {
 
 wizard_is_ready() {
   curl -fsS --max-time 2 "http://127.0.0.1:${INSTALLER_PORT}/" >/dev/null 2>&1
+}
+
+start_tui_installer() {
+  local tui_py="${APP_DIR}/scripts/installer/tui_wizard.py"
+  if [ ! -f "$tui_py" ]; then
+    warn "Terminal installer missing — falling back."
+    return 1
+  fi
+  mkdir -p "${DATA_DIR}"
+  rm -f "${INSTALL_CONFIG_FILE}"
+  write_progress "waiting" 0 "Waiting for installer configuration…" false
+  log "Starting NexusPanel terminal installer…"
+  if python3 "$tui_py" --config "${INSTALL_CONFIG_FILE}"; then
+    ok "Install configuration received."
+    load_install_config
+    write_progress "deps" 8 "Configuration saved — preparing install…" false
+    return 0
+  fi
+  local rc=$?
+  if [ "$rc" -eq 1 ]; then
+    die "Install cancelled."
+  fi
+  return 1
+}
+
+run_install_wizard() {
+  if [ "${SKIP_WIZARD}" = "1" ]; then
+    prompt_install_config
+    return 1
+  fi
+  if [ "${WEB_WIZARD}" = "1" ]; then
+    start_install_wizard
+    return $?
+  fi
+  if start_tui_installer; then
+    return 0
+  fi
+  warn "TUI unavailable — trying web installer or CLI prompts."
+  if start_install_wizard; then
+    return 0
+  fi
+  prompt_install_config
+  return 1
 }
 
 start_install_wizard() {
@@ -594,9 +660,10 @@ cmd_install() {
   install_deps
   fetch_repo
   local wizard_active=0
-  if start_install_wizard; then
+  if run_install_wizard; then
     wizard_active=1
   fi
+  print_install_phase_banner
   write_progress "seed" 12 "Preparing data directory…" false
   seed_data_dir
   write_progress "env" 18 "Generating secrets and .env…" false
@@ -630,8 +697,8 @@ cmd_install() {
     "{\"result\":{\"admin_username\":\"${ADMIN_USERNAME:-}\",\"admin_password\":\"${ADMIN_PASSWORD:-}\",\"dashboard_path\":\"${DASHBOARD_PATH:-}\",\"dashboard_url\":\"${dash_url}\"}}"
   ok "NexusPanel is up."
   print_access
-  if [ "$wizard_active" = "1" ]; then
-    log "Installer UI will close in 30 seconds — save your credentials from the browser or below."
+  if [ -n "${WIZARD_PID}" ] && kill -0 "${WIZARD_PID}" 2>/dev/null; then
+    log "Web installer will close in 30 seconds — save credentials from the browser or below."
     sleep 30
     stop_install_wizard
   fi
@@ -845,7 +912,7 @@ ${BOLD}NexusPanel manager${NC}
 
 Usage: ${APP_NAME} <command>
 
-  install            Install via web wizard (or SKIP_WIZARD=1 for CLI)
+  install            Install via terminal TUI wizard (WEB_WIZARD=1 for browser)
   update             Pull latest and rebuild
   up | down | restart
   status             Show container status

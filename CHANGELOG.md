@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.12.2 — 2026-06-10
+
+- Fix `PermissionError: /code/.env` when bind-mounting the app dir into Docker (chown uid 1000).
+- Skip unreadable `.env` in `load_dotenv` (Compose `env_file` already injects vars).
+- Silence APScheduler `pkg_resources` deprecation warning; pin setuptools `<81`.
+
 ## 0.12.1 — 2026-06-10
 
 - Dashboard update detection via GitHub HTTPS when git is unavailable in Docker.

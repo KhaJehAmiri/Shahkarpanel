@@ -1,4 +1,12 @@
 import logging
+import warnings
+
+# APScheduler still imports pkg_resources; silence the setuptools deprecation noise.
+warnings.filterwarnings(
+    "ignore",
+    message=".*pkg_resources is deprecated.*",
+    category=UserWarning,
+)
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI, Request, status

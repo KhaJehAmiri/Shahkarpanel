@@ -113,8 +113,10 @@ def create_backup() -> str:
         if XRAY_JSON and os.path.isfile(XRAY_JSON):
             shutil.copy2(XRAY_JSON, os.path.join(workdir, "xray_config.json"))
 
-        if BACKUP_INCLUDE_ENV and os.path.isfile(".env"):
-            shutil.copy2(".env", os.path.join(workdir, "env.backup"))
+        if BACKUP_INCLUDE_ENV:
+            env_path = os.environ.get("DOTENV_PATH", ".env")
+            if os.path.isfile(env_path) and os.access(env_path, os.R_OK):
+                shutil.copy2(env_path, os.path.join(workdir, "env.backup"))
 
         with tarfile.open(archive_path, "w:gz") as tar:
             for entry in os.listdir(workdir):

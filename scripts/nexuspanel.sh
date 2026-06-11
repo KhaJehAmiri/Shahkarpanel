@@ -371,6 +371,19 @@ ensure_docker_gid() {
   fi
 }
 
+# Panel container runs as uid 1000; bind-mount makes host files visible at /code.
+ensure_code_permissions() {
+  [ -d "${APP_DIR}" ] || return 0
+  local env_file="${APP_DIR}/.env"
+  if [ -f "$env_file" ]; then
+    chown 1000:1000 "$env_file" 2>/dev/null || true
+    chmod 600 "$env_file"
+  fi
+  if [ -d "${APP_DIR}/.git" ]; then
+    chown -R 1000:1000 "${APP_DIR}" 2>/dev/null || true
+  fi
+}
+
 write_install_meta() {
   local ver sha meta
   ver="$(tr -d '[:space:]' < "${APP_DIR}/VERSION" 2>/dev/null || echo "0.0.0")"
@@ -539,6 +552,8 @@ write_env() {
   if [ -f "$env_file" ]; then
     warn ".env already exists; keeping it."
     load_env_creds
+    ensure_docker_gid
+    ensure_code_permissions
     return
   fi
 
@@ -610,7 +625,8 @@ BACKUP_INTERVAL_HOURS=24
 NODE_AGENT_IMAGE=nexuspanel/node:latest
 EOF
   [ -n "${SUPPORT_URL:-}" ] && echo "SUB_SUPPORT_URL=${SUPPORT_URL}" >> "$env_file"
-  chmod 600 "$env_file"
+  ensure_docker_gid
+  ensure_code_permissions
 
   # Stash creds so we can print them at the end (password not stored in plaintext).
   ADMIN_USERNAME="$admin_user"
@@ -725,6 +741,7 @@ cmd_install() {
   write_progress "env" 18 "Generating secrets and .env…" false
   write_env
   ensure_docker_gid
+  ensure_code_permissions
   write_progress "services" 25 "Stopping conflicting services…" false
   disable_conflicting_services
   write_progress "firewall" 30 "Configuring firewall…" false
@@ -913,6 +930,7 @@ cmd_update()  {
   fetch_repo
   seed_data_dir
   ensure_docker_gid
+  ensure_code_permissions
   load_env_creds
   disable_conflicting_services
   configure_firewall

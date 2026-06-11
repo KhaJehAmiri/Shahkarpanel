@@ -1,0 +1,22 @@
+{
+  "en": [
+    "Fix PermissionError on /code/.env when using Docker bind-mount (uid 1000)",
+    "Installer/update sets .env and app dir ownership for the panel container",
+    "Silence APScheduler pkg_resources deprecation warning in logs"
+  ],
+  "fa": [
+    "رفع PermissionError روی /code/.env با bind-mount داکر",
+    "install/update مالکیت .env و پوشه اپ را برای کانتینر تنظیم می‌کند",
+    "حذف هشدار pkg_resources از لاگ APScheduler"
+  ],
+  "ru": [
+    "Исправлен PermissionError для /code/.env при bind-mount Docker",
+    "install/update выставляет владельца .env и каталога для контейнера",
+    "Убрано предупреждение pkg_resources в логах"
+  ],
+  "zh": [
+    "修复 Docker bind-mount 时 /code/.env 权限错误",
+    "安装/更新时为容器设置 .env 与目录所有权",
+    "静默 APScheduler pkg_resources 弃用警告"
+  ]
+}

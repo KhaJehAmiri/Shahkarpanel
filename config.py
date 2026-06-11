@@ -1,7 +1,21 @@
 from decouple import config
 from dotenv import load_dotenv
+import os
+from pathlib import Path
 
-load_dotenv()
+
+def _load_env_file() -> None:
+    """Load .env when readable. Docker Compose already injects env_file vars."""
+    path = Path(os.environ.get("DOTENV_PATH", ".env"))
+    if not path.is_file() or not os.access(path, os.R_OK):
+        return
+    try:
+        load_dotenv(path)
+    except OSError:
+        pass
+
+
+_load_env_file()
 
 
 SQLALCHEMY_DATABASE_URL = config("SQLALCHEMY_DATABASE_URL", default="sqlite:///db.sqlite3")

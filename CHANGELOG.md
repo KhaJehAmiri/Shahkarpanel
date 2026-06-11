@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.12.11 — 2026-06-10
+
+- E2E verification release for the dashboard update pipeline (no functional changes).
+
 ## 0.12.10 — 2026-06-10
 
 - Reorder update steps: **pull before backup** so Docker PostgreSQL backup fix is available before dump runs.

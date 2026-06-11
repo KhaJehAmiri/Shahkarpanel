@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.11.0 — 2026-06-10
+
+- Professional web installer wizard (language, HTTPS, branding, live progress).
+- In-place panel updates from any page with automatic reload after install.
+- Localized “What’s new” popup after each update (en / fa / ru / zh).
+- Sidebar version strip with update alert for sudo admins.
+- Secret dashboard path, reseller branding isolation, live data polling.
+
 ## 0.10.0 — 2026-06-06
 
 - Tunnels now actually deploy: relay/exit Xray fragments are injected per

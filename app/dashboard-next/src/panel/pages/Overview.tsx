@@ -2,7 +2,8 @@ import { FC, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
-import { MrrSummary, RealtimeStats, ResellerWorkspace, SystemStats, TopUser, UpdateCheck } from "../api/types";
+import { MrrSummary, RealtimeStats, ResellerWorkspace, SystemStats, TopUser } from "../api/types";
+import { usePanelUpdate } from "../context/UpdateContext";
 import { useApp } from "../context/AppContext";
 import { useCopilot } from "../copilot/CopilotContext";
 import { useFetch, useLiveReload, usePolling } from "../lib/useFetch";
@@ -63,12 +64,7 @@ export const Overview: FC = () => {
     mrr.reload();
   }, 30000);
 
-  const updates = useFetch<UpdateCheck | null>(
-    () => (admin?.is_sudo ? api.get("/system/updates/check") : Promise.resolve(null)),
-    [admin?.is_sudo],
-  );
-  usePolling(() => updates.reload(), 300000, !!admin?.is_sudo);
-
+  const { hasUpdate, check, openUpdateModal } = usePanelUpdate();
   const s = sys.data;
   const bwSource = rt?.bandwidth_source ?? s?.bandwidth_source ?? "nic";
   const downHist = useMetricHistory(rt?.incoming_bandwidth_speed ?? 0);
@@ -106,8 +102,6 @@ export const Overview: FC = () => {
     ];
   }, [admin?.is_sudo, connectedNodes, hasInbounds, hasUsers, s?.total_user, t]);
 
-  const hasUpdate = (updates.data?.commits_behind ?? 0) > 0;
-
   return (
     <div className="nx-overview">
       <PageHeader
@@ -118,15 +112,20 @@ export const Overview: FC = () => {
         ) : undefined}
       />
 
-      {hasUpdate && updates.data && (
+      {hasUpdate && check && (
         <Callout tone="info" className="compact nx-mb-16">
           {t("system.updatesBehind", {
-            from: updates.data.current_version,
-            to: updates.data.remote_version,
+            from: check.current_version,
+            to: check.remote_version,
           })}{" "}
-          <Link to="/system?tab=updates" style={{ marginInlineStart: 8, fontWeight: 600 }}>
-            {t("system.tabUpdates")} →
-          </Link>
+          <button
+            type="button"
+            className="nx-link-btn"
+            style={{ marginInlineStart: 8, fontWeight: 600 }}
+            onClick={openUpdateModal}
+          >
+            {t("system.applyUpdates")} →
+          </button>
         </Callout>
       )}
 

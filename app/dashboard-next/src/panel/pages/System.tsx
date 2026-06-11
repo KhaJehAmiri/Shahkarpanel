@@ -2,8 +2,9 @@ import { FC, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
-import { ApiKey, DeploymentInfo, FeatureFlag, SystemStats, UpdateCheck, UpdateJobInfo } from "../api/types";
+import { ApiKey, DeploymentInfo, FeatureFlag, SystemStats } from "../api/types";
 import { useApp } from "../context/AppContext";
+import { usePanelUpdate } from "../context/UpdateContext";
 import { useFetch, useLiveReload } from "../lib/useFetch";
 import { PageHeader } from "../components/Shell";
 import { LANGUAGES, setLanguage } from "../i18n";
@@ -278,64 +279,29 @@ const XrayCoreTab: FC = () => {
   );
 };
 
-const UPDATE_STEP_IDS = ["backup", "pull", "migrate", "build", "restart"] as const;
 
 const UpdatesTab: FC = () => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const toast = useToast();
-  const [check, setCheck] = useState<UpdateCheck | null>(null);
+  const { check, hasUpdate, checking, refreshCheck, openUpdateModal } = usePanelUpdate();
   const [busy, setBusy] = useState(false);
-  const [job, setJob] = useState<UpdateJobInfo | null>(null);
 
   const runCheck = async () => {
     setBusy(true);
-    try {
-      const res = await api.get<UpdateCheck>("/system/updates/check");
-      setCheck(res);
-    } catch (e: any) { toast.push(e.message, "error"); } finally { setBusy(false); }
+    try { await refreshCheck(); }
+    catch (e: any) { toast.push(e.message, "error"); } finally { setBusy(false); }
   };
 
-  const runApply = async () => {
-    if (!check) return;
-    if (!confirm(t("system.updateConfirm", { from: check.current_version, to: check.remote_version }))) return;
-    setBusy(true);
-    setJob(null);
-    try {
-      const res = await api.post<{ job_id: string }>("/system/updates/apply");
-      setJob({ id: res.job_id, status: "running", finished: false, steps: UPDATE_STEP_IDS.map((id) => ({ id, status: "pending" })) });
-      toast.push(t("system.updateJobRunning"), "info");
-    } catch (e: any) { toast.push(e.message, "error"); } finally { setBusy(false); }
-  };
-
-  useEffect(() => {
-    if (!job || job.finished) return;
-    const id = setInterval(async () => {
-      try {
-        const j = await api.get<UpdateJobInfo>(`/system/updates/jobs/${job.id}`);
-        setJob(j);
-        if (j.finished) {
-          clearInterval(id);
-          if (j.status === "success") {
-            toast.push(t("system.updateDone", { version: check?.remote_version || "" }), "success");
-            runCheck();
-          } else {
-            toast.push(j.error_message || t("common.error"), "error");
-          }
-        }
-      } catch { /* ignore poll errors */ }
-    }, 2000);
-    return () => clearInterval(id);
-  }, [job?.id, job?.finished]);
-
-  const hasUpdate = (check?.commits_behind ?? 0) > 0;
+  const notes = check ? (check.release_notes_i18n?.[i18n.language] || check.release_notes_i18n?.en || []) : [];
+  const noteLines = notes.length ? notes : (check?.release_notes || check?.changelog_md || "").split("\n").filter(Boolean);
 
   return (
     <Card>
       <CardHead
         title={t("system.tabUpdates")}
         actions={<>
-          <Button variant="ghost" disabled={busy} onClick={runCheck}>{t("system.checkUpdates")}</Button>
-          <Button variant="primary" disabled={busy || !hasUpdate} onClick={runApply}>{t("system.applyUpdates")}</Button>
+          <Button variant="ghost" disabled={busy || checking} onClick={runCheck}>{t("system.checkUpdates")}</Button>
+          <Button variant="primary" disabled={busy || checking || !hasUpdate} onClick={openUpdateModal}>{t("system.applyUpdates")}</Button>
         </>}
       />
       {check && (
@@ -358,36 +324,15 @@ const UpdatesTab: FC = () => {
           ) : (
             <Callout tone="ok">{t("system.updatesUpToDate", { version: check.current_version })}</Callout>
           )}
-          {hasUpdate && (check.release_notes || check.changelog_md) && (
+          {hasUpdate && noteLines.length > 0 && (
             <div>
               <div className="nx-muted" style={{ fontSize: 12, marginBottom: 6 }}>{t("system.updateReleaseNotes")}</div>
               <ul style={{ margin: 0, paddingInlineStart: 18, fontSize: 13, lineHeight: 1.5 }}>
-                {(check.release_notes || check.changelog_md).split("\n").filter(Boolean).map((line) => (
+                {noteLines.map((line) => (
                   <li key={line}>{line}</li>
                 ))}
               </ul>
             </div>
-          )}
-        </div>
-      )}
-      {job && job.steps.length > 0 && (
-        <div className="nx-stack" style={{ marginTop: 16, gap: 6 }}>
-          <div className="nx-muted" style={{ fontSize: 12 }}>{t("system.updateProgress")}</div>
-          {UPDATE_STEP_IDS.map((stepId) => {
-            const s = job.steps.find((x) => x.id === stepId);
-            const st = s?.status || "pending";
-            const tone = st === "done" ? "ok" : st === "failed" ? "danger" : st === "running" ? "accent" : "default";
-            return (
-              <div key={stepId} className="nx-row" style={{ gap: 8, fontSize: 13 }}>
-                <Pill tone={tone} dot>{t(`system.updateStep.${stepId}`)}</Pill>
-                {s?.detail && st === "done" && stepId === "backup" && (
-                  <span className="nx-faint">{s.detail}</span>
-                )}
-              </div>
-            );
-          })}
-          {job.error_message && job.status === "failed" && (
-            <Callout tone="danger">{t("system.updateFailed")}</Callout>
           )}
         </div>
       )}

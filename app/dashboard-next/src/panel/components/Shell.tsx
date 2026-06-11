@@ -7,6 +7,7 @@ import { useCopilot } from "../copilot/CopilotContext";
 import { Copilot } from "../copilot/Copilot";
 import { LANGUAGES, setLanguage } from "../i18n";
 import { IcGlobe, IcLogout, IcMenu, IcMoon, IcSun, navIcon } from "./icons";
+import { UpdateProvider } from "../context/UpdateContext";
 import { PanelVersionStrip } from "./PanelVersionStrip";
 
 /** Simplified 5-item navigation + settings footer. */
@@ -86,6 +87,7 @@ export const Shell: FC = () => {
   const closeNav = () => setOpen(false);
 
   return (
+    <UpdateProvider sudo={!!admin?.is_sudo} lang={i18n.language}>
     <div className="nx-app">
       <div className="nx-app-bg" aria-hidden />
       <div className={`nx-scrim ${open ? "show" : ""}`} onClick={closeNav} />
@@ -210,6 +212,7 @@ export const Shell: FC = () => {
 
       <Copilot />
     </div>
+    </UpdateProvider>
   );
 };
 

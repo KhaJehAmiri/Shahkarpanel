@@ -243,8 +243,8 @@ const CloseButton: FC<{ onClose: () => void }> = ({ onClose }) => {
 /* -------------------------------- Modal -------------------------------- */
 export const Modal: FC<{
   open: boolean; title: ReactNode; onClose: () => void; children: ReactNode; footer?: ReactNode;
-  wide?: boolean; formWide?: boolean;
-}> = ({ open, title, onClose, children, footer, wide, formWide }) => {
+  wide?: boolean; formWide?: boolean; hideHead?: boolean;
+}> = ({ open, title, onClose, children, footer, wide, formWide, hideHead }) => {
   useEffect(() => {
     if (!open) return;
     const prev = document.body.style.overflow;
@@ -259,10 +259,12 @@ export const Modal: FC<{
   return createPortal(
     <div className="nx-overlay" onClick={onClose}>
       <div className={modalCls} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+        {!hideHead && (
         <div className="nx-modal-head">
           <div className="nx-card-title">{title}</div>
           <CloseButton onClose={onClose} />
         </div>
+        )}
         <div className="nx-modal-body">{children}</div>
         {footer && <div className="nx-modal-foot">{footer}</div>}
       </div>

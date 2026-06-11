@@ -957,6 +957,11 @@
       "build": "ساخت داشبورد",
       "restart": "ری‌استارت پنل"
     },
+    "updateReloading": "به‌روزرسانی تمام شد — در حال بارگذاری مجدد…",
+    "whatsNewKicker": "تغییرات جدید",
+    "whatsNewTitle": "NexusPanel نسخه {{version}}",
+    "whatsNewGotIt": "متوجه شدم",
+    "whatsNewEmpty": "این نسخه نصب شد. از بهبودها لذت ببرید!",
     "panelRegion": "منطقه پنل",
     "detectedBy": "تشخیص با",
     "gitSha": "کامیت git",

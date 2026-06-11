@@ -1085,6 +1085,11 @@
       "build": "Rebuild dashboard",
       "restart": "Restart panel"
     },
+    "updateReloading": "Update complete — reloading the dashboard…",
+    "whatsNewKicker": "What’s new",
+    "whatsNewTitle": "NexusPanel v{{version}}",
+    "whatsNewGotIt": "Got it",
+    "whatsNewEmpty": "This version is installed. Enjoy the improvements!",
     "panelRegion": "Panel region",
     "detectedBy": "Detected via",
     "gitSha": "Git commit",

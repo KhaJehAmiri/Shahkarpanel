@@ -215,6 +215,7 @@ export interface UpdateCheck {
   commits_behind: number;
   changelog_md: string;
   release_notes?: string;
+  release_notes_i18n?: Record<string, string[]>;
   breaking?: boolean;
 }
 

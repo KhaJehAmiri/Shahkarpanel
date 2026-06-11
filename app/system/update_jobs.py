@@ -1,6 +1,7 @@
 """In-process panel update jobs (backup, git pull, build, service restart)."""
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -87,6 +88,39 @@ def _version_at_git_ref(ref: str) -> Optional[str]:
 
 def _local_version() -> str:
     return _read_version_file(_VERSION_FILE) or "0.0.0"
+
+
+def _semver_tuple(version: str) -> tuple:
+    parts = (version or "0.0.0").strip().split(".")
+    nums: List[int] = []
+    for part in parts[:3]:
+        try:
+            nums.append(int(re.sub(r"[^0-9].*", "", part) or "0"))
+        except ValueError:
+            nums.append(0)
+    while len(nums) < 3:
+        nums.append(0)
+    return tuple(nums)
+
+
+def _release_notes_i18n(version: str) -> Dict[str, List[str]]:
+    path = _ROOT / "release-notes" / f"{version}.json"
+    if path.is_file():
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                out: Dict[str, List[str]] = {}
+                for lang, items in raw.items():
+                    if isinstance(items, list):
+                        out[str(lang)] = [str(x).strip() for x in items if str(x).strip()]
+                    elif items:
+                        out[str(lang)] = [str(items).strip()]
+                if out:
+                    return out
+        except (json.JSONDecodeError, OSError, TypeError):
+            pass
+    en = [ln.strip() for ln in _release_notes_for(version).split("\n") if ln.strip()]
+    return {"en": en, "fa": en, "ru": en, "zh": en}
 
 
 def _release_notes_for(version: str) -> str:
@@ -242,6 +276,7 @@ def check_updates() -> dict:
         "commits_behind": 0,
         "changelog_md": "",
         "release_notes": "",
+        "release_notes_i18n": {},
         "breaking": False,
     }
     try:
@@ -269,20 +304,28 @@ def check_updates() -> dict:
         )
         remote_version = _version_at_git_ref("origin/master") or current_version
         result["remote_version"] = remote_version
-        if result["current_sha"] == result["remote_sha"]:
+        notes_i18n = _release_notes_i18n(remote_version)
+        result["release_notes_i18n"] = notes_i18n
+        semver_ahead = _semver_tuple(remote_version) > _semver_tuple(current_version)
+        if result["current_sha"] == result["remote_sha"] and not semver_ahead:
             result["release_notes"] = ""
+            result["changelog_md"] = ""
             return result
-        count_out = subprocess.check_output(
-            ["git", "rev-list", "--count", f'{result["current_sha"]}..origin/master'],
-            cwd=_ROOT,
-            stderr=subprocess.DEVNULL,
-            text=True,
-        ).strip()
-        result["commits_behind"] = max(int(count_out or "0"), 1)
-        notes = _release_notes_for(remote_version)
-        result["release_notes"] = notes
-        result["changelog_md"] = notes
-        if "BREAKING" in notes.upper():
+        if result["current_sha"] == result["remote_sha"] and semver_ahead:
+            result["commits_behind"] = 1
+        else:
+            count_out = subprocess.check_output(
+                ["git", "rev-list", "--count", f'{result["current_sha"]}..origin/master'],
+                cwd=_ROOT,
+                stderr=subprocess.DEVNULL,
+                text=True,
+            ).strip()
+            result["commits_behind"] = max(int(count_out or "0"), 1 if semver_ahead else 0)
+        notes = notes_i18n.get("en") or []
+        joined = "\n".join(notes)
+        result["release_notes"] = joined
+        result["changelog_md"] = joined
+        if "BREAKING" in joined.upper():
             result["breaking"] = True
     except (subprocess.SubprocessError, FileNotFoundError, OSError, ValueError):
         pass

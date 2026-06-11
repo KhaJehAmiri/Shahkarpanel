@@ -44,6 +44,7 @@ class UpdateCheckResponse(BaseModel):
     commits_behind: int = 0
     changelog_md: str = ""
     release_notes: str = ""
+    release_notes_i18n: dict = {}
     breaking: bool = False
 
 

@@ -1,0 +1,30 @@
+{
+  "en": [
+    "Professional web installer with language, HTTPS, branding, and live progress",
+    "Sidebar version strip with one-click in-place updates",
+    "Secret dashboard path and reseller branding isolated from master panel",
+    "Live data refresh on Users, Nodes, Billing, Analytics, and API Keys",
+    "Default panel language set at install time (en / fa / ru / zh)"
+  ],
+  "fa": [
+    "اینستالر وب حرفه‌ای با انتخاب زبان، HTTPS، برندینگ و پیشرفت زنده",
+    "نوار نسخه در سایدبار با به‌روزرسانی یک‌کلیکی بدون ترک صفحه",
+    "مسیر مخفی داشبورد و جداسازی برند نماینده از پنل مستر",
+    "به‌روزرسانی خودکار داده‌ها در کاربران، نودها، صورتحساب و آنالیتیک",
+    "زبان پیش‌فرض پنل هنگام نصب (en / fa / ru / zh)"
+  ],
+  "ru": [
+    "Веб-установщик: язык, HTTPS, брендинг и прогресс в реальном времени",
+    "Полоска версии в сайдбаре с обновлением в один клик без смены страницы",
+    "Секретный путь dashboard и изоляция брендинга реселлера от master",
+    "Автообновление данных: пользователи, ноды, биллинг, аналитика",
+    "Язык панели по умолчанию при установке (en / fa / ru / zh)"
+  ],
+  "zh": [
+    "专业 Web 安装向导：语言、HTTPS、品牌与实时进度",
+    "侧边栏版本条，一键原地更新无需跳转",
+    "密钥 Dashboard 路径，经销商品牌与主面板隔离",
+    "用户、节点、账单、分析页面自动刷新",
+    "安装时设置默认面板语言（en / fa / ru / zh）"
+  ]
+}

@@ -1,34 +1,33 @@
 import { FC } from "react";
-import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
-import { SystemStats, UpdateCheck } from "../api/types";
+import { SystemStats } from "../api/types";
+import { usePanelUpdate } from "../context/UpdateContext";
 import { useFetch, useLiveReload, usePolling } from "../lib/useFetch";
 
 /** Sidebar version strip — visible on every dashboard page (sudo: includes update hint). */
 export const PanelVersionStrip: FC<{ sudo?: boolean }> = ({ sudo }) => {
   const { t } = useTranslation();
+  const { hasUpdate, check, openUpdateModal } = usePanelUpdate();
   const sys = useFetch<SystemStats>(() => api.get("/system"), []);
-  const updates = useFetch<UpdateCheck | null>(
-    () => (sudo ? api.get("/system/updates/check") : Promise.resolve(null)),
-    [sudo],
-  );
   useLiveReload(() => sys.reload(), 60000);
-  usePolling(() => updates.reload(), 300000, !!sudo);
 
   const version = sys.data?.version || "…";
-  const hasUpdate = sudo && (updates.data?.commits_behind ?? 0) > 0;
-  const remote = updates.data?.remote_version;
+  const remote = check?.remote_version;
 
   if (sudo && hasUpdate) {
     return (
-      <Link to="/system?tab=updates" className="nx-side-version nx-side-version-update">
+      <button
+        type="button"
+        className="nx-side-version nx-side-version-update"
+        onClick={openUpdateModal}
+      >
         <span className="nx-side-version-label">{t("overview.version")}</span>
         <span className="nx-side-version-val">v{version}</span>
         <span className="nx-side-version-new">
-          → v{remote} · {t("system.tabUpdates")}
+          → v{remote} · {t("system.applyUpdates")}
         </span>
-      </Link>
+      </button>
     );
   }
 

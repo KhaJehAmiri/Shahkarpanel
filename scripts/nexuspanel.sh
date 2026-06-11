@@ -89,8 +89,11 @@ PY
 
 print_install_progress() {
   local pct="${1:-0}" msg="${2:-}" done="${3:-false}"
-  local bar_w=32 filled=$(( pct * bar_w / 100 )) empty=$(( bar_w - filled ))
-  local bar="" i
+  local bar_w=32 filled empty bar="" i
+  pct="${pct//[^0-9]/}"
+  [ -n "$pct" ] || pct=0
+  filled=$(( pct * bar_w / 100 ))
+  empty=$(( bar_w - filled ))
   for ((i = 0; i < filled; i++)); do bar+="█"; done
   for ((i = 0; i < empty; i++)); do bar+="░"; done
   if [ "$done" = "true" ]; then

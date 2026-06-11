@@ -1,6 +1,6 @@
 import { FC, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { isUserInbound, inboundDisplayProtocol, inboundTransportLabel } from "../../lib/xrayHelpers";
+import { isManageableInbound, inboundDisplayProtocol, inboundTransportLabel } from "../../lib/xrayHelpers";
 import { Button, Callout, Card, EmptyState, Pill } from "../ui";
 import { IcEdit, IcPlus, IcTrash } from "../icons";
 import { InboundEditor } from "./InboundEditor";
@@ -12,23 +12,27 @@ export const InboundsSection: FC<{
   saving: boolean;
 }> = ({ config, onChange, onSave, saving }) => {
   const { t } = useTranslation();
-  const inbounds = ((config.inbounds || []) as Record<string, unknown>[]).filter(isUserInbound);
-  const allInbounds = (config.inbounds || []) as Record<string, unknown>[];
+  const rawInbounds = (config.inbounds || []) as Record<string, unknown>[];
+  const reservedInbounds = rawInbounds.filter((i) => !isManageableInbound(i));
+  const manageableInbounds = rawInbounds.filter(isManageableInbound);
+  const inbounds = manageableInbounds;
   const [show, setShow] = useState(false);
   const [editInbound, setEditInbound] = useState<Record<string, unknown> | null>(null);
 
+  const withInbounds = (manageable: Record<string, unknown>[]) => ({
+    ...config,
+    inbounds: [...reservedInbounds, ...manageable],
+  });
+
   const remove = (tag: string) => {
     if (!confirm(t("common.confirmDelete"))) return;
-    onChange({
-      ...config,
-      inbounds: allInbounds.filter((i) => i.tag !== tag),
-    });
+    onChange(withInbounds(manageableInbounds.filter((i) => i.tag !== tag)));
   };
 
-  const findIdx = (tag: string) => allInbounds.findIndex((i) => i.tag === tag);
+  const findIdx = (tag: string) => manageableInbounds.findIndex((i) => i.tag === tag);
 
   const applyInbound = (built: Record<string, unknown>, originalTag?: string) => {
-    const next = [...allInbounds];
+    const next = [...manageableInbounds];
     if (originalTag) {
       const idx = findIdx(originalTag);
       if (idx >= 0) next[idx] = built;
@@ -36,7 +40,7 @@ export const InboundsSection: FC<{
     } else {
       next.push(built);
     }
-    onChange({ ...config, inbounds: next });
+    onChange(withInbounds(next));
   };
 
   return (
@@ -113,7 +117,7 @@ export const InboundsSection: FC<{
       {show && (
         <InboundEditor
           initial={editInbound}
-          allInbounds={allInbounds}
+          allInbounds={manageableInbounds}
           onClose={() => setShow(false)}
           onApply={(built, originalTag) => {
             applyInbound(built, originalTag);

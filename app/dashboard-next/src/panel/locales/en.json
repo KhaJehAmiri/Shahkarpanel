@@ -178,7 +178,7 @@
     "tabAutomation": "Automation",
     "tabCommercial": "Commercial",
     "inboundHintTitle": "Start here",
-    "inboundHintBody": "Create an inbound (e.g. VLESS on port 443), then add users in the Users section."
+    "inboundHintBody": "Inbounds are optional. A fresh install starts with none — add a listener (e.g. VLESS on 443) when you need one, then create users."
   },
   "users": {
     "title": "Users",
@@ -682,7 +682,7 @@
     "expertProtocolsHint": "HTTP/SOCKS and dokodemo appear only in expert mode (System settings).",
     "protocol": "Protocol",
     "network": "Network",
-    "emptyDesc": "Add your first inbound — e.g. VLESS + Reality on 443.",
+    "emptyDesc": "No inbounds configured. Add one when you're ready — e.g. VLESS + Reality on 443.",
     "sectionBasic": "Basic",
     "sectionTransport": "Transport",
     "sectionSecurity": "Security (TLS / Reality)",

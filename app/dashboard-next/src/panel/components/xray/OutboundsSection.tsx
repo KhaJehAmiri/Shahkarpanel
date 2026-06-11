@@ -254,7 +254,7 @@ export const OutboundsSection: FC<{
       </Card>
 
       <div className="nx-row" style={{ justifyContent: "flex-end" }}>
-        <Button variant="primary" disabled={saving} onClick={onSave}>{t("common.save")}</Button>
+        <Button variant="primary" disabled={saving} onClick={() => onSave()}>{t("common.save")}</Button>
       </div>
 
       {show && (

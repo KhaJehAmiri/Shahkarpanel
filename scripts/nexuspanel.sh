@@ -454,8 +454,12 @@ seed_data_dir() {
     return 0
   fi
   # Upgrade legacy single-protocol (Shadowsocks-only) default to the current
-  # empty install template.
-  if ! grep -q '"vless"' "${target}" && ! grep -q '"vmess"' "${target}"; then
+  # empty install template. Do not touch configs that are already empty or
+  # intentionally have no vless/vmess (e.g. wireguard-only or zero inbounds).
+  if grep -q '"shadowsocks"' "${target}" \
+    && ! grep -q '"vless"' "${target}" \
+    && ! grep -q '"vmess"' "${target}" \
+    && ! grep -q '"trojan"' "${target}"; then
     cp "${target}" "${target}.bak.$(date +%s)"
     cp "${source}" "${target}"
     ok "Upgraded ${target} to empty multi-protocol-ready template; old config backed up."

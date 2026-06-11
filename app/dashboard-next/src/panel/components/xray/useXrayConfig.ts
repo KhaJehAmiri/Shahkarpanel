@@ -2,8 +2,12 @@ import { useCallback, useState } from "react";
 import { api } from "../../api/client";
 import { ensureConfigShape, NXPANEL_INBOUND_KIND, sanitizeConfigOutbounds } from "../../lib/xrayHelpers";
 
+function cloneJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
 async function prepareConfigForSave(config: Record<string, unknown>): Promise<Record<string, unknown>> {
-  const shaped = sanitizeConfigOutbounds(ensureConfigShape(config));
+  const shaped = sanitizeConfigOutbounds(ensureConfigShape(cloneJson(config)));
   const inbounds = [...((shaped.inbounds || []) as Record<string, unknown>[])];
   let changed = false;
 

@@ -179,7 +179,7 @@
     "tabAutomation": "اتوماسیون",
     "tabCommercial": "تجاری",
     "inboundHintTitle": "از اینجا شروع کنید",
-    "inboundHintBody": "یک اینباند بسازید (مثلاً VLESS روی پورت ۴۴۳) سپس در بخش کاربران، اشتراک بدهید."
+    "inboundHintBody": "اینباند اختیاری است. نصب خام بدون هیچ inbound شروع می‌شود — وقتی لازم شد یک listener (مثلاً VLESS روی ۴۴۳) بسازید و بعد کاربر اضافه کنید."
   },
   "users": {
     "title": "کاربران",
@@ -554,7 +554,7 @@
     "expertProtocolsHint": "HTTP/SOCKS و dokodemo فقط در حالت حرفه‌ای (تنظیمات سیستم) نمایش داده می‌شوند.",
     "protocol": "پروتکل",
     "network": "شبکه",
-    "emptyDesc": "اولین ورودی را اضافه کنید — مثلاً VLESS + Reality روی ۴۴۳.",
+    "emptyDesc": "هیچ inboundی تنظیم نشده. وقتی خواستید یکی اضافه کنید — مثلاً VLESS + Reality روی ۴۴۳.",
     "sectionBasic": "پایه",
     "sectionTransport": "ترنسپورت",
     "sectionSecurity": "امنیت (TLS / Reality)",

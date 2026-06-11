@@ -105,6 +105,14 @@ export function isUserInbound(i: { protocol?: string; tag?: string }): boolean {
   return INBOUND_PROTOCOLS.includes(i.protocol as (typeof INBOUND_PROTOCOLS)[number]);
 }
 
+/** Inbounds stored in xray_config.json that the panel UI may list and delete. */
+export function isManageableInbound(i: { protocol?: string; tag?: string }): boolean {
+  const tag = String(i?.tag || "").trim();
+  if (!tag || SYSTEM_TAGS.has(tag)) return false;
+  if (i?.protocol === "dokodemo-door" && tag === "API_INBOUND") return false;
+  return !!i?.protocol;
+}
+
 /** Label for inbound table/UI (amneziawg stored as wireguard in JSON). */
 export function inboundDisplayProtocol(i: {
   protocol?: string;

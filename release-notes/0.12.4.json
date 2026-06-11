@@ -1,0 +1,22 @@
+{
+  "en": [
+    "Docker entrypoint fixes xray_config.json permissions on every container start",
+    "Amnezia preset auto-generates secretKey before adding to config",
+    "Save button pre-generates WireGuard keys for empty inbounds"
+  ],
+  "fa": [
+    "entrypoint داکر در هر استارت permission فایل xray_config.json را اصلاح می‌کند",
+    "preset Amnezia قبل از افزودن، secretKey تولید می‌کند",
+    "دکمه ذخیره برای inboundهای خالی کلید WireGuard می‌سازد"
+  ],
+  "ru": [
+    "Docker entrypoint исправляет права xray_config.json при старте",
+    "Preset Amnezia генерирует secretKey заранее",
+    "Кнопка Save генерирует ключи для пустых WG inbound"
+  ],
+  "zh": [
+    "Docker entrypoint 启动时修复 xray_config.json 权限",
+    "Amnezia 预设添加前自动生成 secretKey",
+    "保存时为空的 WireGuard inbound 生成密钥"
+  ]
+}

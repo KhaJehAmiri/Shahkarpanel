@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.12.4 — 2026-06-11
+
+- Docker entrypoint (root → runuser) fixes `/var/lib/nexuspanel/xray_config.json` and `.env` permissions on start.
+- AmneziaWG preset and Save pre-generate `secretKey` in the dashboard before PUT `/core/config`.
+
 ## 0.12.3 — 2026-06-10
 
 - Fix AmneziaWG/WireGuard inbound save: auto-generate `secretKey`, map `amneziawg` → `wireguard`, strip invalid stream settings.

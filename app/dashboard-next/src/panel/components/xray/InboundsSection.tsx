@@ -1,6 +1,7 @@
 import { FC, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { isUserInbound, inboundDisplayProtocol, inboundTransportLabel, defaultAmneziaInbound, defaultHysteriaInbound, appendInboundIfMissing, hasInboundTag, DEFAULT_HYSTERIA_INBOUND_TAG, DEFAULT_AMNEZIA_INBOUND_TAG } from "../../lib/xrayHelpers";
+import { api } from "../../api/client";
+import { isUserInbound, inboundDisplayProtocol, inboundTransportLabel, defaultAmneziaInbound, defaultHysteriaInbound, appendInboundIfMissing, hasInboundTag, DEFAULT_HYSTERIA_INBOUND_TAG, DEFAULT_AMNEZIA_INBOUND_TAG, buildInboundFromForm, inboundToForm } from "../../lib/xrayHelpers";
 import { Button, Callout, Card, EmptyState, Pill, useToast } from "../ui";
 import { IcEdit, IcPlus, IcTrash } from "../icons";
 import { InboundEditor } from "./InboundEditor";
@@ -12,6 +13,7 @@ export const InboundsSection: FC<{
   saving: boolean;
 }> = ({ config, onChange, onSave, saving }) => {
   const { t } = useTranslation();
+  const toast = useToast();
   const inbounds = ((config.inbounds || []) as Record<string, unknown>[]).filter(isUserInbound);
   const allInbounds = (config.inbounds || []) as Record<string, unknown>[];
   const [show, setShow] = useState(false);
@@ -39,8 +41,19 @@ export const InboundsSection: FC<{
     onChange({ ...config, inbounds: next });
   };
 
-  const addPreset = (kind: "hysteria" | "amnezia") => {
-    const ib = kind === "hysteria" ? defaultHysteriaInbound() : defaultAmneziaInbound();
+  const addPreset = async (kind: "hysteria" | "amnezia") => {
+    let ib = kind === "hysteria" ? defaultHysteriaInbound() : defaultAmneziaInbound();
+    if (kind === "amnezia") {
+      try {
+        const kp = await api.get<{ privateKey: string }>("/core/wireguard/keypair");
+        const form = inboundToForm(ib);
+        form.wgSecretKey = kp.privateKey;
+        ib = buildInboundFromForm(form);
+      } catch (e: unknown) {
+        toast.push(e instanceof Error ? e.message : t("inbounds.wgKeygenFailed"), "error");
+        return;
+      }
+    }
     if (hasInboundTag(config, String(ib.tag))) {
       setEditInbound(allInbounds.find((i) => String(i.tag) === ib.tag) || null);
       setShow(true);

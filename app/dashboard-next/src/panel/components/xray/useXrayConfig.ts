@@ -2,6 +2,43 @@ import { useCallback, useState } from "react";
 import { api } from "../../api/client";
 import { ensureConfigShape, sanitizeConfigOutbounds } from "../../lib/xrayHelpers";
 
+async function prepareConfigForSave(config: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const shaped = sanitizeConfigOutbounds(ensureConfigShape(config));
+  const inbounds = [...((shaped.inbounds || []) as Record<string, unknown>[])];
+  let changed = false;
+
+  for (let i = 0; i < inbounds.length; i++) {
+    const ib = { ...inbounds[i] };
+    const proto = String(ib.protocol || "").toLowerCase();
+    if (proto !== "wireguard" && proto !== "amneziawg") continue;
+
+    ib.protocol = "wireguard";
+    if (ib.streamSettings) {
+      delete ib.streamSettings;
+      changed = true;
+    }
+    if (ib.sniffing) {
+      delete ib.sniffing;
+      changed = true;
+    }
+
+    const settings = { ...((ib.settings || {}) as Record<string, unknown>) };
+    delete settings.clients;
+    if (!String(settings.secretKey || "").trim()) {
+      const kp = await api.get<{ privateKey: string }>("/core/wireguard/keypair");
+      settings.secretKey = kp.privateKey;
+      changed = true;
+    }
+    if (!settings.mtu) settings.mtu = 1420;
+    if (!Array.isArray(settings.peers)) settings.peers = [];
+    ib.settings = settings;
+    inbounds[i] = ib;
+    changed = true;
+  }
+
+  return changed ? { ...shaped, inbounds } : shaped;
+}
+
 export function useXrayConfig() {
   const [config, setConfig] = useState<Record<string, unknown> | null>(null);
   const [loading, setLoading] = useState(true);
@@ -25,7 +62,7 @@ export function useXrayConfig() {
     async (next: Record<string, unknown>) => {
       setSaving(true);
       try {
-        const shaped = sanitizeConfigOutbounds(ensureConfigShape(next));
+        const shaped = await prepareConfigForSave(next);
         await api.put("/core/config", shaped);
         setConfig(shaped);
         return true;

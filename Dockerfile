@@ -44,9 +44,9 @@ RUN SITE="$(python3 -c 'import site; print(site.getsitepackages()[0])')" \
 COPY --from=build /usr/local/bin /usr/local/bin
 COPY --from=build /usr/local/share/xray /usr/local/share/xray
 
-# git + docker CLI for in-dashboard updates (bind-mount /code + docker.sock).
+# git + docker CLI + runuser for entrypoint privilege drop.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git docker.io \
+    && apt-get install -y --no-install-recommends git docker.io util-linux \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 1000 nexuspanel 2>/dev/null || true \
     && useradd --uid 1000 --gid 1000 --create-home --home-dir /home/nexuspanel nexuspanel 2>/dev/null || true
@@ -58,8 +58,10 @@ RUN test -f /code/app/dashboard-next/out/dashboard/index.html \
 
 RUN ln -sf /code/nexuspanel-cli.py /usr/bin/nexuspanel-cli \
     && chmod +x /usr/bin/nexuspanel-cli \
+    && cp /code/docker-entrypoint.sh /docker-entrypoint.sh \
+    && chmod +x /docker-entrypoint.sh \
     && chown -R nexuspanel:nexuspanel /code
 
-USER nexuspanel
-
-CMD ["bash", "-c", "alembic upgrade head && exec python main.py"]
+USER root
+ENTRYPOINT ["/docker-entrypoint.sh"]
+CMD ["panel"]

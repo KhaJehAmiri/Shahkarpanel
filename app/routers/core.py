@@ -142,7 +142,11 @@ def modify_core_config(
     except ValueError as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
 
-    startup_config = config.include_db_users()
+    try:
+        startup_config = config.include_db_users()
+    except Exception as err:
+        logger.exception("Failed to merge DB users into Xray config")
+        raise HTTPException(status_code=500, detail=f"Failed to merge users: {err}") from err
     test_err = _xray_config_test_error(dict(startup_config))
     if test_err:
         raise HTTPException(status_code=400, detail=test_err)

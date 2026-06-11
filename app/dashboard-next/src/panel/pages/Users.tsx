@@ -20,6 +20,7 @@ import { IcEdit, IcExternal, IcEye, IcPlus, IcRefresh, IcShare, IcTrash } from "
 import { UserTemplatesPanel } from "../components/UserTemplates";
 import { useApp } from "../context/AppContext";
 import { useCopilot } from "../copilot/CopilotContext";
+import { NXPANEL_WG_KIND, userDisplayProtocols, userWgStackLabels, wgKindForSubmit } from "../lib/userHelpers";
 
 const PAGE = 12;
 const STATUSES = ["active", "disabled", "expired", "limited", "on_hold"];
@@ -175,7 +176,7 @@ export const Users: FC = () => {
                 <tbody>
                   {data.users.map((u) => {
                     const pct = usagePct(u.used_traffic, u.data_limit);
-                    const protos = u.proxies ? Object.keys(u.proxies) : [];
+                    const protos = userDisplayProtocols(u.proxies as Record<string, unknown> | undefined);
                     return (
                       <tr key={u.username} style={{ cursor: "pointer" }} onClick={() => setViewUser(u)}>
                         <td style={{ fontWeight: 600 }}>{u.username}{u.note ? <div className="nx-faint" style={{ fontWeight: 400, fontSize: 11 }}>{u.note}</div> : null}</td>
@@ -289,22 +290,36 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
     // WireGuard is a first-class protocol that is *not* an Xray inbound, so it
     // never comes back from /inbounds. Surface it as a synthetic toggle: the
     // server generates the peer keypair + allocates the IP automatically.
-    next["wireguard"] = {
-      enabled: mode === "edit" ? userProtos.includes("wireguard") : !!presetWireguard,
-      tags: [],
-      flow: "",
-      method: "",
-    };
-    const wgSettings = user?.proxies?.wireguard as { awg_address?: string; address?: string } | undefined;
+    const wgSettings = user?.proxies?.wireguard as {
+      awg_address?: string;
+      address?: string;
+      nexusPanelKind?: string;
+    } | undefined;
+    const wgKind = wgSettings?.nexusPanelKind;
     const hasAwgPeer = !!(wgSettings?.awg_address);
     const hasPlainPeer = !!(wgSettings?.address);
     next["amneziawg"] = {
-      enabled: mode === "edit" ? userProtos.includes("wireguard") && hasAwgPeer : false,
+      enabled: mode === "edit" ? userProtos.includes("wireguard") && (wgKind === "amneziawg" || wgKind === "both" || (hasAwgPeer && !hasPlainPeer && !wgKind)) : false,
       tags: [],
       flow: "",
       method: "",
     };
-    if (mode === "edit" && userProtos.includes("wireguard") && hasPlainPeer && !hasAwgPeer) {
+    next["wireguard"] = {
+      enabled: mode === "edit" ? userProtos.includes("wireguard") && (wgKind === "wireguard" || wgKind === "both" || (hasPlainPeer && !hasAwgPeer && !wgKind) || (!hasPlainPeer && !hasAwgPeer && !wgKind)) : !!presetWireguard,
+      tags: [],
+      flow: "",
+      method: "",
+    };
+    if (mode === "edit" && userProtos.includes("wireguard") && wgKind === "amneziawg") {
+      next["wireguard"].enabled = false;
+      next["amneziawg"].enabled = true;
+    } else if (mode === "edit" && userProtos.includes("wireguard") && wgKind === "both") {
+      next["wireguard"].enabled = true;
+      next["amneziawg"].enabled = true;
+    } else if (mode === "edit" && userProtos.includes("wireguard") && wgKind === "wireguard") {
+      next["wireguard"].enabled = true;
+      next["amneziawg"].enabled = false;
+    } else if (mode === "edit" && userProtos.includes("wireguard") && hasPlainPeer && !hasAwgPeer) {
       next["wireguard"].enabled = true;
       next["amneziawg"].enabled = false;
     } else if (mode === "edit" && userProtos.includes("wireguard") && hasAwgPeer && !hasPlainPeer) {
@@ -397,10 +412,17 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
           if (existing.private_key) s.private_key = existing.private_key;
           if (existing.public_key) s.public_key = existing.public_key;
           if (existing.address) s.address = existing.address;
+          if ((existing as { awg_address?: string }).awg_address) {
+            s.awg_address = (existing as { awg_address?: string }).awg_address;
+          }
           if (existing.preshared_key) s.preshared_key = existing.preshared_key;
         }
+        const wgKind = wgKindForSubmit(!!protos.wireguard?.enabled, !!protos.amneziawg?.enabled);
+        if (p === "wireguard" && wgKind) {
+          s[NXPANEL_WG_KIND] = wgKind;
+        }
         if (NATIVE_PROTOCOLS.includes(p as typeof NATIVE_PROTOCOLS[number])) {
-          proxies[p] = Object.keys(s).length ? s : {};
+          proxies[p] = Object.keys(s).length ? s : (p === "wireguard" && wgKind ? { [NXPANEL_WG_KIND]: wgKind } : {});
           inb[p] = [];
         } else {
           proxies[p] = s;
@@ -957,7 +979,9 @@ const UserDetail: FC<{ username: string; onClose: () => void; onEdit: () => void
   const subscribeBrowserUrl = resolveSubscribeBrowserUrl(subUrl);
   const rawLinks = data?.links || [];
   const links = rawLinks.map((l) => absoluteUrl(l));
-  const hasWireguard = !!data?.proxies && "wireguard" in data.proxies;
+  const wgStacks = data ? userWgStackLabels(data.proxies?.wireguard as { address?: string; awg_address?: string; nexusPanelKind?: string }) : [];
+  const hasWireguard = wgStacks.includes("wireguard");
+  const hasAmneziaWg = wgStacks.includes("amneziawg");
   const wgUrl = resolveWgUrl(subUrl, "plain");
   const awgUrl = resolveWgUrl(subUrl, "awg");
 
@@ -1076,12 +1100,14 @@ const UserDetail: FC<{ username: string; onClose: () => void; onEdit: () => void
                     <a className="nx-btn" href={subUrl} target="_blank" rel="noreferrer"><IcExternal className="nx-ico" /> {t("users.open")}</a>
                     <Button onClick={() => share(subUrl)}><IcShare className="nx-ico" /> {t("users.share")}</Button>
                   </div>
-                  {hasWireguard && wgUrl && (
+                  {(hasWireguard || hasAmneziaWg) && (wgUrl || awgUrl) && (
                     <div className="nx-share-row">
-                      <a className="nx-btn" href={wgUrl} download={`${data.username}.conf`}>
-                        <IcExternal className="nx-ico" /> {t("users.downloadWireguard")}
-                      </a>
-                      {awgUrl && (
+                      {hasWireguard && wgUrl && (
+                        <a className="nx-btn" href={wgUrl} download={`${data.username}.conf`}>
+                          <IcExternal className="nx-ico" /> {t("users.downloadWireguard")}
+                        </a>
+                      )}
+                      {hasAmneziaWg && awgUrl && (
                         <a className="nx-btn" href={awgUrl} download={`${data.username}-awg.conf`}>
                           <IcExternal className="nx-ico" /> {t("users.downloadAwg")}
                         </a>

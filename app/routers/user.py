@@ -146,6 +146,21 @@ def add_user_from_template(
         username = f"{db_tpl.username_suffix}{username}"
 
     proxies = {ptype: {} for ptype in tpl.inbounds}
+    wg_kind = None
+    for inbound in db_tpl.inbounds or []:
+        from app.models.user_template import NATIVE_TEMPLATE_MARKERS
+
+        if inbound.tag in NATIVE_TEMPLATE_MARKERS:
+            tag_kind = inbound.tag.replace("__native:", "")
+            if tag_kind == "amneziawg":
+                wg_kind = "amneziawg" if wg_kind != "wireguard" else "both"
+            elif tag_kind == "wireguard":
+                wg_kind = "wireguard" if wg_kind != "amneziawg" else "both"
+    if wg_kind and ProxyTypes.WireGuard in proxies:
+        from app.wireguard.kind import NXPANEL_WG_KIND
+
+        proxies[ProxyTypes.WireGuard] = {NXPANEL_WG_KIND: wg_kind}
+
     for ptype in proxies:
         _ensure_protocol_enabled(ptype, db)
 

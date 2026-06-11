@@ -109,7 +109,11 @@ class ProxySettings(BaseModel, use_enum_values=True):
 
     def dict(self, *, no_obj=False, **kwargs):
         if no_obj:
-            return json.loads(self.json())
+            if hasattr(self, "model_dump"):
+                return self.model_dump(mode="json", by_alias=True)
+            return json.loads(self.model_dump(mode="json", by_alias=True) if hasattr(self, "model_dump") else self.json())
+        if hasattr(self, "model_dump"):
+            return self.model_dump(by_alias=True, **kwargs)
         return super().dict(**kwargs)
 
 
@@ -198,11 +202,18 @@ class WireGuardSettings(ProxySettings):
     user is assigned to a node — it stays ``None`` until then. Keys are
     auto-generated when absent so an empty ``{}`` from the API yields a valid
     peer.
+
+    ``nexusPanelKind`` records whether the user was assigned plain WG, AmneziaWG,
+    or both (panel-only; ignored by the node).
     """
     private_key: str = ""
     public_key: str = ""
     address: Optional[str] = None
+    awg_address: Optional[str] = None
     preshared_key: Optional[str] = None
+    nexus_panel_kind: Optional[str] = Field(default=None, alias="nexusPanelKind")
+
+    model_config = ConfigDict(populate_by_name=True)
 
     @model_validator(mode="after")
     def _ensure_keys(self):

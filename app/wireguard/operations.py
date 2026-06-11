@@ -40,8 +40,13 @@ def _settings_key_for_subnet(cfg, subnet: str) -> str:
 
 def ensure_user_address(db, proxy: Proxy, subnet: str, *, cfg=None) -> Optional[str]:
     """Allocate a peer IP from ``subnet`` for plain or AWG stack."""
+    from app.wireguard.kind import wg_wants_awg_address, wg_wants_plain_address
+
     key = _settings_key_for_subnet(cfg, subnet)
     settings = dict(proxy.settings or {})
+    wants = wg_wants_awg_address if key == "awg_address" else wg_wants_plain_address
+    if not wants(settings):
+        return settings.get(key)
     if settings.get(key):
         return settings[key]
 
@@ -63,13 +68,18 @@ def ensure_user_address(db, proxy: Proxy, subnet: str, *, cfg=None) -> Optional[
 
 
 def ensure_addresses_for_subnet(db, subnet: str, *, cfg=None) -> None:
-    """Allocate peer IPs for every WG user missing one in ``subnet``."""
+    """Allocate peer IPs for WG users missing one in ``subnet``."""
+    from app.wireguard.kind import wg_wants_awg_address, wg_wants_plain_address
+
     key = _settings_key_for_subnet(cfg, subnet)
+    wants = wg_wants_awg_address if key == "awg_address" else wg_wants_plain_address
     proxies = _all_wg_proxies(db)
     used = [p.settings.get(key) for p in proxies if p.settings and p.settings.get(key)]
     allocator = WireGuardPeerIPAllocator(subnet, used=used)
     for proxy in proxies:
         settings = dict(proxy.settings or {})
+        if not wants(settings):
+            continue
         if settings.get(key):
             continue
         address = allocator.allocate()

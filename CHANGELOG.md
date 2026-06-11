@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.12.7 — 2026-06-10
+
+- Users page: selecting **AmneziaWG** shows the correct badge (not WireGuard).
+- Persist `nexusPanelKind` on user WireGuard proxy settings; allocate plain vs AWG peer IPs based on user intent.
+
 ## 0.12.6 — 2026-06-10
 
 - AmneziaWG inbounds display as **amneziawg** / **AWG** in the Inbounds table (Xray JSON still uses `wireguard`).

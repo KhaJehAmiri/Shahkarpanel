@@ -153,7 +153,13 @@ const TemplateFormModal: FC<{ row?: UserTemplateRow; onClose: () => void; onDone
         if (p === "wireguard" || p === "amneziawg") return;
         if (nativeOn[p]) inboundsBody[p] = [];
       });
-      if (nativeOn.wireguard || nativeOn.amneziawg) inboundsBody.wireguard = [];
+      if (nativeOn.wireguard && nativeOn.amneziawg) {
+        inboundsBody.wireguard = ["__native:wireguard", "__native:amneziawg"];
+      } else if (nativeOn.amneziawg) {
+        inboundsBody.wireguard = ["__native:amneziawg"];
+      } else if (nativeOn.wireguard) {
+        inboundsBody.wireguard = ["__native:wireguard"];
+      }
       const body: Record<string, unknown> = {
         name: name.trim(),
         data_limit: dataLimitValue ? dataLimitToBytes(dataLimitValue, dataLimitUnit) : 0,

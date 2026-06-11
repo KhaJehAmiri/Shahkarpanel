@@ -1,0 +1,18 @@
+{
+  "en": [
+    "Users page: AmneziaWG selection now shows AmneziaWG badge instead of WireGuard",
+    "Persist nexusPanelKind on user WireGuard proxy; allocate AWG/plain IPs by intent"
+  ],
+  "fa": [
+    "صفحه Users: انتخاب AmneziaWG حالا برچسب AmneziaWG نشان می‌دهد نه WireGuard",
+    "ذخیره nexusPanelKind روی پروکسی کاربر؛ تخصیص IP بر اساس نوع AWG/ساده"
+  ],
+  "ru": [
+    "Users: выбор AmneziaWG показывает бейдж AmneziaWG, а не WireGuard",
+    "Маркер nexusPanelKind у WG-прокси; выделение IP по типу AWG/plain"
+  ],
+  "zh": [
+    "Users 页：选择 AmneziaWG 显示 AmneziaWG 徽章而非 WireGuard",
+    "在用户 WireGuard 代理上持久化 nexusPanelKind；按意图分配 AWG/普通 IP"
+  ]
+}

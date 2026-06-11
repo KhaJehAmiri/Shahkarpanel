@@ -76,6 +76,12 @@ def test_wireguard_settings_fills_public_from_given_private():
     assert s.public_key == pub
 
 
+def test_wireguard_settings_keeps_panel_kind_marker():
+    s = WireGuardSettings.model_validate({"nexusPanelKind": "amneziawg"})
+    dumped = s.dict(no_obj=True)
+    assert dumped["nexusPanelKind"] == "amneziawg"
+
+
 def test_wireguard_settings_revoke_rotates_keys():
     s = WireGuardSettings()
     old_priv, old_pub = s.private_key, s.public_key

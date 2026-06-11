@@ -137,6 +137,7 @@ def modify_core_config(
 ) -> dict:
     """Modify the core configuration and restart the core."""
     payload = normalize_core_config_payload(payload)
+    payload["inbounds"] = list(payload.get("inbounds") or [])
     try:
         config = XRayConfig(payload, api_port=xray.config.api_port)
     except ValueError as err:

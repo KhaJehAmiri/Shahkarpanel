@@ -40,6 +40,15 @@ def test_xray_config_accepts_missing_or_empty_inbounds():
         assert cfg.inbounds_by_protocol == {}
 
 
+def test_xray_config_accepts_empty_inbounds_list():
+    cfg = XRayConfig(
+        {"inbounds": [], "outbounds": [{"protocol": "freedom", "tag": "DIRECT"}]},
+        api_port=8080,
+    )
+    assert cfg.inbounds_by_protocol == {}
+    assert cfg.get_inbound("API_INBOUND") is not None
+
+
 def test_default_xray_template_loads_into_xray_config():
     cfg = XRayConfig(DEFAULT, api_port=8080)
     assert cfg.get_inbound("API_INBOUND") is not None

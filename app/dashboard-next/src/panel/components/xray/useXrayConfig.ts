@@ -44,7 +44,7 @@ async function prepareConfigForSave(config: Record<string, unknown>): Promise<Re
     changed = true;
   }
 
-  return changed ? { ...shaped, inbounds } : shaped;
+  return { ...shaped, inbounds };
 }
 
 export function useXrayConfig() {

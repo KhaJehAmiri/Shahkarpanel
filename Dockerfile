@@ -44,6 +44,13 @@ RUN SITE="$(python3 -c 'import site; print(site.getsitepackages()[0])')" \
 COPY --from=build /usr/local/bin /usr/local/bin
 COPY --from=build /usr/local/share/xray /usr/local/share/xray
 
+# git + docker CLI for in-dashboard updates (bind-mount /code + docker.sock).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git docker.io \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 1000 nexuspanel 2>/dev/null || true \
+    && useradd --uid 1000 --gid 1000 --create-home --home-dir /home/nexuspanel nexuspanel 2>/dev/null || true
+
 COPY . /code
 
 RUN test -f /code/app/dashboard-next/out/dashboard/index.html \
@@ -51,8 +58,6 @@ RUN test -f /code/app/dashboard-next/out/dashboard/index.html \
 
 RUN ln -sf /code/nexuspanel-cli.py /usr/bin/nexuspanel-cli \
     && chmod +x /usr/bin/nexuspanel-cli \
-    && groupadd --gid 1000 nexuspanel 2>/dev/null || true \
-    && useradd --uid 1000 --gid 1000 --create-home --home-dir /home/nexuspanel nexuspanel 2>/dev/null || true \
     && chown -R nexuspanel:nexuspanel /code
 
 USER nexuspanel

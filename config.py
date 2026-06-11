@@ -48,6 +48,10 @@ LOGIN_MAX_WINDOW_SECONDS = config("LOGIN_MAX_WINDOW_SECONDS", cast=int, default=
 PROVISIONING_SSH_STRICT_HOST_KEY = config("PROVISIONING_SSH_STRICT_HOST_KEY", cast=bool, default=False)
 # Interval (seconds) for the cluster failover detector. 0 disables it.
 CLUSTER_FAILOVER_CHECK_INTERVAL = config("CLUSTER_FAILOVER_CHECK_INTERVAL", cast=int, default=0)
+
+# Panel self-update: GitHub repo for version check when git is unavailable (Docker).
+PANEL_GITHUB_REPO = config("PANEL_GITHUB_REPO", default="KhaJehAmiri/nexuspanel")
+PANEL_GITHUB_BRANCH = config("PANEL_GITHUB_BRANCH", default="master")
 # A node must stay in error for this many seconds before being considered down.
 CLUSTER_NODE_DOWN_SECONDS = config("CLUSTER_NODE_DOWN_SECONDS", cast=int, default=180)
 # Automatically disable a persistently-down node (failover). Off by default.

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -11,16 +12,50 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Literal, Optional
+from urllib.error import URLError
+from urllib.request import urlopen
 
 JobStatus = Literal["pending", "running", "success", "failed"]
 StepStatus = Literal["pending", "running", "done", "failed"]
 
 _ROOT = Path(__file__).resolve().parents[2]
 _VERSION_FILE = _ROOT / "VERSION"
+_META_FILE = Path(os.environ.get("NEXUSPANEL_DATA_DIR", "/var/lib/nexuspanel")) / "install-meta.json"
 _lock = threading.Lock()
 _jobs: Dict[str, "UpdateJob"] = {}
 
 STEP_ORDER = ("backup", "pull", "migrate", "build", "restart")
+
+
+def _github_repo() -> str:
+    try:
+        from config import PANEL_GITHUB_REPO
+
+        return PANEL_GITHUB_REPO.strip() or "KhaJehAmiri/nexuspanel"
+    except Exception:
+        return "KhaJehAmiri/nexuspanel"
+
+
+def _github_branch() -> str:
+    try:
+        from config import PANEL_GITHUB_BRANCH
+
+        return PANEL_GITHUB_BRANCH.strip() or "master"
+    except Exception:
+        return "master"
+
+
+def _github_raw(path: str) -> str:
+    branch = _github_branch()
+    return f"https://raw.githubusercontent.com/{_github_repo()}/{branch}/{path.lstrip('/')}"
+
+
+def _fetch_text(url: str, timeout: int = 20) -> Optional[str]:
+    try:
+        with urlopen(url, timeout=timeout) as resp:
+            return resp.read().decode("utf-8", errors="replace").strip()
+    except (URLError, OSError, ValueError, TimeoutError):
+        return None
 
 
 @dataclass
@@ -72,6 +107,24 @@ def _read_version_file(path: Path) -> Optional[str]:
     return m.group(1) if m else None
 
 
+def _write_install_meta(version: str, sha: Optional[str] = None) -> None:
+    try:
+        _META_FILE.parent.mkdir(parents=True, exist_ok=True)
+        payload = {"version": version, "sha": sha, "updated_at": int(time.time())}
+        _META_FILE.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _read_install_meta() -> dict:
+    if not _META_FILE.is_file():
+        return {}
+    try:
+        return json.loads(_META_FILE.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
 def _version_at_git_ref(ref: str) -> Optional[str]:
     try:
         out = subprocess.check_output(
@@ -88,6 +141,27 @@ def _version_at_git_ref(ref: str) -> Optional[str]:
 
 def _local_version() -> str:
     return _read_version_file(_VERSION_FILE) or "0.0.0"
+
+
+def _remote_version_https() -> Optional[str]:
+    raw = _fetch_text(_github_raw("VERSION"))
+    if not raw:
+        return None
+    m = re.match(r"^(\d+\.\d+\.\d+)", raw.strip())
+    return m.group(1) if m else None
+
+
+def _remote_sha_https() -> Optional[str]:
+    repo = _github_repo()
+    branch = _github_branch()
+    url = f"https://api.github.com/repos/{repo}/commits/{branch}"
+    try:
+        with urlopen(url, timeout=20) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        sha = data.get("sha") or ""
+        return sha[:7] if sha else None
+    except (URLError, OSError, json.JSONDecodeError, ValueError, KeyError):
+        return None
 
 
 def _semver_tuple(version: str) -> tuple:
@@ -119,6 +193,19 @@ def _release_notes_i18n(version: str) -> Dict[str, List[str]]:
                     return out
         except (json.JSONDecodeError, OSError, TypeError):
             pass
+    remote = _fetch_text(_github_raw(f"release-notes/{version}.json"))
+    if remote:
+        try:
+            raw = json.loads(remote)
+            if isinstance(raw, dict):
+                out = {}
+                for lang, items in raw.items():
+                    if isinstance(items, list):
+                        out[str(lang)] = [str(x).strip() for x in items if str(x).strip()]
+                if out:
+                    return out
+        except json.JSONDecodeError:
+            pass
     en = [ln.strip() for ln in _release_notes_for(version).split("\n") if ln.strip()]
     return {"en": en, "fa": en, "ru": en, "zh": en}
 
@@ -126,6 +213,13 @@ def _release_notes_i18n(version: str) -> Dict[str, List[str]]:
 def _release_notes_for(version: str) -> str:
     changelog = _ROOT / "CHANGELOG.md"
     if not changelog.is_file():
+        remote = _fetch_text(_github_raw("CHANGELOG.md"))
+        if remote:
+            pattern = rf"##\s+{re.escape(version)}\b[^\n]*\n(.*?)(?=\n##\s+|\Z)"
+            m = re.search(pattern, remote, re.DOTALL)
+            if m:
+                lines = [line[2:].strip() for line in m.group(1).splitlines() if line.strip().startswith("- ")]
+                return "\n".join(lines[:8])
         return ""
     try:
         text = changelog.read_text(encoding="utf-8")
@@ -161,23 +255,53 @@ def _run_cmd_quiet(cmd: List[str], cwd: Optional[Path] = None, timeout: int = 60
         raise RuntimeError(msg[-1] if msg else f"exit {proc.returncode}")
 
 
+def _git_available() -> bool:
+    return shutil.which("git") is not None and (_ROOT / ".git").is_dir()
+
+
 def _docker_available() -> bool:
-    return shutil.which("docker") is not None
+    return Path("/var/run/docker.sock").exists() and shutil.which("docker") is not None
+
+
+def _compose_file() -> Optional[Path]:
+    for name in ("docker-compose.postgres.yml", "docker-compose.yml"):
+        path = _ROOT / name
+        if path.is_file():
+            return path
+    return None
+
+
+def _git_pull() -> None:
+    branch = _github_branch()
+    _run_cmd_quiet(["git", "fetch", "origin", branch, "--depth", "1"])
+    _run_cmd_quiet(["git", "reset", "--hard", f"origin/{branch}"])
+
+
+def _docker_compose_rebuild() -> None:
+    compose = _compose_file()
+    if not compose or not _docker_available():
+        raise RuntimeError("docker_compose_unavailable")
+    _run_cmd_quiet(
+        ["docker", "compose", "-f", str(compose.name), "up", "-d", "--build", "nexuspanel"],
+        cwd=_ROOT,
+        timeout=1200,
+    )
 
 
 def _restart_panel(job: UpdateJob) -> None:
-    compose_pg = _ROOT / "docker-compose.postgres.yml"
-    compose_default = _ROOT / "docker-compose.yml"
+    compose = _compose_file()
+    if _docker_available() and compose:
+        _run_cmd_quiet(
+            ["docker", "compose", "-f", str(compose.name), "restart", "nexuspanel"],
+            cwd=_ROOT,
+            timeout=180,
+        )
+        return
     if _docker_available():
-        if compose_pg.is_file():
+        if compose and compose.name == "docker-compose.postgres.yml":
             _run_cmd_quiet(
-                ["docker", "compose", "-f", str(compose_pg), "restart", "nexuspanel"],
-                timeout=180,
-            )
-            return
-        if compose_default.is_file():
-            _run_cmd_quiet(
-                ["docker", "compose", "-f", str(compose_default), "restart", "nexuspanel"],
+                ["docker", "compose", "-f", str(compose.name), "restart", "nexuspanel"],
+                cwd=_ROOT,
                 timeout=180,
             )
             return
@@ -212,23 +336,50 @@ def _worker(job_id: str) -> None:
         job.step_done("backup", detail=Path(path).name)
 
         job.step_running("pull")
-        _run_cmd_quiet(["git", "fetch", "origin"])
-        _run_cmd_quiet(["git", "pull", "origin", "master"])
-        job.step_done("pull")
+        if _git_available():
+            _git_pull()
+            job.step_done("pull", detail=f"origin/{_github_branch()}")
+        else:
+            raise RuntimeError(
+                "git unavailable — bind-mount the app dir (/opt/nexuspanel:/code) and install git in the panel container"
+            )
 
         job.step_running("migrate")
         _run_cmd_quiet(["alembic", "upgrade", "head"])
         job.step_done("migrate")
 
         job.step_running("build")
-        build = _ROOT / "build_dashboard.sh"
-        if build.is_file():
-            _run_cmd_quiet(["bash", str(build)], timeout=900)
-        job.step_done("build")
+        if _docker_available() and _compose_file():
+            _docker_compose_rebuild()
+            job.step_done("build", detail="docker compose build")
+        else:
+            build = _ROOT / "build_dashboard.sh"
+            if build.is_file() and shutil.which("npm"):
+                _run_cmd_quiet(["bash", str(build)], timeout=900)
+                job.step_done("build", detail="dashboard build")
+            else:
+                job.step_done("build", detail="skipped (prebuilt assets from git)")
 
         job.step_running("restart")
-        _restart_panel(job)
-        job.step_done("restart")
+        if _docker_available() and _compose_file():
+            job.step_done("restart", detail="container rebuilt")
+        else:
+            _restart_panel(job)
+            job.step_done("restart")
+
+        new_ver = _local_version()
+        sha = None
+        if _git_available():
+            try:
+                sha = subprocess.check_output(
+                    ["git", "rev-parse", "--short", "HEAD"],
+                    cwd=_ROOT,
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                ).strip()
+            except subprocess.SubprocessError:
+                pass
+        _write_install_meta(new_ver, sha)
         job.status = "success"
     except Exception as exc:
         job.error_message = str(exc)
@@ -250,8 +401,6 @@ def start_apply_job() -> str:
     job_id = uuid.uuid4().hex[:12]
     job = UpdateJob(id=job_id)
     with _lock:
-        # Refuse to start a second update concurrently — two `git pull` +
-        # migrate + build + restart runs would race on the working tree.
         for existing in _jobs.values():
             if existing.status not in ("success", "failed"):
                 raise UpdateInProgress(existing.id)
@@ -266,69 +415,97 @@ def get_job(job_id: str) -> Optional[UpdateJob]:
 
 
 def check_updates() -> dict:
-    """Compare installed semver to origin/master VERSION file."""
+    """Compare installed semver to GitHub master (git fetch or HTTPS fallback)."""
     current_version = _local_version()
+    meta = _read_install_meta()
     result = {
         "current_version": current_version,
         "remote_version": current_version,
-        "current_sha": None,
+        "current_sha": meta.get("sha"),
         "remote_sha": None,
         "commits_behind": 0,
+        "update_available": False,
+        "check_source": "none",
         "changelog_md": "",
         "release_notes": "",
         "release_notes_i18n": {},
         "breaking": False,
     }
-    try:
-        result["current_sha"] = (
-            subprocess.check_output(
-                ["git", "rev-parse", "--short", "HEAD"],
+
+    remote_version = current_version
+    remote_sha: Optional[str] = None
+    commits_behind = 0
+    git_ok = False
+
+    if _git_available():
+        try:
+            branch = _github_branch()
+            result["current_sha"] = (
+                subprocess.check_output(
+                    ["git", "rev-parse", "--short", "HEAD"],
+                    cwd=_ROOT,
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                ).strip()
+            )
+            subprocess.check_call(
+                ["git", "fetch", "origin", branch, "--depth", "1"],
                 cwd=_ROOT,
+                stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                text=True,
-            ).strip()
-        )
-        subprocess.check_call(
-            ["git", "fetch", "origin"],
-            cwd=_ROOT,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        result["remote_sha"] = (
-            subprocess.check_output(
-                ["git", "rev-parse", "--short", "origin/master"],
-                cwd=_ROOT,
-                stderr=subprocess.DEVNULL,
-                text=True,
-            ).strip()
-        )
-        remote_version = _version_at_git_ref("origin/master") or current_version
-        result["remote_version"] = remote_version
+            )
+            remote_sha = (
+                subprocess.check_output(
+                    ["git", "rev-parse", "--short", f"origin/{branch}"],
+                    cwd=_ROOT,
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                ).strip()
+            )
+            remote_version = _version_at_git_ref(f"origin/{branch}") or _remote_version_https() or current_version
+            if result["current_sha"] and remote_sha and result["current_sha"] != remote_sha:
+                count_out = subprocess.check_output(
+                    ["git", "rev-list", "--count", f'HEAD..origin/{branch}'],
+                    cwd=_ROOT,
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                ).strip()
+                commits_behind = int(count_out or "0")
+            git_ok = True
+            result["check_source"] = "git"
+        except (subprocess.SubprocessError, FileNotFoundError, OSError, ValueError):
+            git_ok = False
+
+    if not git_ok:
+        https_ver = _remote_version_https()
+        if https_ver:
+            remote_version = https_ver
+        remote_sha = _remote_sha_https()
+        result["check_source"] = "github"
+        if remote_sha and result.get("current_sha") and remote_sha != result["current_sha"]:
+            commits_behind = 1
+
+    semver_ahead = _semver_tuple(remote_version) > _semver_tuple(current_version)
+    if semver_ahead and commits_behind == 0:
+        commits_behind = 1
+    if remote_sha and result.get("current_sha") and remote_sha != result["current_sha"] and commits_behind == 0:
+        commits_behind = 1
+
+    result["remote_version"] = remote_version
+    result["remote_sha"] = remote_sha
+    result["commits_behind"] = commits_behind
+    result["update_available"] = semver_ahead or commits_behind > 0
+
+    if result["update_available"]:
         notes_i18n = _release_notes_i18n(remote_version)
         result["release_notes_i18n"] = notes_i18n
-        semver_ahead = _semver_tuple(remote_version) > _semver_tuple(current_version)
-        if result["current_sha"] == result["remote_sha"] and not semver_ahead:
-            result["release_notes"] = ""
-            result["changelog_md"] = ""
-            return result
-        if result["current_sha"] == result["remote_sha"] and semver_ahead:
-            result["commits_behind"] = 1
-        else:
-            count_out = subprocess.check_output(
-                ["git", "rev-list", "--count", f'{result["current_sha"]}..origin/master'],
-                cwd=_ROOT,
-                stderr=subprocess.DEVNULL,
-                text=True,
-            ).strip()
-            result["commits_behind"] = max(int(count_out or "0"), 1 if semver_ahead else 0)
         notes = notes_i18n.get("en") or []
         joined = "\n".join(notes)
         result["release_notes"] = joined
         result["changelog_md"] = joined
         if "BREAKING" in joined.upper():
             result["breaking"] = True
-    except (subprocess.SubprocessError, FileNotFoundError, OSError, ValueError):
-        pass
+
     return result
 
 

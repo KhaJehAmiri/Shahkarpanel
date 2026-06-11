@@ -123,11 +123,29 @@ def test_check_updates_uses_versions(monkeypatch):
     monkeypatch.setattr(update_jobs.subprocess, "check_output", fake_output)
     monkeypatch.setattr(update_jobs.subprocess, "check_call", lambda *a, **k: 0)
     monkeypatch.setattr(update_jobs, "_release_notes_for", lambda v: "- Better updates UI")
+    monkeypatch.setattr(update_jobs, "_git_available", lambda: True)
     out = update_jobs.check_updates()
     assert out["current_version"] == "0.9.3"
     assert out["remote_version"] == "0.9.4"
     assert out["commits_behind"] >= 1
+    assert out["update_available"] is True
+    assert out["check_source"] == "git"
     assert "Better updates" in out["release_notes"]
+
+
+def test_check_updates_https_fallback(monkeypatch):
+    from app.system import update_jobs
+
+    monkeypatch.setattr(update_jobs, "_git_available", lambda: False)
+    monkeypatch.setattr(update_jobs, "_local_version", lambda: "0.12.0")
+    monkeypatch.setattr(update_jobs, "_remote_version_https", lambda: "0.12.1")
+    monkeypatch.setattr(update_jobs, "_remote_sha_https", lambda: "abc1234")
+    monkeypatch.setattr(update_jobs, "_release_notes_for", lambda v: "- Dashboard update alert")
+    out = update_jobs.check_updates()
+    assert out["remote_version"] == "0.12.1"
+    assert out["update_available"] is True
+    assert out["check_source"] == "github"
+    assert out["commits_behind"] >= 1
 
 
 def test_deployment_snapshot_keys():

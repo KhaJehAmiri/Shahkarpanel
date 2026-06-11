@@ -17,7 +17,7 @@ export const PanelUpdateModal: FC<{
   onApply: () => Promise<string | void>;
 }> = ({ open, check, checking, job, applying, onClose, onRefresh, onApply }) => {
   const { t, i18n } = useTranslation();
-  const hasUpdate = (check?.commits_behind ?? 0) > 0;
+  const hasUpdate = !!check?.update_available || (check?.commits_behind ?? 0) > 0;
   const notes = releaseNotesForLang(check, i18n.language);
   const running = applying || (job && !job.finished);
 

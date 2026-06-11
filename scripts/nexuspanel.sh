@@ -358,6 +358,34 @@ prepare_low_memory() {
 
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.postgres.yml}"
 
+ensure_docker_gid() {
+  local env_file="${APP_DIR}/.env"
+  [ -f "$env_file" ] || return 0
+  local gid
+  gid="$(getent group docker 2>/dev/null | cut -d: -f3)"
+  [ -n "$gid" ] || gid="$(stat -c '%g' /var/run/docker.sock 2>/dev/null || echo 988)"
+  if grep -q '^DOCKER_GID=' "$env_file" 2>/dev/null; then
+    sed -i "s/^DOCKER_GID=.*/DOCKER_GID=${gid}/" "$env_file"
+  else
+    printf '\n# Docker socket GID (in-dashboard updates)\nDOCKER_GID=%s\n' "$gid" >> "$env_file"
+  fi
+}
+
+write_install_meta() {
+  local ver sha meta
+  ver="$(tr -d '[:space:]' < "${APP_DIR}/VERSION" 2>/dev/null || echo "0.0.0")"
+  sha="$(git -C "${APP_DIR}" rev-parse --short HEAD 2>/dev/null || true)"
+  meta="${DATA_DIR}/install-meta.json"
+  python3 - "$meta" "$ver" "$sha" <<'PY'
+import json, sys, time
+path, ver, sha = sys.argv[1:4]
+payload = {"version": ver, "updated_at": int(time.time())}
+if sha:
+    payload["sha"] = sha
+open(path, "w", encoding="utf-8").write(json.dumps(payload, indent=2))
+PY
+}
+
 compose() {
   if docker compose version >/dev/null 2>&1; then
     docker compose -f "${APP_DIR}/${COMPOSE_FILE}" "$@"
@@ -696,6 +724,7 @@ cmd_install() {
   seed_data_dir
   write_progress "env" 18 "Generating secrets and .env…" false
   write_env
+  ensure_docker_gid
   write_progress "services" 25 "Stopping conflicting services…" false
   disable_conflicting_services
   write_progress "firewall" 30 "Configuring firewall…" false
@@ -883,12 +912,14 @@ cmd_update()  {
   need_root
   fetch_repo
   seed_data_dir
+  ensure_docker_gid
   load_env_creds
   disable_conflicting_services
   configure_firewall
   install_cli
   compose up -d --build
   wait_for_panel
+  write_install_meta
   ok "Updated."
   print_access
 }

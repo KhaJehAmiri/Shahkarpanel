@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.12.1 — 2026-06-10
+
+- Dashboard update detection via GitHub HTTPS when git is unavailable in Docker.
+- One-click in-dashboard updates: bind-mount app dir, docker.sock, git + docker CLI in container.
+- Sidebar and Overview update alerts use `update_available` semver comparison.
+
 ## 0.12.0 — 2026-06-10
 
 - User create wizard: AmneziaWG protocol card + fixed protocol picker grid CSS.

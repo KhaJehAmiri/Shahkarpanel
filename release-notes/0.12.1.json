@@ -1,0 +1,22 @@
+{
+  "en": [
+    "Dashboard update alert: detects new releases from GitHub even inside Docker",
+    "One-click update from System → Updates (backup, pull, migrate, rebuild)",
+    "Sidebar version strip shows clickable update hint when a new version is available"
+  ],
+  "fa": [
+    "هشدار آپدیت در داشبورد: تشخیص نسخه جدید از GitHub حتی داخل Docker",
+    "آپدیت یک‌کلیکی از System → Updates (بکاپ، pull، migrate، rebuild)",
+    "نوار نسخه در سایدبار با کلیک برای آپدیت وقتی نسخه جدید موجود است"
+  ],
+  "ru": [
+    "Уведомление об обновлении в панели: проверка GitHub даже в Docker",
+    "Обновление в один клик: System → Updates",
+    "Полоска версии в сайдбаре — клик для обновления"
+  ],
+  "zh": [
+    "仪表盘更新提醒：Docker 内也可从 GitHub 检测新版本",
+    "System → Updates 一键更新",
+    "侧边栏版本条可点击更新"
+  ]
+}

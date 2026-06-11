@@ -213,6 +213,8 @@ export interface UpdateCheck {
   current_sha?: string | null;
   remote_sha?: string | null;
   commits_behind: number;
+  update_available?: boolean;
+  check_source?: string;
   changelog_md: string;
   release_notes?: string;
   release_notes_i18n?: Record<string, string[]>;

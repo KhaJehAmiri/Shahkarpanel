@@ -13,8 +13,12 @@ services:
     restart: always
     env_file: .env
     network_mode: host
+    group_add:
+      - "${DOCKER_GID:-988}"
     volumes:
       - /var/lib/nexuspanel:/var/lib/nexuspanel
+      - .:/code
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       postgres:
         condition: service_healthy

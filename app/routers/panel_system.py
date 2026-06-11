@@ -42,6 +42,8 @@ class UpdateCheckResponse(BaseModel):
     current_sha: Optional[str] = None
     remote_sha: Optional[str] = None
     commits_behind: int = 0
+    update_available: bool = False
+    check_source: str = "none"
     changelog_md: str = ""
     release_notes: str = ""
     release_notes_i18n: dict = {}

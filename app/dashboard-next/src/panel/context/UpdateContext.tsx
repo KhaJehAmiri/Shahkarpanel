@@ -52,9 +52,12 @@ export const UpdateProvider: FC<{ sudo: boolean; lang: string; children: ReactNo
     if (sudo) refreshCheck();
   }, [sudo, refreshCheck]);
 
-  usePolling(() => { refreshCheck(); }, 300000, sudo);
+  usePolling(() => { refreshCheck(); }, 120000, sudo);
 
-  const hasUpdate = sudo && (check?.commits_behind ?? 0) > 0;
+  const hasUpdate = sudo && (
+    !!check?.update_available
+    || (check?.commits_behind ?? 0) > 0
+  );
 
   const openUpdateModal = useCallback(() => {
     if (!sudo) return;

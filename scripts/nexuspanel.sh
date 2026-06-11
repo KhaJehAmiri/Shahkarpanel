@@ -5,10 +5,10 @@
 # One-line install (run as root):
 #   bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/nexuspanel/master/scripts/nexuspanel.sh) install
 #
-# Opens an interactive TUI wizard in this terminal (default).
+# Interactive shell installer (3x-ui style menus in this terminal).
 #   bash <(curl -fsSL …/scripts/nexuspanel.sh) install
-# Web browser wizard: WEB_WIZARD=1 install
-# Plain CLI prompts:  SKIP_WIZARD=1 install
+# Browser wizard: WEB_WIZARD=1 install
+# Plain CLI:       SKIP_WIZARD=1 install
 #
 # After install, manage with:  nexuspanel <command>
 #   install | update | up | down | restart | status | logs
@@ -161,10 +161,32 @@ wizard_is_ready() {
   curl -fsS --max-time 2 "http://127.0.0.1:${INSTALLER_PORT}/" >/dev/null 2>&1
 }
 
+start_shell_installer() {
+  local wiz="${APP_DIR}/scripts/installer/shell_wizard.sh"
+  if [ ! -f "$wiz" ]; then
+    warn "Shell installer missing — falling back."
+    return 1
+  fi
+  mkdir -p "${DATA_DIR}"
+  rm -f "${INSTALL_CONFIG_FILE}"
+  write_progress "waiting" 0 "Waiting for installer configuration…" false
+  log "Starting NexusPanel installer wizard…"
+  chmod +x "$wiz"
+  if bash "$wiz" --config "${INSTALL_CONFIG_FILE}"; then
+    ok "Install configuration received."
+    load_install_config
+    write_progress "deps" 8 "Configuration saved — preparing install…" false
+    return 0
+  fi
+  if [ ! -f "${INSTALL_CONFIG_FILE}" ]; then
+    die "Install cancelled."
+  fi
+  return 1
+}
+
 start_tui_installer() {
   local tui_py="${APP_DIR}/scripts/installer/tui_wizard.py"
   if [ ! -f "$tui_py" ]; then
-    warn "Terminal installer missing — falling back."
     return 1
   fi
   mkdir -p "${DATA_DIR}"
@@ -193,10 +215,13 @@ run_install_wizard() {
     start_install_wizard
     return $?
   fi
+  if start_shell_installer; then
+    return 0
+  fi
+  warn "Shell wizard unavailable — trying curses TUI, web, or CLI."
   if start_tui_installer; then
     return 0
   fi
-  warn "TUI unavailable — trying web installer or CLI prompts."
   if start_install_wizard; then
     return 0
   fi
@@ -912,7 +937,7 @@ ${BOLD}NexusPanel manager${NC}
 
 Usage: ${APP_NAME} <command>
 
-  install            Install via terminal TUI wizard (WEB_WIZARD=1 for browser)
+  install            Install via shell wizard (WEB_WIZARD=1 for browser)
   update             Pull latest and rebuild
   up | down | restart
   status             Show container status

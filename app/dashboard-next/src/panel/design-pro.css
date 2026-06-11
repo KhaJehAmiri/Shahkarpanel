@@ -150,6 +150,33 @@
 .nx-side-assist-body small { font-size: 10.5px; color: var(--nx-text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ── Sidebar: profile chip ── */
+.nx-side-version {
+  margin: 8px 10px 4px;
+  padding: 8px 10px;
+  border-radius: var(--nx-radius-sm);
+  border: 1px solid var(--nx-border);
+  background: var(--nx-surface-2);
+  font-size: 11px;
+  color: var(--nx-text-dim);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.nx-side-version-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.85; }
+.nx-side-version-val { font-family: var(--nx-mono, monospace); font-weight: 600; color: var(--nx-text); font-size: 12px; }
+a.nx-side-version-update {
+  text-decoration: none;
+  color: inherit;
+  border-color: color-mix(in srgb, var(--nx-accent) 45%, var(--nx-border));
+  background: color-mix(in srgb, var(--nx-accent) 8%, var(--nx-surface-2));
+  transition: border-color 0.15s, background 0.15s;
+}
+a.nx-side-version-update:hover {
+  border-color: var(--nx-accent);
+  background: color-mix(in srgb, var(--nx-accent) 14%, var(--nx-surface-2));
+}
+.nx-side-version-new { font-size: 10.5px; color: var(--nx-accent); font-weight: 600; margin-top: 2px; }
+
 .nx-side-profile {
   display: flex; align-items: center; gap: 10px;
   margin-top: 10px; padding: 10px 11px;

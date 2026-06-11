@@ -1,9 +1,10 @@
 import { FC, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import { ApiKey, DeploymentInfo, FeatureFlag, SystemStats, UpdateCheck, UpdateJobInfo } from "../api/types";
 import { useApp } from "../context/AppContext";
-import { useFetch } from "../lib/useFetch";
+import { useFetch, useLiveReload } from "../lib/useFetch";
 import { PageHeader } from "../components/Shell";
 import { LANGUAGES, setLanguage } from "../i18n";
 import {
@@ -49,9 +50,24 @@ export const System: FC = () => {
     ];
   }, [admin?.is_sudo, isEnabled, t]);
 
+  const [searchParams] = useSearchParams();
   const [group, setGroup] = useState(groups[0]?.id || "general");
   const activeGroup = groups.find((g) => g.id === group) || groups[0];
-  const [tab, setTab] = useState(activeGroup?.tabs[0]?.id || "about");
+  const tabFromUrl = searchParams.get("tab");
+  const [tab, setTab] = useState(
+    tabFromUrl && groups.some((g) => g.tabs.some((x) => x.id === tabFromUrl))
+      ? tabFromUrl
+      : (activeGroup?.tabs[0]?.id || "about"),
+  );
+
+  useEffect(() => {
+    if (!tabFromUrl) return;
+    const g = groups.find((gr) => gr.tabs.some((x) => x.id === tabFromUrl));
+    if (g) {
+      setGroup(g.id);
+      setTab(tabFromUrl);
+    }
+  }, [tabFromUrl, groups]);
 
   useEffect(() => {
     if (!groups.some((g) => g.id === group)) setGroup(groups[0]?.id || "general");
@@ -420,6 +436,7 @@ const ApiKeysTab: FC = () => {
   const toast = useToast();
   const [show, setShow] = useState(false);
   const { data, loading, error, reload } = useFetch<ApiKey[]>(() => api.get("/api-keys"), []);
+  useLiveReload(reload, 30000);
 
   const revoke = async (id: number) => {
     if (!confirm(t("common.confirmDelete"))) return;

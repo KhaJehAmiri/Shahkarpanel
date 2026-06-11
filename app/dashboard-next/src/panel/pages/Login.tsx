@@ -17,6 +17,11 @@ export const Login: FC = () => {
       setBranding(b);
       applyBranding(b);
     }).catch(() => {});
+    api.get<{ default_lang?: string }>("/setup/status").then((s) => {
+      if (!localStorage.getItem("nx_lang") && s.default_lang) {
+        setLanguage(s.default_lang);
+      }
+    }).catch(() => {});
   }, []);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");

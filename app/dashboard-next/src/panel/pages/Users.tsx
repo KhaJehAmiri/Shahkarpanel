@@ -2,7 +2,7 @@ import { FC, Fragment, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import { ImportPreviewResponse, ImportPreviewRow, InboundsByProtocol, NodeItem, Plan, UserItem, UsersResponse } from "../api/types";
-import { useFetch } from "../lib/useFetch";
+import { useFetch, useLiveReload } from "../lib/useFetch";
 import { formatBytes, formatDate, relativeExpiry, relativeExpiryLabel, statusTone, usagePct } from "../lib/format";
 import {
   bytesToDataLimitValue, dataLimitToBytes, detectDataLimitUnit, type DataLimitUnit,
@@ -100,6 +100,7 @@ export const Users: FC = () => {
   }, [page, search, statusFilter]);
 
   const { data, loading, error, reload } = useFetch<UsersResponse>(() => api.get(`/users?${query}`), [query]);
+  useLiveReload(reload, 30000);
   const total = data?.total ?? 0;
   const pages = Math.max(1, Math.ceil(total / PAGE));
 

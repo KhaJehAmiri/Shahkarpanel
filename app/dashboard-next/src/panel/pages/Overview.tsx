@@ -2,10 +2,10 @@ import { FC, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
-import { MrrSummary, RealtimeStats, ResellerWorkspace, SystemStats, TopUser } from "../api/types";
+import { MrrSummary, RealtimeStats, ResellerWorkspace, SystemStats, TopUser, UpdateCheck } from "../api/types";
 import { useApp } from "../context/AppContext";
 import { useCopilot } from "../copilot/CopilotContext";
-import { useFetch, usePolling } from "../lib/useFetch";
+import { useFetch, useLiveReload, usePolling } from "../lib/useFetch";
 import { formatBytes, formatSpeed } from "../lib/format";
 import { PageHeader } from "../components/Shell";
 import { HealthChecklist } from "../components/HealthChecklist";
@@ -54,6 +54,20 @@ export const Overview: FC = () => {
   }, 5000);
 
   usePolling(() => sys.reload(), 15000);
+  useLiveReload(() => {
+    top.reload();
+    nodes.reload();
+    inbounds.reload();
+    nodesUsage.reload();
+    workspace.reload();
+    mrr.reload();
+  }, 30000);
+
+  const updates = useFetch<UpdateCheck | null>(
+    () => (admin?.is_sudo ? api.get("/system/updates/check") : Promise.resolve(null)),
+    [admin?.is_sudo],
+  );
+  usePolling(() => updates.reload(), 300000, !!admin?.is_sudo);
 
   const s = sys.data;
   const bwSource = rt?.bandwidth_source ?? s?.bandwidth_source ?? "nic";
@@ -92,6 +106,8 @@ export const Overview: FC = () => {
     ];
   }, [admin?.is_sudo, connectedNodes, hasInbounds, hasUsers, s?.total_user, t]);
 
+  const hasUpdate = (updates.data?.commits_behind ?? 0) > 0;
+
   return (
     <div className="nx-overview">
       <PageHeader
@@ -101,6 +117,18 @@ export const Overview: FC = () => {
           <Button variant="ghost" onClick={() => setOpen(true)}>✦ {t("overview.openGuide")}</Button>
         ) : undefined}
       />
+
+      {hasUpdate && updates.data && (
+        <Callout tone="info" className="compact nx-mb-16">
+          {t("system.updatesBehind", {
+            from: updates.data.current_version,
+            to: updates.data.remote_version,
+          })}{" "}
+          <Link to="/system?tab=updates" style={{ marginInlineStart: 8, fontWeight: 600 }}>
+            {t("system.tabUpdates")} →
+          </Link>
+        </Callout>
+      )}
 
       {!admin?.is_sudo && ws?.wallet_low && (
         <Callout tone="warn" title={t("overview.lowWalletTitle")} className="nx-mb-16">

@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import { TopUser } from "../api/types";
 import { useApp } from "../context/AppContext";
-import { useFetch } from "../lib/useFetch";
+import { useFetch, useLiveReload } from "../lib/useFetch";
 import { formatBytes, statusTone } from "../lib/format";
 import { PageHeader } from "../components/Shell";
 import { Button, Callout, Card, CardHead, EmptyState, Field, Pill, Select, SkeletonRows, useToast } from "../components/ui";
@@ -13,6 +13,7 @@ export const Analytics: FC<{ embedded?: boolean }> = ({ embedded }) => {
   const { t } = useTranslation();
   const { admin, isEnabled } = useApp();
   const top = useFetch<TopUser[]>(() => api.get("/analytics/top-users?limit=15"), []);
+  useLiveReload(() => top.reload(), 30000);
 
   return (
     <div className="nx-page">

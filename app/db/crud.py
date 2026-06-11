@@ -1013,6 +1013,25 @@ def create_admin(db: Session, admin: AdminCreate) -> Admin:
             dbadmin.tenant_id = parent.tenant_id
             db.commit()
             db.refresh(dbadmin)
+    role = getattr(dbadmin, "role", None) or "reseller"
+    if (
+        not dbadmin.is_sudo
+        and dbadmin.tenant_id is None
+        and role in ("reseller", "support")
+    ):
+        from app.tenant import create_tenant
+
+        tenant = create_tenant(
+            db,
+            name=dbadmin.username,
+            slug=dbadmin.username,
+            owner_admin_id=dbadmin.id,
+            max_users=getattr(dbadmin, "max_users", None),
+            max_nodes=getattr(dbadmin, "max_nodes", None),
+        )
+        dbadmin.tenant_id = tenant.id
+        db.commit()
+        db.refresh(dbadmin)
     return dbadmin
 
 

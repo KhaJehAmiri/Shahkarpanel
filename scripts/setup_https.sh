@@ -257,7 +257,7 @@ EOF
 }
 
 # --------------------------------------------------------------------------- #
-# Bind the panel to localhost and align public URLs in .env
+# Bind the panel and align public URLs in .env
 # --------------------------------------------------------------------------- #
 update_env() {
   [ -f "$ENV_FILE" ] || { warn ".env not found at ${ENV_FILE} — skipping app bind/origin update."; return; }
@@ -271,24 +271,34 @@ update_env() {
       echo "${1}=${2}" >> "$ENV_FILE"
     fi
   }
-  set_kv "UVICORN_HOST" "127.0.0.1"
+  set_kv "UVICORN_HOST" "0.0.0.0"
   set_kv "PANEL_PUBLIC_ADDRESS" "${scheme_host}"
-  # Subscription links handed to users must point at the HTTPS edge, not the
-  # (now localhost-only) app port.
   set_kv "XRAY_SUBSCRIPTION_URL_PREFIX" "${scheme_host}"
-  set_kv "ALLOWED_ORIGINS" "${scheme_host},http://127.0.0.1:${PANEL_PORT}"
-  ok ".env updated: panel binds 127.0.0.1, public address ${scheme_host}, sub links via ${scheme_host}."
+  set_kv "ALLOWED_ORIGINS" "${scheme_host},http://127.0.0.1:${PANEL_PORT},http://${SERVER_NAME}:${PANEL_PORT}"
+  ok ".env updated: public address ${scheme_host}, sub links via ${scheme_host}."
 }
 
 restart_panel() {
+  local compose_file=""
+  if [ -f "${ROOT}/docker-compose.postgres.yml" ]; then
+    compose_file="docker-compose.postgres.yml"
+  elif [ -f "${ROOT}/docker-compose.yml" ]; then
+    compose_file="docker-compose.yml"
+  fi
   if systemctl is-enabled nexuspanel.service >/dev/null 2>&1 || systemctl is-active nexuspanel.service >/dev/null 2>&1; then
     log "Restarting nexuspanel.service..."
     systemctl restart nexuspanel.service || warn "Could not restart nexuspanel.service — restart it manually."
-  elif command -v docker >/dev/null 2>&1 && [ -f "${ROOT}/docker-compose.yml" ]; then
-    log "Recreating docker compose stack (picks up new bind)..."
-    (cd "${ROOT}" && docker compose up -d) || warn "Could not restart docker stack — restart it manually."
+  elif command -v docker >/dev/null 2>&1 && [ -n "$compose_file" ]; then
+    log "Recreating docker compose stack (picks up .env changes)..."
+    if docker compose version >/dev/null 2>&1; then
+      (cd "${ROOT}" && docker compose -f "$compose_file" up -d --force-recreate nexuspanel) \
+        || warn "Could not restart docker stack — run: nexuspanel restart"
+    else
+      (cd "${ROOT}" && docker-compose -f "$compose_file" up -d --force-recreate nexuspanel) \
+        || warn "Could not restart docker stack — run: nexuspanel restart"
+    fi
   else
-    warn "Panel process not managed by systemd/docker here — restart it so UVICORN_HOST=127.0.0.1 takes effect."
+    warn "Panel not managed by systemd/docker here — restart manually: nexuspanel restart"
   fi
 }
 
@@ -312,8 +322,15 @@ restart_panel
 
 echo
 ok "HTTPS is live."
-echo "  ${BOLD}Dashboard${NC}  https://${SERVER_NAME}/dashboard/"
+dash_path="/dashboard/"
+if [ -f "$ENV_FILE" ]; then
+  # shellcheck disable=SC1090
+  set -a && source "$ENV_FILE" && set +a
+  dash_path="${DASHBOARD_PATH:-/dashboard/}"
+fi
+case "$dash_path" in */) ;; *) dash_path="${dash_path}/" ;; esac
+echo "  ${BOLD}Dashboard${NC}  https://${SERVER_NAME}${dash_path}"
 echo "  ${BOLD}Cert${NC}       Let's Encrypt (${MODE} mode), auto-renewing"
 [ "$MODE" = "ip" ] && echo "  ${YELLOW}Note${NC}       IP certificates are valid 6 days; renewal runs twice daily."
-echo "  ${BOLD}App port${NC}   127.0.0.1:${PANEL_PORT} (no longer exposed publicly)"
+echo "  ${BOLD}App port${NC}   0.0.0.0:${PANEL_PORT} (block ${PANEL_PORT} in firewall; use HTTPS :443)"
 echo

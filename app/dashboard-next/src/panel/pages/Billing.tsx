@@ -6,7 +6,7 @@ import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import { Invoice, Plan, Transaction, UsageSummary, Wallet } from "../api/types";
 import { useApp } from "../context/AppContext";
-import { useFetch } from "../lib/useFetch";
+import { useFetch, useLiveReload } from "../lib/useFetch";
 import { formatBytes } from "../lib/format";
 import { PageHeader } from "../components/Shell";
 import {
@@ -24,6 +24,7 @@ export const Billing: FC<{ embedded?: boolean }> = ({ embedded }) => {
   const [topupOpen, setTopupOpen] = useState(false);
   const wallet = useFetch<Wallet>(() => api.get("/billing/wallet"), []);
   const providers = useFetch<string[]>(() => api.get("/billing/payment-providers"), []);
+  useLiveReload(() => { wallet.reload(); providers.reload(); }, 30000);
   const canTopUp = !admin?.is_sudo && (providers.data?.length ?? 0) > 0;
 
   if (!isEnabled("billing"))

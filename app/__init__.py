@@ -47,6 +47,10 @@ if ALLOWED_ORIGINS:
     )
 app.add_middleware(RequestContextMiddleware)
 
+from app.middleware.dashboard_path import hide_default_dashboard_middleware  # noqa: E402
+
+app.middleware("http")(hide_default_dashboard_middleware)
+
 
 @app.middleware("http")
 async def security_headers_middleware(request: Request, call_next):
@@ -93,6 +97,15 @@ def on_startup():
         ha_start()
     except Exception:
         logger.exception("Failed to start HA leader election")
+    try:
+        from app.db import GetDB
+        from app.tenant import ensure_reseller_tenants
+        with GetDB() as db:
+            n = ensure_reseller_tenants(db)
+            if n:
+                logger.info("Backfilled tenant_id for %s legacy reseller/support admin(s)", n)
+    except Exception:
+        logger.exception("Failed to backfill reseller tenants")
     scheduler.start()
 
 

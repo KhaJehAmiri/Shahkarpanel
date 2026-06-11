@@ -78,7 +78,7 @@ def test_admin_tenant_scoping():
 # --------------------------------------------------------------------------- #
 def test_branding_resolution_layers():
     with GetDB() as db:
-        tenant_svc.set_branding(db, None, panel_title="Platform", primary_color="#111111")
+        tenant_svc.set_branding(db, None, allow_global=True, panel_title="Platform", primary_color="#111111")
         t = tenant_svc.create_tenant(db, name="BrandCo")
         tenant_svc.set_branding(db, t.id, panel_title="BrandCo Panel")
 

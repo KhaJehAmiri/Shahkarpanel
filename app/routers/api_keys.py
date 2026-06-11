@@ -36,7 +36,10 @@ class ApiKeyCreated(ApiKeyResponse):
 def _admin_id(db: Session, admin: Admin) -> int:
     dbadmin = crud.get_admin(db, admin.username)
     if dbadmin is None:
-        raise HTTPException(status_code=400, detail="API keys require a database-backed admin")
+        raise HTTPException(
+            status_code=400,
+            detail="Admin record not found in database — run migrations or recreate the admin user",
+        )
     return dbadmin.id
 
 

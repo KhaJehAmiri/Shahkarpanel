@@ -13,6 +13,7 @@ from app import feature_flags, tenant as tenant_svc
 from app.db import Session, get_db
 from app.models.admin import Admin
 from app.utils import responses
+from config import PANEL_DEFAULT_LANG
 
 router = APIRouter(
     tags=["Setup"],
@@ -31,6 +32,7 @@ _TOGGLEABLE = {
 class SetupStatus(BaseModel):
     completed: bool
     show_wizard: bool
+    default_lang: str = "en"
 
 
 class SetupRequest(BaseModel):
@@ -44,9 +46,12 @@ class SetupRequest(BaseModel):
 @router.get("/status", response_model=SetupStatus)
 def setup_status():
     """Public: the dashboard checks this on load to decide whether to show the wizard."""
+    from config import PANEL_DEFAULT_LANG
+
     completed = feature_flags.is_enabled(_COMPLETED_FLAG)
     show = feature_flags.is_enabled("setup_wizard") and not completed
-    return SetupStatus(completed=completed, show_wizard=show)
+    lang = PANEL_DEFAULT_LANG if PANEL_DEFAULT_LANG in ("en", "fa", "ru", "zh") else "en"
+    return SetupStatus(completed=completed, show_wizard=show, default_lang=lang)
 
 
 @router.post("/", response_model=SetupStatus)
@@ -68,7 +73,7 @@ def run_setup(
         }.items() if v is not None
     }
     if branding_fields:
-        tenant_svc.set_branding(db, None, **branding_fields)
+        tenant_svc.set_branding(db, None, allow_global=True, **branding_fields)
 
     for name in body.enable_features:
         if name not in _TOGGLEABLE:
@@ -76,4 +81,5 @@ def run_setup(
         feature_flags.set_flag(name, True)
 
     feature_flags.set_flag(_COMPLETED_FLAG, True)
-    return SetupStatus(completed=True, show_wizard=False)
+    lang = PANEL_DEFAULT_LANG if PANEL_DEFAULT_LANG in ("en", "fa", "ru", "zh") else "en"
+    return SetupStatus(completed=True, show_wizard=False, default_lang=lang)

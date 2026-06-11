@@ -185,5 +185,15 @@ def update_my_branding(
     global default (tenant_id = None)."""
     _require_white_label_enabled()
     tenant_id = tenant_svc.admin_tenant_id(db, admin)
-    tenant_svc.set_branding(db, tenant_id, **body.model_dump(exclude_unset=True))
+    if not admin.is_sudo and tenant_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Reseller has no tenant — contact the platform owner",
+        )
+    tenant_svc.set_branding(
+        db,
+        tenant_id,
+        allow_global=bool(admin.is_sudo and tenant_id is None),
+        **body.model_dump(exclude_unset=True),
+    )
     return BrandingResponse(**tenant_svc.resolve_branding(db, tenant_id))

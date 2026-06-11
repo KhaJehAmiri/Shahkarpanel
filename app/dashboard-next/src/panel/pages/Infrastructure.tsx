@@ -5,7 +5,7 @@ import { api } from "../api/client";
 import { NodeItem, Tunnel } from "../api/types";
 import { useApp } from "../context/AppContext";
 import { useCopilot } from "../copilot/CopilotContext";
-import { useFetch, usePolling } from "../lib/useFetch";
+import { useFetch, useLiveReload, usePolling } from "../lib/useFetch";
 import { statusTone } from "../lib/format";
 import {
   Button, Callout, Card, CopyField, EmptyState, Field, Input, Modal, Pager, Pill, Select, SkeletonRows, UsageBar, usePagedList, useToast,
@@ -27,6 +27,7 @@ export const NodesTab: FC<{ resellerMode?: boolean }> = ({ resellerMode }) => {
   const { data, loading, error, reload } = useFetch<NodeItem[]>(() => api.get("/nodes"), []);
   const provisioning = (data || []).some((n) => n.provision_status === "provisioning");
   usePolling(reload, 3000, provisioning);
+  useLiveReload(reload, 30000);
   const [nodeSearch, setNodeSearch] = useState("");
   const filteredNodes = (data || []).filter((n) =>
     !nodeSearch.trim() || `${n.name} ${n.address} ${n.region || ""}`.toLowerCase().includes(nodeSearch.trim().toLowerCase()),

@@ -7,6 +7,7 @@ import { useCopilot } from "../copilot/CopilotContext";
 import { Copilot } from "../copilot/Copilot";
 import { LANGUAGES, setLanguage } from "../i18n";
 import { IcGlobe, IcLogout, IcMenu, IcMoon, IcSun, navIcon } from "./icons";
+import { PanelVersionStrip } from "./PanelVersionStrip";
 
 /** Simplified 5-item navigation + settings footer. */
 const NAV_SUDO = [
@@ -125,6 +126,8 @@ export const Shell: FC = () => {
         </button>
 
         <NavItem id="system" onNav={closeNav} />
+
+        <PanelVersionStrip sudo={!!admin?.is_sudo} />
 
         <div className="nx-side-profile">
           <span className="nx-side-avatar">{(admin?.username || "?").slice(0, 1).toUpperCase()}</span>

@@ -262,6 +262,11 @@ SUB_UPDATE_INTERVAL = config("SUB_UPDATE_INTERVAL", default="12")
 SUB_SUPPORT_URL = config("SUB_SUPPORT_URL", default="https://t.me/")
 SUB_PROFILE_TITLE = config("SUB_PROFILE_TITLE", default="NexusPanel")
 
+# Installer / first-run defaults
+PANEL_DEFAULT_LANG = config("PANEL_DEFAULT_LANG", default="en")
+PANEL_TITLE = config("PANEL_TITLE", default="NexusPanel")
+PRIMARY_COLOR = config("PRIMARY_COLOR", default="#5b8cff")
+
 # discord webhook log
 DISCORD_WEBHOOK_URL = config("DISCORD_WEBHOOK_URL", default="")
 

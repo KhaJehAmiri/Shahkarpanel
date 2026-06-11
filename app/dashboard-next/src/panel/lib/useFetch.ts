@@ -77,3 +77,21 @@ export function usePolling(fn: () => void, intervalMs: number, enabled = true) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [intervalMs, enabled]);
 }
+
+/** Re-fetch when the browser tab becomes visible again. */
+export function useFocusReload(reload: () => void, enabled = true) {
+  useEffect(() => {
+    if (!enabled) return;
+    const onVis = () => {
+      if (document.visibilityState === "visible") reload();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [reload, enabled]);
+}
+
+/** Polling + focus reload for live dashboard data. */
+export function useLiveReload(reload: () => void, intervalMs = 30000, enabled = true) {
+  usePolling(reload, intervalMs, enabled);
+  useFocusReload(reload, enabled);
+}

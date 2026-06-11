@@ -33,6 +33,7 @@ __all__ = [
     "set_branding",
     "resolve_branding",
     "tenant_owned_node_ids",
+    "ensure_reseller_tenants",
 ]
 
 
@@ -110,6 +111,33 @@ def delete_tenant(db: Session, tenant: Tenant) -> None:
     db.commit()
 
 
+def ensure_reseller_tenants(db: Session) -> int:
+    """Backfill tenants for legacy reseller/support admins missing tenant_id."""
+    legacy = (
+        db.query(Admin)
+        .filter(
+            Admin.is_sudo.is_(False),
+            Admin.tenant_id.is_(None),
+            Admin.role.in_(("reseller", "support")),
+        )
+        .all()
+    )
+    count = 0
+    for admin in legacy:
+        tenant = create_tenant(
+            db,
+            name=admin.username,
+            slug=admin.username,
+            owner_admin_id=admin.id,
+            max_users=getattr(admin, "max_users", None),
+            max_nodes=getattr(admin, "max_nodes", None),
+        )
+        admin.tenant_id = tenant.id
+        db.commit()
+        count += 1
+    return count
+
+
 # --------------------------------------------------------------------------- #
 # Scoping
 # --------------------------------------------------------------------------- #
@@ -151,7 +179,15 @@ def get_branding(db: Session, tenant_id: Optional[int]) -> Optional[BrandingSett
     )
 
 
-def set_branding(db: Session, tenant_id: Optional[int], **fields) -> BrandingSettings:
+def set_branding(
+    db: Session,
+    tenant_id: Optional[int],
+    *,
+    allow_global: bool = False,
+    **fields,
+) -> BrandingSettings:
+    if tenant_id is None and not allow_global:
+        raise ValueError("Cannot write global branding without allow_global=True")
     row = get_branding(db, tenant_id)
     if row is None:
         row = BrandingSettings(tenant_id=tenant_id)
@@ -188,13 +224,13 @@ def resolve_branding(db: Session, tenant_id: Optional[int]) -> dict:
     headers. Never returns None values for the core fields.
     """
     from app import PRODUCT_NAME
-    from config import SUB_PROFILE_TITLE, SUB_SUPPORT_URL
+    from config import PANEL_DEFAULT_LANG, PANEL_TITLE, PRIMARY_COLOR, SUB_PROFILE_TITLE, SUB_SUPPORT_URL
 
     base = {
-        "panel_title": PRODUCT_NAME,
+        "panel_title": PANEL_TITLE or PRODUCT_NAME,
         "logo_url": None,
         "favicon_url": None,
-        "primary_color": "#5b8cff",
+        "primary_color": PRIMARY_COLOR or "#5b8cff",
         "support_url": SUB_SUPPORT_URL,
         "sub_profile_title": SUB_PROFILE_TITLE,
         "domain": None,

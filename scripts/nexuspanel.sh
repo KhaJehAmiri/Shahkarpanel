@@ -413,9 +413,9 @@ PY
 
 compose() {
   if docker compose version >/dev/null 2>&1; then
-    docker compose -f "${APP_DIR}/${COMPOSE_FILE}" "$@"
+    docker compose -p nexuspanel -f "${APP_DIR}/${COMPOSE_FILE}" "$@"
   else
-    docker-compose -f "${APP_DIR}/${COMPOSE_FILE}" "$@"
+    docker-compose -p nexuspanel -f "${APP_DIR}/${COMPOSE_FILE}" "$@"
   fi
 }
 
@@ -541,8 +541,23 @@ install_deps() {
 load_env_creds() {
   local env_file="${APP_DIR}/.env"
   [ -f "$env_file" ] || return 0
-  # shellcheck disable=SC1090
-  set -a && source "$env_file" && set +a
+  # Tolerate "KEY = value" lines and comments (plain `source` breaks on spaced `=`).
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%%#*}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [ -z "$line" ] && continue
+    if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=(.*)$ ]]; then
+      local key="${BASH_REMATCH[1]}"
+      local val="${BASH_REMATCH[2]}"
+      val="${val#"${val%%[![:space:]]*}"}"
+      val="${val%"${val##*[![:space:]]}"}"
+      if [[ "$val" =~ ^\"(.*)\"$ ]] || [[ "$val" =~ ^\'(.*)\'$ ]]; then
+        val="${BASH_REMATCH[1]}"
+      fi
+      export "${key}=${val}"
+    fi
+  done < "$env_file"
   ADMIN_USERNAME="${SUDO_USERNAME:-${ADMIN_USERNAME:-}}"
   DASHBOARD_PATH="${DASHBOARD_PATH:-/dashboard/}"
   # Password is bcrypt-hashed in .env and cannot be recovered; only the value

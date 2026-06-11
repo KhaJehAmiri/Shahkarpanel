@@ -6,25 +6,31 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Literal, Optional
+from typing import Dict, List, Literal, Optional, Tuple
 from urllib.error import URLError
 from urllib.request import urlopen
 
 JobStatus = Literal["pending", "running", "success", "failed"]
 StepStatus = Literal["pending", "running", "done", "failed"]
+UpdateMode = Literal["restart", "pip", "dashboard", "rebuild"]
 
 _ROOT = Path(__file__).resolve().parents[2]
 _VERSION_FILE = _ROOT / "VERSION"
 _META_FILE = Path(os.environ.get("NEXUSPANEL_DATA_DIR", "/var/lib/nexuspanel")) / "install-meta.json"
+_COMPOSE_PROJECT = os.environ.get("COMPOSE_PROJECT_NAME", "nexuspanel").strip() or "nexuspanel"
 _lock = threading.Lock()
 _jobs: Dict[str, "UpdateJob"] = {}
 
 STEP_ORDER = ("backup", "pull", "migrate", "build", "restart")
+
+_IMAGE_REBUILD_FILES = frozenset({"Dockerfile", "docker-entrypoint.sh"})
+_PIP_FILES = frozenset({"requirements.txt"})
 
 
 def _github_repo() -> str:
@@ -73,6 +79,7 @@ class UpdateJob:
     error_message: Optional[str] = None
     created_at: float = field(default_factory=time.time)
     finished_at: Optional[float] = None
+    update_mode: UpdateMode = "restart"
 
     def _index(self, step_id: str) -> int:
         for i, s in enumerate(self.steps):
@@ -274,23 +281,117 @@ def _compose_file() -> Optional[Path]:
     return None
 
 
+def _compose_cmd(*args: str) -> List[str]:
+    compose = _compose_file()
+    if not compose:
+        raise RuntimeError("docker_compose_unavailable")
+    return [
+        "docker",
+        "compose",
+        "-p",
+        _COMPOSE_PROJECT,
+        "-f",
+        compose.name,
+        *args,
+    ]
+
+
+def _git_head_sha() -> Optional[str]:
+    if not _git_available():
+        return None
+    try:
+        return subprocess.check_output(
+            ["git", *_GIT_SAFE, "rev-parse", "HEAD"],
+            cwd=_ROOT,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+    except (subprocess.SubprocessError, FileNotFoundError, OSError):
+        return None
+
+
+def _git_changed_files(from_sha: str, to_sha: str = "HEAD") -> List[str]:
+    if not _git_available() or not from_sha:
+        return []
+    try:
+        out = subprocess.check_output(
+            ["git", *_GIT_SAFE, "diff", "--name-only", from_sha, to_sha],
+            cwd=_ROOT,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        return [line.strip() for line in out.splitlines() if line.strip()]
+    except (subprocess.SubprocessError, FileNotFoundError, OSError):
+        return []
+
+
+def _dashboard_prebuilt() -> bool:
+    return (_ROOT / "app" / "dashboard-next" / "out" / "dashboard" / "index.html").is_file()
+
+
+def plan_update(changed: List[str]) -> Tuple[UpdateMode, str]:
+    """Pick the smallest safe update path from a git diff file list."""
+    if not changed:
+        return "restart", "fast restart (bind-mounted code)"
+
+    if any(name in _IMAGE_REBUILD_FILES for name in changed):
+        return "rebuild", "Dockerfile/entrypoint changed"
+
+    if any(name in _PIP_FILES for name in changed):
+        return "pip", "requirements.txt changed"
+
+    dash_src = any(p.startswith("app/dashboard-next/src/") for p in changed)
+    dash_out = any(p.startswith("app/dashboard-next/out/") for p in changed)
+    if dash_src and not dash_out and not _dashboard_prebuilt():
+        return "dashboard", "dashboard source changed (no prebuilt out/)"
+
+    return "restart", "app/config only (bind-mounted code)"
+
+
 def _git_pull() -> None:
     branch = _github_branch()
     _run_cmd_quiet(["git", *_GIT_SAFE, "fetch", "origin", branch, "--depth", "1"])
     _run_cmd_quiet(["git", *_GIT_SAFE, "reset", "--hard", f"origin/{branch}"])
 
 
-def _docker_compose_rebuild_detached() -> None:
-    """Schedule compose rebuild; the running panel container will be replaced."""
-    compose = _compose_file()
-    if not compose or not _docker_available():
-        raise RuntimeError("docker_compose_unavailable")
+def _pip_install_requirements() -> None:
+    req = _ROOT / "requirements.txt"
+    if not req.is_file():
+        return
+    if _docker_available() and _compose_file():
+        _run_cmd_quiet(
+            _compose_cmd("exec", "-T", "-u", "0", "nexuspanel", "pip", "install", "--no-cache-dir", "-r", "/code/requirements.txt"),
+            timeout=900,
+        )
+        return
+    _run_cmd_quiet([sys.executable, "-m", "pip", "install", "--no-cache-dir", "-r", str(req)], timeout=900)
+
+
+def _build_dashboard() -> None:
+    build = _ROOT / "build_dashboard.sh"
+    if not build.is_file():
+        raise RuntimeError("build_dashboard.sh missing")
+    if shutil.which("npm"):
+        _run_cmd_quiet(["bash", str(build)], timeout=900)
+        return
+    if not _dashboard_prebuilt():
+        raise RuntimeError("npm unavailable and dashboard out/ is missing")
+
+
+def _schedule_compose_action(mode: UpdateMode) -> None:
+    """Run compose restart/rebuild detached so the API can report success first."""
     log_path = _META_FILE.parent / "update-rebuild.log"
+    if mode == "rebuild":
+        cmd = _compose_cmd("up", "-d", "--build", "nexuspanel")
+        label = "rebuild"
+    else:
+        cmd = _compose_cmd("up", "-d", "nexuspanel")
+        label = "restart"
     with open(log_path, "a", encoding="utf-8") as logf:
-        logf.write(f"\n--- rebuild {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} ---\n")
+        logf.write(f"\n--- {label} {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} mode={mode} ---\n")
         logf.flush()
         subprocess.Popen(
-            ["docker", "compose", "-f", str(compose.name), "up", "-d", "--build", "nexuspanel"],
+            cmd,
             cwd=str(_ROOT),
             stdout=logf,
             stderr=subprocess.STDOUT,
@@ -299,22 +400,9 @@ def _docker_compose_rebuild_detached() -> None:
 
 
 def _restart_panel(job: UpdateJob) -> None:
-    compose = _compose_file()
-    if _docker_available() and compose:
-        _run_cmd_quiet(
-            ["docker", "compose", "-f", str(compose.name), "restart", "nexuspanel"],
-            cwd=_ROOT,
-            timeout=180,
-        )
+    if _docker_available() and _compose_file():
+        _run_cmd_quiet(_compose_cmd("restart", "nexuspanel"), cwd=_ROOT, timeout=180)
         return
-    if _docker_available():
-        if compose and compose.name == "docker-compose.postgres.yml":
-            _run_cmd_quiet(
-                ["docker", "compose", "-f", str(compose.name), "restart", "nexuspanel"],
-                cwd=_ROOT,
-                timeout=180,
-            )
-            return
     for unit in ("nexuspanel", "marzban"):
         if not shutil.which("systemctl"):
             break
@@ -338,6 +426,8 @@ def _worker(job_id: str) -> None:
     job.status = "running"
     for sid in STEP_ORDER:
         job.steps.append(UpdateStep(id=sid, status="pending"))
+    old_sha = _git_head_sha()
+    use_docker = _docker_available() and bool(_compose_file())
     try:
         job.step_running("backup")
         from app.backup import create_backup
@@ -354,47 +444,41 @@ def _worker(job_id: str) -> None:
                 "git unavailable — bind-mount the app dir (/opt/nexuspanel:/code) and install git in the panel container"
             )
 
+        changed = _git_changed_files(old_sha or "", "HEAD")
+        mode, mode_detail = plan_update(changed)
+        job.update_mode = mode
+
         job.step_running("migrate")
         _run_cmd_quiet(["alembic", "upgrade", "head"])
         job.step_done("migrate")
 
         job.step_running("build")
-        rebuild_via_docker = _docker_available() and bool(_compose_file())
-        if rebuild_via_docker:
-            job.step_done("build", detail="docker compose (scheduled)")
+        if mode == "rebuild":
+            job.step_done("build", detail=mode_detail)
+        elif mode == "pip":
+            _pip_install_requirements()
+            job.step_done("build", detail=mode_detail)
+        elif mode == "dashboard":
+            _build_dashboard()
+            job.step_done("build", detail=mode_detail)
         else:
-            build = _ROOT / "build_dashboard.sh"
-            if build.is_file() and shutil.which("npm"):
-                _run_cmd_quiet(["bash", str(build)], timeout=900)
-                job.step_done("build", detail="dashboard build")
-            else:
-                job.step_done("build", detail="skipped (prebuilt assets from git)")
+            job.step_done("build", detail=mode_detail)
 
         new_ver = _local_version()
-        sha = None
-        if _git_available():
-            try:
-                sha = subprocess.check_output(
-                    ["git", *_GIT_SAFE, "rev-parse", "--short", "HEAD"],
-                    cwd=_ROOT,
-                    stderr=subprocess.DEVNULL,
-                    text=True,
-                ).strip()
-            except subprocess.SubprocessError:
-                pass
+        sha = _git_head_sha()
         _write_install_meta(new_ver, sha)
 
         job.step_running("restart")
-        if rebuild_via_docker:
-            job.step_done("restart", detail="panel will restart")
+        if use_docker:
+            job.step_done("restart", detail=f"{mode} scheduled")
         else:
             _restart_panel(job)
             job.step_done("restart")
 
         job.status = "success"
-        if rebuild_via_docker:
-            time.sleep(3)
-            _docker_compose_rebuild_detached()
+        if use_docker:
+            time.sleep(2)
+            _schedule_compose_action("rebuild" if mode == "rebuild" else "restart")
     except Exception as exc:
         job.error_message = str(exc)
         for s in job.steps:
@@ -529,6 +613,7 @@ def job_to_api(job: UpdateJob) -> dict:
         "status": job.status,
         "finished": job.status in ("success", "failed"),
         "error_message": job.error_message,
+        "update_mode": job.update_mode,
         "steps": [
             {"id": s.id, "status": s.status, "detail": s.detail}
             for s in job.steps

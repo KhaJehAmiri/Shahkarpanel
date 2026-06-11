@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.12.8 — 2026-06-10
+
+- Fix in-dashboard update creating a wrong Docker stack (`code-*` instead of `nexuspanel-*`) by pinning compose project name to `nexuspanel`.
+- Smart update paths: code-only changes → fast container restart (bind-mounted `/code`); `requirements.txt` → in-container pip; Dockerfile/entrypoint → image rebuild.
+- Fix `nexuspanel update` CLI when `.env` uses spaced `KEY = value` lines.
+
 ## 0.12.7 — 2026-06-10
 
 - Users page: selecting **AmneziaWG** shows the correct badge (not WireGuard).

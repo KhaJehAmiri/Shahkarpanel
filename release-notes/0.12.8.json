@@ -1,0 +1,22 @@
+{
+  "en": [
+    "Fix in-dashboard update: docker compose project name (no duplicate code-* stack)",
+    "Smart update: fast restart for code-only changes; rebuild only when Dockerfile/requirements change",
+    "Fix nexuspanel update CLI when .env uses spaced KEY = value syntax"
+  ],
+  "fa": [
+    "رفع آپدیت داشبورد: نام پروژه docker compose (دیگر stack تکراری code-* ساخته نمی‌شود)",
+    "آپدیت هوشمند: restart سریع برای تغییرات کد؛ rebuild فقط وقتی Dockerfile/requirements عوض شود",
+    "رفع nexuspanel update وقتی .env فرمت KEY = value با فاصله دارد"
+  ],
+  "ru": [
+    "Исправлено обновление из панели: имя проекта docker compose",
+    "Умное обновление: быстрый restart для кода; rebuild только при Dockerfile/requirements",
+    "Исправлен nexuspanel update при .env с пробелами вокруг ="
+  ],
+  "zh": [
+    "修复仪表盘更新：docker compose 项目名（不再创建重复的 code-* 栈）",
+    "智能更新：仅代码变更时快速 restart；仅 Dockerfile/requirements 变更时 rebuild",
+    "修复 .env 使用 KEY = value 带空格时 nexuspanel update 失败"
+  ]
+}

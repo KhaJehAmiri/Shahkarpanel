@@ -68,10 +68,10 @@ def get_system_stats(
     )
 
 
-@router.get("/inbounds", response_model=Dict[ProxyTypes, List[ProxyInbound]])
+@router.get("/inbounds", response_model=Dict[str, List[ProxyInbound]])
 def get_inbounds(admin: Admin = Depends(Admin.get_current)):
     """Retrieve inbound configurations grouped by protocol."""
-    return xray.config.inbounds_by_protocol
+    return dict(xray.config.inbounds_by_protocol)
 
 
 @router.get(

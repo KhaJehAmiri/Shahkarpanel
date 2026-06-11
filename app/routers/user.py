@@ -39,15 +39,17 @@ def _ensure_protocol_enabled(proxy_type, db: Session) -> None:
         from app.wireguard.sync import amneziawg_enabled, plain_wg_enabled
 
         wg_nodes = crud.get_wireguard_nodes(db)
-        if not any(
+        if any(
             n.wireguard and (plain_wg_enabled(n.wireguard) or amneziawg_enabled(n.wireguard))
             for n in wg_nodes
         ):
-            raise HTTPException(
-                status_code=400,
-                detail="WireGuard / AmneziaWG has no configured node on your server",
-            )
-        return
+            return
+        if xray.config.inbounds_by_protocol.get("amneziawg"):
+            return
+        raise HTTPException(
+            status_code=400,
+            detail="WireGuard / AmneziaWG has no configured node on your server",
+        )
     if proxy_type == ProxyTypes.Hysteria2:
         nodes = crud.get_singbox_nodes(db)
         if not any(n.singbox and n.singbox.hysteria2_enabled for n in nodes):

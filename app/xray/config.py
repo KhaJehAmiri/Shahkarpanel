@@ -13,6 +13,7 @@ from app.db import models as db_models
 from app.models.proxy import ProxyTypes
 from app.models.user import UserStatus
 from app.utils.crypto import get_cert_SANs
+from app.xray.inbound_normalize import NXPANEL_INBOUND_KIND
 from config import DEBUG, XRAY_EXCLUDE_INBOUND_TAGS, XRAY_FALLBACKS_INBOUND_TAG
 
 
@@ -165,12 +166,14 @@ class XRayConfig(dict):
             if not inbound['protocol'] in ProxyTypes._value2member_map_:
                 continue
 
-            # WireGuard is a product protocol served by a native node interface,
-            # not by Xray. A `wireguard` inbound in the Xray config is server
-            # configuration (Phase 10 editor) and must never be exposed as a
-            # per-user product inbound, otherwise add_user would try to build a
-            # (non-existent) Xray WireGuard account. See accounting-contract.md.
-            if inbound['protocol'] == ProxyTypes.WireGuard.value:
+            # Plain WireGuard Xray listeners are server-only. AmneziaWG-marked
+            # wireguard inbounds are assignable product inbounds (peers injected
+            # in include_db_users). Native WG nodes use a separate code path.
+            is_xray_awg = (
+                inbound['protocol'] == ProxyTypes.WireGuard.value
+                and (inbound.get('settings') or {}).get(NXPANEL_INBOUND_KIND) == 'amneziawg'
+            )
+            if inbound['protocol'] == ProxyTypes.WireGuard.value and not is_xray_awg:
                 continue
 
             if inbound['tag'] in XRAY_EXCLUDE_INBOUND_TAGS:
@@ -368,13 +371,78 @@ class XRayConfig(dict):
                     elif host and isinstance(host, list):
                         settings['host'] = host[0]
 
+            if is_xray_awg:
+                settings["xray_awg"] = True
+                settings["protocol"] = "amneziawg"
+                api_key = "amneziawg"
+            else:
+                api_key = inbound["protocol"]
+
             self.inbounds.append(settings)
             self.inbounds_by_tag[inbound['tag']] = settings
 
             try:
-                self.inbounds_by_protocol[inbound['protocol']].append(settings)
+                self.inbounds_by_protocol[api_key].append(settings)
             except KeyError:
-                self.inbounds_by_protocol[inbound['protocol']] = [settings]
+                self.inbounds_by_protocol[api_key] = [settings]
+
+    def product_inbounds_for_type(self, proxy_type: ProxyTypes) -> list:
+        """Inbounds a user proxy of ``proxy_type`` may be assigned to."""
+        key = proxy_type.value if isinstance(proxy_type, ProxyTypes) else str(proxy_type)
+        items = list(self.inbounds_by_protocol.get(key, []))
+        if key == ProxyTypes.WireGuard.value:
+            items.extend(self.inbounds_by_protocol.get("amneziawg", []))
+        return items
+
+    @staticmethod
+    def _wg_subnet_from_settings(settings: dict) -> str:
+        import ipaddress
+
+        addrs = settings.get("address") or []
+        if isinstance(addrs, str):
+            addrs = [addrs]
+        for raw in addrs:
+            try:
+                return str(ipaddress.ip_interface(str(raw)).network)
+            except ValueError:
+                continue
+        return "10.8.0.0/24"
+
+    def _inject_xray_awg_peers(self, config: "XRayConfig", grouped_data: dict) -> None:
+        awg_inbounds = self.inbounds_by_protocol.get("amneziawg") or []
+        if not awg_inbounds:
+            return
+
+        from app.wireguard.kind import wg_wants_awg_address
+        from app.wireguard.pool import WireGuardPeerIPAllocator
+
+        rows = grouped_data.get(ProxyTypes.WireGuard.value, [])
+        for inbound_meta in awg_inbounds:
+            tag = inbound_meta["tag"]
+            raw = config.get_inbound(tag)
+            if not raw:
+                continue
+            settings = raw.setdefault("settings", {})
+            subnet = self._wg_subnet_from_settings(settings)
+            peers = []
+            used_addrs = []
+            for _uid, _username, user_settings, excluded_tags in rows:
+                if excluded_tags and tag in excluded_tags:
+                    continue
+                if not wg_wants_awg_address(user_settings or {}):
+                    continue
+                pub = (user_settings or {}).get("public_key")
+                if not pub:
+                    continue
+                addr = (user_settings or {}).get("awg_address") or (user_settings or {}).get("address")
+                if not addr:
+                    allocator = WireGuardPeerIPAllocator(subnet, used=used_addrs)
+                    addr = allocator.allocate()
+                    if not addr:
+                        continue
+                used_addrs.append(addr)
+                peers.append({"publicKey": pub, "allowedIPs": [addr]})
+            settings["peers"] = peers
 
     def get_inbound(self, tag) -> dict:
         for inbound in self['inbounds']:
@@ -396,6 +464,18 @@ class XRayConfig(dict):
         config = self.copy()
 
         with GetDB() as db:
+            awg_inbounds = self.inbounds_by_protocol.get("amneziawg") or []
+            if awg_inbounds:
+                from app.db.models import Proxy
+                from app.wireguard.kind import wg_wants_awg_address
+                from app.wireguard.operations import ensure_user_address
+
+                first = config.get_inbound(awg_inbounds[0]["tag"]) or {}
+                subnet = self._wg_subnet_from_settings(first.get("settings") or {})
+                for proxy in db.query(Proxy).filter(Proxy.type == ProxyTypes.WireGuard).all():
+                    if wg_wants_awg_address(dict(proxy.settings or {})):
+                        ensure_user_address(db, proxy, subnet)
+
             query = db.query(
                 db_models.User.id,
                 db_models.User.username,
@@ -482,6 +562,8 @@ class XRayConfig(dict):
                             del client['flow']
 
                         clients.append(client)
+
+                self._inject_xray_awg_peers(config, grouped_data)
 
         if DEBUG:
             with open('generated_config-debug.json', 'w') as f:

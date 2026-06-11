@@ -274,11 +274,13 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
   // Initialize protocol state once inbounds + user are known.
   useEffect(() => {
     if (!inbounds.data) return;
+    const awgInboundTags = (inbounds.data.amneziawg || []).map((i) => i.tag);
     const next: Record<string, ProtoState> = {};
     const userProtos = user?.proxies ? Object.keys(user.proxies) : [];
-    Object.keys(inbounds.data).forEach((proto, idx) => {
+    Object.keys(inbounds.data).forEach((proto) => {
+      if (proto === "amneziawg") return;
       const tags = inbounds.data![proto].map((i) => i.tag);
-      const enabled = mode === "edit" ? userProtos.includes(proto) : idx === 0;
+      const enabled = mode === "edit" ? userProtos.includes(proto) : false;
       const selected = user?.inbounds?.[proto] || tags;
       next[proto] = {
         enabled,
@@ -300,7 +302,9 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
     const hasPlainPeer = !!(wgSettings?.address);
     next["amneziawg"] = {
       enabled: mode === "edit" ? userProtos.includes("wireguard") && (wgKind === "amneziawg" || wgKind === "both" || (hasAwgPeer && !hasPlainPeer && !wgKind)) : false,
-      tags: [],
+      tags: mode === "edit"
+        ? (user?.inbounds?.wireguard || []).filter((t) => awgInboundTags.includes(t))
+        : awgInboundTags,
       flow: "",
       method: "",
     };
@@ -379,6 +383,11 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
       return;
     }
     if (!enabledProtos.length) { toast.push(t("users.selectProtocol"), "error"); return; }
+    const awgInboundTags = inbounds.data?.amneziawg?.map((i) => i.tag) || [];
+    if (protos.amneziawg?.enabled && awgInboundTags.length > 0 && !protos.amneziawg.tags?.length) {
+      toast.push(t("users.inboundRequired", { proto: PROTO_LABEL.amneziawg }), "error");
+      return;
+    }
     const apiProtos = submitEnabledProtos();
     for (const [p, v] of apiProtos) {
       if (!NATIVE_PROTOCOLS.includes(p as typeof NATIVE_PROTOCOLS[number]) && !v.tags.length) {
@@ -423,7 +432,9 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
         }
         if (NATIVE_PROTOCOLS.includes(p as typeof NATIVE_PROTOCOLS[number])) {
           proxies[p] = Object.keys(s).length ? s : (p === "wireguard" && wgKind ? { [NXPANEL_WG_KIND]: wgKind } : {});
-          inb[p] = [];
+          inb[p] = p === "wireguard" && protos.amneziawg?.enabled && awgInboundTags.length
+            ? protos.amneziawg.tags.filter((t) => awgInboundTags.includes(t))
+            : [];
         } else {
           proxies[p] = s;
           inb[p] = v.tags;
@@ -472,18 +483,23 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
   const availableProtos = PROTO_ORDER.filter((p) => {
     if (!protos[p]) return false;
     if (p === "wireguard") return hasPlainWgNode || protos[p]?.enabled;
-    if (p === "amneziawg") return hasAwgNode || protos[p]?.enabled;
-    if (NATIVE_PROTOCOLS.includes(p as typeof NATIVE_PROTOCOLS[number])) return true;
+    if (p === "amneziawg") {
+      return hasAwgNode || (inbounds.data?.amneziawg?.length || 0) > 0 || protos[p]?.enabled;
+    }
+    if (p === "hysteria2" || p === "tuic") return true;
     return (inbounds.data?.[p]?.length || 0) > 0;
   });
 
   const toggleWizardProto = (p: string) => {
     const enabling = !protos[p]?.enabled;
-    const tags = inbounds.data?.[p]?.map((i) => i.tag) || [];
     const isNative = NATIVE_PROTOCOLS.includes(p as typeof NATIVE_PROTOCOLS[number]);
+    const tags = p === "amneziawg"
+      ? (inbounds.data?.amneziawg?.map((i) => i.tag) || [])
+      : (inbounds.data?.[p]?.map((i) => i.tag) || []);
     setProto(p, {
       enabled: enabling,
       ...(enabling && !isNative ? { tags } : {}),
+      ...(enabling && p === "amneziawg" ? { tags } : {}),
     });
   };
 
@@ -592,9 +608,11 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
                       <span className="nx-proto-icon">{vis.icon}</span>
                       <b>{PROTO_LABEL[p] || p}</b>
                       <small>
-                        {NATIVE_PROTOCOLS.includes(p as typeof NATIVE_PROTOCOLS[number])
-                          ? t("users.wgNativePeer")
-                          : t("users.inboundCount", { n: inbounds.data?.[p]?.length || 0 })}
+                        {p === "amneziawg" && (inbounds.data?.amneziawg?.length || 0) > 0
+                          ? t("users.inboundCount", { n: inbounds.data?.amneziawg?.length || 0 })
+                          : NATIVE_PROTOCOLS.includes(p as typeof NATIVE_PROTOCOLS[number])
+                            ? t("users.wgNativePeer")
+                            : t("users.inboundCount", { n: inbounds.data?.[p]?.length || 0 })}
                       </small>
                     </button>
                   );
@@ -620,10 +638,26 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
                     </div>
                     {v.enabled && expanded[p] && (
                       <div style={{ marginTop: 10, paddingInlineStart: 28 }}>
-                        {p === "wireguard" ? (
+                        {p === "amneziawg" ? (
+                          <>
+                            <div className="nx-faint" style={{ fontSize: 12, marginBottom: 8 }}>{t("users.awgHint")}</div>
+                            {(inbounds.data?.amneziawg?.length || 0) > 0 && (
+                              <div className="nx-row" style={{ gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+                                {inbounds.data?.amneziawg?.map((i) => (
+                                  <button
+                                    key={i.tag}
+                                    type="button"
+                                    className={`nx-btn sm ${v.tags.includes(i.tag) ? "primary" : ""}`}
+                                    onClick={() => toggleTag(p, i.tag)}
+                                  >
+                                    {v.tags.includes(i.tag) ? "✓ " : ""}{i.tag} <span style={{ opacity: 0.6 }}>:{i.port}</span>
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </>
+                        ) : p === "wireguard" ? (
                           <div className="nx-faint" style={{ fontSize: 12, marginBottom: 8 }}>{t("users.wgHint")}</div>
-                        ) : p === "amneziawg" ? (
-                          <div className="nx-faint" style={{ fontSize: 12, marginBottom: 8 }}>{t("users.awgHint")}</div>
                         ) : p === "hysteria2" ? (
                           <div className="nx-faint" style={{ fontSize: 12, marginBottom: 8 }}>{t("users.hy2Hint")}</div>
                         ) : p === "tuic" ? (

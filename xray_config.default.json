@@ -14,103 +14,7 @@
             }
         ]
     },
-    "inbounds": [
-        {
-            "tag": "VLESS TCP",
-            "listen": "0.0.0.0",
-            "port": 8443,
-            "protocol": "vless",
-            "settings": {
-                "clients": [],
-                "decryption": "none"
-            },
-            "streamSettings": {
-                "network": "tcp",
-                "security": "reality",
-                "realitySettings": {
-                    "show": false,
-                    "dest": "www.google.com:443",
-                    "xver": 0,
-                    "serverNames": [
-                        "www.google.com"
-                    ],
-                    "privateKey": "0IUfcmh4XmN0bHlcW8od7XN1IRktN7Iq3lDto1Vqb2Q",
-                    "publicKey": "CuRelm5ulh6VZyasA1BekWMl4We-01o6BcCYW2zFmQc",
-                    "shortIds": [
-                        "63ff9c82",
-                        ""
-                    ]
-                }
-            },
-            "sniffing": {
-                "enabled": true,
-                "destOverride": [
-                    "http",
-                    "tls",
-                    "quic"
-                ]
-            }
-        },
-        {
-            "tag": "VLESS WS",
-            "listen": "0.0.0.0",
-            "port": 2095,
-            "protocol": "vless",
-            "settings": {
-                "clients": [],
-                "decryption": "none"
-            },
-            "streamSettings": {
-                "network": "ws",
-                "security": "none",
-                "wsSettings": {
-                    "path": "/vless"
-                }
-            }
-        },
-        {
-            "tag": "VMess WS",
-            "listen": "0.0.0.0",
-            "port": 2096,
-            "protocol": "vmess",
-            "settings": {
-                "clients": []
-            },
-            "streamSettings": {
-                "network": "ws",
-                "security": "none",
-                "wsSettings": {
-                    "path": "/vmess"
-                }
-            }
-        },
-        {
-            "tag": "Trojan WS",
-            "listen": "0.0.0.0",
-            "port": 2097,
-            "protocol": "trojan",
-            "settings": {
-                "clients": []
-            },
-            "streamSettings": {
-                "network": "ws",
-                "security": "none",
-                "wsSettings": {
-                    "path": "/trojan"
-                }
-            }
-        },
-        {
-            "tag": "Shadowsocks TCP",
-            "listen": "0.0.0.0",
-            "port": 1080,
-            "protocol": "shadowsocks",
-            "settings": {
-                "clients": [],
-                "network": "tcp,udp"
-            }
-        }
-    ],
+    "inbounds": [],
     "outbounds": [
         {
             "protocol": "freedom",
@@ -123,9 +27,7 @@
     ],
     "dns": {
         "servers": [
-            "https://1.1.1.1/dns-query",
-            "1.1.1.1",
-            "8.8.8.8"
+            "1.1.1.1"
         ],
         "queryStrategy": "UseIPv4"
     }

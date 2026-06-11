@@ -453,12 +453,12 @@ seed_data_dir() {
     ok "Created ${target} from install template"
     return 0
   fi
-  # Upgrade the legacy single-protocol (Shadowsocks-only) default to the rich
-  # multi-protocol template so users get VLESS/VMess/Trojan out of the box.
+  # Upgrade legacy single-protocol (Shadowsocks-only) default to the current
+  # empty install template.
   if ! grep -q '"vless"' "${target}" && ! grep -q '"vmess"' "${target}"; then
     cp "${target}" "${target}.bak.$(date +%s)"
     cp "${source}" "${target}"
-    ok "Upgraded ${target} to multi-protocol (VLESS/VMess/Trojan/Shadowsocks); old config backed up."
+    ok "Upgraded ${target} to empty multi-protocol-ready template; old config backed up."
   fi
 }
 

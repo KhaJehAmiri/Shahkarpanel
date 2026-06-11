@@ -170,7 +170,7 @@ class UserCreate(User):
         excluded = {}
         for proxy_type in self.proxies:
             excluded[proxy_type] = []
-            for inbound in xray.config.inbounds_by_protocol.get(proxy_type, []):
+            for inbound in xray.config.product_inbounds_for_type(proxy_type):
                 if not inbound["tag"] in self.inbounds.get(proxy_type, []):
                     excluded[proxy_type].append(inbound["tag"])
 

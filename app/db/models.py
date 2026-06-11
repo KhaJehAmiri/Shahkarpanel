@@ -174,7 +174,7 @@ class User(Base):
         for proxy in self.proxies:
             _[proxy.type] = []
             excluded_tags = [i.tag for i in proxy.excluded_inbounds]
-            for inbound in xray.config.inbounds_by_protocol.get(proxy.type, []):
+            for inbound in xray.config.product_inbounds_for_type(proxy.type):
                 tag = inbound["tag"]
                 if tag in excluded_tags:
                     continue

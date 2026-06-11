@@ -10,7 +10,7 @@ import {
 import { PanelUpdateModal } from "../components/PanelUpdateModal";
 import { WhatsNewModal } from "../components/WhatsNewModal";
 
-const UPDATE_STEP_IDS = ["backup", "pull", "migrate", "build", "restart"] as const;
+const UPDATE_STEP_IDS = ["pull", "backup", "migrate", "build", "restart"] as const;
 
 interface UpdateState {
   check: UpdateCheck | null;

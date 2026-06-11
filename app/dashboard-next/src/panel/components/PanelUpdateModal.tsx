@@ -4,7 +4,7 @@ import { UpdateCheck, UpdateJobInfo } from "../api/types";
 import { releaseNotesForLang } from "../lib/releaseNotes";
 import { Button, Callout, Modal, Pill } from "./ui";
 
-const STEP_IDS = ["backup", "pull", "migrate", "build", "restart"] as const;
+const STEP_IDS = ["pull", "backup", "migrate", "build", "restart"] as const;
 
 export const PanelUpdateModal: FC<{
   open: boolean;

@@ -1,0 +1,18 @@
+{
+  "en": [
+    "Update order: git pull first, then backup (fixes pg_dump on Docker PostgreSQL)",
+    "Non-fatal backup step if dump fails; smart fast restart unchanged from v0.12.8"
+  ],
+  "fa": [
+    "ترتیب آپدیت: ابتدا git pull سپس backup (رفع pg_dump روی PostgreSQL داکر)",
+    "مرحله backup در صورت خطا skip می‌شود؛ restart سریع هوشمند مثل v0.12.8"
+  ],
+  "ru": [
+    "Порядок: сначала git pull, затем backup (pg_dump через Docker PostgreSQL)",
+    "Backup пропускается при ошибке; быстрый restart как в v0.12.8"
+  ],
+  "zh": [
+    "更新顺序：先 git pull 再 backup（修复 Docker PostgreSQL 的 pg_dump）",
+    "备份失败时跳过；保留 v0.12.8 的快速智能 restart"
+  ]
+}

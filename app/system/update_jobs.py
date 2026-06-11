@@ -27,7 +27,7 @@ _COMPOSE_PROJECT = os.environ.get("COMPOSE_PROJECT_NAME", "nexuspanel").strip() 
 _lock = threading.Lock()
 _jobs: Dict[str, "UpdateJob"] = {}
 
-STEP_ORDER = ("backup", "pull", "migrate", "build", "restart")
+STEP_ORDER = ("pull", "backup", "migrate", "build", "restart")
 
 _IMAGE_REBUILD_FILES = frozenset({"Dockerfile", "docker-entrypoint.sh"})
 _PIP_FILES = frozenset({"requirements.txt"})
@@ -429,12 +429,6 @@ def _worker(job_id: str) -> None:
     old_sha = _git_head_sha()
     use_docker = _docker_available() and bool(_compose_file())
     try:
-        job.step_running("backup")
-        from app.backup import create_backup
-
-        path = create_backup()
-        job.step_done("backup", detail=Path(path).name)
-
         job.step_running("pull")
         if _git_available():
             _git_pull()
@@ -443,6 +437,15 @@ def _worker(job_id: str) -> None:
             raise RuntimeError(
                 "git unavailable — bind-mount the app dir (/opt/nexuspanel:/code) and install git in the panel container"
             )
+
+        job.step_running("backup")
+        try:
+            from app.backup import create_backup
+
+            path = create_backup()
+            job.step_done("backup", detail=Path(path).name)
+        except Exception as exc:
+            job.step_done("backup", detail=f"skipped: {exc}")
 
         changed = _git_changed_files(old_sha or "", "HEAD")
         mode, mode_detail = plan_update(changed)

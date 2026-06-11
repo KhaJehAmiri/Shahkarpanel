@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.12.10 — 2026-06-10
+
+- Reorder update steps: **pull before backup** so Docker PostgreSQL backup fix is available before dump runs.
+- Backup step is non-fatal when dump fails (update continues).
+
 ## 0.12.9 — 2026-06-10
 
 - Fix pre-update backup when `pg_dump` is not in the panel image (dump via `docker compose exec postgres`).

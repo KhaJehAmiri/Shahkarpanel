@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from app import panel_version, xray
 from app.db import Session, crud, get_db
 from app.models.admin import Admin
-from app.models.proxy import ProxyHost, ProxyInbound, ProxyTypes
+from app.models.proxy import ProxyHost
 from app.models.system import SystemStats
 from app.models.user import UserStatus
 from app.utils import responses

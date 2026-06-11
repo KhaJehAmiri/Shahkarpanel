@@ -141,13 +141,12 @@ class XRayConfig(dict):
                 outbound["settings"] = settings
 
     def _validate(self):
-        if not self.get("inbounds"):
-            raise ValueError("config doesn't have inbounds")
-
         if not self.get("outbounds"):
             raise ValueError("config doesn't have outbounds")
 
-        for inbound in self['inbounds']:
+        # Fresh installs ship with no user inbounds; API_INBOUND is injected in
+        # _apply_api() after validation.
+        for inbound in self.get("inbounds") or []:
             if not inbound.get("tag"):
                 raise ValueError("all inbounds must have a unique tag")
             if ',' in inbound.get("tag"):

@@ -384,6 +384,17 @@ ensure_code_permissions() {
   fi
 }
 
+ensure_data_permissions() {
+  mkdir -p "${DATA_DIR}/backups"
+  chown 1000:1000 "${DATA_DIR}/backups" 2>/dev/null || true
+  for path in "${DATA_DIR}/xray_config.json" "${DATA_DIR}/install-meta.json"; do
+    if [ -f "$path" ]; then
+      chown 1000:1000 "$path" 2>/dev/null || true
+      chmod 664 "$path" 2>/dev/null || true
+    fi
+  done
+}
+
 write_install_meta() {
   local ver sha meta
   ver="$(tr -d '[:space:]' < "${APP_DIR}/VERSION" 2>/dev/null || echo "0.0.0")"
@@ -436,6 +447,7 @@ seed_data_dir() {
   [ -f "${source}" ] || return 0
   if [ ! -f "${target}" ]; then
     cp "${source}" "${target}"
+    chown 1000:1000 "${target}" 2>/dev/null || true
     ok "Created ${target}"
     return 0
   fi
@@ -742,6 +754,7 @@ cmd_install() {
   write_env
   ensure_docker_gid
   ensure_code_permissions
+  ensure_data_permissions
   write_progress "services" 25 "Stopping conflicting services…" false
   disable_conflicting_services
   write_progress "firewall" 30 "Configuring firewall…" false
@@ -931,6 +944,7 @@ cmd_update()  {
   seed_data_dir
   ensure_docker_gid
   ensure_code_permissions
+  ensure_data_permissions
   load_env_creds
   disable_conflicting_services
   configure_firewall

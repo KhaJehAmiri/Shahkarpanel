@@ -1,0 +1,22 @@
+{
+  "en": [
+    "Fix AmneziaWG / WireGuard inbound save error (auto-generate secretKey, normalize protocol)",
+    "Xray config test before save returns a clear error instead of generic server error",
+    "Generate WireGuard keys button in inbound editor"
+  ],
+  "fa": [
+    "رفع خطای ذخیره inbound AmneziaWG/WireGuard (تولید خودکار secretKey)",
+    "اعتبارسنجی config با xray -test قبل از ذخیره با پیام خطای واضح",
+    "دکمه تولید کلید WireGuard در ویرایشگر inbound"
+  ],
+  "ru": [
+    "Исправлено сохранение inbound AmneziaWG/WireGuard",
+    "Проверка config через xray -test перед сохранением",
+    "Кнопка генерации ключей WireGuard"
+  ],
+  "zh": [
+    "修复 AmneziaWG/WireGuard inbound 保存错误",
+    "保存前 xray -test 校验并显示明确错误",
+    "inbound 编辑器新增 WireGuard 密钥生成"
+  ]
+}

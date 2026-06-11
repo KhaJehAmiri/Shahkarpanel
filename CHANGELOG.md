@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.12.3 — 2026-06-10
+
+- Fix AmneziaWG/WireGuard inbound save: auto-generate `secretKey`, map `amneziawg` → `wireguard`, strip invalid stream settings.
+- Run `xray run -test` before persisting core config; surface validation errors as HTTP 400.
+- Inbound editor: Generate WireGuard keys button; fix `xray_config.json` permissions for Docker uid 1000.
+
 ## 0.12.2 — 2026-06-10
 
 - Fix `PermissionError: /code/.env` when bind-mounting the app dir into Docker (chown uid 1000).

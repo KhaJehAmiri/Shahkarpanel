@@ -6,7 +6,7 @@ import commentjson
 from fastapi import APIRouter, Body, Depends, HTTPException, WebSocket
 from starlette.websockets import WebSocketDisconnect
 
-from app import xray
+from app import logger, xray
 from app.db import Session, get_db
 from app.models.admin import Admin
 from app.models.core import CoreStats
@@ -14,9 +14,33 @@ from app.utils import responses, warp
 from app.utils.outbound_test import test_outbound
 from app.utils.ws_auth import ws_bearer_token
 from app.xray import XRayConfig
-from config import XRAY_JSON
+from app.xray.inbound_normalize import normalize_core_config_payload
+from config import XRAY_EXECUTABLE_PATH, XRAY_JSON
 
 router = APIRouter(tags=["Core"], prefix="/api", responses={401: responses._401})
+
+
+def _xray_config_test_error(config_dict: dict) -> str | None:
+    """Return a short error message when ``xray run -test`` rejects the config."""
+    import subprocess
+
+    try:
+        proc = subprocess.run(
+            [XRAY_EXECUTABLE_PATH, "run", "-test", "-config", "stdin:"],
+            input=json.dumps(config_dict),
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        return str(exc)
+    if proc.returncode == 0:
+        return None
+    text = (proc.stderr or proc.stdout or "").strip()
+    if not text:
+        return "Xray rejected the configuration"
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    return lines[-1] if lines else "Xray rejected the configuration"
 
 
 @router.websocket("/core/logs")
@@ -112,16 +136,28 @@ def modify_core_config(
     payload: dict, admin: Admin = Depends(Admin.check_sudo_admin)
 ) -> dict:
     """Modify the core configuration and restart the core."""
+    payload = normalize_core_config_payload(payload)
     try:
         config = XRayConfig(payload, api_port=xray.config.api_port)
     except ValueError as err:
-        raise HTTPException(status_code=400, detail=str(err))
+        raise HTTPException(status_code=400, detail=str(err)) from err
+
+    startup_config = config.include_db_users()
+    test_err = _xray_config_test_error(dict(startup_config))
+    if test_err:
+        raise HTTPException(status_code=400, detail=test_err)
+
+    try:
+        with open(XRAY_JSON, "w", encoding="utf-8") as f:
+            f.write(json.dumps(payload, indent=4))
+    except OSError as err:
+        logger.exception("Failed to write Xray config to %s", XRAY_JSON)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Cannot write Xray config ({XRAY_JSON}): {err}",
+        ) from err
 
     xray.config = config
-    with open(XRAY_JSON, "w") as f:
-        f.write(json.dumps(payload, indent=4))
-
-    startup_config = xray.config.include_db_users()
     xray.core.restart(startup_config)
     for node_id, node in list(xray.nodes.items()):
         if node.connected:
@@ -130,6 +166,15 @@ def modify_core_config(
     xray.hosts.update()
 
     return payload
+
+
+@router.get("/core/wireguard/keypair", responses={403: responses._403})
+def generate_wireguard_keypair(_: Admin = Depends(Admin.check_sudo_admin)) -> dict:
+    """Generate a WireGuard X25519 keypair for inbound/outbound editors."""
+    from app.wireguard import generate_keypair
+
+    private_key, public_key = generate_keypair()
+    return {"privateKey": private_key, "publicKey": public_key}
 
 
 @router.get("/core/warp", responses={403: responses._403})

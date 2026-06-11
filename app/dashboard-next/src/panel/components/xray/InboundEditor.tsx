@@ -26,6 +26,7 @@ import {
   type InboundForm,
   buildInboundFromForm,
 } from "../../lib/xrayHelpers";
+import { api } from "../../api/client";
 import { Button, Callout, Checkbox, CopyButton, Field, Input, Modal, Select, useToast } from "../ui";
 
 const Section: FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
@@ -47,6 +48,7 @@ export const InboundEditor: FC<{
   const toast = useToast();
   const [f, setF] = useState<InboundForm>(initial ? inboundToForm(initial) : defaultInboundForm());
   const [genKeys, setGenKeys] = useState(false);
+  const [genWgKeys, setGenWgKeys] = useState(false);
   const originalTag = initial ? String(initial.tag) : undefined;
 
   const upd = (k: keyof InboundForm) => (e: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -98,7 +100,20 @@ export const InboundEditor: FC<{
     }
   };
 
-  const submit = () => {
+  const genWireGuard = async () => {
+    setGenWgKeys(true);
+    try {
+      const kp = await api.get<{ privateKey: string; publicKey: string }>("/core/wireguard/keypair");
+      setF((prev) => ({ ...prev, wgSecretKey: kp.privateKey }));
+      toast.push(t("inbounds.wgKeysGenerated"), "success");
+    } catch (e: unknown) {
+      toast.push(e instanceof Error ? e.message : "Keygen failed", "error");
+    } finally {
+      setGenWgKeys(false);
+    }
+  };
+
+  const submit = async () => {
     const clash = allInbounds.some(
       (i) => i.tag !== originalTag && (String(i.tag) === f.tag.trim() || String(i.port) === f.port),
     );
@@ -110,7 +125,17 @@ export const InboundEditor: FC<{
       toast.push(t("inbounds.realityKeyRequired"), "error");
       return;
     }
-    onApply(buildInboundFromForm(f), originalTag);
+    let form = f;
+    if ((f.protocol === "wireguard" || f.protocol === "amneziawg") && !f.wgSecretKey.trim()) {
+      try {
+        const kp = await api.get<{ privateKey: string; publicKey: string }>("/core/wireguard/keypair");
+        form = { ...f, wgSecretKey: kp.privateKey };
+      } catch (e: unknown) {
+        toast.push(e instanceof Error ? e.message : t("inbounds.wgKeygenFailed"), "error");
+        return;
+      }
+    }
+    onApply(buildInboundFromForm(form), originalTag);
   };
 
   const hasStream = supportsStream(f.protocol);
@@ -198,6 +223,11 @@ export const InboundEditor: FC<{
 
         {f.protocol === "wireguard" && (
           <Section title="WireGuard">
+            <div className="nx-row" style={{ gap: 8, marginBottom: 8 }}>
+              <Button variant="ghost" size="sm" disabled={genWgKeys} onClick={genWireGuard}>
+                {t("inbounds.generateWgKeys")}
+              </Button>
+            </div>
             <Field label={t("inbounds.wgSecretKey")}>
               <Input value={f.wgSecretKey} onChange={upd("wgSecretKey")} />
             </Field>
@@ -218,6 +248,11 @@ export const InboundEditor: FC<{
         {f.protocol === "amneziawg" && (
           <Section title={t("inbounds.amneziaSection")}>
             <CalloutInline>{t("inbounds.amneziaInboundHint")}</CalloutInline>
+            <div className="nx-row" style={{ gap: 8, marginBottom: 8 }}>
+              <Button variant="ghost" size="sm" disabled={genWgKeys} onClick={genWireGuard}>
+                {t("inbounds.generateWgKeys")}
+              </Button>
+            </div>
             <Field label={t("inbounds.wgSecretKey")}>
               <Input value={f.wgSecretKey} onChange={upd("wgSecretKey")} />
             </Field>

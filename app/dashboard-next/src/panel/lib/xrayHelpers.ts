@@ -594,10 +594,12 @@ export function buildInboundFromForm(f: InboundForm): Record<string, unknown> {
     }
     inbound.protocol = "wireguard";
     inbound.settings = {
-      secretKey: f.wgSecretKey,
+      secretKey: f.wgSecretKey.trim(),
       mtu: parseInt(f.wgMtu, 10) || 1420,
       peers,
     };
+    delete inbound.streamSettings;
+    delete inbound.sniffing;
   } else if (f.protocol === "hysteria") {
     const auth = f.hyAuth.trim();
     inbound.settings = {

@@ -5,6 +5,11 @@
 # One-line install (run as root):
 #   bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/nexuspanel/master/scripts/nexuspanel.sh) install
 #
+# Opens a WEB installer in your browser (not in the terminal):
+#   http://YOUR_SERVER_IP:8765/
+# Configure language, HTTPS, admin, branding — then click Install.
+# CLI-only: SKIP_WIZARD=1 bash <(curl …) install
+#
 # After install, manage with:  nexuspanel <command>
 #   install | update | up | down | restart | status | logs
 #   backup | restore <file> | cli ... | uninstall
@@ -110,9 +115,39 @@ PY
   export ADMIN_USERNAME ADMIN_PASSWORD AUTO_CREDENTIALS
 }
 
+print_wizard_banner() {
+  local ip="$1"
+  echo
+  echo "${BOLD}${GREEN}╔══════════════════════════════════════════════════════════════╗${NC}"
+  echo "${BOLD}${GREEN}║              NexusPanel — Web Installer (Browser)            ║${NC}"
+  echo "${BOLD}${GREEN}╚══════════════════════════════════════════════════════════════╝${NC}"
+  echo
+  echo "  ${BOLD}The installer is NOT in this terminal — open your browser:${NC}"
+  echo
+  echo "    ${BOLD}${BLUE}http://${ip}:${INSTALLER_PORT}/${NC}"
+  echo "    ${BOLD}${BLUE}http://127.0.0.1:${INSTALLER_PORT}/${NC}  (if you SSH with port forward)"
+  echo
+  echo "  ${YELLOW}فارسی:${NC} مرورگر را باز کنید → آدرس بالا → زبان، SSL، ادمین → Install"
+  echo "  English: Open the URL above → set language, HTTPS, admin → click Install"
+  echo
+  echo "  Waiting for you to finish in the browser… (Ctrl+C to cancel)"
+  echo
+}
+
+wizard_is_ready() {
+  curl -fsS --max-time 2 "http://127.0.0.1:${INSTALLER_PORT}/" >/dev/null 2>&1
+}
+
 start_install_wizard() {
   local wizard_py="${APP_DIR}/scripts/installer/wizard_server.py"
-  [ -f "$wizard_py" ] || { warn "Web installer UI missing — using CLI prompts."; prompt_install_config; return 1; }
+  if [ ! -f "$wizard_py" ]; then
+    warn "Web installer UI missing in ${APP_DIR}/scripts/installer/"
+    if [ -t 0 ]; then
+      prompt_install_config
+      return 1
+    fi
+    die "Web installer files not found after git clone. Run: nexuspanel update && nexuspanel install"
+  fi
   if [ "${SKIP_WIZARD}" = "1" ]; then
     prompt_install_config
     return 1
@@ -126,35 +161,46 @@ start_install_wizard() {
     --config "${INSTALL_CONFIG_FILE}" \
     --progress "${INSTALL_PROGRESS_FILE}" &
   WIZARD_PID=$!
-  sleep 1
-  local ip
+  local ip tries=0
+  while ! wizard_is_ready; do
+    sleep 1
+    tries=$((tries + 1))
+    if ! kill -0 "${WIZARD_PID}" 2>/dev/null; then
+      if [ -t 0 ]; then
+        warn "Installer UI stopped unexpectedly — falling back to CLI prompts."
+        prompt_install_config
+        return 1
+      fi
+      die "Web installer failed to start on port ${INSTALLER_PORT}. Check: python3, firewall, port in use."
+    fi
+    if [ "$tries" -ge 30 ]; then
+      die "Web installer did not respond on port ${INSTALLER_PORT} after 30s."
+    fi
+  done
   ip="$(curl -fsSL --max-time 6 https://api.ipify.org 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}')"
-  [ -n "$ip" ] || ip="127.0.0.1"
+  [ -n "$ip" ] || ip="YOUR_SERVER_IP"
   if command -v ufw >/dev/null 2>&1; then
     ufw allow "${INSTALLER_PORT}/tcp" comment 'NexusPanel installer (temporary)' >/dev/null 2>&1 || true
   fi
-  echo
-  echo "${BOLD}${GREEN}╔══════════════════════════════════════════════════════╗${NC}"
-  echo "${BOLD}${GREEN}║         NexusPanel — Web Installer                   ║${NC}"
-  echo "${BOLD}${GREEN}╚══════════════════════════════════════════════════════╝${NC}"
-  echo
-  echo "  Open in your browser:"
-  echo "    ${BOLD}http://${ip}:${INSTALLER_PORT}/${NC}"
-  echo "    ${BOLD}http://127.0.0.1:${INSTALLER_PORT}/${NC}"
-  echo
-  echo "  Configure language, HTTPS, admin account, branding — then click Install."
-  echo
-  local waited=0
+  print_wizard_banner "$ip"
+  local waited=0 last_reminder=0
   while [ ! -f "${INSTALL_CONFIG_FILE}" ]; do
     sleep 1
     waited=$((waited + 1))
     if ! kill -0 "${WIZARD_PID}" 2>/dev/null; then
-      warn "Installer UI stopped unexpectedly — falling back to CLI prompts."
-      prompt_install_config
-      return 1
+      if [ -t 0 ]; then
+        warn "Installer UI stopped unexpectedly — falling back to CLI prompts."
+        prompt_install_config
+        return 1
+      fi
+      die "Web installer stopped. Open http://${ip}:${INSTALLER_PORT}/ in your browser and re-run install."
+    fi
+    if [ $((waited - last_reminder)) -ge 30 ]; then
+      last_reminder=$waited
+      echo "  ${YELLOW}Still waiting — open:${NC} ${BOLD}http://${ip}:${INSTALLER_PORT}/${NC}"
     fi
     if [ "$waited" -ge 3600 ]; then
-      die "Timed out waiting for installer configuration (1 hour)."
+      die "Timed out waiting for installer configuration (1 hour). Open http://${ip}:${INSTALLER_PORT}/"
     fi
   done
   ok "Install configuration received."
@@ -174,12 +220,17 @@ stop_install_wizard() {
 }
 
 prompt_install_config() {
-  if [ -t 0 ] && [ -z "${DOMAIN:-}" ]; then
+  if [ ! -t 0 ]; then
+    warn "Non-interactive shell — using defaults (DOMAIN empty, auto HTTPS on IP)."
+    warn "For full options use the web wizard: bash <(curl -fsSL ${SCRIPT_URL}) install"
+    return 0
+  fi
+  if [ -z "${DOMAIN:-}" ]; then
     echo
     read -r -p "Domain for HTTPS (leave empty = certificate on public IP): " DOMAIN || true
     DOMAIN="${DOMAIN// /}"
   fi
-  if [ -n "${DOMAIN:-}" ] && [ -z "${EMAIL:-}" ] && [ -t 0 ]; then
+  if [ -n "${DOMAIN:-}" ] && [ -z "${EMAIL:-}" ]; then
     read -r -p "Email for Let's Encrypt (optional): " EMAIL || true
     EMAIL="${EMAIL// /}"
   fi

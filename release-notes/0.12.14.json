@@ -1,0 +1,10 @@
+{
+  "en": [
+    "Sidebar version refreshes immediately after dashboard updates (no stale cache).",
+    "Fresh installs use xray_config.default.json — no production server IPs or test outbounds."
+  ],
+  "fa": [
+    "نسخه سایدبار بلافاصله بعد از آپدیت از داشبورد به‌روز می‌شود.",
+    "نصب جدید از قالب تمیز xray_config.default.json استفاده می‌کند — بدون IP سرور قبلی."
+  ]
+}

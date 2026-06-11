@@ -7,7 +7,7 @@ from typing import List, Optional
 from urllib.error import URLError
 from urllib.request import urlopen
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 
 from app import logger, xray
@@ -94,9 +94,10 @@ class XrayUpgradeResult(BaseModel):
 
 
 @router.get("/system/version", response_model=PanelVersionInfo)
-def get_panel_version():
+def get_panel_version(response: Response):
     from app import panel_version
 
+    response.headers["Cache-Control"] = "no-store"
     return PanelVersionInfo(version=panel_version())
 
 

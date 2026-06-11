@@ -444,12 +444,13 @@ XRAY_INBOUND_PORTS="8443 2095 2096 2097 1080"
 seed_data_dir() {
   mkdir -p "${DATA_DIR}" "${DATA_DIR}/backups"
   local target="${DATA_DIR}/xray_config.json"
-  local source="${APP_DIR}/xray_config.json"
+  local source="${APP_DIR}/xray_config.default.json"
+  [ -f "${source}" ] || source="${APP_DIR}/xray_config.json"
   [ -f "${source}" ] || return 0
   if [ ! -f "${target}" ]; then
     cp "${source}" "${target}"
     chown 1000:1000 "${target}" 2>/dev/null || true
-    ok "Created ${target}"
+    ok "Created ${target} from install template"
     return 0
   fi
   # Upgrade the legacy single-protocol (Shadowsocks-only) default to the rich

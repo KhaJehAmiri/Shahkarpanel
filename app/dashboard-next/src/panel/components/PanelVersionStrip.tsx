@@ -1,4 +1,4 @@
-import { FC } from "react";
+import { FC, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import { SystemStats } from "../api/types";
@@ -8,11 +8,21 @@ import { useFetch, useLiveReload, usePolling } from "../lib/useFetch";
 /** Sidebar version strip — visible on every dashboard page (sudo: includes update hint). */
 export const PanelVersionStrip: FC<{ sudo?: boolean }> = ({ sudo }) => {
   const { t } = useTranslation();
-  const { hasUpdate, check, openUpdateModal } = usePanelUpdate();
-  const sys = useFetch<SystemStats>(() => api.get("/system"), []);
-  useLiveReload(() => sys.reload(), 60000);
+  const {
+    hasUpdate, check, openUpdateModal, displayVersion, refreshDisplayVersion,
+  } = usePanelUpdate();
+  const sys = useFetch<SystemStats>(() => api.get(`/system?_=${Date.now()}`), []);
+  useLiveReload(() => {
+    sys.reload();
+    void refreshDisplayVersion();
+  }, 60000);
+  usePolling(() => { void refreshDisplayVersion(); }, 15000, sudo);
 
-  const version = sys.data?.version || "…";
+  useEffect(() => {
+    if (check?.current_version) void refreshDisplayVersion();
+  }, [check?.current_version, refreshDisplayVersion]);
+
+  const version = displayVersion || check?.current_version || sys.data?.version || "…";
   const remote = check?.remote_version;
 
   if (sudo && hasUpdate) {

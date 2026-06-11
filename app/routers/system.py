@@ -1,6 +1,6 @@
 from typing import Dict, List, Union
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 
 from app import panel_version, xray
 from app.db import Session, crud, get_db
@@ -16,9 +16,11 @@ router = APIRouter(tags=["System"], prefix="/api", responses={401: responses._40
 
 @router.get("/system", response_model=SystemStats)
 def get_system_stats(
+    response: Response,
     db: Session = Depends(get_db), admin: Admin = Depends(Admin.get_current)
 ):
     """Fetch system stats including memory, CPU, and user metrics."""
+    response.headers["Cache-Control"] = "no-store"
     mem = memory_usage()
     cpu = cpu_usage()
     system = crud.get_system_usage(db)

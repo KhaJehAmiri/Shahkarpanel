@@ -379,9 +379,10 @@ ensure_code_permissions() {
     chown 1000:1000 "$env_file" 2>/dev/null || true
     chmod 600 "$env_file"
   fi
-  if [ -d "${APP_DIR}/.git" ]; then
-    chown -R 1000:1000 "${APP_DIR}" 2>/dev/null || true
-  fi
+}
+
+git_app() {
+  git -c "safe.directory=${APP_DIR}" -C "${APP_DIR}" "$@"
 }
 
 ensure_data_permissions() {
@@ -398,7 +399,7 @@ ensure_data_permissions() {
 write_install_meta() {
   local ver sha meta
   ver="$(tr -d '[:space:]' < "${APP_DIR}/VERSION" 2>/dev/null || echo "0.0.0")"
-  sha="$(git -C "${APP_DIR}" rev-parse --short HEAD 2>/dev/null || true)"
+  sha="$(git -c "safe.directory=${APP_DIR}" -C "${APP_DIR}" rev-parse --short HEAD 2>/dev/null || true)"
   meta="${DATA_DIR}/install-meta.json"
   python3 - "$meta" "$ver" "$sha" <<'PY'
 import json, sys, time
@@ -663,8 +664,8 @@ CREDS
 fetch_repo() {
   if [ -d "${APP_DIR}/.git" ]; then
     log "Updating ${APP_NAME} source..."
-    git -C "${APP_DIR}" fetch --depth 1 origin "${REPO_BRANCH}" >/dev/null 2>&1
-    git -C "${APP_DIR}" reset --hard "origin/${REPO_BRANCH}" >/dev/null 2>&1
+    git_app fetch --depth 1 origin "${REPO_BRANCH}" >/dev/null 2>&1
+    git_app reset --hard "origin/${REPO_BRANCH}" >/dev/null 2>&1
   else
     log "Fetching ${APP_NAME} source into ${APP_DIR}..."
     mkdir -p "$(dirname "${APP_DIR}")"

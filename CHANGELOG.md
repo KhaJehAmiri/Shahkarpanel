@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.12.9 — 2026-06-10
+
+- Fix pre-update backup when `pg_dump` is not in the panel image (dump via `docker compose exec postgres`).
+- Includes v0.12.8 update system fixes (compose project name, smart fast restart).
+
 ## 0.12.8 — 2026-06-10
 
 - Fix in-dashboard update creating a wrong Docker stack (`code-*` instead of `nexuspanel-*`) by pinning compose project name to `nexuspanel`.

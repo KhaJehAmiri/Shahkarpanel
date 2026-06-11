@@ -39,6 +39,31 @@ def _ensure_dir() -> None:
         pass
 
 
+def _compose_pg_dump_cmd(url) -> Optional[List[str]]:
+    """Run pg_dump via the postgres service container when CLI is not in the panel image."""
+    if not shutil.which("docker"):
+        return None
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    compose_file = None
+    for name in ("docker-compose.postgres.yml", "docker-compose.yml"):
+        path = os.path.join(root, name)
+        if os.path.isfile(path):
+            compose_file = name
+            break
+    if not compose_file:
+        return None
+    project = os.environ.get("COMPOSE_PROJECT_NAME", "nexuspanel").strip() or "nexuspanel"
+    cmd = [
+        "docker", "compose", "-p", project, "-f", compose_file,
+        "exec", "-T", "postgres",
+        "pg_dump", "--no-owner", "--no-privileges",
+    ]
+    if url.username:
+        cmd += ["-U", str(url.username)]
+    cmd += ["-d", url.database]
+    return cmd
+
+
 def _dump_database(workdir: str) -> None:
     from app.db.base import engine
 
@@ -55,16 +80,28 @@ def _dump_database(workdir: str) -> None:
         env = os.environ.copy()
         if url.password:
             env["PGPASSWORD"] = str(url.password)
-        cmd = ["pg_dump", "--no-owner", "--no-privileges"]
-        if url.host:
-            cmd += ["-h", str(url.host)]
-        if url.port:
-            cmd += ["-p", str(url.port)]
-        if url.username:
-            cmd += ["-U", str(url.username)]
-        cmd += ["-d", url.database]
-        with open(os.path.join(workdir, "db.sql"), "wb") as out:
-            subprocess.run(cmd, check=True, stdout=out, env=env)
+        out_path = os.path.join(workdir, "db.sql")
+        if shutil.which("pg_dump"):
+            cmd = ["pg_dump", "--no-owner", "--no-privileges"]
+            if url.host:
+                cmd += ["-h", str(url.host)]
+            if url.port:
+                cmd += ["-p", str(url.port)]
+            if url.username:
+                cmd += ["-U", str(url.username)]
+            cmd += ["-d", url.database]
+            with open(out_path, "wb") as out:
+                subprocess.run(cmd, check=True, stdout=out, env=env)
+            return
+        docker_cmd = _compose_pg_dump_cmd(url)
+        if docker_cmd:
+            with open(out_path, "wb") as out:
+                subprocess.run(
+                    docker_cmd, check=True, stdout=out, env=env,
+                    cwd=os.path.join(os.path.dirname(__file__), ".."),
+                )
+            return
+        logger.warning("Backup: pg_dump unavailable; skipping DB dump")
         return
 
     if name == "mysql":

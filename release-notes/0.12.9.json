@@ -1,0 +1,18 @@
+{
+  "en": [
+    "Fix pre-update backup on Docker PostgreSQL stacks (pg_dump via postgres container)",
+    "Includes all v0.12.8 update system fixes (compose project name, smart fast restart)"
+  ],
+  "fa": [
+    "رفع بکاپ قبل از آپدیت روی PostgreSQL داکر (pg_dump از کانتینر postgres)",
+    "شامل تمام اصلاحات v0.12.8 (نام پروژه compose، restart سریع هوشمند)"
+  ],
+  "ru": [
+    "Исправлен бэкап перед обновлением для Docker PostgreSQL (pg_dump через контейнер postgres)",
+    "Включает все исправления v0.12.8"
+  ],
+  "zh": [
+    "修复 Docker PostgreSQL 栈的更新前备份（通过 postgres 容器 pg_dump）",
+    "包含 v0.12.8 全部更新系统修复"
+  ]
+}

@@ -68,10 +68,14 @@ def get_system_stats(
     )
 
 
-@router.get("/inbounds", response_model=Dict[str, List[ProxyInbound]])
-def get_inbounds(admin: Admin = Depends(Admin.get_current)):
-    """Retrieve inbound configurations grouped by protocol."""
-    return dict(xray.config.inbounds_by_protocol)
+@router.get("/inbounds")
+def get_inbounds(admin: Admin = Depends(Admin.get_current)) -> Dict[str, List[dict]]:
+    """Retrieve inbound configurations grouped by protocol.
+
+    Uses plain dicts so the synthetic ``amneziawg`` bucket (Xray wireguard
+    listeners on the panel master) serializes without enum validation errors.
+    """
+    return {key: list(items) for key, items in xray.config.inbounds_by_protocol.items()}
 
 
 @router.get(

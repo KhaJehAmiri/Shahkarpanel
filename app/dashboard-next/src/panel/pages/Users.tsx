@@ -234,6 +234,11 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
   const toast = useToast();
   const inbounds = useFetch<InboundsByProtocol>(() => api.get("/inbounds"), []);
   const nodes = useFetch<NodeItem[]>(() => api.get("/nodes"), []);
+  useEffect(() => {
+    inbounds.reload();
+    nodes.reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const hasHy2Node = (nodes.data || []).some((n) => n.singbox?.hysteria2_enabled);
   const hasTuicNode = (nodes.data || []).some((n) => n.singbox?.tuic_enabled);
   const hasPlainWgNode = (nodes.data || []).some(

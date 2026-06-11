@@ -43,6 +43,8 @@ def test_xray_amnezia_inbound_exposed_as_product():
     cfg = XRayConfig(payload, api_port=8080)
     assert "amneziawg" in cfg.inbounds_by_protocol
     assert cfg.inbounds_by_protocol["amneziawg"][0]["tag"] == "AWG-Panel"
+    assert cfg.inbounds_by_protocol["amneziawg"][0]["protocol"] == ProxyTypes.WireGuard.value
+    assert cfg.inbounds_by_protocol["amneziawg"][0].get("xray_awg") is True
     assert "AWG-Panel" in cfg.inbounds_by_tag
     assert "WG-Server-Only" not in cfg.inbounds_by_tag
     assert cfg.product_inbounds_for_type(ProxyTypes.WireGuard)

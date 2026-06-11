@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections import defaultdict
 from copy import deepcopy
 from pathlib import PosixPath
@@ -163,16 +164,19 @@ class XRayConfig(dict):
 
     def _resolve_inbounds(self):
         for inbound in self['inbounds']:
-            if not inbound['protocol'] in ProxyTypes._value2member_map_:
+            raw_proto = str(inbound.get('protocol') or '').lower()
+            if raw_proto == 'amneziawg':
+                inbound['protocol'] = ProxyTypes.WireGuard.value
+                settings_raw = inbound.setdefault('settings', {})
+                settings_raw.setdefault(NXPANEL_INBOUND_KIND, 'amneziawg')
+
+            if inbound['protocol'] not in ProxyTypes._value2member_map_:
                 continue
 
             # Plain WireGuard Xray listeners are server-only. AmneziaWG-marked
             # wireguard inbounds are assignable product inbounds (peers injected
             # in include_db_users). Native WG nodes use a separate code path.
-            is_xray_awg = (
-                inbound['protocol'] == ProxyTypes.WireGuard.value
-                and (inbound.get('settings') or {}).get(NXPANEL_INBOUND_KIND) == 'amneziawg'
-            )
+            is_xray_awg = self._is_xray_amnezia_inbound(inbound)
             if inbound['protocol'] == ProxyTypes.WireGuard.value and not is_xray_awg:
                 continue
 
@@ -373,7 +377,7 @@ class XRayConfig(dict):
 
             if is_xray_awg:
                 settings["xray_awg"] = True
-                settings["protocol"] = "amneziawg"
+                settings["protocol"] = ProxyTypes.WireGuard.value
                 api_key = "amneziawg"
             else:
                 api_key = inbound["protocol"]
@@ -385,6 +389,21 @@ class XRayConfig(dict):
                 self.inbounds_by_protocol[api_key].append(settings)
             except KeyError:
                 self.inbounds_by_protocol[api_key] = [settings]
+
+    @staticmethod
+    def _is_xray_amnezia_inbound(inbound: dict) -> bool:
+        """True when a wireguard inbound is an assignable AmneziaWG product listener."""
+        proto = str(inbound.get("protocol") or "").lower()
+        settings = inbound.get("settings") or {}
+        if settings.get(NXPANEL_INBOUND_KIND) == "amneziawg":
+            return True
+        if proto == "amneziawg":
+            return True
+        if proto == ProxyTypes.WireGuard.value:
+            tag = str(inbound.get("tag") or "")
+            if re.search(r"amnezia|awg", tag, re.I):
+                return True
+        return False
 
     def product_inbounds_for_type(self, proxy_type: ProxyTypes) -> list:
         """Inbounds a user proxy of ``proxy_type`` may be assigned to."""

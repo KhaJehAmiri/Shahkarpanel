@@ -1,0 +1,10 @@
+{
+  "en": [
+    "Fix panel-master AmneziaWG inbounds missing from user creation (API validation bug).",
+    "User form now refreshes inbound list when opened."
+  ],
+  "fa": [
+    "رفع باگ نمایش inbound امنزیا پنل مستر در ساخت کاربر (خطای validation API).",
+    "فرم کاربر هنگام باز شدن لیست inboundها را دوباره می‌خواند."
+  ]
+}

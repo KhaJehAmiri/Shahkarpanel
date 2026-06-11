@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.12.12 — 2026-06-10
+
+- Fix fast dashboard updates: use `docker compose restart` (not `up -d`) so the Python process reloads after git pull.
+- `/api/system` version reads `VERSION` from disk so sidebar and Updates tab stay in sync.
+
 ## 0.12.11 — 2026-06-10
 
 - E2E verification release for the dashboard update pipeline (no functional changes).

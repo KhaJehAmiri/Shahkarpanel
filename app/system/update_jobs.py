@@ -385,7 +385,8 @@ def _schedule_compose_action(mode: UpdateMode) -> None:
         cmd = _compose_cmd("up", "-d", "--build", "nexuspanel")
         label = "rebuild"
     else:
-        cmd = _compose_cmd("up", "-d", "nexuspanel")
+        # Must restart the container — `up -d` alone leaves the old Python process running.
+        cmd = _compose_cmd("restart", "nexuspanel")
         label = "restart"
     with open(log_path, "a", encoding="utf-8") as logf:
         logf.write(f"\n--- {label} {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} mode={mode} ---\n")

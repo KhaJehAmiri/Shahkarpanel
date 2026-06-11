@@ -1,0 +1,18 @@
+{
+  "en": [
+    "Fix post-update restart: dashboard updates now run docker compose restart (reload Python process)",
+    "Sidebar/API version reads VERSION file live (no stale 0.12.10 after update)"
+  ],
+  "fa": [
+    "رفع restart بعد از آپدیت: docker compose restart واقعی (پروسس Python reload می‌شود)",
+    "نسخه sidebar/API همیشه از فایل VERSION خوانده می‌شود (دیگر 0.12.10 قدیمی نمی‌ماند)"
+  ],
+  "ru": [
+    "Исправлен restart после обновления — docker compose restart перезагружает Python",
+    "Версия в UI читается из VERSION на диске"
+  ],
+  "zh": [
+    "修复更新后 restart：使用 docker compose restart 重载 Python 进程",
+    "侧边栏/API 版本实时读取 VERSION 文件"
+  ]
+}

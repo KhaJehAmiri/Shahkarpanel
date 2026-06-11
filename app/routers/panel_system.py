@@ -95,9 +95,9 @@ class XrayUpgradeResult(BaseModel):
 
 @router.get("/system/version", response_model=PanelVersionInfo)
 def get_panel_version():
-    from app import __version__ as pv
+    from app import panel_version
 
-    return PanelVersionInfo(version=pv)
+    return PanelVersionInfo(version=panel_version())
 
 
 @router.get("/system/deployment", response_model=DeploymentInfo)

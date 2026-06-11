@@ -33,6 +33,11 @@ def _read_version() -> str:
 __version__ = _read_version()
 PRODUCT_NAME = "NexusPanel"
 
+
+def panel_version() -> str:
+    """Installed panel version (reads VERSION file each call — safe after in-dashboard git pull)."""
+    return _read_version()
+
 app = FastAPI(
     title="NexusPanel API",
     description="NexusPanel — professional proxy management platform powered by Xray",

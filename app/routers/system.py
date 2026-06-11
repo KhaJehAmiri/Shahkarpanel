@@ -2,7 +2,7 @@ from typing import Dict, List, Union
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app import __version__, xray
+from app import panel_version, xray
 from app.db import Session, crud, get_db
 from app.models.admin import Admin
 from app.models.proxy import ProxyHost, ProxyInbound, ProxyTypes
@@ -46,7 +46,7 @@ def get_system_stats(
     realtime_bandwidth_stats = realtime_bandwidth()
 
     return SystemStats(
-        version=__version__,
+        version=panel_version(),
         mem_total=mem.total,
         mem_used=mem.used,
         cpu_cores=cpu.cores,

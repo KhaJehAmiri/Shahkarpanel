@@ -28,6 +28,18 @@ def test_default_xray_template_has_no_smoke_test_outbound():
     assert not any("smoke" in str(t).lower() for t in tags if t)
 
 
+def test_xray_config_accepts_missing_or_empty_inbounds():
+    for payload in (
+        {"outbounds": [{"protocol": "freedom", "tag": "DIRECT"}]},
+        {"inbounds": None, "outbounds": [{"protocol": "freedom", "tag": "DIRECT"}]},
+        {"inbounds": [], "outbounds": [{"protocol": "freedom", "tag": "DIRECT"}]},
+    ):
+        cfg = XRayConfig(payload, api_port=8080)
+        assert isinstance(cfg.get("inbounds"), list)
+        assert cfg.get_inbound("API_INBOUND") is not None
+        assert cfg.inbounds_by_protocol == {}
+
+
 def test_default_xray_template_loads_into_xray_config():
     cfg = XRayConfig(DEFAULT, api_port=8080)
     assert cfg.get_inbound("API_INBOUND") is not None

@@ -52,6 +52,7 @@ class XRayConfig(dict):
         self.api_port = api_port
 
         super().__init__(config)
+        self._normalize_shape()
         self._sanitize_outbounds()
         self._validate()
 
@@ -126,6 +127,24 @@ class XRayConfig(dict):
             self["routing"] = {"rules": []}
             self["routing"]["rules"].insert(0, rule)
 
+    def _normalize_shape(self) -> None:
+        """Accept legacy/partial configs (missing keys, null lists) after users clear inbounds."""
+        if not isinstance(self.get("inbounds"), list):
+            self["inbounds"] = []
+
+        outbounds = self.get("outbounds")
+        if not isinstance(outbounds, list) or not outbounds:
+            self["outbounds"] = [
+                {"protocol": "freedom", "tag": "DIRECT"},
+                {"protocol": "blackhole", "tag": "BLOCK"},
+            ]
+
+        routing = self.get("routing")
+        if not isinstance(routing, dict):
+            self["routing"] = {"domainStrategy": "IPIfNonMatch", "rules": []}
+        elif not isinstance(routing.get("rules"), list):
+            routing["rules"] = []
+
     def _sanitize_outbounds(self):
         valid_wg_ds = {
             "", "ForceIP", "ForceIPv4", "ForceIPv6", "ForceIPv6v4", "ForceIPv4v6",
@@ -162,7 +181,7 @@ class XRayConfig(dict):
             raise ValueError("duplicate outbound tags are not allowed")
 
     def _resolve_inbounds(self):
-        for inbound in self['inbounds']:
+        for inbound in self.get("inbounds") or []:
             raw_proto = str(inbound.get('protocol') or '').lower()
             if raw_proto == 'amneziawg':
                 inbound['protocol'] = ProxyTypes.WireGuard.value
@@ -463,12 +482,12 @@ class XRayConfig(dict):
             settings["peers"] = peers
 
     def get_inbound(self, tag) -> dict:
-        for inbound in self['inbounds']:
+        for inbound in self.get("inbounds") or []:
             if inbound['tag'] == tag:
                 return inbound
 
     def get_outbound(self, tag) -> dict:
-        for outbound in self['outbounds']:
+        for outbound in self.get("outbounds") or []:
             if outbound['tag'] == tag:
                 return outbound
 

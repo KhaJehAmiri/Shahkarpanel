@@ -1,0 +1,18 @@
+{
+  "en": [
+    "In-dashboard update: mount host Docker CLI, detached compose rebuild after job success",
+    "Removed Hysteria2 / AmneziaWG preset shortcut buttons from Inbounds page"
+  ],
+  "fa": [
+    "آپدیت از داشبورد: mount کردن Docker CLI هاست + rebuild جداگانه بعد از موفقیت job",
+    "حذف دکمه‌های preset هیستریا و AmneziaWG از صفحه Inbounds"
+  ],
+  "ru": [
+    "Обновление из панели: Docker CLI с хоста, отложенный compose rebuild",
+    "Убраны кнопки preset Hysteria2/AmneziaWG на странице Inbounds"
+  ],
+  "zh": [
+    "仪表盘更新：挂载主机 Docker CLI，job 成功后 detached rebuild",
+    "移除 Inbounds 页的 Hysteria2/AmneziaWG 预设按钮"
+  ]
+}

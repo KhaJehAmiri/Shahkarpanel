@@ -19,6 +19,8 @@ services:
       - /var/lib/nexuspanel:/var/lib/nexuspanel
       - .:/code
       - /var/run/docker.sock:/var/run/docker.sock
+      - /usr/bin/docker:/usr/bin/docker:ro
+      - /usr/libexec/docker/cli-plugins:/usr/libexec/docker/cli-plugins:ro
     depends_on:
       postgres:
         condition: service_healthy

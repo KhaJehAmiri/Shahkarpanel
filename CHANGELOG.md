@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.12.5 — 2026-06-11
+
+- Fix in-dashboard update: bind-mount host `docker` CLI + compose plugin; schedule detached rebuild after job reports success.
+- Remove Hysteria2 / AmneziaWG preset buttons from Connection → Inbounds (use **Add inbound** instead).
+
 ## 0.12.4 — 2026-06-11
 
 - Docker entrypoint (root → runuser) fixes `/var/lib/nexuspanel/xray_config.json` and `.env` permissions on start.

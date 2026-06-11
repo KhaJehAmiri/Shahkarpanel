@@ -128,7 +128,7 @@ def _read_install_meta() -> dict:
 def _version_at_git_ref(ref: str) -> Optional[str]:
     try:
         out = subprocess.check_output(
-            ["git", "show", f"{ref}:VERSION"],
+            ["git", *_GIT_SAFE, "show", f"{ref}:VERSION"],
             cwd=_ROOT,
             stderr=subprocess.DEVNULL,
             text=True,
@@ -255,6 +255,9 @@ def _run_cmd_quiet(cmd: List[str], cwd: Optional[Path] = None, timeout: int = 60
         raise RuntimeError(msg[-1] if msg else f"exit {proc.returncode}")
 
 
+_GIT_SAFE = ("-c", f"safe.directory={_ROOT}")
+
+
 def _git_available() -> bool:
     return shutil.which("git") is not None and (_ROOT / ".git").is_dir()
 
@@ -273,19 +276,26 @@ def _compose_file() -> Optional[Path]:
 
 def _git_pull() -> None:
     branch = _github_branch()
-    _run_cmd_quiet(["git", "fetch", "origin", branch, "--depth", "1"])
-    _run_cmd_quiet(["git", "reset", "--hard", f"origin/{branch}"])
+    _run_cmd_quiet(["git", *_GIT_SAFE, "fetch", "origin", branch, "--depth", "1"])
+    _run_cmd_quiet(["git", *_GIT_SAFE, "reset", "--hard", f"origin/{branch}"])
 
 
-def _docker_compose_rebuild() -> None:
+def _docker_compose_rebuild_detached() -> None:
+    """Schedule compose rebuild; the running panel container will be replaced."""
     compose = _compose_file()
     if not compose or not _docker_available():
         raise RuntimeError("docker_compose_unavailable")
-    _run_cmd_quiet(
-        ["docker", "compose", "-f", str(compose.name), "up", "-d", "--build", "nexuspanel"],
-        cwd=_ROOT,
-        timeout=1200,
-    )
+    log_path = _META_FILE.parent / "update-rebuild.log"
+    with open(log_path, "a", encoding="utf-8") as logf:
+        logf.write(f"\n--- rebuild {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} ---\n")
+        logf.flush()
+        subprocess.Popen(
+            ["docker", "compose", "-f", str(compose.name), "up", "-d", "--build", "nexuspanel"],
+            cwd=str(_ROOT),
+            stdout=logf,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
 
 
 def _restart_panel(job: UpdateJob) -> None:
@@ -349,9 +359,9 @@ def _worker(job_id: str) -> None:
         job.step_done("migrate")
 
         job.step_running("build")
-        if _docker_available() and _compose_file():
-            _docker_compose_rebuild()
-            job.step_done("build", detail="docker compose build")
+        rebuild_via_docker = _docker_available() and bool(_compose_file())
+        if rebuild_via_docker:
+            job.step_done("build", detail="docker compose (scheduled)")
         else:
             build = _ROOT / "build_dashboard.sh"
             if build.is_file() and shutil.which("npm"):
@@ -360,19 +370,12 @@ def _worker(job_id: str) -> None:
             else:
                 job.step_done("build", detail="skipped (prebuilt assets from git)")
 
-        job.step_running("restart")
-        if _docker_available() and _compose_file():
-            job.step_done("restart", detail="container rebuilt")
-        else:
-            _restart_panel(job)
-            job.step_done("restart")
-
         new_ver = _local_version()
         sha = None
         if _git_available():
             try:
                 sha = subprocess.check_output(
-                    ["git", "rev-parse", "--short", "HEAD"],
+                    ["git", *_GIT_SAFE, "rev-parse", "--short", "HEAD"],
                     cwd=_ROOT,
                     stderr=subprocess.DEVNULL,
                     text=True,
@@ -380,7 +383,18 @@ def _worker(job_id: str) -> None:
             except subprocess.SubprocessError:
                 pass
         _write_install_meta(new_ver, sha)
+
+        job.step_running("restart")
+        if rebuild_via_docker:
+            job.step_done("restart", detail="panel will restart")
+        else:
+            _restart_panel(job)
+            job.step_done("restart")
+
         job.status = "success"
+        if rebuild_via_docker:
+            time.sleep(3)
+            _docker_compose_rebuild_detached()
     except Exception as exc:
         job.error_message = str(exc)
         for s in job.steps:
@@ -442,21 +456,21 @@ def check_updates() -> dict:
             branch = _github_branch()
             result["current_sha"] = (
                 subprocess.check_output(
-                    ["git", "rev-parse", "--short", "HEAD"],
+                    ["git", *_GIT_SAFE, "rev-parse", "--short", "HEAD"],
                     cwd=_ROOT,
                     stderr=subprocess.DEVNULL,
                     text=True,
                 ).strip()
             )
             subprocess.check_call(
-                ["git", "fetch", "origin", branch, "--depth", "1"],
+                ["git", *_GIT_SAFE, "fetch", "origin", branch, "--depth", "1"],
                 cwd=_ROOT,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
             remote_sha = (
                 subprocess.check_output(
-                    ["git", "rev-parse", "--short", f"origin/{branch}"],
+                    ["git", *_GIT_SAFE, "rev-parse", "--short", f"origin/{branch}"],
                     cwd=_ROOT,
                     stderr=subprocess.DEVNULL,
                     text=True,
@@ -465,7 +479,7 @@ def check_updates() -> dict:
             remote_version = _version_at_git_ref(f"origin/{branch}") or _remote_version_https() or current_version
             if result["current_sha"] and remote_sha and result["current_sha"] != remote_sha:
                 count_out = subprocess.check_output(
-                    ["git", "rev-list", "--count", f'HEAD..origin/{branch}'],
+                    ["git", *_GIT_SAFE, "rev-list", "--count", f'HEAD..origin/{branch}'],
                     cwd=_ROOT,
                     stderr=subprocess.DEVNULL,
                     text=True,

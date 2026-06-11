@@ -171,3 +171,5 @@ node_modules/
 .next/
 *.tsbuildinfo
 next-env.d.ts
+warp_account.json
+.env.bak.*

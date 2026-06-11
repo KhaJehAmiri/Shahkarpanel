@@ -5,6 +5,9 @@ from copy import deepcopy
 from typing import Any, Dict, List
 
 
+NXPANEL_INBOUND_KIND = "nexusPanelKind"
+
+
 def normalize_core_config_payload(payload: dict) -> dict:
     """Ensure wireguard/amneziawg inbounds are valid for Xray.
 
@@ -21,11 +24,16 @@ def normalize_core_config_payload(payload: dict) -> dict:
         if proto not in ("wireguard", "amneziawg"):
             continue
 
+        settings = dict(inbound.get("settings") or {})
+        is_amnezia = proto == "amneziawg" or settings.get(NXPANEL_INBOUND_KIND) == "amneziawg"
+
         inbound["protocol"] = "wireguard"
         inbound.pop("streamSettings", None)
         inbound.pop("sniffing", None)
-        settings = dict(inbound.get("settings") or {})
         settings.pop("clients", None)
+
+        if is_amnezia:
+            settings[NXPANEL_INBOUND_KIND] = "amneziawg"
 
         secret = str(settings.get("secretKey") or "").strip()
         if not secret:

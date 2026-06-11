@@ -76,6 +76,21 @@ export const SNIFF_OVERRIDES = ["http", "tls", "quic", "fakedns"];
 export const KCP_HEADERS = ["none", "srtp", "utp", "wechat-video", "dtls", "wireguard"];
 const SYSTEM_TAGS = new Set(["API_INBOUND", "API", "TUN_IN", "metrics_in"]);
 
+/** Xray wireguard JSON marker — ignored by Xray, used by NexusPanel UI. */
+export const NXPANEL_INBOUND_KIND = "nexusPanelKind";
+
+export function isAmneziaInbound(i: {
+  protocol?: string;
+  tag?: string;
+  settings?: unknown;
+}): boolean {
+  const settings = (i.settings || {}) as Record<string, unknown>;
+  if (settings[NXPANEL_INBOUND_KIND] === "amneziawg") return true;
+  const proto = String(i.protocol || "");
+  const tag = String(i.tag || "");
+  return proto === "amneziawg" || (proto === "wireguard" && /amnezia|awg/i.test(tag));
+}
+
 export function supportsStream(protocol: string): boolean {
   return (
     PROXY_PROTOCOLS.includes(protocol as (typeof PROXY_PROTOCOLS)[number]) ||
@@ -91,18 +106,21 @@ export function isUserInbound(i: { protocol?: string; tag?: string }): boolean {
 }
 
 /** Label for inbound table/UI (amneziawg stored as wireguard in JSON). */
-export function inboundDisplayProtocol(i: { protocol?: string; tag?: string }): string {
-  const proto = String(i.protocol || "");
-  const tag = String(i.tag || "");
-  if (proto === "wireguard" && /amnezia|awg/i.test(tag)) return "amneziawg";
-  return proto;
+export function inboundDisplayProtocol(i: {
+  protocol?: string;
+  tag?: string;
+  settings?: unknown;
+}): string {
+  if (isAmneziaInbound(i)) return "amneziawg";
+  return String(i.protocol || "");
 }
 
 export function inboundTransportLabel(i: Record<string, unknown>): string {
   const ss = (i.streamSettings || {}) as Record<string, unknown>;
   const proto = String(i.protocol || "");
+  if (isAmneziaInbound(i)) return "AWG";
   if (proto === "hysteria" || ss.network === "hysteria") return "HYSTERIA";
-  if (proto === "wireguard" || proto === "amneziawg") return "WG";
+  if (proto === "wireguard") return "WG";
   if (proto === "tun") return "TUN";
   if (proto === "dokodemo-door") return "TUNNEL";
   if (proto === "http" || proto === "socks" || proto === "mixed") return proto.toUpperCase();
@@ -454,7 +472,7 @@ export function inboundToForm(i: Record<string, unknown>): InboundForm {
         ? (peers[0].allowedIPs as string[]).join(",")
         : "0.0.0.0/0";
     }
-    if (f.protocol === "wireguard" && /amnezia|awg/i.test(String(i.tag || ""))) {
+    if (settings[NXPANEL_INBOUND_KIND] === "amneziawg" || (f.protocol === "wireguard" && /amnezia|awg/i.test(String(i.tag || "")))) {
       f.protocol = "amneziawg";
     }
   }
@@ -597,6 +615,7 @@ export function buildInboundFromForm(f: InboundForm): Record<string, unknown> {
       secretKey: f.wgSecretKey.trim(),
       mtu: parseInt(f.wgMtu, 10) || 1420,
       peers,
+      ...(f.protocol === "amneziawg" ? { [NXPANEL_INBOUND_KIND]: "amneziawg" } : {}),
     };
     delete inbound.streamSettings;
     delete inbound.sniffing;

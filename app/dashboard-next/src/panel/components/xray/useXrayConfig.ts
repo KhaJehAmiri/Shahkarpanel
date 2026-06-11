@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import { api } from "../../api/client";
-import { ensureConfigShape, sanitizeConfigOutbounds } from "../../lib/xrayHelpers";
+import { ensureConfigShape, NXPANEL_INBOUND_KIND, sanitizeConfigOutbounds } from "../../lib/xrayHelpers";
 
 async function prepareConfigForSave(config: Record<string, unknown>): Promise<Record<string, unknown>> {
   const shaped = sanitizeConfigOutbounds(ensureConfigShape(config));
@@ -11,6 +11,9 @@ async function prepareConfigForSave(config: Record<string, unknown>): Promise<Re
     const ib = { ...inbounds[i] };
     const proto = String(ib.protocol || "").toLowerCase();
     if (proto !== "wireguard" && proto !== "amneziawg") continue;
+
+    const wasAmnezia = proto === "amneziawg"
+      || (ib.settings as Record<string, unknown> | undefined)?.[NXPANEL_INBOUND_KIND] === "amneziawg";
 
     ib.protocol = "wireguard";
     if (ib.streamSettings) {
@@ -31,6 +34,7 @@ async function prepareConfigForSave(config: Record<string, unknown>): Promise<Re
     }
     if (!settings.mtu) settings.mtu = 1420;
     if (!Array.isArray(settings.peers)) settings.peers = [];
+    if (wasAmnezia) settings[NXPANEL_INBOUND_KIND] = "amneziawg";
     ib.settings = settings;
     inbounds[i] = ib;
     changed = true;

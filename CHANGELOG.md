@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.12.6 — 2026-06-10
+
+- AmneziaWG inbounds display as **amneziawg** / **AWG** in the Inbounds table (Xray JSON still uses `wireguard`).
+- Persist `nexusPanelKind` marker in inbound settings so the label survives save and reload.
+
 ## 0.12.5 — 2026-06-11
 
 - Fix in-dashboard update: bind-mount host `docker` CLI + compose plugin; schedule detached rebuild after job reports success.

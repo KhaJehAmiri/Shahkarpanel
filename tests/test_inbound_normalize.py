@@ -29,7 +29,24 @@ def test_normalize_amneziawg_generates_secret_key():
     ib = out["inbounds"][0]
     assert ib["protocol"] == "wireguard"
     assert ib["settings"]["secretKey"]
+    assert ib["settings"]["nexusPanelKind"] == "amneziawg"
     assert "streamSettings" not in ib
+
+
+def test_normalize_amneziawg_keeps_ui_marker():
+    raw = _minimal_payload(
+        {
+            "tag": "s",
+            "listen": "0.0.0.0",
+            "port": 443,
+            "protocol": "amneziawg",
+            "settings": {"secretKey": "existingKey==", "mtu": 1420, "peers": []},
+        }
+    )
+    out = normalize_core_config_payload(raw)
+    ib = out["inbounds"][0]
+    assert ib["protocol"] == "wireguard"
+    assert ib["settings"]["nexusPanelKind"] == "amneziawg"
 
 
 def test_normalize_wireguard_keeps_existing_secret():
@@ -44,3 +61,4 @@ def test_normalize_wireguard_keeps_existing_secret():
     )
     out = normalize_core_config_payload(raw)
     assert out["inbounds"][0]["settings"]["secretKey"] == "existingKey=="
+    assert "nexusPanelKind" not in out["inbounds"][0]["settings"]

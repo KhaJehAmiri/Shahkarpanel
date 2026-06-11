@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.12.13 — 2026-06-10
+
+- Dashboard update: `--force-recreate` panel container after git pull so Python loads the new version.
+- UI polls `/api/system/version` until the target version is live before reloading the page.
+- Sync `install-meta.json` from `VERSION` on panel startup.
+
 ## 0.12.12 — 2026-06-10
 
 - Fix fast dashboard updates: use `docker compose restart` (not `up -d`) so the Python process reloads after git pull.

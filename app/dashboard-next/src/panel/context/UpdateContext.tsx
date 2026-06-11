@@ -96,9 +96,25 @@ export const UpdateProvider: FC<{ sudo: boolean; lang: string; children: ReactNo
           setApplying(false);
           if (j.status === "success" && check) {
             const notes = releaseNotesForLang(check, lang);
-            stashPendingWhatsNew({ version: check.remote_version, notes });
+            const targetVer = check.remote_version;
+            stashPendingWhatsNew({ version: targetVer, notes });
             setUpdateModalOpen(false);
-            window.setTimeout(() => window.location.reload(), 1200);
+            const waitForVersion = async () => {
+              for (let n = 0; n < 45; n += 1) {
+                try {
+                  const v = await api.get<{ version: string }>("/system/version");
+                  if (v.version === targetVer) {
+                    window.location.reload();
+                    return;
+                  }
+                } catch {
+                  /* panel restarting */
+                }
+                await new Promise((r) => window.setTimeout(r, 2000));
+              }
+              window.location.reload();
+            };
+            void waitForVersion();
           }
         }
       } catch {

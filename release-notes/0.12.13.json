@@ -1,0 +1,18 @@
+{
+  "en": [
+    "Dashboard update now force-recreates the panel container so the new version loads",
+    "UI waits for the new version before reload (no more stuck on 0.12.11 after updating to 0.12.12)"
+  ],
+  "fa": [
+    "آپدیت داشبورد کانتینر پنل را force-recreate می‌کند تا نسخه جدید واقعاً load شود",
+    "UI قبل از reload منتظر نسخه جدید می‌ماند (دیگر بعد از آپدیت روی 0.12.11 گیر نمی‌کند)"
+  ],
+  "ru": [
+    "Обновление пересоздаёт контейнер панели для загрузки новой версии",
+    "UI ждёт новую версию перед перезагрузкой страницы"
+  ],
+  "zh": [
+    "仪表盘更新强制重建面板容器以加载新版本",
+    "UI 在重载前等待新版本生效"
+  ]
+}

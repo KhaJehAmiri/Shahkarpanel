@@ -385,9 +385,9 @@ def _schedule_compose_action(mode: UpdateMode) -> None:
         cmd = _compose_cmd("up", "-d", "--build", "nexuspanel")
         label = "rebuild"
     else:
-        # Must restart the container — `up -d` alone leaves the old Python process running.
-        cmd = _compose_cmd("restart", "nexuspanel")
-        label = "restart"
+        # Force a new container so Python reloads code from the bind-mounted /code tree.
+        cmd = _compose_cmd("up", "-d", "--force-recreate", "--no-deps", "nexuspanel")
+        label = "recreate"
     with open(log_path, "a", encoding="utf-8") as logf:
         logf.write(f"\n--- {label} {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} mode={mode} ---\n")
         logf.flush()
@@ -481,7 +481,7 @@ def _worker(job_id: str) -> None:
 
         job.status = "success"
         if use_docker:
-            time.sleep(2)
+            time.sleep(3)
             _schedule_compose_action("rebuild" if mode == "rebuild" else "restart")
     except Exception as exc:
         job.error_message = str(exc)

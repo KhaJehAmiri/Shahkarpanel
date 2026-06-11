@@ -121,6 +121,12 @@ def on_startup():
                 logger.info("Backfilled tenant_id for %s legacy reseller/support admin(s)", n)
     except Exception:
         logger.exception("Failed to backfill reseller tenants")
+    try:
+        from app.system.update_jobs import _git_head_sha, _local_version, _write_install_meta
+
+        _write_install_meta(_local_version(), _git_head_sha())
+    except Exception:
+        logger.exception("Failed to sync install-meta.json")
     scheduler.start()
 
 

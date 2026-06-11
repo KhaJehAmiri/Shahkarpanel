@@ -9,6 +9,8 @@ export type HealthItem = {
   label: string;
   hint?: string;
   to: string;
+  /** Optional steps are shown as guidance but do not block setup completion. */
+  optional?: boolean;
 };
 
 const RING_R = 30;
@@ -16,9 +18,10 @@ const RING_C = 2 * Math.PI * RING_R;
 
 export const HealthChecklist: FC<{ items: HealthItem[] }> = ({ items }) => {
   const { t } = useTranslation();
-  const done = items.filter((i) => i.ok).length;
-  const pct = items.length ? Math.round((done / items.length) * 100) : 0;
-  const allDone = done === items.length;
+  const required = items.filter((i) => !i.optional);
+  const done = required.filter((i) => i.ok).length;
+  const pct = required.length ? Math.round((done / required.length) * 100) : 100;
+  const allDone = required.length > 0 && done === required.length;
 
   return (
     <div className="nx-glass-card nx-health">
@@ -44,7 +47,7 @@ export const HealthChecklist: FC<{ items: HealthItem[] }> = ({ items }) => {
         </div>
         <div className="nx-health-headings">
           <div className="nx-health-title">{t("overview.healthTitle")}</div>
-          <div className="nx-health-sub">{t("overview.healthSub", { done, total: items.length })}</div>
+          <div className="nx-health-sub">{t("overview.healthSub", { done, total: required.length })}</div>
         </div>
         {allDone && (
           <span className="nx-health-done-badge">
@@ -55,12 +58,12 @@ export const HealthChecklist: FC<{ items: HealthItem[] }> = ({ items }) => {
 
       <div className="nx-health-steps">
         {items.map((item, idx) => (
-          <Link key={item.id} to={item.to} className={`nx-health-step ${item.ok ? "ok" : "todo"}`}>
+          <Link key={item.id} to={item.to} className={`nx-health-step ${item.ok ? "ok" : "todo"}${item.optional ? " optional" : ""}`}>
             <span className="nx-health-step-mark">
               {item.ok ? <IcCheck /> : <span className="nx-health-step-num">{idx + 1}</span>}
             </span>
             <span className="nx-health-step-body">
-              <b>{item.label}</b>
+              <b>{item.label}{item.optional ? ` (${t("common.optional")})` : ""}</b>
               {item.hint ? <small>{item.hint}</small> : null}
             </span>
             <span className="nx-health-step-go" aria-hidden>→</span>

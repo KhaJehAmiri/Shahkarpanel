@@ -1,5 +1,6 @@
 import { FC, Fragment, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import { ImportPreviewResponse, ImportPreviewRow, InboundsByProtocol, NodeItem, Plan, UserItem, UsersResponse } from "../api/types";
 import { useFetch, useLiveReload } from "../lib/useFetch";
@@ -593,7 +594,13 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
           )}
           {inbounds.loading ? <SkeletonRows rows={2} cols={1} />
             : !Object.keys(protos).length ? <div className="nx-faint" style={{ fontSize: 12 }}>{t("common.noData")}</div>
-            : useWizard ? (
+            : useWizard && !availableProtos.length ? (
+              <EmptyState
+                title={t("users.noProtocolsAvailable")}
+                desc={t("users.noProtocolsAvailableHint")}
+                action={<Link to="/connection?tab=inbounds"><Button variant="primary">{t("users.openConnectionHub")}</Button></Link>}
+              />
+            ) : useWizard ? (
               <div className="nx-proto-pick">
                 {availableProtos.map((p) => {
                   const vis = PROTO_VISUAL[p] || { icon: "🔗", hue: "var(--nx-accent)" };

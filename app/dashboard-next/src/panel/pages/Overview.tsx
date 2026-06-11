@@ -73,7 +73,7 @@ export const Overview: FC = () => {
   const connectedNodes = (nodes.data || []).filter((n) => n.status === "connected").length;
   const hasInbounds = Object.values(inbounds.data || {}).some((arr) => arr.length > 0);
   const hasUsers = (s?.total_user ?? 0) > 0;
-  const setupDone = connectedNodes > 0 && hasInbounds && hasUsers;
+  const setupDone = connectedNodes > 0 && hasUsers;
 
   const healthItems = useMemo(() => {
     if (!admin?.is_sudo) return [];
@@ -88,6 +88,7 @@ export const Overview: FC = () => {
       {
         id: "inbounds",
         ok: hasInbounds,
+        optional: true,
         label: t("overview.healthInbounds"),
         hint: hasInbounds ? t("overview.healthInboundsOk") : t("overview.healthInboundsNo"),
         to: "/connection?tab=inbounds",

@@ -402,7 +402,7 @@ def _schedule_compose_action(mode: UpdateMode) -> None:
 
 def _restart_panel(job: UpdateJob) -> None:
     if _docker_available() and _compose_file():
-        _run_cmd_quiet(_compose_cmd("restart", "nexuspanel"), cwd=_ROOT, timeout=180)
+        _schedule_compose_action("restart")
         return
     for unit in ("nexuspanel", "marzban"):
         if not shutil.which("systemctl"):

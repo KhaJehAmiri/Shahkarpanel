@@ -1,6 +1,10 @@
 from random import randint
 from typing import TYPE_CHECKING, Dict, Sequence
 
+import commentjson
+import json
+from pathlib import Path
+
 from app.models.proxy import ProxyHostSecurity
 from app.utils.store import DictStorage
 from app.utils.system import check_port
@@ -15,13 +19,38 @@ from xray_api import exceptions as exc
 
 core = XRayCore(XRAY_EXECUTABLE_PATH, XRAY_ASSETS_PATH)
 
+
+def _load_xray_config(api_port: int) -> XRayConfig:
+    """Load panel Xray JSON from disk, normalizing legacy/partial configs."""
+    from app.xray.inbound_normalize import normalize_core_config_payload
+
+    path = Path(XRAY_JSON)
+    if path.is_file():
+        with open(path, encoding="utf-8") as f:
+            raw = commentjson.loads(f.read())
+        normalized = normalize_core_config_payload(raw)
+        needs_repair = (
+            not isinstance(raw.get("inbounds"), list)
+            or not isinstance(raw.get("outbounds"), list)
+            or not raw.get("outbounds")
+        )
+        if needs_repair:
+            try:
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(json.dumps(normalized, indent=4))
+            except OSError:
+                pass
+        return XRayConfig(normalized, api_port=api_port)
+    return XRayConfig({}, api_port=api_port)
+
+
 # Search for a free API port
 try:
     for api_port in range(randint(10000, 60000), 65536):
         if not check_port(api_port):
             break
 finally:
-    config = XRayConfig(XRAY_JSON, api_port=api_port)
+    config = _load_xray_config(api_port)
     del api_port
 
 api = XRayAPI(config.api_host, config.api_port)

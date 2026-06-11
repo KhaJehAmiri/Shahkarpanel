@@ -9,13 +9,30 @@ NXPANEL_INBOUND_KIND = "nexusPanelKind"
 
 
 def normalize_core_config_payload(payload: dict) -> dict:
-    """Ensure wireguard/amneziawg inbounds are valid for Xray.
+    """Normalize Xray JSON before save/restart.
 
-    - ``amneziawg`` is stored as ``wireguard`` in JSON (Xray has no amneziawg proto).
-    - Auto-generate ``secretKey`` when empty (UI often leaves it blank).
-    - Strip transport/sniffing fields that belong to proxy inbounds only.
+    - Ensures ``inbounds`` is always a list (may be empty).
+    - Restores minimal ``outbounds`` / ``routing`` when missing or cleared.
+    - Converts wireguard/amneziawg inbounds to valid Xray wireguard JSON.
     """
     data = deepcopy(payload)
+
+    if not isinstance(data.get("inbounds"), list):
+        data["inbounds"] = []
+
+    outbounds = data.get("outbounds")
+    if not isinstance(outbounds, list) or not outbounds:
+        data["outbounds"] = [
+            {"protocol": "freedom", "tag": "DIRECT"},
+            {"protocol": "blackhole", "tag": "BLOCK"},
+        ]
+
+    routing = data.get("routing")
+    if not isinstance(routing, dict):
+        data["routing"] = {"domainStrategy": "IPIfNonMatch", "rules": []}
+    elif not isinstance(routing.get("rules"), list):
+        routing["rules"] = []
+
     inbounds: List[Dict[str, Any]] = list(data.get("inbounds") or [])
     changed = False
 
@@ -56,6 +73,5 @@ def normalize_core_config_payload(payload: dict) -> dict:
         inbound["settings"] = settings
         changed = True
 
-    if changed:
-        data["inbounds"] = inbounds
+    data["inbounds"] = inbounds
     return data

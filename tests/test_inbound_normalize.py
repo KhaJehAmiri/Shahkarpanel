@@ -62,3 +62,16 @@ def test_normalize_wireguard_keeps_existing_secret():
     out = normalize_core_config_payload(raw)
     assert out["inbounds"][0]["settings"]["secretKey"] == "existingKey=="
     assert "nexusPanelKind" not in out["inbounds"][0]["settings"]
+
+
+def test_normalize_empty_or_missing_inbounds():
+    for raw in (
+        {"inbounds": None},
+        {"inbounds": []},
+        {},
+    ):
+        out = normalize_core_config_payload(raw)
+        assert out["inbounds"] == []
+        assert len(out["outbounds"]) >= 2
+        assert isinstance(out["routing"], dict)
+        assert isinstance(out["routing"]["rules"], list)

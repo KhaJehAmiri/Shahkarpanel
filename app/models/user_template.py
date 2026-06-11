@@ -8,6 +8,7 @@ from app.models.proxy import ProxyTypes
 # Sentinel inbound tags persisted for native product protocols (no Xray inbound).
 NATIVE_TEMPLATE_MARKERS: Dict[str, ProxyTypes] = {
     "__native:wireguard": ProxyTypes.WireGuard,
+    "__native:amneziawg": ProxyTypes.WireGuard,
     "__native:hysteria2": ProxyTypes.Hysteria2,
     "__native:tuic": ProxyTypes.TUIC,
 }

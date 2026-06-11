@@ -1,0 +1,65 @@
+{
+  "device_id": "4dac38e5-9b4a-46cd-ac7d-200883663449",
+  "access_token": "1bfca053-d40d-4832-8d44-c9fb66676484",
+  "license_key": "Cv6p37a9-18w3iBj4-U2E361RD",
+  "private_key": "EDDossbKd11WxQIdE2uUisfQXnHJdJtwnZlMkjG39VQ=",
+  "public_key": "2SLh4ObFFzm47KU01dv4XkpYUUPPOTXxn7ommHhZ6Rw=",
+  "config": {
+    "client_id": "/gSS",
+    "peers": [
+      {
+        "public_key": "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
+        "endpoint": {
+          "v4": "162.159.192.9:0",
+          "v6": "[2606:4700:d0::a29f:c009]:0",
+          "host": "engage.cloudflareclient.com:2408",
+          "ports": [
+            2408,
+            500,
+            1701,
+            4500
+          ]
+        }
+      }
+    ],
+    "interface": {
+      "addresses": {
+        "v4": "172.16.0.2",
+        "v6": "2606:4700:110:863b:c88:686:c195:2bc3"
+      }
+    },
+    "services": {
+      "http_proxy": "172.16.0.1:2480"
+    },
+    "account": {
+      "id": "42401d89-c1b8-4255-be7c-039198fc4c46",
+      "account_type": "free",
+      "created": "2026-06-10T01:18:59.086786151Z",
+      "updated": "2026-06-10T01:18:59.086786151Z",
+      "premium_data": 0,
+      "quota": 0,
+      "usage": 0,
+      "warp_plus": true,
+      "referral_count": 0,
+      "referral_renewal_countdown": 0,
+      "role": "child",
+      "license": "Cv6p37a9-18w3iBj4-U2E361RD",
+      "ttl": "2026-09-08T01:18:59.086784651Z"
+    }
+  },
+  "account": {
+    "id": "42401d89-c1b8-4255-be7c-039198fc4c46",
+    "account_type": "free",
+    "created": "2026-06-10T01:18:59.086786151Z",
+    "updated": "2026-06-10T01:18:59.086786151Z",
+    "premium_data": 0,
+    "quota": 0,
+    "usage": 0,
+    "warp_plus": true,
+    "referral_count": 0,
+    "referral_renewal_countdown": 0,
+    "role": "child",
+    "license": "Cv6p37a9-18w3iBj4-U2E361RD",
+    "ttl": "2026-09-08T01:18:59.086784651Z"
+  }
+}

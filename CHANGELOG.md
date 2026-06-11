@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.12.0 — 2026-06-10
+
+- User create wizard: AmneziaWG protocol card + fixed protocol picker grid CSS.
+- Shell installer (3x-ui style) as default; progress bar fix under `set -u`.
+- WireGuard API validation accepts nodes with plain WG or AmneziaWG enabled.
+
 ## 0.11.0 — 2026-06-10
 
 - Professional web installer wizard (language, HTTPS, branding, live progress).

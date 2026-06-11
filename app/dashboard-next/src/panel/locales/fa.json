@@ -260,6 +260,8 @@
     "singboxNoHy2": "هیچ نود Hysteria2 فعال نیست — ابتدا H2 را روی سرور فعال کنید.",
     "singboxNoTuic": "هیچ نود TUIC فعال روی پنل نیست.",
     "wgNoNode": "نود WireGuard فعال نیست — ابتدا نود WG اضافه کنید.",
+    "awgHint": "پیر AmneziaWG مبهم‌شده روی پورت 51821 — فایل .conf را از جزئیات کاربر دانلود کنید.",
+    "awgNoNode": "نود AmneziaWG فعال نیست — ابتدا AWG را روی نود WireGuard فعال کنید.",
     "inboundRequired": "حداقل یک inbound برای {{proto}} انتخاب کنید",
     "ssInboundMismatch": "cipher با این inbound سازگار نیست (legacy در برابر SS-2022)",
     "resetAllUsage": "ریست مصرف همه",

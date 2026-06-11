@@ -22,9 +22,9 @@ export interface UserTemplateRow {
   inbounds?: Record<string, string[]>;
 }
 
-const PROTO_ORDER = ["vless", "vmess", "trojan", "shadowsocks", "wireguard", "hysteria2", "tuic"];
+const PROTO_ORDER = ["vless", "vmess", "trojan", "shadowsocks", "wireguard", "amneziawg", "hysteria2", "tuic"];
 
-const NATIVE_PROTOCOLS = ["wireguard", "hysteria2", "tuic"] as const;
+const NATIVE_PROTOCOLS = ["wireguard", "amneziawg", "hysteria2", "tuic"] as const;
 
 const PROTO_VISUAL: Record<string, { icon: string; hue: string; label: string }> = {
   vless: { icon: "⚡", hue: "#2ee0c4", label: "VLESS" },
@@ -32,6 +32,7 @@ const PROTO_VISUAL: Record<string, { icon: string; hue: string; label: string }>
   trojan: { icon: "🔒", hue: "#f59e0b", label: "Trojan" },
   shadowsocks: { icon: "🛡", hue: "#38bdf8", label: "Shadowsocks" },
   wireguard: { icon: "⬡", hue: "#a78bfa", label: "WireGuard" },
+  amneziawg: { icon: "🛡", hue: "#22d3ee", label: "AmneziaWG" },
   hysteria2: { icon: "🚀", hue: "#f472b6", label: "Hysteria2" },
   tuic: { icon: "◉", hue: "#34d399", label: "TUIC" },
 };
@@ -149,8 +150,10 @@ const TemplateFormModal: FC<{ row?: UserTemplateRow; onClose: () => void; onDone
         if (tags.length) inboundsBody[proto] = tags;
       });
       NATIVE_PROTOCOLS.forEach((p) => {
+        if (p === "wireguard" || p === "amneziawg") return;
         if (nativeOn[p]) inboundsBody[p] = [];
       });
+      if (nativeOn.wireguard || nativeOn.amneziawg) inboundsBody.wireguard = [];
       const body: Record<string, unknown> = {
         name: name.trim(),
         data_limit: dataLimitValue ? dataLimitToBytes(dataLimitValue, dataLimitUnit) : 0,

@@ -259,6 +259,8 @@
     "singboxNoHy2": "No Hysteria2-enabled node — enable H2 on a server first (Add node or Sing-box page).",
     "singboxNoTuic": "No TUIC-enabled node on this panel.",
     "wgNoNode": "No WireGuard-enabled node — add or provision a WG node first.",
+    "awgHint": "AmneziaWG obfuscated peer on port 51821 — download .conf from user details.",
+    "awgNoNode": "No AmneziaWG-enabled node — enable AWG on a WireGuard node first.",
     "inboundRequired": "Select at least one inbound for {{proto}}",
     "ssInboundMismatch": "Cipher does not match this inbound (legacy vs SS-2022)",
     "resetAllUsage": "Reset all usage",

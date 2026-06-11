@@ -49,13 +49,14 @@ const PROTO_LABEL: Record<string, string> = {
   trojan: "Trojan",
   shadowsocks: "Shadowsocks",
   wireguard: "WireGuard",
+  amneziawg: "AmneziaWG",
   hysteria2: "Hysteria2",
   tuic: "TUIC",
 };
 
-const NATIVE_PROTOCOLS = ["wireguard", "hysteria2", "tuic"] as const;
+const NATIVE_PROTOCOLS = ["wireguard", "amneziawg", "hysteria2", "tuic"] as const;
 
-const PROTO_ORDER = ["vless", "vmess", "trojan", "shadowsocks", "wireguard", "hysteria2", "tuic"];
+const PROTO_ORDER = ["vless", "vmess", "trojan", "shadowsocks", "wireguard", "amneziawg", "hysteria2", "tuic"];
 
 const PROTO_VISUAL: Record<string, { icon: string; hue: string }> = {
   vless: { icon: "⚡", hue: "#2ee0c4" },
@@ -63,6 +64,7 @@ const PROTO_VISUAL: Record<string, { icon: string; hue: string }> = {
   trojan: { icon: "🔒", hue: "#f59e0b" },
   shadowsocks: { icon: "🛡", hue: "#38bdf8" },
   wireguard: { icon: "⬡", hue: "#a78bfa" },
+  amneziawg: { icon: "🛡", hue: "#22d3ee" },
   hysteria2: { icon: "🚀", hue: "#f472b6" },
   tuic: { icon: "◉", hue: "#34d399" },
 };
@@ -233,9 +235,11 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
   const nodes = useFetch<NodeItem[]>(() => api.get("/nodes"), []);
   const hasHy2Node = (nodes.data || []).some((n) => n.singbox?.hysteria2_enabled);
   const hasTuicNode = (nodes.data || []).some((n) => n.singbox?.tuic_enabled);
-  const hasWgNode = (nodes.data || []).some(
-    (n) => n.core_kind === "wireguard" || n.wireguard?.plain_enabled || n.wireguard?.awg_enabled,
+  const hasPlainWgNode = (nodes.data || []).some(
+    (n) => n.core_kind === "wireguard" || (n.wireguard && n.wireguard.plain_enabled !== false),
   );
+  const hasAwgNode = (nodes.data || []).some((n) => n.wireguard?.awg_enabled);
+  const hasWgNode = hasPlainWgNode || hasAwgNode;
   const templates = useFetch<{ id: number; name?: string }[]>(
     () => (admin?.is_sudo ? api.get("/user_template") : Promise.resolve([])),
     [admin?.is_sudo],
@@ -291,6 +295,22 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
       flow: "",
       method: "",
     };
+    const wgSettings = user?.proxies?.wireguard as { awg_address?: string; address?: string } | undefined;
+    const hasAwgPeer = !!(wgSettings?.awg_address);
+    const hasPlainPeer = !!(wgSettings?.address);
+    next["amneziawg"] = {
+      enabled: mode === "edit" ? userProtos.includes("wireguard") && hasAwgPeer : false,
+      tags: [],
+      flow: "",
+      method: "",
+    };
+    if (mode === "edit" && userProtos.includes("wireguard") && hasPlainPeer && !hasAwgPeer) {
+      next["wireguard"].enabled = true;
+      next["amneziawg"].enabled = false;
+    } else if (mode === "edit" && userProtos.includes("wireguard") && hasAwgPeer && !hasPlainPeer) {
+      next["wireguard"].enabled = false;
+      next["amneziawg"].enabled = true;
+    }
     for (const p of ["hysteria2", "tuic"]) {
       next[p] = {
         enabled: mode === "edit" ? userProtos.includes(p) : false,
@@ -318,6 +338,15 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
   });
 
   const enabledProtos = Object.entries(protos).filter(([, v]) => v.enabled);
+  const wgStackEnabled = !!(protos.wireguard?.enabled || protos.amneziawg?.enabled);
+
+  const submitEnabledProtos = (): [string, ProtoState][] => {
+    const rows = enabledProtos.filter(([p]) => p !== "amneziawg");
+    if (wgStackEnabled && !rows.some(([p]) => p === "wireguard")) {
+      rows.push(["wireguard", protos.wireguard || { enabled: true, tags: [], flow: "", method: "" }]);
+    }
+    return rows;
+  };
 
   const submit = async () => {
     if (mode === "create" && templateId) {
@@ -335,7 +364,8 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
       return;
     }
     if (!enabledProtos.length) { toast.push(t("users.selectProtocol"), "error"); return; }
-    for (const [p, v] of enabledProtos) {
+    const apiProtos = submitEnabledProtos();
+    for (const [p, v] of apiProtos) {
       if (!NATIVE_PROTOCOLS.includes(p as typeof NATIVE_PROTOCOLS[number]) && !v.tags.length) {
         toast.push(t("users.inboundRequired", { proto: PROTO_LABEL[p] || p }), "error");
         return;
@@ -349,7 +379,7 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
     try {
       const proxies: Record<string, any> = {};
       const inb: Record<string, string[]> = {};
-      enabledProtos.forEach(([p, v]) => {
+      apiProtos.forEach(([p, v]) => {
         const s: any = {};
         const existing = mode === "edit" ? user?.proxies?.[p] : undefined;
         if (p === "vless" || p === "vmess" || p === "trojan") {
@@ -419,6 +449,8 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
 
   const availableProtos = PROTO_ORDER.filter((p) => {
     if (!protos[p]) return false;
+    if (p === "wireguard") return hasPlainWgNode || protos[p]?.enabled;
+    if (p === "amneziawg") return hasAwgNode || protos[p]?.enabled;
     if (NATIVE_PROTOCOLS.includes(p as typeof NATIVE_PROTOCOLS[number])) return true;
     return (inbounds.data?.[p]?.length || 0) > 0;
   });
@@ -513,7 +545,10 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
           {protos.tuic?.enabled && !hasTuicNode && (
             <Callout tone="warn" className="compact">{t("users.singboxNoTuic")}</Callout>
           )}
-          {protos.wireguard?.enabled && !hasWgNode && (
+          {protos.amneziawg?.enabled && !hasAwgNode && (
+            <Callout tone="warn" className="compact">{t("users.awgNoNode")}</Callout>
+          )}
+          {protos.wireguard?.enabled && !hasPlainWgNode && (
             <Callout tone="warn" className="compact">{t("users.wgNoNode")}</Callout>
           )}
           {inbounds.loading ? <SkeletonRows rows={2} cols={1} />
@@ -565,6 +600,8 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
                       <div style={{ marginTop: 10, paddingInlineStart: 28 }}>
                         {p === "wireguard" ? (
                           <div className="nx-faint" style={{ fontSize: 12, marginBottom: 8 }}>{t("users.wgHint")}</div>
+                        ) : p === "amneziawg" ? (
+                          <div className="nx-faint" style={{ fontSize: 12, marginBottom: 8 }}>{t("users.awgHint")}</div>
                         ) : p === "hysteria2" ? (
                           <div className="nx-faint" style={{ fontSize: 12, marginBottom: 8 }}>{t("users.hy2Hint")}</div>
                         ) : p === "tuic" ? (

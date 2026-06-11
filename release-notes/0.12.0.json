@@ -1,0 +1,26 @@
+{
+  "en": [
+    "User wizard: AmneziaWG card in protocol picker (native AWG node peers)",
+    "Fixed protocol selection grid layout in create-user wizard",
+    "3x-ui style shell installer as default (language, domain, SSL prompts)",
+    "WireGuard node check accepts plain WG or AmneziaWG stacks"
+  ],
+  "fa": [
+    "ویزارد کاربر: کارت AmneziaWG در انتخاب پروتکل (پیر AWG روی نود)",
+    "رفع چیدمان شکسته کارت‌های پروتکل در ویزارد ساخت کاربر",
+    "اینستالر شل شبیه 3x-ui به‌صورت پیش‌فرض (زبان، دامنه، SSL)",
+    "بررسی نود WireGuard برای WG ساده یا AmneziaWG"
+  ],
+  "ru": [
+    "Мастер пользователя: карточка AmneziaWG в выборе протокола",
+    "Исправлена сетка карточек протоколов при создании пользователя",
+    "Shell-установщик в стиле 3x-ui по умолчанию",
+    "Проверка WG-ноды для plain WG и AmneziaWG"
+  ],
+  "zh": [
+    "用户向导：协议选择器新增 AmneziaWG 卡片",
+    "修复创建用户向导中协议卡片布局错乱",
+    "默认使用 3x-ui 风格 Shell 安装器",
+    "WireGuard 节点检查支持 plain WG 与 AmneziaWG"
+  ]
+}

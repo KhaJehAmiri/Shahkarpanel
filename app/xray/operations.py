@@ -265,8 +265,35 @@ def connect_node(node_id, config=None):
             config = xray.config.include_db_users()
         config = _apply_node_tunnels(config, node_id)
 
-        node.start(config)
-        version = node.get_version()
+        from app.models.node import CoreKind
+
+        is_wg_node = dbnode.core_kind == CoreKind.wireguard.value
+        version = None
+        if is_wg_node:
+            # WireGuard nodes need the RPyC channel for wg_apply; Xray on the
+            # node is best-effort (stats/API) and must not block AWG sync.
+            if not node.connected:
+                node.connect()
+            try:
+                node.start(config)
+                version = node.get_version()
+            except Exception as exc:
+                logger.warning(
+                    "WireGuard node \"%s\" connected but Xray start failed (%s); continuing with WG sync",
+                    dbnode.name,
+                    exc,
+                )
+                if not node.connected:
+                    node.connect()
+        else:
+            node.start(config)
+            version = node.get_version()
+
+        if not version:
+            version = "wireguard" if is_wg_node else None
+        if not version:
+            raise RuntimeError("Node did not report an Xray version")
+
         _change_node_status(node_id, NodeStatus.connected, version=version)
         logger.info(f"Connected to \"{dbnode.name}\" node, xray run on v{version}")
 
@@ -308,6 +335,9 @@ def restart_node(node_id, config=None):
 
         node.restart(config)
         logger.info(f"Xray core of \"{dbnode.name}\" node restarted")
+        from app.models.node import CoreKind
+        if dbnode.core_kind == CoreKind.wireguard.value:
+            _sync_wireguard_node(node_id, node)
     except Exception as e:
         _change_node_status(node_id, NodeStatus.error, message=str(e))
         logger.info(f"Unable to restart node {node_id}")

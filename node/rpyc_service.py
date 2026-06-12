@@ -78,13 +78,19 @@ class XrayService(rpyc.Service):
             self.core = None
             self.connection = None
 
+    def _panel_peer_ip(self) -> str:
+        conn = self.connection
+        if conn is not None and getattr(conn, "peer", None):
+            return conn.peer
+        return "127.0.0.1"
+
     @rpyc.exposed
     def start(self, config: str):
         if self.core is not None:
             self.stop()
 
         try:
-            config = XRayConfig(config, self.connection.peer)
+            config = XRayConfig(config, self._panel_peer_ip())
             self.core = XRayCore(executable_path=XRAY_EXECUTABLE_PATH,
                                  assets_path=XRAY_ASSETS_PATH)
 
@@ -128,7 +134,9 @@ class XrayService(rpyc.Service):
 
     @rpyc.exposed
     def restart(self, config: str):
-        config = XRayConfig(config, self.connection.peer)
+        if self.core is None:
+            return self.start(config)
+        config = XRayConfig(config, self._panel_peer_ip())
         self.core.restart(config)
 
     @rpyc.exposed

@@ -471,11 +471,14 @@ class RPyCXRayNode:
         self._api = None
 
     def restart(self, config: XRayConfig):
-        self.started = False
-        config = self._prepare_config(config)
-        json_config = config.to_json()
-        self.remote.restart(json_config)
-        self.started = True
+        """Restart remote Xray — use stop+start so older node agents with a
+        broken ``restart()`` (missing ``connection.peer``) still recover."""
+        try:
+            self.stop()
+        except Exception:
+            self.started = False
+            self._api = None
+        self.start(config)
 
     @contextmanager
     def get_logs(self):

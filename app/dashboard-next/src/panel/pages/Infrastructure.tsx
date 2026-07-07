@@ -2,17 +2,18 @@ import { FC, useEffect, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
-import { NodeItem, Tunnel } from "../api/types";
+import { NodeItem, Tunnel, TunnelHealth } from "../api/types";
 import { useApp } from "../context/AppContext";
 import { useCopilot } from "../copilot/CopilotContext";
 import { useFetch, useLiveReload, usePolling } from "../lib/useFetch";
 import { statusTone } from "../lib/format";
 import {
-  Button, Callout, Card, CopyField, EmptyState, Field, Input, Modal, Pager, Pill, Select, SkeletonRows, UsageBar, usePagedList, useToast,
+  Button, Callout, Card, CardHead, CopyField, EmptyState, Field, Input, Modal, Pager, Pill, Select, SkeletonRows, UsageBar, usePagedList, useToast,
 } from "../components/ui";
 import { IcPlus, IcRefresh, IcTrash, IcLink, IcEdit, IcEye, IcBolt } from "../components/icons";
 import { AddNodeModal, AddNodePreset } from "../components/AddNodeModal";
-import { isIranNode } from "../lib/region";
+import { NodeXrayOverrideModal } from "../components/NodeXrayOverrideModal";
+import { isIranNode, pickNodeByRegion } from "../lib/region";
 /** @deprecated Use /nodes — kept for old bookmarks. */
 export const Infrastructure: FC = () => <Navigate to="/nodes" replace />;
 
@@ -23,6 +24,7 @@ export const NodesTab: FC<{ resellerMode?: boolean }> = ({ resellerMode }) => {
   const [show, setShow] = useState(false);
   const [editNode, setEditNode] = useState<NodeItem | null>(null);
   const [xrayNode, setXrayNode] = useState<NodeItem | null>(null);
+  const [overrideNode, setOverrideNode] = useState<NodeItem | null>(null);
   const [preset, setPreset] = useState<AddNodePreset>({});
   const { data, loading, error, reload } = useFetch<NodeItem[]>(() => api.get("/nodes"), []);
   const provisioning = (data || []).some((n) => n.provision_status === "provisioning");
@@ -129,6 +131,11 @@ export const NodesTab: FC<{ resellerMode?: boolean }> = ({ resellerMode }) => {
                               {t("infra.xraySetVersion")}
                             </Button>
                           )}
+                          {!resellerMode && n.core_kind !== "wireguard" && (
+                            <Button size="sm" variant="ghost" onClick={() => setOverrideNode(n)} title={t("infra.xrayConfigOverride")}>
+                              <IcBolt className="nx-ico" />
+                            </Button>
+                          )}
                           {!resellerMode && (
                             <Button size="sm" variant="ghost" onClick={() => setEditNode(n)} title={t("infra.editNode")}>
                               <IcEdit className="nx-ico" />
@@ -148,6 +155,7 @@ export const NodesTab: FC<{ resellerMode?: boolean }> = ({ resellerMode }) => {
           )}
       </Card>
       <Pager page={pager.page} pages={pager.pages} onPage={pager.setPage} />
+      {!resellerMode && <TopologyCard />}
       {show && (
         <AddNodeModal
           preset={preset}
@@ -160,6 +168,9 @@ export const NodesTab: FC<{ resellerMode?: boolean }> = ({ resellerMode }) => {
       )}
       {editNode && (
         <EditNodeModal node={editNode} onClose={() => setEditNode(null)} onDone={() => { setEditNode(null); reload(); }} />
+      )}
+      {overrideNode && (
+        <NodeXrayOverrideModal node={overrideNode} onClose={() => setOverrideNode(null)} onDone={() => { setOverrideNode(null); reload(); }} />
       )}
     </>
   );
@@ -234,11 +245,8 @@ const NodeGroupsPanel: FC = () => {
 const EditNodeModal: FC<{ node: NodeItem; onClose: () => void; onDone: () => void }> = ({ node, onClose, onDone }) => {
   const { t } = useTranslation();
   const toast = useToast();
-  const groups = useFetch<NodeGroupRow[]>(() => api.get("/node/groups"), []);
   const [name, setName] = useState(node.name);
   const [address, setAddress] = useState(node.address);
-  const [region, setRegion] = useState(node.region || "");
-  const [groupId, setGroupId] = useState(node.group_id != null ? String(node.group_id) : "");
   const [busy, setBusy] = useState(false);
 
   const submit = async () => {
@@ -247,8 +255,6 @@ const EditNodeModal: FC<{ node: NodeItem; onClose: () => void; onDone: () => voi
       await api.put(`/node/${node.id}`, {
         name: name.trim(),
         address: address.trim(),
-        region: region.trim() || null,
-        group_id: groupId ? parseInt(groupId, 10) : null,
       });
       toast.push(t("common.saved"), "success");
       onDone();
@@ -268,13 +274,6 @@ const EditNodeModal: FC<{ node: NodeItem; onClose: () => void; onDone: () => voi
       <div className="nx-stack">
         <Field label={t("common.name")}><Input value={name} onChange={(e: any) => setName(e.target.value)} autoFocus /></Field>
         <Field label={t("infra.address")}><Input value={address} onChange={(e: any) => setAddress(e.target.value)} /></Field>
-        <Field label={t("infra.region")}><Input value={region} onChange={(e: any) => setRegion(e.target.value)} /></Field>
-        <Field label={t("infra.nodeGroup")}>
-          <Select value={groupId} onChange={(e: any) => setGroupId(e.target.value)}>
-            <option value="">—</option>
-            {(groups.data || []).map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
-          </Select>
-        </Field>
       </div>
     </Modal>
   );
@@ -322,9 +321,28 @@ export const TunnelsTab: FC = () => {
   const [show, setShow] = useState(false);
   const [edit, setEdit] = useState<Tunnel | null>(null);
   const [configId, setConfigId] = useState<number | null>(null);
+  const [healthMap, setHealthMap] = useState<Record<number, TunnelHealth | "loading" | "error">>({});
   const enabled = isEnabled("tunneling");
   const { data, loading, error, status, reload } = useFetch<Tunnel[]>(() => api.get("/tunnels"), []);
   const nodes = useFetch<NodeItem[]>(() => api.get("/nodes"), []);
+  const templates = useFetch<TunnelTemplatesResponse>(() => api.get("/tunnels/templates"), []);
+  const transports = useFetch<TransportsResponse>(() => api.get("/tunnels/transports"), []);
+
+  const loadHealth = async (id: number) => {
+    setHealthMap((prev) => ({ ...prev, [id]: "loading" }));
+    try {
+      const h = await api.get<TunnelHealth>(`/tunnels/${id}/health`);
+      setHealthMap((prev) => ({ ...prev, [id]: h }));
+    } catch {
+      setHealthMap((prev) => ({ ...prev, [id]: "error" }));
+    }
+  };
+
+  useEffect(() => {
+    if (!data?.length) return;
+    data.filter((tn) => tn.enabled).forEach((tn) => { void loadHealth(tn.id); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
 
   if (!enabled || status === 404) {
     return <Callout tone="warn" title={t("infra.tunnelsDisabled")}>{t("common.disabledFeature")}</Callout>;
@@ -337,8 +355,37 @@ export const TunnelsTab: FC = () => {
   };
 
   const apply = async (id: number) => {
-    try { await api.post(`/tunnels/${id}/apply`, {}); toast.push(t("infra.tunnelApplied"), "success"); }
-    catch (e: any) { toast.push(e.message, "error"); }
+    try {
+      const res = await api.post<{ health?: TunnelHealth }>(`/tunnels/${id}/apply`, {});
+      if (res.health) setHealthMap((prev) => ({ ...prev, [id]: res.health! }));
+      toast.push(t("infra.tunnelApplied"), "success");
+    } catch (e: any) { toast.push(e.message, "error"); }
+  };
+
+  const healthHint = (h: TunnelHealth) => {
+    const parts: string[] = [];
+    const c = h.checks || {};
+    if (c.relay && c.relay.connected === false) parts.push(t("infra.tunnelHealthRelayDown"));
+    if (c.transit && c.transit.connected === false) parts.push(t("infra.tunnelHealthTransitDown"));
+    if (c.exit && c.exit.connected === false) parts.push(t("infra.tunnelHealthExitDown"));
+    if (c.transit_listen && c.transit_listen.reachable === false) parts.push(t("infra.tunnelHealthTransitListenDown"));
+    if (c.exit_listen && c.exit_listen.reachable === false) parts.push(t("infra.tunnelHealthListenDown"));
+    return parts.join(" · ");
+  };
+
+  const renderHealth = (tn: Tunnel) => {
+    if (!tn.enabled) return "—";
+    const h = healthMap[tn.id];
+    if (h === "loading") return t("common.loading");
+    if (h === "error") return <Pill tone="default">?</Pill>;
+    if (!h) return "—";
+    const hint = healthHint(h);
+    return (
+      <div>
+        <Pill tone={h.healthy ? "ok" : "danger"} dot>{h.healthy ? t("infra.tunnelHealthOk") : t("infra.tunnelHealthDown")}</Pill>
+        {hint ? <div className="nx-faint" style={{ fontSize: 11, marginTop: 4 }}>{hint}</div> : null}
+      </div>
+    );
   };
 
   const endName = (id: number | null, kind: "panel" | "node") =>
@@ -361,8 +408,10 @@ export const TunnelsTab: FC = () => {
             <div className="nx-table-wrap">
               <table className="nx-table">
                 <thead><tr>
-                  <th>{t("common.name")}</th><th>{t("infra.relayNode")}</th><th>{t("infra.exitNode")}</th>
-                  <th>{t("infra.transport")}</th><th>{t("infra.listenPort")}→{t("infra.targetPort")}</th>
+                  <th>{t("common.name")}</th><th>{t("infra.relayNode")}</th>
+                  <th>{t("infra.transitNode")}</th><th>{t("infra.exitNode")}</th>
+                  <th>{t("infra.transport")}</th>                  <th>{t("infra.listenPort")}→{t("infra.targetPort")}</th>
+                  <th>{t("infra.tunnelHealthCol")}</th>
                   <th>{t("common.status")}</th>
                   <th style={{ textAlign: "end" }}>{t("common.actions")}</th>
                 </tr></thead>
@@ -371,12 +420,15 @@ export const TunnelsTab: FC = () => {
                     <tr key={tn.id}>
                       <td style={{ fontWeight: 600 }}>{tn.name}</td>
                       <td>{endName(tn.relay_node_id, tn.relay_kind)}</td>
+                      <td>{tn.intermediate_node_id ? endName(tn.intermediate_node_id, "node") : "—"}</td>
                       <td>{endName(tn.exit_node_id, tn.exit_kind)}</td>
                       <td><Pill tone="accent">{tn.transport}</Pill></td>
                       <td className="nx-mono">{tn.listen_port} → {tn.target_port}</td>
+                      <td>{renderHealth(tn)}</td>
                       <td><Pill tone={tn.enabled ? "ok" : "default"}>{tn.enabled ? t("common.enabled") : t("common.disabled")}</Pill></td>
                       <td>
                         <div className="nx-row" style={{ justifyContent: "flex-end", gap: 6 }}>
+                          <Button size="sm" variant="ghost" title={t("infra.tunnelHealthRefresh")} disabled={!tn.enabled} onClick={() => void loadHealth(tn.id)}><IcRefresh className="nx-ico" /></Button>
                           <Button size="sm" variant="ghost" title={t("infra.applyTunnel")} disabled={!tn.enabled} onClick={() => apply(tn.id)}><IcBolt className="nx-ico" /></Button>
                           <Button size="sm" variant="ghost" title={t("infra.viewConfig")} onClick={() => setConfigId(tn.id)}><IcEye className="nx-ico" /></Button>
                           <Button size="sm" variant="ghost" onClick={() => setEdit(tn)}><IcEdit className="nx-ico" /></Button>
@@ -390,101 +442,95 @@ export const TunnelsTab: FC = () => {
             </div>
           )}
       </Card>
-      {show && <AddTunnel nodes={nodes.data || []} onClose={() => setShow(false)} onDone={() => { setShow(false); reload(); }} />}
-      {edit && <EditTunnel tunnel={edit} onClose={() => setEdit(null)} onDone={() => { setEdit(null); reload(); }} />}
+      {show && (
+        <AddTunnel
+          nodes={nodes.data || []}
+          templates={templates}
+          transports={transports.data?.transports || []}
+          onClose={() => setShow(false)}
+          onDone={() => { setShow(false); reload(); }}
+        />
+      )}
+      {edit && (
+        <EditTunnel
+          tunnel={edit}
+          transports={transports.data?.transports || []}
+          onClose={() => setEdit(null)}
+          onDone={() => { setEdit(null); reload(); }}
+        />
+      )}
       {configId != null && <TunnelConfigModal tunnelId={configId} onClose={() => setConfigId(null)} />}
     </>
   );
 };
 
 /* -------------------------------- Hosts --------------------------------- */
-export const HostsTab: FC = () => {
+export { HostsTab } from "../components/hosts/HostsTab";
+
+type TunnelTemplateSpec = {
+  id?: string;
+  label: string;
+  hops?: number;
+  transport?: string;
+  relay_region?: string;
+  exit_region?: string;
+  category?: string;
+};
+
+type TunnelTemplatesResponse = {
+  templates: Record<string, TunnelTemplateSpec>;
+  iran_pairs: Record<string, TunnelTemplateSpec>;
+};
+
+type TemplatesFetchState = {
+  data: TunnelTemplatesResponse | null;
+  loading: boolean;
+  error: string | null;
+  reload: () => void;
+};
+
+type TunnelTransportMeta = {
+  id: string;
+  label: string;
+  engine: "xray" | "singbox";
+  stub?: boolean;
+  description?: string;
+};
+
+type TransportsResponse = { transports: TunnelTransportMeta[] };
+
+const TunnelTransportSelect: FC<{
+  value: string;
+  onChange: (e: { target: { value: string } }) => void;
+  transports: TunnelTransportMeta[];
+  hint?: string;
+}> = ({ value, onChange, transports, hint }) => {
   const { t } = useTranslation();
-  const toast = useToast();
-  const { data, loading, error, reload } = useFetch<Record<string, any[]>>(() => api.get("/hosts"), []);
-  const [draft, setDraft] = useState<Record<string, any[]> | null>(null);
-  const [busy, setBusy] = useState(false);
-  const hosts = draft ?? data ?? {};
-
-  const setHost = (tag: string, idx: number, key: string, value: any) => {
-    const copy: Record<string, any[]> = JSON.parse(JSON.stringify(hosts));
-    copy[tag][idx][key] = value;
-    setDraft(copy);
-  };
-  const addHost = (tag: string) => {
-    const copy: Record<string, any[]> = JSON.parse(JSON.stringify(hosts));
-    copy[tag] = [...(copy[tag] || []), {
-      remark: "{USERNAME}", address: "", port: null, sni: "", host: "", path: "",
-      security: "inbound_default", alpn: "", fingerprint: "", allowinsecure: false,
-      is_disabled: false, mux_enable: false, fragment_setting: "", noise_setting: "",
-      random_user_agent: false, use_sni_as_host: false,
-    }];
-    setDraft(copy);
-  };
-  const delHost = (tag: string, idx: number) => {
-    if (!confirm(t("common.confirmDelete"))) return;
-    const copy: Record<string, any[]> = JSON.parse(JSON.stringify(hosts));
-    copy[tag].splice(idx, 1);
-    setDraft(copy);
-  };
-
-  const save = async () => {
-    setBusy(true);
-    try { await api.put("/hosts", hosts); toast.push(t("common.saved"), "success"); setDraft(null); reload(); }
-    catch (e: any) { toast.push(e.message, "error"); } finally { setBusy(false); }
-  };
-
-  if (loading) return <Card><SkeletonRows rows={4} cols={3} /></Card>;
-  if (error) return <EmptyState title={t("common.error")} desc={error} />;
+  const xray = transports.filter((tr) => tr.engine === "xray");
+  const singbox = transports.filter((tr) => tr.engine === "singbox");
+  const fallback = ["reality", "ws", "grpc", "tcp", "quic", "hysteria2", "tuic"];
 
   return (
-    <>
-      <Callout tone="info" title={t("infra.tabHosts")}>{t("infra.hostsDesc")}</Callout>
-      <div className="nx-row" style={{ justifyContent: "flex-end", margin: "14px 0" }}>
-        <Button variant="primary" disabled={busy || !draft} onClick={save}>{t("common.save")}</Button>
-      </div>
-      <div className="nx-stack">
-        {Object.keys(hosts).map((tag) => (
-          <Card key={tag}>
-            <div className="nx-row" style={{ justifyContent: "space-between", marginBottom: 12 }}>
-              <b>{tag}</b>
-              <Button size="sm" onClick={() => addHost(tag)}><IcPlus className="nx-ico" /> {t("common.add")}</Button>
-            </div>
-            {!hosts[tag]?.length ? <div className="nx-faint" style={{ fontSize: 12 }}>{t("infra.noHost")}</div>
-              : <div className="nx-stack" style={{ gap: 12 }}>
-                  {hosts[tag].map((h: any, idx: number) => (
-                    <div key={idx} className="nx-card" style={{ background: "var(--nx-surface-2)", padding: 12 }}>
-                      <div className="nx-row" style={{ gap: 10, flexWrap: "wrap" }}>
-                        <Field label={t("infra.remark")}><Input value={h.remark || ""} onChange={(e: any) => setHost(tag, idx, "remark", e.target.value)} style={{ maxWidth: 160 }} /></Field>
-                        <Field label={t("infra.address")}><Input value={h.address || ""} onChange={(e: any) => setHost(tag, idx, "address", e.target.value)} placeholder={t("infra.hostAddressPlaceholder")} style={{ maxWidth: 200 }} /></Field>
-                        <Field label={t("infra.port")}><Input type="number" value={h.port ?? ""} onChange={(e: any) => setHost(tag, idx, "port", e.target.value ? parseInt(e.target.value) : null)} style={{ maxWidth: 100 }} /></Field>
-                        <Field label={t("infra.hostSni")}><Input value={h.sni || ""} onChange={(e: any) => setHost(tag, idx, "sni", e.target.value)} style={{ maxWidth: 160 }} /></Field>
-                        <Field label={t("infra.hostHost")}><Input value={h.host || ""} onChange={(e: any) => setHost(tag, idx, "host", e.target.value)} style={{ maxWidth: 160 }} /></Field>
-                        <Field label={t("infra.hostPath")}><Input value={h.path || ""} onChange={(e: any) => setHost(tag, idx, "path", e.target.value)} style={{ maxWidth: 140 }} /></Field>
-                        <Field label={t("infra.hostTls")}><Select value={h.security || "inbound_default"} onChange={(e: any) => setHost(tag, idx, "security", e.target.value)}>
-                          {["inbound_default", "none", "tls"].map((s) => <option key={s}>{s}</option>)}
-                        </Select></Field>
-                        <Field label={t("infra.hostAlpn")}><Input value={h.alpn || ""} onChange={(e: any) => setHost(tag, idx, "alpn", e.target.value)} style={{ maxWidth: 120 }} /></Field>
-                        <Field label={t("infra.hostFp")}><Input value={h.fingerprint || ""} onChange={(e: any) => setHost(tag, idx, "fingerprint", e.target.value)} style={{ maxWidth: 100 }} /></Field>
-                        <label className="nx-row" style={{ gap: 6, fontSize: 12 }}><input type="checkbox" checked={!!h.allowinsecure} onChange={(e) => setHost(tag, idx, "allowinsecure", e.target.checked)} /> {t("infra.hostInsecure")}</label>
-                        <label className="nx-row" style={{ gap: 6, fontSize: 12 }}><input type="checkbox" checked={!!h.is_disabled} onChange={(e) => setHost(tag, idx, "is_disabled", e.target.checked)} /> {t("infra.hostDisabled")}</label>
-                        <label className="nx-row" style={{ gap: 6, fontSize: 12 }}><input type="checkbox" checked={!!h.mux_enable} onChange={(e) => setHost(tag, idx, "mux_enable", e.target.checked)} /> {t("infra.hostMux")}</label>
-                        <label className="nx-row" style={{ gap: 6, fontSize: 12 }}><input type="checkbox" checked={!!h.use_sni_as_host} onChange={(e) => setHost(tag, idx, "use_sni_as_host", e.target.checked)} /> {t("infra.hostSniAsHost")}</label>
-                        <Field label={t("infra.hostFragment")}><Input value={h.fragment_setting || ""} onChange={(e: any) => setHost(tag, idx, "fragment_setting", e.target.value)} style={{ maxWidth: 140 }} /></Field>
-                        <Field label={t("infra.hostNoise")}><Input value={h.noise_setting || ""} onChange={(e: any) => setHost(tag, idx, "noise_setting", e.target.value)} style={{ maxWidth: 140 }} /></Field>
-                        <div style={{ alignSelf: "flex-end" }}><Button variant="danger" size="sm" title={t("common.delete")} onClick={() => delHost(tag, idx)}><IcTrash className="nx-ico" /></Button></div>
-                      </div>
-                    </div>
-                  ))}
-                </div>}
-          </Card>
+    <Field label={t("infra.transport")} hint={hint}>
+      <Select value={value} onChange={onChange}>
+        {(xray.length ? xray : fallback.filter((id) => id !== "hysteria2" && id !== "tuic").map((id) => ({ id, label: id, engine: "xray" as const }))).map((tr) => (
+          <option key={tr.id} value={tr.id}>{tr.label}</option>
         ))}
-      </div>
-    </>
+        {singbox.length > 0 && (
+          <optgroup label={t("infra.tunnelSingboxTransports")}>
+            {singbox.map((tr) => (
+              <option key={tr.id} value={tr.id}>{tr.label}{tr.stub ? " *" : ""}</option>
+            ))}
+          </optgroup>
+        )}
+      </Select>
+    </Field>
   );
 };
 
-const EditTunnel: FC<{ tunnel: Tunnel; onClose: () => void; onDone: () => void }> = ({ tunnel, onClose, onDone }) => {
+const EditTunnel: FC<{ tunnel: Tunnel; transports: TunnelTransportMeta[]; onClose: () => void; onDone: () => void }> = ({
+  tunnel, transports, onClose, onDone,
+}) => {
   const { t } = useTranslation();
   const toast = useToast();
   const [f, setF] = useState({
@@ -519,11 +565,12 @@ const EditTunnel: FC<{ tunnel: Tunnel; onClose: () => void; onDone: () => void }
       <div className="nx-stack">
         <Field label={t("common.name")}><Input value={f.name} onChange={upd("name")} /></Field>
         <label className="nx-row" style={{ gap: 8 }}><input type="checkbox" checked={f.enabled} onChange={upd("enabled")} /> {t("common.enabled")}</label>
-        <Field label={t("infra.transport")}>
-          <Select value={f.transport} onChange={upd("transport")}>
-            {["reality", "ws", "grpc", "tcp"].map((x) => <option key={x} value={x}>{x}</option>)}
-          </Select>
-        </Field>
+        <TunnelTransportSelect
+          value={f.transport}
+          onChange={upd("transport")}
+          transports={transports}
+          hint={transports.find((tr) => tr.id === f.transport)?.stub ? t("infra.tunnelSingboxStubHint") : undefined}
+        />
         <div className="nx-row" style={{ gap: 12 }}>
           <Field label={t("infra.listenPort")}><Input type="number" value={f.listen} onChange={upd("listen")} /></Field>
           <Field label={t("infra.targetPort")}><Input type="number" value={f.target} onChange={upd("target")} /></Field>
@@ -549,7 +596,15 @@ const TunnelConfigModal: FC<{ tunnelId: number; onClose: () => void }> = ({ tunn
   );
 };
 
-const AddTunnel: FC<{ nodes: NodeItem[]; onClose: () => void; onDone: () => void }> = ({ nodes, onClose, onDone }) => {
+const AddTunnel: FC<{
+  nodes: NodeItem[];
+  templates: TemplatesFetchState;
+  transports: TunnelTransportMeta[];
+  onClose: () => void;
+  onDone: () => void;
+}> = ({
+  nodes, templates, transports, onClose, onDone,
+}) => {
   const { t } = useTranslation();
   const toast = useToast();
   const deploy = useFetch<{ panel_region: string }>(() => api.get("/system/deployment"), []);
@@ -559,31 +614,73 @@ const AddTunnel: FC<{ nodes: NodeItem[]; onClose: () => void; onDone: () => void
 
   const defaultRelay = irNodes[0]?.id ?? "";
   const defaultExit = foreignNodes[0]?.id ?? "";
+  const defaultTransit = foreignNodes[1]?.id ?? foreignNodes[0]?.id ?? "";
 
   const [f, setF] = useState({
-    name: "", relay: String(defaultRelay || ""), exit: String(defaultExit || ""),
-    transport: "reality", listen: "443", target: "443",
+    name: "", template: "", relay: String(defaultRelay || ""), transit: "", exit: String(defaultExit || ""),
+    transport: "reality", listen: "443", target: "443", transitPort: "8442",
   });
   const [busy, setBusy] = useState(false);
   const upd = (k: string) => (e: any) => setF({ ...f, [k]: e.target.value });
 
+  const selectedTemplate = f.template ? templates.data?.templates?.[f.template] : undefined;
+  const needsTransit = (selectedTemplate?.hops ?? 2) >= 3;
+  const otherTemplates = Object.entries(templates.data?.templates || {}).filter(([, spec]) => spec.category !== "iran-pair");
+
   useEffect(() => {
     if (!f.relay && defaultRelay) setF((s) => ({ ...s, relay: String(defaultRelay) }));
     if (!f.exit && defaultExit) setF((s) => ({ ...s, exit: String(defaultExit) }));
-  }, [defaultRelay, defaultExit, f.relay, f.exit]);
+    if (needsTransit && !f.transit && defaultTransit) setF((s) => ({ ...s, transit: String(defaultTransit) }));
+  }, [defaultRelay, defaultExit, defaultTransit, f.relay, f.exit, f.transit, needsTransit]);
+
+  useEffect(() => {
+    if (!f.template || !templates.data) return;
+    const spec = templates.data.templates[f.template];
+    if (!spec) return;
+    setF((s) => {
+      const next = { ...s };
+      if (spec.transport) next.transport = spec.transport;
+      if (spec.relay_region) {
+        if (!panelForeign) next.relay = "panel";
+        else {
+          const relayNode = pickNodeByRegion(nodes, spec.relay_region);
+          if (relayNode) next.relay = String(relayNode.id);
+        }
+      }
+      if (spec.exit_region) {
+        if (panelForeign) next.exit = "panel";
+        else {
+          const exitNode = pickNodeByRegion(nodes, spec.exit_region);
+          if (exitNode) next.exit = String(exitNode.id);
+        }
+      }
+      if (!s.name.trim() && spec.label) next.name = spec.label;
+      return next;
+    });
+  }, [f.template, templates.data, nodes, panelForeign]);
 
   // "panel" => this panel's local core is that end; otherwise a node id string.
-  const endId = (v: string): number | null => (v === "panel" ? null : parseInt(v));
+  const endId = (v: string): number | null => (v === "panel" ? null : parseInt(v, 10));
 
   const submit = async () => {
     if (f.relay === "panel" && f.exit === "panel") {
       toast.push(t("infra.tunnelBothPanel"), "error"); return;
     }
+    if (needsTransit && !f.transit) {
+      toast.push(t("infra.tunnelTransitRequired"), "error"); return;
+    }
     setBusy(true);
     try {
       await api.post("/tunnels", {
-        name: f.name.trim(), relay_node_id: endId(f.relay), exit_node_id: endId(f.exit),
-        transport: f.transport, listen_port: parseInt(f.listen), target_port: parseInt(f.target),
+        name: f.name.trim(),
+        template_id: f.template || undefined,
+        relay_node_id: endId(f.relay),
+        intermediate_node_id: f.transit ? endId(f.transit) : undefined,
+        intermediate_port: f.transit ? parseInt(f.transitPort, 10) : undefined,
+        exit_node_id: endId(f.exit),
+        transport: f.transport,
+        listen_port: parseInt(f.listen, 10),
+        target_port: parseInt(f.target, 10),
       });
       toast.push(t("common.created"), "success"); onDone();
     } catch (e: any) { toast.push(e.message, "error"); } finally { setBusy(false); }
@@ -594,13 +691,40 @@ const AddTunnel: FC<{ nodes: NodeItem[]; onClose: () => void; onDone: () => void
   return (
     <Modal open title={t("infra.addTunnel")} onClose={onClose}
       footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
-        <Button variant="primary" disabled={busy || !f.name || !f.relay || !f.exit || bothPanel} onClick={submit}>{t("common.create")}</Button></>}>
+        <Button variant="primary" disabled={busy || !f.name || !f.relay || !f.exit || bothPanel || (needsTransit && !f.transit)} onClick={submit}>{t("common.create")}</Button></>}>
       <div className="nx-stack">
         {deploy.data && (
           <Callout tone="info">
             {panelForeign ? t("infra.tunnelHintPanelForeign") : t("infra.tunnelHintPanelIran")}
           </Callout>
         )}
+        <Field label={t("infra.tunnelTemplate")} hint={t("infra.tunnelTemplateHint")}>
+          <Select value={f.template} onChange={upd("template")} disabled={templates.loading}>
+            <option value="">{templates.loading ? t("common.loading") : t("common.none")}</option>
+            {Object.keys(templates.data?.iran_pairs || {}).length > 0 && (
+              <optgroup label={t("infra.tunnelIranTemplates")}>
+                {Object.entries(templates.data!.iran_pairs).map(([id, spec]) => (
+                  <option key={id} value={id}>
+                    {spec.label} ({spec.relay_region}→{spec.exit_region})
+                  </option>
+                ))}
+              </optgroup>
+            )}
+            {otherTemplates.length > 0 && (
+              <optgroup label={t("infra.tunnelOtherTemplates")}>
+                {otherTemplates.map(([id, spec]) => (
+                  <option key={id} value={id}>{spec.label} ({spec.hops ?? 2} hops)</option>
+                ))}
+              </optgroup>
+            )}
+          </Select>
+          {templates.error ? (
+            <div className="nx-faint" style={{ fontSize: 12, marginTop: 6, color: "var(--nx-danger)" }}>
+              {templates.error}
+              <Button size="sm" variant="ghost" onClick={templates.reload}>{t("common.retry")}</Button>
+            </div>
+          ) : null}
+        </Field>
         <Field label={t("common.name")}><Input value={f.name} onChange={upd("name")} autoFocus /></Field>
         <div className="nx-row" style={{ gap: 12 }}>
           <Field label={t("infra.relayNode")} hint={t("infra.relayEndHint")}>
@@ -610,6 +734,14 @@ const AddTunnel: FC<{ nodes: NodeItem[]; onClose: () => void; onDone: () => void
               {(irNodes.length ? irNodes : nodes).map((n) => <option key={n.id} value={n.id}>{n.name} ({n.region || "?"})</option>)}
             </Select>
           </Field>
+          {needsTransit && (
+            <Field label={t("infra.transitNode")} hint={t("infra.transitEndHint")}>
+              <Select value={f.transit} onChange={upd("transit")}>
+                <option value="">—</option>
+                {nodes.map((n) => <option key={n.id} value={n.id}>{n.name} ({n.region || "?"})</option>)}
+              </Select>
+            </Field>
+          )}
           <Field label={t("infra.exitNode")} hint={t("infra.exitEndHint")}>
             <Select value={f.exit} onChange={upd("exit")}>
               <option value="">—</option>
@@ -618,16 +750,51 @@ const AddTunnel: FC<{ nodes: NodeItem[]; onClose: () => void; onDone: () => void
             </Select>
           </Field>
         </div>
-        <Field label={t("infra.transport")}>
-          <Select value={f.transport} onChange={upd("transport")}>
-            {["reality", "ws", "grpc", "tcp"].map((x) => <option key={x} value={x}>{x}</option>)}
-          </Select>
-        </Field>
+        <TunnelTransportSelect
+          value={f.transport}
+          onChange={upd("transport")}
+          transports={transports}
+          hint={transports.find((tr) => tr.id === f.transport)?.stub ? t("infra.tunnelSingboxStubHint") : undefined}
+        />
         <div className="nx-row" style={{ gap: 12 }}>
           <Field label={t("infra.listenPort")}><Input type="number" value={f.listen} onChange={upd("listen")} /></Field>
+          {needsTransit && (
+            <Field label={t("infra.transitPort")}><Input type="number" value={f.transitPort} onChange={upd("transitPort")} /></Field>
+          )}
           <Field label={t("infra.targetPort")}><Input type="number" value={f.target} onChange={upd("target")} /></Field>
         </div>
       </div>
     </Modal>
+  );
+};
+
+type TopologyEdge = { id: number; name: string; source: string; target: string; transport: string; enabled: boolean };
+type TopologyResponse = { nodes: { id: number; name: string; address: string; status: string }[]; edges: TopologyEdge[] };
+
+const TopologyCard: FC = () => {
+  const { t } = useTranslation();
+  const topo = useFetch<TopologyResponse>(() => api.get("/nodes/topology"), []);
+
+  return (
+    <Card className="nx-mt-20">
+      <CardHead title={t("infra.topology", "Node topology")} actions={
+        <Button variant="ghost" size="sm" onClick={topo.reload}>{t("common.refresh")}</Button>
+      } />
+      {topo.loading ? <SkeletonRows rows={2} cols={3} />
+        : topo.error ? <EmptyState title={t("common.error")} desc={topo.error} />
+        : (
+          <div className="nx-stack" style={{ gap: 8, fontSize: 13 }}>
+            {(topo.data?.edges || []).length === 0 ? (
+              <div className="nx-faint">{t("infra.topologyEmpty", "No tunnels configured yet.")}</div>
+            ) : (
+              (topo.data?.edges || []).map((e) => (
+                <div key={e.id} className="nx-code" style={{ padding: "8px 10px" }}>
+                  <b>{e.name}</b>: {e.source} → {e.target} ({e.transport}) {e.enabled ? "" : `[${t("common.disabled")}]`}
+                </div>
+              ))
+            )}
+          </div>
+        )}
+    </Card>
   );
 };

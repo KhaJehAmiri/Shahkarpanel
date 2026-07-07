@@ -151,9 +151,14 @@ def create_backup() -> str:
             shutil.copy2(XRAY_JSON, os.path.join(workdir, "xray_config.json"))
 
         if BACKUP_INCLUDE_ENV:
+            from app.runtime_env import RUNTIME_ENV_PATH
+
             env_path = os.environ.get("DOTENV_PATH", ".env")
             if os.path.isfile(env_path) and os.access(env_path, os.R_OK):
                 shutil.copy2(env_path, os.path.join(workdir, "env.backup"))
+            runtime_path = str(RUNTIME_ENV_PATH)
+            if os.path.isfile(runtime_path) and os.access(runtime_path, os.R_OK):
+                shutil.copy2(runtime_path, os.path.join(workdir, "runtime-env.backup"))
 
         with tarfile.open(archive_path, "w:gz") as tar:
             for entry in os.listdir(workdir):
@@ -233,8 +238,78 @@ def restore_backup(archive_path: str) -> None:
             dest = os.path.join(BACKUP_DIR, "restore-db.sql")
             if os.path.isfile(sql_src):
                 shutil.copy2(sql_src, dest)
+
+            xray_src = os.path.join(workdir, "xray_config.json")
+            if os.path.isfile(xray_src) and XRAY_JSON:
+                shutil.copy2(xray_src, XRAY_JSON)
+
+            if name == "postgresql":
+                cmd = None
+                if shutil.which("psql"):
+                    url = engine.url
+                    cmd = [
+                        "psql",
+                        "-h",
+                        url.host or "localhost",
+                        "-p",
+                        str(url.port or 5432),
+                        "-U",
+                        str(url.username or "postgres"),
+                        "-d",
+                        str(url.database),
+                        "-f",
+                        sql_src if os.path.isfile(sql_src) else dest,
+                    ]
+                elif _compose_pg_dump_cmd(engine.url):
+                    project = os.environ.get("COMPOSE_PROJECT_NAME", "nexuspanel").strip() or "nexuspanel"
+                    root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+                    compose_file = "docker-compose.postgres.yml"
+                    if not os.path.isfile(os.path.join(root, compose_file)):
+                        compose_file = "docker-compose.yml"
+                    dump_path = sql_src if os.path.isfile(sql_src) else dest
+                    cmd = [
+                        "docker", "compose", "-p", project, "-f", compose_file,
+                        "exec", "-T", "postgres",
+                        "psql", "-U", str(engine.url.username or "postgres"),
+                        "-d", str(engine.url.database),
+                        "-f", "/dev/stdin",
+                    ]
+                    if cmd and os.path.isfile(dump_path):
+                        env = os.environ.copy()
+                        with open(dump_path, "rb") as sql_file:
+                            subprocess.run(cmd, input=sql_file.read(), check=True, env=env)
+                        logger.info("PostgreSQL backup restored from %s", archive_path)
+                        return
+
+                if cmd and os.path.isfile(sql_src):
+                    env = os.environ.copy()
+                    if engine.url.password:
+                        env["PGPASSWORD"] = str(engine.url.password)
+                    subprocess.run(cmd, check=True, env=env)
+                    logger.info("PostgreSQL backup restored from %s", archive_path)
+                    return
+
+            if name == "mysql" and shutil.which("mysql") and os.path.isfile(sql_src):
+                url = engine.url
+                cmd = [
+                    "mysql",
+                    "-h",
+                    url.host or "localhost",
+                    "-P",
+                    str(url.port or 3306),
+                    "-u",
+                    str(url.username or "root"),
+                    str(url.database),
+                ]
+                env = os.environ.copy()
+                if url.password:
+                    env["MYSQL_PWD"] = str(url.password)
+                with open(sql_src, "rb") as sql_file:
+                    subprocess.run(cmd, input=sql_file.read(), check=True, env=env)
+                logger.info("MySQL backup restored from %s", archive_path)
+                return
+
             raise RuntimeError(
-                f"Automatic restore is only supported for SQLite. The SQL dump "
-                f"has been extracted to {dest}; import it manually into your "
-                f"{name} database."
+                f"Automatic restore for {name} requires psql/mysql CLI. The SQL dump "
+                f"has been extracted to {dest}; import it manually."
             )

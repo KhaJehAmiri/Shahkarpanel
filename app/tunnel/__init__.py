@@ -29,24 +29,62 @@ Everything here is pure and deterministic given the tunnel + its params (key
 generation is the one impure helper and is isolated), so it is trivially
 testable and can be assembled into a node's running config by the xray layer.
 """
+import secrets
 import subprocess
 import uuid
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Literal, Optional, Tuple
 
 __all__ = [
     "SUPPORTED_TRANSPORTS",
+    "TUNNEL_TRANSPORT_META",
     "default_params",
     "generate_reality_keys",
     "ensure_reality_keys",
+    "ensure_quic_key",
+    "ensure_singbox_tunnel_secrets",
     "build_relay_outbound",
     "build_relay_routing_rule",
+    "build_intermediate_inbound",
+    "build_intermediate_outbound",
+    "build_intermediate_routing_rule",
     "build_exit_inbound",
     "build_wireguard_relay_inbound",
     "build_tunnel_pair",
+    "build_singbox_tunnel_fragments",
+    "tunnel_hops",
+    "transit_port",
+    "transport_engine",
     "validate_transport",
 ]
 
-SUPPORTED_TRANSPORTS = ("reality", "ws", "grpc", "tcp")
+TunnelEngine = Literal["xray", "singbox"]
+
+TUNNEL_TRANSPORT_META: dict[str, dict] = {
+    "reality": {"label": "VLESS + Reality", "engine": "xray", "description": "XTLS Vision over Reality"},
+    "ws": {"label": "VLESS + WebSocket", "engine": "xray", "description": "WebSocket + TLS hop"},
+    "grpc": {"label": "VLESS + gRPC", "engine": "xray", "description": "gRPC transport hop"},
+    "tcp": {"label": "VLESS + TCP", "engine": "xray", "description": "Plain TCP hop"},
+    "quic": {"label": "VLESS + QUIC/TLS", "engine": "xray", "description": "VLESS over QUIC (HTTP/3 ALPN)"},
+    "hysteria2": {
+        "label": "Hysteria2 (sing-box)",
+        "engine": "singbox",
+        "stub": True,
+        "description": "QUIC obfs hop — sing-box fragments; manual merge on exit",
+    },
+    "tuic": {
+        "label": "TUIC (sing-box)",
+        "engine": "singbox",
+        "stub": True,
+        "description": "QUIC TUIC hop — sing-box fragments; manual merge on exit",
+    },
+}
+
+SUPPORTED_TRANSPORTS = tuple(TUNNEL_TRANSPORT_META.keys())
+
+
+def transport_engine(transport: str) -> TunnelEngine:
+    validate_transport(transport)
+    return TUNNEL_TRANSPORT_META[transport]["engine"]  # type: ignore[return-value]
 
 
 def validate_transport(transport: str) -> str:
@@ -110,6 +148,34 @@ def ensure_reality_keys(params: Dict) -> Dict:
     return params
 
 
+def ensure_quic_key(params: Dict) -> Dict:
+    """Fill an empty QUIC ``key`` in ``params`` (Xray quicSettings.key)."""
+    if not params.get("key"):
+        params["key"] = secrets.token_hex(8)
+    return params
+
+
+def ensure_singbox_tunnel_secrets(params: Dict, transport: str) -> Dict:
+    """Seed passwords/uuids for sing-box tunnel stubs."""
+    if transport == "hysteria2":
+        if not params.get("password"):
+            params["password"] = str(uuid.uuid4())
+        if not params.get("obfs_password"):
+            params["obfs_password"] = secrets.token_hex(8)
+        params.setdefault("sni", "www.cloudflare.com")
+        params.setdefault("up_mbps", 100)
+        params.setdefault("down_mbps", 200)
+    elif transport == "tuic":
+        if not params.get("uuid"):
+            params["uuid"] = str(uuid.uuid4())
+        if not params.get("password"):
+            params["password"] = str(uuid.uuid4())
+        params.setdefault("congestion_control", "bbr")
+        params.setdefault("sni", "www.cloudflare.com")
+        params.setdefault("alpn", "h3")
+    return params
+
+
 def default_params(transport: str) -> Dict:
     """Sensible default transport params (also used to seed a new tunnel)."""
     validate_transport(transport)
@@ -130,6 +196,31 @@ def default_params(transport: str) -> Dict:
         return {"id": client_id, "path": "/tunnel", "host": ""}
     if transport == "grpc":
         return {"id": client_id, "service_name": "tunnel"}
+    if transport == "quic":
+        return {
+            "id": client_id,
+            "security": "tls",
+            "sni": "www.cloudflare.com",
+            "alpn": "h3",
+            "key": "",
+            "header_type": "none",
+        }
+    if transport == "hysteria2":
+        return {
+            "password": "",
+            "obfs_password": "",
+            "sni": "www.cloudflare.com",
+            "up_mbps": 100,
+            "down_mbps": 200,
+        }
+    if transport == "tuic":
+        return {
+            "uuid": "",
+            "password": "",
+            "congestion_control": "bbr",
+            "sni": "www.cloudflare.com",
+            "alpn": "h3",
+        }
     return {"id": client_id}  # tcp
 
 
@@ -149,7 +240,7 @@ def _stream_settings(transport: str, params: Dict, *, server_side: bool) -> Dict
             reality["serverNames"] = [sni]
             reality["shortIds"] = [short_id]
             reality["privateKey"] = params.get("private_key", "")
-            reality["dest"] = f"{sni}:443"
+            reality["target"] = f"{sni}:443"
         else:
             reality["publicKey"] = params.get("public_key", "")
             reality["serverName"] = sni
@@ -162,6 +253,26 @@ def _stream_settings(transport: str, params: Dict, *, server_side: bool) -> Dict
         }
     elif transport == "grpc":
         stream["grpcSettings"] = {"serviceName": params.get("service_name", "tunnel")}
+    elif transport == "quic":
+        stream["security"] = params.get("security", "tls")
+        key = str(params.get("key") or "").strip()
+        path = key if key.startswith("/") else (f"/{key}" if key else "/tunnel")
+        stream["network"] = "xhttp"
+        stream["xhttpSettings"] = {"path": path, "mode": "stream-one"}
+        if stream["security"] == "tls":
+            alpn_raw = params.get("alpn", "h3")
+            if isinstance(alpn_raw, str):
+                alpn = [x.strip() for x in alpn_raw.split(",") if x.strip()]
+            elif isinstance(alpn_raw, list):
+                alpn = [str(x).strip() for x in alpn_raw if str(x).strip()]
+            else:
+                alpn = ["h3"]
+            if "h3" not in alpn:
+                alpn = ["h3"] + [a for a in alpn if a != "h3"]
+            stream["tlsSettings"] = {
+                "serverName": params.get("sni", "www.cloudflare.com"),
+                "alpn": alpn,
+            }
 
     return stream
 
@@ -170,19 +281,42 @@ def outbound_tag(tunnel) -> str:
     return f"tunnel-{tunnel.id}-out"
 
 
-def build_relay_outbound(tunnel, exit_address: str) -> Dict:
-    """Return the VLESS outbound the relay uses to dial the exit."""
+def intermediate_inbound_tag(tunnel) -> str:
+    return f"tunnel-{tunnel.id}-transit-in"
+
+
+def intermediate_outbound_tag(tunnel) -> str:
+    return f"tunnel-{tunnel.id}-transit-out"
+
+
+def tunnel_hops(tunnel) -> int:
+    """2 = relay→exit, 3 = relay→transit→exit."""
+    return 3 if getattr(tunnel, "intermediate_node_id", None) else 2
+
+
+def transit_port(tunnel) -> int:
+    """Port the transit node listens on for the first encrypted hop."""
+    explicit = getattr(tunnel, "intermediate_port", None)
+    if explicit:
+        return int(explicit)
+    target = int(tunnel.target_port)
+    return target - 1 if target > 1024 else target + 1
+
+
+def build_hop_outbound(tunnel, address: str, port: int, *, tag: str) -> Dict:
     transport = validate_transport(tunnel.transport)
+    if transport_engine(transport) != "xray":
+        raise ValueError(f"build_hop_outbound requires an xray transport, got {transport!r}")
     params = tunnel.params or default_params(transport)
 
     return {
-        "tag": outbound_tag(tunnel),
+        "tag": tag,
         "protocol": "vless",
         "settings": {
             "vnext": [
                 {
-                    "address": exit_address,
-                    "port": int(tunnel.target_port),
+                    "address": address,
+                    "port": int(port),
                     "users": [
                         {
                             "id": params.get("id"),
@@ -195,6 +329,12 @@ def build_relay_outbound(tunnel, exit_address: str) -> Dict:
         },
         "streamSettings": _stream_settings(transport, params, server_side=False),
     }
+
+
+def build_relay_outbound(tunnel, next_address: str, *, next_port: Optional[int] = None) -> Dict:
+    """Return the VLESS outbound the relay uses to dial the next hop."""
+    port = int(next_port if next_port is not None else tunnel.target_port)
+    return build_hop_outbound(tunnel, next_address, port, tag=outbound_tag(tunnel))
 
 
 def build_relay_routing_rule(tunnel, inbound_tags: Optional[List[str]] = None) -> Dict:
@@ -216,6 +356,8 @@ def build_relay_routing_rule(tunnel, inbound_tags: Optional[List[str]] = None) -
 def build_exit_inbound(tunnel) -> Dict:
     """Return the inbound the exit node listens on for this tunnel."""
     transport = validate_transport(tunnel.transport)
+    if transport_engine(transport) != "xray":
+        raise ValueError(f"build_exit_inbound requires an xray transport, got {transport!r}")
     params = tunnel.params or default_params(transport)
 
     return {
@@ -233,6 +375,50 @@ def build_exit_inbound(tunnel) -> Dict:
             "decryption": "none",
         },
         "streamSettings": _stream_settings(transport, params, server_side=True),
+    }
+
+
+def build_intermediate_inbound(tunnel) -> Dict:
+    """Inbound on the transit node — receives traffic from the relay hop."""
+    transport = validate_transport(tunnel.transport)
+    if transport_engine(transport) != "xray":
+        raise ValueError(f"build_intermediate_inbound requires an xray transport, got {transport!r}")
+    params = tunnel.params or default_params(transport)
+
+    return {
+        "tag": intermediate_inbound_tag(tunnel),
+        "listen": "0.0.0.0",
+        "port": transit_port(tunnel),
+        "protocol": "vless",
+        "settings": {
+            "clients": [
+                {
+                    "id": params.get("id"),
+                    **({"flow": params["flow"]} if params.get("flow") else {}),
+                }
+            ],
+            "decryption": "none",
+        },
+        "streamSettings": _stream_settings(transport, params, server_side=True),
+    }
+
+
+def build_intermediate_outbound(tunnel, exit_address: str) -> Dict:
+    """Outbound on the transit node — second hop to the exit."""
+    return build_hop_outbound(
+        tunnel,
+        exit_address,
+        int(tunnel.target_port),
+        tag=intermediate_outbound_tag(tunnel),
+    )
+
+
+def build_intermediate_routing_rule(tunnel) -> Dict:
+    """Pin transit inbound traffic to the exit-bound outbound."""
+    return {
+        "type": "field",
+        "inboundTag": [intermediate_inbound_tag(tunnel)],
+        "outboundTag": intermediate_outbound_tag(tunnel),
     }
 
 
@@ -271,26 +457,116 @@ def build_wireguard_relay_inbound(
     return inbound, routing_rule
 
 
+def build_singbox_tunnel_fragments(tunnel, exit_address: str) -> Dict:
+    """Sing-box hop fragments for hysteria2/tuic tunnel transports (stub).
+
+    Relay-side Xray still routes user traffic; these JSON fragments are meant
+    for a sing-box listener/outbound on the exit (and optional sidecar). They
+    are returned by ``GET /tunnels/{id}/config`` but are not auto-injected into
+    the Xray core yet.
+    """
+    transport = validate_transport(tunnel.transport)
+    if transport_engine(transport) != "singbox":
+        raise ValueError(f"not a sing-box tunnel transport: {transport!r}")
+    params = tunnel.params or default_params(transport)
+    ensure_singbox_tunnel_secrets(params, transport)
+    tag = outbound_tag(tunnel)
+    tls = {
+        "enabled": True,
+        "server_name": params.get("sni", "www.cloudflare.com"),
+        "insecure": True,
+    }
+
+    if transport == "hysteria2":
+        outbound = {
+            "type": "hysteria2",
+            "tag": tag,
+            "server": exit_address,
+            "server_port": int(tunnel.target_port),
+            "password": params["password"],
+            "tls": dict(tls),
+        }
+        if params.get("obfs_password"):
+            outbound["obfs"] = {"type": "salamander", "password": params["obfs_password"]}
+        inbound = {
+            "type": "hysteria2",
+            "tag": f"tunnel-{tunnel.id}-exit",
+            "listen": "0.0.0.0",
+            "listen_port": int(tunnel.target_port),
+            "users": [{"password": params["password"]}],
+            "tls": dict(tls),
+        }
+        if params.get("obfs_password"):
+            inbound["obfs"] = {"type": "salamander", "password": params["obfs_password"]}
+        if params.get("up_mbps"):
+            inbound["up_mbps"] = int(params["up_mbps"])
+        if params.get("down_mbps"):
+            inbound["down_mbps"] = int(params["down_mbps"])
+    else:  # tuic
+        outbound = {
+            "type": "tuic",
+            "tag": tag,
+            "server": exit_address,
+            "server_port": int(tunnel.target_port),
+            "uuid": params["uuid"],
+            "password": params["password"],
+            "congestion_control": params.get("congestion_control", "bbr"),
+            "tls": dict(tls),
+        }
+        inbound = {
+            "type": "tuic",
+            "tag": f"tunnel-{tunnel.id}-exit",
+            "listen": "0.0.0.0",
+            "listen_port": int(tunnel.target_port),
+            "users": [{"uuid": params["uuid"], "password": params["password"]}],
+            "congestion_control": params.get("congestion_control", "bbr"),
+            "tls": dict(tls),
+        }
+
+    return {
+        "engine": "singbox",
+        "stub": True,
+        "transport": transport,
+        "relay": {"outbound": outbound, "routing_rule": build_relay_routing_rule(tunnel)},
+        "exit": {"inbound": inbound},
+    }
+
+
 def build_tunnel_pair(
     tunnel,
     exit_address: str,
     *,
+    intermediate_address: Optional[str] = None,
     relay_inbound_tags: Optional[List[str]] = None,
     wireguard_port: Optional[int] = None,
 ) -> Dict:
-    """Full config fragments for both ends of a tunnel.
+    """Full config fragments for every endpoint in the tunnel chain.
 
-    ``exit_address`` is the address the relay dials (the exit end's reachable
-    address). ``relay_inbound_tags`` optionally scopes the relay routing rule to
-    specific user inbounds; ``wireguard_port`` adds the WireGuard-over-Reality
-    capture inbound on the relay. Returns a dict the xray layer / API hands to
-    each end.
+    ``exit_address`` is the address the last hop dials (or the relay dials in a
+    2-end tunnel). For 3-hop chains pass ``intermediate_address`` too.
+
+    Sing-box transports (``hysteria2``, ``tuic``) return stub fragments only.
     """
-    outbound = build_relay_outbound(tunnel, exit_address)
+    transport = validate_transport(tunnel.transport)
+    if transport_engine(transport) == "singbox":
+        fragments = build_singbox_tunnel_fragments(tunnel, exit_address)
+        fragments["tunnel_id"] = tunnel.id
+        fragments["hops"] = tunnel_hops(tunnel)
+        return fragments
+
+    hops = tunnel_hops(tunnel)
+    if hops >= 3 and not intermediate_address:
+        raise ValueError("intermediate_address is required for a 3-hop tunnel")
+
+    if hops >= 3:
+        relay_out = build_relay_outbound(tunnel, intermediate_address, next_port=transit_port(tunnel))
+    else:
+        relay_out = build_relay_outbound(tunnel, exit_address)
+
     routing_rules = [build_relay_routing_rule(tunnel, relay_inbound_tags)]
 
     relay: Dict = {
-        "outbound": outbound,
+        "outbound": relay_out,
         "routing_rule": routing_rules[0],
         "routing_rules": routing_rules,
         "client_listen_port": int(tunnel.listen_port),
@@ -301,11 +577,22 @@ def build_tunnel_pair(
         relay["wireguard_inbound"] = wg_inbound
         routing_rules.append(wg_rule)
 
-    return {
+    result: Dict = {
         "tunnel_id": tunnel.id,
         "transport": tunnel.transport,
+        "hops": hops,
         "relay": relay,
         "exit": {
             "inbound": build_exit_inbound(tunnel),
         },
     }
+
+    if hops >= 3:
+        result["intermediate"] = {
+            "inbound": build_intermediate_inbound(tunnel),
+            "outbound": build_intermediate_outbound(tunnel, exit_address),
+            "routing_rule": build_intermediate_routing_rule(tunnel),
+            "listen_port": transit_port(tunnel),
+        }
+
+    return result

@@ -76,6 +76,10 @@ async def security_headers_middleware(request: Request, call_next):
     response.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
     if request.url.scheme == "https":
         response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    from config import SECURITY_CSP
+
+    if SECURITY_CSP:
+        response.headers.setdefault("Content-Security-Policy", SECURITY_CSP)
     return response
 from app import dashboard, jobs, routers, telegram  # noqa
 from app.routers import api_router  # noqa
@@ -127,6 +131,28 @@ def on_startup():
         _write_install_meta(_local_version(), _git_head_sha())
     except Exception:
         logger.exception("Failed to sync install-meta.json")
+    try:
+        from app.db import GetDB
+        from app.services.edge_proxy import cdn_origin_nginx_enabled, sync_edge_nginx, sync_subscription_legacy_nginx
+
+        with GetDB() as db:
+            sync_edge_nginx(db)
+            sync_subscription_legacy_nginx(db)
+    except Exception:
+        logger.exception("cdn origin nginx sync on startup failed")
+    try:
+        from app.xray.network_defaults import apply_host_network_tuning
+
+        apply_host_network_tuning()
+    except Exception:
+        logger.debug("host network tuning skipped", exc_info=True)
+    try:
+        from app.routers import api_router
+        from app.subscription.route_registry import register_extra_subscription_routes
+
+        register_extra_subscription_routes(app, api_router)
+    except Exception:
+        logger.exception("Failed to register extra subscription routes")
     scheduler.start()
 
 

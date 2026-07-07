@@ -16,6 +16,7 @@ interface AppState {
   setTheme: (t: "dark" | "light") => void;
   setExpertMode: (v: boolean) => void;
   isEnabled: (flag: string) => boolean;
+  hasPermission: (perm: string) => boolean;
   refreshFlags: () => Promise<void>;
   logout: () => void;
   onAuthenticated: () => Promise<void>;
@@ -125,9 +126,14 @@ export const AppProvider: FC<{ children: ReactNode }> = ({ children }) => {
     return !!admin?.is_sudo;
   };
 
+  const hasPermission = (perm: string) => {
+    if (admin?.is_sudo) return true;
+    return (admin?.permissions || []).includes(perm);
+  };
+
   return (
     <Ctx.Provider
-      value={{ admin, branding, flags, loadingAuth, theme, expertMode, setTheme, setExpertMode, isEnabled, refreshFlags, logout, onAuthenticated }}
+      value={{ admin, branding, flags, loadingAuth, theme, expertMode, setTheme, setExpertMode, isEnabled, hasPermission, refreshFlags, logout, onAuthenticated }}
     >
       {children}
     </Ctx.Provider>

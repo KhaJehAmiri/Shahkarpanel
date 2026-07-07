@@ -25,6 +25,8 @@ class WGUserPeer:
     preshared_key: Optional[str] = None
     active: bool = True
     awg_address: str = ""             # AmneziaWG subnet address (dual-stack nodes)
+    speed_limit_up: Optional[int] = None
+    speed_limit_down: Optional[int] = None
 
 
 def server_interface_address(subnet: str) -> str:
@@ -60,6 +62,13 @@ def amneziawg_enabled(cfg) -> bool:
     return bool(getattr(cfg, "awg_enabled", False))
 
 
+def sg_wire_enabled(cfg) -> bool:
+    """True when this node serves the proprietary SigmaGuard Wire preset."""
+    if cfg is None:
+        return False
+    return bool(getattr(cfg, "sg_wire_enabled", False))
+
+
 def awg_params_from_cfg(cfg) -> dict:
     """Extract AmneziaWG [Interface] params from a NodeWireGuard row."""
     mapping = {
@@ -68,6 +77,8 @@ def awg_params_from_cfg(cfg) -> dict:
         "Jmax": getattr(cfg, "awg_jmax", None),
         "S1": getattr(cfg, "awg_s1", None),
         "S2": getattr(cfg, "awg_s2", None),
+        "S3": getattr(cfg, "awg_s3", None),
+        "S4": getattr(cfg, "awg_s4", None),
         "H1": getattr(cfg, "awg_h1", None),
         "H2": getattr(cfg, "awg_h2", None),
         "H3": getattr(cfg, "awg_h3", None),
@@ -96,12 +107,23 @@ def build_node_spec(
     for p in peers:
         if not p.active or not p.public_key or p.public_key in seen:
             continue
+        if not p.address:
+            # A peer with no address for this variant (e.g. a plain-WG-only
+            # user on the AWG interface) would otherwise render as an empty
+            # `AllowedIPs = ` line. `wg`/`awg syncconf` treats the whole
+            # config as one atomic transaction and rejects it outright on
+            # any unparsable line, wiping *every* peer on the interface —
+            # not just the bad one. Skip it instead of shipping a broken
+            # entry (see AUDIT_FINDINGS.md C5 incident notes).
+            continue
         seen.add(p.public_key)
         peer_payload.append(
             {
                 "public_key": p.public_key,
                 "allowed_ips": [_normalize_allowed(p.address)] if p.address else [],
                 "preshared_key": p.preshared_key or None,
+                "speed_limit_up": p.speed_limit_up,
+                "speed_limit_down": p.speed_limit_down,
             }
         )
     spec = {
@@ -142,6 +164,8 @@ def build_node_specs(cfg, peers: List[WGUserPeer]) -> List[dict]:
                 address=p.awg_address or "",
                 preshared_key=p.preshared_key,
                 active=p.active,
+                speed_limit_up=p.speed_limit_up,
+                speed_limit_down=p.speed_limit_down,
             )
             for p in peers
         ]

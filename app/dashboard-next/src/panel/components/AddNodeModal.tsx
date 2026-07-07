@@ -9,6 +9,7 @@ import {
   defaultNodeServices,
   type NodeServicesState,
 } from "./NodeServicesForm";
+import "./add-node-modal.css";
 
 type ProvisionResult = {
   status: string;
@@ -48,7 +49,8 @@ export const AddNodeModal: FC<{
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [manualCmd, setManualCmd] = useState<string | null>(null);
-  const upd = (k: string) => (e: any) => setF({ ...f, [k]: e.target.value });
+  const upd = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
+    setF({ ...f, [k]: e.target.value });
 
   const patchServices = (patch: Partial<NodeServicesState>) => {
     setServices((prev) => ({ ...prev, ...patch }));
@@ -143,63 +145,85 @@ export const AddNodeModal: FC<{
   }
 
   return (
-    <Modal open formWide title={t("infra.addNode")} onClose={onClose}
+    <Modal
+      open
+      formWide
+      className="nx-add-node-shell"
+      title={t("infra.addNode")}
+      onClose={onClose}
       footer={<>
         <Button variant="ghost" onClick={onClose} disabled={busy}>{t("common.cancel")}</Button>
         <Button variant="primary" disabled={busy || !valid} onClick={submit}>
           {busy ? t("infra.provisionRunning") : t("infra.provisionInstall")}
         </Button>
-      </>}>
-      <div className="nx-stack" style={{ gap: 14 }}>
+      </>}
+    >
+      <div className="nx-add-node-body">
         <Callout tone="info" className="compact">{t("infra.autoHint")}</Callout>
 
-        <div className="nx-form-grid">
-          <Field label={t("infra.coreKind")}>
-            <Select value={f.core_kind} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => onCoreKindChange(e.target.value as "xray" | "wireguard")}>
-              <option value="xray">Xray (v2ray)</option>
-              <option value="wireguard">WireGuard</option>
-            </Select>
-          </Field>
-          <Field label={t("infra.role")}>
-            <Select value={f.role} onChange={upd("role")}>
-              <option value="direct">direct</option>
-              <option value="relay">relay</option>
-              <option value="exit">exit</option>
-            </Select>
-          </Field>
+        <section className="nx-add-node-section" aria-labelledby="add-node-core">
+          <h3 className="nx-add-node-section-title" id="add-node-core">{t("infra.addNodeSectionCore")}</h3>
+          <div className="nx-form-grid">
+            <Field label={t("infra.coreKind")}>
+              <Select value={f.core_kind} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => onCoreKindChange(e.target.value as "xray" | "wireguard")}>
+                <option value="xray">Xray (v2ray)</option>
+                <option value="wireguard">WireGuard</option>
+              </Select>
+            </Field>
+            <Field label={t("infra.role")}>
+              <Select value={f.role} onChange={upd("role")}>
+                <option value="direct">direct</option>
+                <option value="relay">relay</option>
+                <option value="exit">exit</option>
+              </Select>
+            </Field>
+          </div>
+        </section>
 
-          <Field label={t("common.name")}>
-            <Input value={f.name} onChange={upd("name")} autoFocus placeholder="de-node-1" />
-          </Field>
-          <Field label={t("infra.serverIp")}>
-            <Input value={f.address} onChange={upd("address")} placeholder="1.2.3.4" />
-          </Field>
+        <section className="nx-add-node-section" aria-labelledby="add-node-server">
+          <h3 className="nx-add-node-section-title" id="add-node-server">{t("infra.addNodeSectionServer")}</h3>
+          <div className="nx-form-grid">
+            <Field label={t("common.name")}>
+              <Input value={f.name} onChange={upd("name")} autoFocus placeholder="de-node-1" />
+            </Field>
+            <Field label={t("infra.serverIp")}>
+              <Input value={f.address} onChange={upd("address")} placeholder="1.2.3.4" />
+            </Field>
+            <div className="span-2">
+              <Field label={t("infra.regionPreset")}>
+                <Select value={f.region} onChange={upd("region")}>
+                  <option value="">—</option>
+                  {["ir", "eu", "us", "ae", "tr"].map((r) => <option key={r} value={r}>{r}</option>)}
+                  <option value="custom">custom</option>
+                </Select>
+              </Field>
+            </div>
+          </div>
+        </section>
 
-          <Field label={t("infra.regionPreset")}>
-            <Select value={f.region} onChange={upd("region")}>
-              <option value="">—</option>
-              {["ir", "eu", "us", "ae", "tr"].map((r) => <option key={r} value={r}>{r}</option>)}
-              <option value="custom">custom</option>
-            </Select>
-          </Field>
-          <Field label={t("infra.sshUser")}>
-            <Input value={f.username} onChange={upd("username")} placeholder="root" />
-          </Field>
+        <section className="nx-add-node-section" aria-labelledby="add-node-ssh">
+          <h3 className="nx-add-node-section-title" id="add-node-ssh">{t("infra.addNodeSectionSsh")}</h3>
+          <div className="nx-form-grid">
+            <Field label={t("infra.sshUser")}>
+              <Input value={f.username} onChange={upd("username")} placeholder="root" />
+            </Field>
+            <Field label={t("infra.sshPort")}>
+              <Input type="number" value={f.ssh_port} onChange={upd("ssh_port")} />
+            </Field>
+            <div className="span-2">
+              <Field label={t("infra.sshPassword")} hint={t("infra.sshPasswordHint")}>
+                <Input type="password" value={f.password} onChange={upd("password")} autoComplete="new-password" />
+              </Field>
+            </div>
+          </div>
+        </section>
 
-          <Field label={t("infra.sshPort")}>
-            <Input type="number" value={f.ssh_port} onChange={upd("ssh_port")} />
-          </Field>
-          <Field label={t("infra.sshPassword")} hint={t("infra.sshPasswordHint")}>
-            <Input type="password" value={f.password} onChange={upd("password")} autoComplete="new-password" />
-          </Field>
-
-          <NodeServicesForm
-            state={{ ...services, core_kind: f.core_kind }}
-            setState={patchServices}
-            serverAddress={f.address}
-            region={f.region}
-          />
-        </div>
+        <NodeServicesForm
+          state={{ ...services, core_kind: f.core_kind }}
+          setState={patchServices}
+          serverAddress={f.address}
+          region={f.region}
+        />
 
         {error && <Callout tone="danger" className="compact">{error}</Callout>}
       </div>

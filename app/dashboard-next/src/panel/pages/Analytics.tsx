@@ -47,12 +47,47 @@ export const Analytics: FC<{ embedded?: boolean }> = ({ embedded }) => {
       </Card>
 
       {admin?.is_sudo && isEnabled("smart_routing") && <SmartRoutingCard />}
+      {admin?.is_sudo && <ProtocolUsageCard />}
       {admin?.is_sudo && <IntelligenceCard enabled={isEnabled("traffic_intelligence")} />}
     </div>
   );
 };
 
 type RoutedNode = { id: number; name: string; region?: string | null; latency_ms?: number | null; status: string };
+
+type ProtocolUsageRow = { protocol: string; used_traffic: number };
+
+const ProtocolUsageCard: FC = () => {
+  const { t } = useTranslation();
+  const rows = useFetch<ProtocolUsageRow[]>(() => api.get("/analytics/usage-by-protocol"), []);
+  useLiveReload(() => rows.reload(), 60000);
+
+  return (
+    <Card className="nx-mb-20">
+      <CardHead title={t("analytics.protocolUsage", "Usage by protocol")} actions={
+        <Button variant="ghost" size="sm" onClick={rows.reload}>{t("common.refresh")}</Button>
+      } />
+      {rows.loading ? <SkeletonRows rows={2} cols={2} />
+        : rows.error ? <EmptyState title={t("common.error")} desc={rows.error} />
+        : !rows.data?.length ? <EmptyState title={t("common.noData")} />
+        : (
+          <div className="nx-table-wrap">
+            <table className="nx-table">
+              <thead><tr><th>{t("analytics.protocol", "Protocol")}</th><th>{t("users.used")}</th></tr></thead>
+              <tbody>
+                {rows.data.map((r) => (
+                  <tr key={r.protocol}>
+                    <td style={{ fontWeight: 600 }}>{r.protocol}</td>
+                    <td>{formatBytes(r.used_traffic)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+    </Card>
+  );
+};
 
 const SmartRoutingCard: FC = () => {
   const { t } = useTranslation();

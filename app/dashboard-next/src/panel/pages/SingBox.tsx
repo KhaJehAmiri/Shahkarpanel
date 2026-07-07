@@ -39,6 +39,8 @@ const SingBoxNodeCard: FC<{ node: NodeItem; onSaved: () => void }> = ({ node, on
   const [tuicOn, setTuicOn] = useState(!!sb?.tuic_enabled);
   const [tuicPort, setTuicPort] = useState(String(sb?.tuic_port ?? 44334));
   const [tuicCc, setTuicCc] = useState(sb?.tuic_congestion_control ?? "bbr");
+  const [anytlsOn, setAnytlsOn] = useState(!!sb?.anytls_enabled);
+  const [anytlsPort, setAnytlsPort] = useState(String(sb?.anytls_port ?? 44335));
   const [leDomain, setLeDomain] = useState(sb?.tls_le_domain || sb?.sni || "");
   const [leKind, setLeKind] = useState(sb?.tls_le_kind || "auto");
   const [leEmail, setLeEmail] = useState("");
@@ -61,6 +63,8 @@ const SingBoxNodeCard: FC<{ node: NodeItem; onSaved: () => void }> = ({ node, on
     setTuicOn(!!node.singbox?.tuic_enabled);
     setTuicPort(String(node.singbox?.tuic_port ?? 44334));
     setTuicCc(node.singbox?.tuic_congestion_control ?? "bbr");
+    setAnytlsOn(!!node.singbox?.anytls_enabled);
+    setAnytlsPort(String(node.singbox?.anytls_port ?? 44335));
     setLeDomain(node.singbox?.tls_le_domain || node.singbox?.sni || "");
     setLeKind(node.singbox?.tls_le_kind || "auto");
     setTlsStatus(null);
@@ -152,7 +156,7 @@ const SingBoxNodeCard: FC<{ node: NodeItem; onSaved: () => void }> = ({ node, on
   };
 
   const save = async () => {
-    if (!hy2On && !tuicOn) {
+    if (!hy2On && !tuicOn && !anytlsOn) {
       toast.push(t("singbox.stackRequired"), "error");
       return;
     }
@@ -174,6 +178,8 @@ const SingBoxNodeCard: FC<{ node: NodeItem; onSaved: () => void }> = ({ node, on
         tuic_enabled: tuicOn,
         tuic_port: tuicOn ? Number(tuicPort) : null,
         tuic_congestion_control: tuicCc.trim() || "bbr",
+        anytls_enabled: anytlsOn,
+        anytls_port: anytlsOn ? Number(anytlsPort) : null,
       };
       await api.put(`/node/${node.id}/singbox`, body);
       toast.push(t("common.saved"), "success");
@@ -262,6 +268,10 @@ const SingBoxNodeCard: FC<{ node: NodeItem; onSaved: () => void }> = ({ node, on
             <input type="checkbox" checked={tuicOn} onChange={(e) => setTuicOn(e.target.checked)} />
             <span>{t("singbox.tuicEnable")}</span>
           </label>
+          <label className="nx-row" style={{ gap: 6, cursor: "pointer" }}>
+            <input type="checkbox" checked={anytlsOn} onChange={(e) => setAnytlsOn(e.target.checked)} />
+            <span>{t("singbox.anytlsEnable")}</span>
+          </label>
         </div>
 
         {hy2On && (
@@ -303,6 +313,16 @@ const SingBoxNodeCard: FC<{ node: NodeItem; onSaved: () => void }> = ({ node, on
             </div>
           </div>
         )}
+
+        {anytlsOn && (
+          <div className="nx-row" style={{ gap: 10, flexWrap: "wrap" }}>
+            <div style={{ flex: 1, minWidth: 120 }}>
+              <Field label={t("singbox.anytlsPort")}>
+                <Input value={anytlsPort} onChange={(e) => setAnytlsPort(e.target.value)} type="number" />
+              </Field>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="nx-row" style={{ marginTop: 14, gap: 8 }}>
@@ -331,7 +351,7 @@ export const SingBox: FC<{ embedded?: boolean }> = ({ embedded }) => {
 
   const nodeList = (nodes.data || []).filter((n) => n.status !== "disabled");
   const configuredNodes = nodeList.filter(
-    (n) => n.singbox?.hysteria2_enabled || n.singbox?.tuic_enabled,
+    (n) => n.singbox?.hysteria2_enabled || n.singbox?.tuic_enabled || n.singbox?.anytls_enabled,
   );
   const hy2Nodes = configuredNodes.filter((n) => n.singbox?.hysteria2_enabled).length;
   const hasUsers = (users.data?.total ?? 0) > 0;

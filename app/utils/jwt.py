@@ -7,7 +7,7 @@ from hashlib import sha256
 from typing import Union
 
 
-from config import JWT_ACCESS_TOKEN_EXPIRE_MINUTES
+from config import JWT_ACCESS_TOKEN_EXPIRE_MINUTES, JWT_REFRESH_TOKEN_EXPIRE_DAYS
 
 
 @lru_cache(maxsize=None)
@@ -42,6 +42,27 @@ def create_admin_token(username: str, is_sudo=False) -> str:
     return encoded_jwt
 
 
+def create_admin_refresh_token(username: str, is_sudo: bool = False) -> str:
+    """Long-lived refresh token for the admin dashboard (L6)."""
+    data = {
+        "sub": username,
+        "access": "admin_refresh",
+        "sudo": bool(is_sudo),
+        "iat": datetime.utcnow(),
+        "exp": datetime.utcnow() + timedelta(days=JWT_REFRESH_TOKEN_EXPIRE_DAYS),
+    }
+    return jwt.encode(data, get_secret_key(), algorithm="HS256")
+
+
+def admin_token_bundle(username: str, is_sudo: bool = False) -> dict:
+    """Access + refresh pair for admin/SSO login responses."""
+    return {
+        "access_token": create_admin_token(username, is_sudo),
+        "refresh_token": create_admin_refresh_token(username, is_sudo),
+        "expires_in": app_access_token_expires_in(),
+    }
+
+
 def create_portal_token(username: str) -> str:
     data = {"sub": username, "access": "portal", "iat": datetime.utcnow()}
     if JWT_ACCESS_TOKEN_EXPIRE_MINUTES > 0:
@@ -59,10 +80,42 @@ def get_admin_payload(token: str) -> Union[dict, None]:
             return
         try:
             created_at = datetime.utcfromtimestamp(payload['iat'])
+            iat = float(payload['iat'])
         except KeyError:
             created_at = None
+            iat = None
 
-        return {"username": username, "is_sudo": access == "sudo", "created_at": created_at}
+        from app.utils.admin_sessions import is_token_revoked
+
+        if is_token_revoked(username, iat):
+            return
+
+        return {"username": username, "is_sudo": access == "sudo", "created_at": created_at, "iat": iat}
+    except jwt.exceptions.PyJWTError:
+        return
+
+
+def get_admin_refresh_payload(token: str) -> Union[dict, None]:
+    try:
+        payload = jwt.decode(token, get_secret_key(), algorithms=["HS256"])
+        username: str = payload.get("sub")
+        if not username or payload.get("access") != "admin_refresh":
+            return
+        try:
+            iat = float(payload["iat"])
+        except (KeyError, TypeError, ValueError):
+            iat = None
+
+        from app.utils.admin_sessions import is_token_revoked
+
+        if is_token_revoked(username, iat):
+            return
+
+        return {
+            "username": username,
+            "is_sudo": bool(payload.get("sudo")),
+            "iat": iat,
+        }
     except jwt.exceptions.PyJWTError:
         return
 

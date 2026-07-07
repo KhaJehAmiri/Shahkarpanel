@@ -57,6 +57,8 @@ class ProxyTypes(str, Enum):
     # single used_traffic; see docs/accounting-contract.md.
     Hysteria2 = "hysteria2"
     TUIC = "tuic"
+    # AnyTLS is a TLS-shaped tunnel served by sing-box (TCP/TLS, not QUIC).
+    AnyTLS = "anytls"
 
     @property
     def account_model(self):
@@ -68,9 +70,9 @@ class ProxyTypes(str, Enum):
             return TrojanAccount
         if self == self.Shadowsocks:
             return ShadowsocksAccount
-        # WireGuard / Hysteria2 / TUIC have no Xray account; they are
+        # WireGuard / Hysteria2 / TUIC / AnyTLS have no Xray account; they are
         # provisioned on the node's native engine (WireGuard / sing-box).
-        if self in (self.WireGuard, self.Hysteria2, self.TUIC):
+        if self in (self.WireGuard, self.Hysteria2, self.TUIC, self.AnyTLS):
             return None
 
     @property
@@ -89,17 +91,19 @@ class ProxyTypes(str, Enum):
             return Hysteria2Settings
         if self == self.TUIC:
             return TUICSettings
+        if self == self.AnyTLS:
+            return AnyTLSSettings
 
     @property
     def is_xray_account(self) -> bool:
         """True when this protocol is provisioned through the Xray handler
         (and therefore reports usage via the Xray Stats API)."""
-        return self not in (self.WireGuard, self.Hysteria2, self.TUIC)
+        return self not in (self.WireGuard, self.Hysteria2, self.TUIC, self.AnyTLS)
 
     @property
     def is_singbox_product(self) -> bool:
         """True for protocols served by the node's sing-box engine."""
-        return self in (self.Hysteria2, self.TUIC)
+        return self in (self.Hysteria2, self.TUIC, self.AnyTLS)
 
 
 class ProxySettings(BaseModel, use_enum_values=True):
@@ -157,7 +161,7 @@ class VMessSettings(ProxySettings):
 
 class VLESSSettings(ProxySettings):
     id: UUID = Field(default_factory=uuid4)
-    flow: XTLSFlows = XTLSFlows.NONE
+    flow: XTLSFlows = XTLSFlows.VISION
 
     def revoke(self):
         self.id = uuid4()
@@ -217,7 +221,11 @@ class WireGuardSettings(ProxySettings):
 
     @model_validator(mode="after")
     def _ensure_keys(self):
-        from app.wireguard.keys import generate_keypair, public_key_from_private
+        from app.wireguard.keys import (
+            generate_keypair,
+            generate_preshared_key,
+            public_key_from_private,
+        )
 
         if not self.private_key:
             priv, pub = generate_keypair()
@@ -225,14 +233,18 @@ class WireGuardSettings(ProxySettings):
             self.public_key = pub
         elif not self.public_key:
             self.public_key = public_key_from_private(self.private_key)
+        # AmneziaVPN on iOS fails to parse configs without PresharedKey (upstream bug).
+        if not self.preshared_key:
+            self.preshared_key = generate_preshared_key()
         return self
 
     def revoke(self):
-        from app.wireguard.keys import generate_keypair
+        from app.wireguard.keys import generate_keypair, generate_preshared_key
 
         priv, pub = generate_keypair()
         self.private_key = priv
         self.public_key = pub
+        self.preshared_key = generate_preshared_key()
 
 
 class Hysteria2Settings(ProxySettings):
@@ -261,10 +273,20 @@ class TUICSettings(ProxySettings):
         self.password = random_password()
 
 
+class AnyTLSSettings(ProxySettings):
+    """Per-user AnyTLS credentials (served by the node's sing-box engine)."""
+    password: str = Field(default_factory=random_password)
+
+    def revoke(self):
+        self.password = random_password()
+
+
 class ProxyHostSecurity(str, Enum):
     inbound_default = "inbound_default"
+    same = "same"  # 3x-ui alias for inbound_default
     none = "none"
     tls = "tls"
+    reality = "reality"  # inherit inbound Reality params; override SNI/fp only
 
 
 ProxyHostALPN = Enum(
@@ -321,6 +343,21 @@ class ProxyHost(BaseModel):
     noise_setting: Optional[str] = Field(None, nullable=True)
     random_user_agent: Union[bool, None] = None
     use_sni_as_host: Union[bool, None] = None
+    sort_order: int = 0
+    override_sni_from_address: Union[bool, None] = False
+    keep_sni_blank: Union[bool, None] = False
+    pinned_peer_cert_sha256: Optional[str] = Field(None, nullable=True)
+    verify_peer_cert_by_name: Optional[str] = Field(None, nullable=True)
+    ech_config_list: Optional[str] = Field(None, nullable=True)
+    mux_params: Optional[str] = Field(None, nullable=True)
+    sockopt_params: Optional[str] = Field(None, nullable=True)
+    final_mask: Optional[str] = Field(None, nullable=True)
+    vless_route: Optional[str] = Field(None, nullable=True)
+    exclude_from_sub_types: Optional[str] = Field(None, nullable=True)
+    mihomo_ip_version: Optional[str] = Field(None, nullable=True)
+    external_proxy: Optional[str] = Field(None, nullable=True)
+    node_ids: Optional[str] = Field(None, nullable=True)
+    region: Optional[str] = Field(None, nullable=True)
     model_config = ConfigDict(from_attributes=True)
 
     @field_validator("remark", mode="after")

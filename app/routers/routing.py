@@ -31,6 +31,22 @@ def _require_enabled():
         raise HTTPException(status_code=404, detail="Smart routing is disabled")
 
 
+@router.get("/presets")
+def routing_presets(_: Admin = Depends(require_permission("core:read"))):
+    """Return built-in routing rule packs for one-click apply in the UI."""
+    from app.routing_presets import ROUTING_PRESETS
+
+    return {"presets": ROUTING_PRESETS}
+
+
+@router.get("/dns-presets")
+def dns_presets(_: Admin = Depends(require_permission("core:read"))):
+    """Per-user DNS split-horizon / fake DNS presets for subscription merge."""
+    from app.routing_presets import DNS_PRESETS
+
+    return {"presets": DNS_PRESETS}
+
+
 @router.get("/strategies", response_model=List[str])
 def list_strategies(_: Admin = Depends(require_permission("nodes:read"))):
     _require_enabled()
@@ -64,3 +80,25 @@ def order_nodes(
         )
         for n in ordered
     ]
+
+
+@router.post("/probe-latency")
+def probe_node_latency(
+    db: Session = Depends(get_db),
+    _: Admin = Depends(require_permission("nodes:read")),
+):
+    """Run an immediate health probe on all connected nodes (fills latency_ms)."""
+    _require_enabled()
+    from app.jobs.xray_core_health import core_health_check
+
+    core_health_check()
+    from app.db.models import Node
+
+    nodes = db.query(Node).all()
+    return {
+        "probed": len(nodes),
+        "nodes": [
+            {"id": n.id, "name": n.name, "latency_ms": n.latency_ms, "status": str(n.status)}
+            for n in nodes
+        ],
+    }

@@ -10,6 +10,12 @@ from starlette.websockets import WebSocketDisconnect
 
 from app import logger, xray
 from app.bootstrap_limit import enforce_bootstrap_rate_limit
+from app.services.node_register import (
+    apply_bootstrap_metadata,
+    connect_node_async,
+    create_node_record,
+    finalize_new_node,
+)
 from app.db import Session, crud, get_db
 from app.dependencies import get_dbnode, get_scoped_node, validate_dates
 from app.events import EventType, publish
@@ -133,7 +139,7 @@ def bootstrap_node(
         provision_jobs.complete_for_node(pending.id)
     else:
         try:
-            dbnode = crud.create_node(
+            dbnode = create_node_record(
                 db,
                 NodeCreate(
                     name=body.name,
@@ -150,24 +156,23 @@ def bootstrap_node(
             raise HTTPException(status_code=409, detail=f'Node "{body.name}" already exists')
 
         if body.tenant_id is not None or (body.role and body.role != "direct"):
-            if body.role and body.role not in ("direct", "relay", "exit"):
+            if body.role and body.role not in ("direct", "relay", "transit", "exit"):
                 raise HTTPException(status_code=422, detail="invalid node role")
             if body.tenant_id is not None:
                 from app.db.models import Tenant
                 if db.query(Tenant.id).filter(Tenant.id == body.tenant_id).first() is None:
                     raise HTTPException(status_code=422, detail="Unknown tenant_id")
-            dbnode.tenant_id = body.tenant_id
-            if body.role:
-                dbnode.role = body.role
-            dbnode.provision_status = "registered"
-            dbnode.provision_host = body.address
-            db.commit()
-            db.refresh(dbnode)
+            apply_bootstrap_metadata(
+                db,
+                dbnode,
+                tenant_id=body.tenant_id,
+                role=body.role,
+                address=body.address,
+            )
 
-    if dbnode.core_kind == CoreKind.wireguard.value:
-        crud.provision_wireguard_defaults(db, dbnode)
+    finalize_new_node(db, dbnode)
 
-    bg.add_task(xray.operations.connect_node, node_id=dbnode.id)
+    connect_node_async(bg, dbnode.id)
     tls = crud.get_tls_certificate(db)
 
     publish(EventType.node_created, {"node_id": dbnode.id, "name": dbnode.name, "via": "bootstrap"})
@@ -218,15 +223,28 @@ def add_node(
 ):
     """Add a new node to the database and optionally add it as a host."""
     try:
-        dbnode = crud.create_node(db, new_node)
+        dbnode = create_node_record(db, new_node)
     except IntegrityError:
         db.rollback()
         raise HTTPException(
             status_code=409, detail=f'Node "{new_node.name}" already exists'
         )
 
-    bg.add_task(xray.operations.connect_node, node_id=dbnode.id)
-    bg.add_task(add_host_if_needed, new_node, db)
+    finalize_new_node(db, dbnode)
+
+    connect_node_async(bg, dbnode.id)
+    from app.services.materialize import provision_slug_list
+    from app.services.node_apply import set_node_services
+
+    default_slugs = provision_slug_list(
+        core_kind=new_node.core_kind.value if hasattr(new_node.core_kind, "value") else str(new_node.core_kind),
+        enable_plain_wg=new_node.core_kind.value == "wireguard" if hasattr(new_node.core_kind, "value") else False,
+        enable_xray=new_node.core_kind.value == "xray" if hasattr(new_node.core_kind, "value") else True,
+    )
+    if default_slugs:
+        set_node_services(db, dbnode, default_slugs, replace=True)
+    elif new_node.add_as_new_host:
+        bg.add_task(add_host_if_needed, new_node, db)
 
     publish(EventType.node_created, {"node_id": dbnode.id, "name": dbnode.name})
     logger.info(f'New node "{dbnode.name}" added')
@@ -359,10 +377,16 @@ class AmneziaWGConfig(BaseModel):
     awg_jmax: Optional[int] = None
     awg_s1: Optional[int] = None
     awg_s2: Optional[int] = None
+    awg_s3: Optional[int] = None
+    awg_s4: Optional[int] = None
     awg_h1: Optional[int] = None
     awg_h2: Optional[int] = None
     awg_h3: Optional[int] = None
     awg_h4: Optional[int] = None
+
+
+class SgWireConfig(BaseModel):
+    enabled: bool
 
 
 class SingBoxNodeConfig(BaseModel):
@@ -379,6 +403,8 @@ class SingBoxNodeConfig(BaseModel):
     tuic_enabled: Optional[bool] = None
     tuic_port: Optional[int] = None
     tuic_congestion_control: Optional[str] = None
+    anytls_enabled: Optional[bool] = None
+    anytls_port: Optional[int] = None
 
 
 @router.put("/node/{node_id}/singbox", response_model=NodeResponse)
@@ -389,7 +415,7 @@ def set_node_singbox(
     db: Session = Depends(get_db),
     _: Admin = Depends(Admin.check_sudo_admin),
 ):
-    """Configure Hysteria2/TUIC on a node (sudo only).
+    """Configure Hysteria2/TUIC/AnyTLS on a node (sudo only).
 
     sing-box runs alongside Xray or native WireGuard on the node agent; enabling
     a protocol here provisions the inbound and pushes the user list on save.
@@ -650,6 +676,8 @@ class AmneziaWGStatus(BaseModel):
     """Runtime + config state for AmneziaWG on a WireGuard node."""
     plain_enabled: bool
     awg_enabled: bool
+    sg_wire_enabled: bool = False
+    sg_wire_preset_rev: Optional[str] = None
     runtime_ready: bool
     node_connected: bool
     needs_agent_upgrade: bool
@@ -674,6 +702,8 @@ def get_node_amneziawg_status(
     return AmneziaWGStatus(
         plain_enabled=plain_wg_enabled(cfg),
         awg_enabled=awg_on,
+        sg_wire_enabled=bool(getattr(cfg, "sg_wire_enabled", False)) if cfg else False,
+        sg_wire_preset_rev=getattr(cfg, "sg_wire_preset_rev", None) if cfg else None,
         runtime_ready=runtime_ready,
         node_connected=connected,
         needs_agent_upgrade=awg_on and not runtime_ready,
@@ -731,6 +761,31 @@ def set_node_amneziawg(
     return dbnode
 
 
+@router.put("/node/{node_id}/sigmaguard-wire", response_model=NodeResponse)
+def set_node_sigmaguard_wire(
+    body: SgWireConfig,
+    bg: BackgroundTasks,
+    dbnode=Depends(get_dbnode),
+    db: Session = Depends(get_db),
+    _: Admin = Depends(Admin.check_sudo_admin),
+):
+    """Enable proprietary SigmaGuard Wire preset on a WireGuard node (sudo only)."""
+    from app import feature_flags
+    from app.models.node import CoreKind
+
+    if not feature_flags.is_enabled("sigmaguard_wire"):
+        raise HTTPException(status_code=404, detail="SigmaGuard Wire is disabled")
+    if dbnode.core_kind != CoreKind.wireguard.value:
+        raise HTTPException(status_code=400, detail="Node is not a WireGuard node")
+    try:
+        crud.set_node_sg_wire(db, dbnode, enabled=body.enabled)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    db.refresh(dbnode)
+    bg.add_task(_sync_wireguard_node, dbnode.id)
+    return dbnode
+
+
 def _sync_wireguard_node(node_id: int) -> None:
     try:
         from app.db import GetDB
@@ -744,6 +799,53 @@ def _sync_wireguard_node(node_id: int) -> None:
         pass
 
 
+@router.get("/node/{node_id}/xray-config")
+def get_node_xray_config(
+    dbnode=Depends(get_scoped_node),
+    _: Admin = Depends(require_permission("nodes:read")),
+):
+    """Preview the effective Xray config this node would receive."""
+    from app.services.xray_node import build_node_xray_config
+
+    cfg = build_node_xray_config(dbnode.id)
+    return cfg if isinstance(cfg, dict) else cfg.to_dict()
+
+
+@router.get("/node/{node_id}/xray-config/override")
+def get_node_xray_config_override(
+    dbnode=Depends(get_scoped_node),
+    _: Admin = Depends(require_permission("nodes:read")),
+):
+    """Return the stored per-node config override fragment (JSON object)."""
+    import commentjson
+
+    raw = getattr(dbnode, "xray_config_override", None)
+    if not raw:
+        return {}
+    try:
+        data = commentjson.loads(raw)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+@router.put("/node/{node_id}/xray-config/override")
+def set_node_xray_config_override(
+    payload: dict,
+    bg: BackgroundTasks,
+    dbnode=Depends(get_scoped_node),
+    db: Session = Depends(get_db),
+    _: Admin = Depends(require_permission("nodes:provision")),
+):
+    """Save a JSON merge-patch applied after master filter + tunnels."""
+    import commentjson
+
+    dbnode.xray_config_override = commentjson.dumps(payload) if payload else None
+    db.commit()
+    bg.add_task(xray.operations.restart_node, dbnode.id)
+    return {"saved": True}
+
+
 @router.post("/node/{node_id}/reconnect")
 def reconnect_node(
     bg: BackgroundTasks,
@@ -753,6 +855,42 @@ def reconnect_node(
     """Trigger a reconnection for a node in the caller's workspace."""
     bg.add_task(xray.operations.connect_node, node_id=dbnode.id)
     return {"detail": "Reconnection task scheduled"}
+
+
+@router.post("/node/{node_id}/repin")
+def repin_node_cert(
+    bg: BackgroundTasks,
+    dbnode=Depends(get_scoped_node),
+    db: Session = Depends(get_db),
+    _: Admin = Depends(require_permission("nodes:provision")),
+):
+    """Clear the pinned TLS cert so the next connection re-captures it (TOFU).
+
+    Use after legitimately reissuing a node's certificate. There is no automatic
+    rotation — call this endpoint when you intend to trust a new cert fingerprint.
+    Until reconnect completes the pin stays cleared.
+    """
+    previous_pin = dbnode.server_cert_sha256
+    dbnode.server_cert_sha256 = None
+    db.commit()
+    db.refresh(dbnode)
+    try:
+        live = xray.nodes[dbnode.id]
+        live.pinned_cert_sha256 = None
+        live.observed_cert_sha256 = None
+    except KeyError:
+        pass
+    bg.add_task(xray.operations.connect_node, node_id=dbnode.id)
+    logger.info(
+        'Node "%s" cert pin cleared%s; reconnect scheduled',
+        dbnode.name,
+        f" (was {previous_pin[:16]}…)" if previous_pin else "",
+    )
+    return {
+        "detail": "Cert pin cleared; reconnection scheduled",
+        "node_id": dbnode.id,
+        "had_pin": bool(previous_pin),
+    }
 
 
 @router.delete("/node/{node_id}")
@@ -783,3 +921,91 @@ def get_usage(
     usages = crud.get_nodes_usage(db, start, end)
 
     return {"usages": usages}
+
+
+class TopologyNode(BaseModel):
+    id: int
+    name: str
+    address: str
+    status: str
+    role: Optional[str] = None
+    region: Optional[str] = None
+    core_kind: Optional[str] = None
+
+
+class TopologyEdge(BaseModel):
+    id: int
+    name: str
+    source: str
+    target: str
+    transport: str
+    enabled: bool
+
+
+class TopologyResponse(BaseModel):
+    nodes: List[TopologyNode]
+    edges: List[TopologyEdge]
+
+
+@router.get("/nodes/topology", response_model=TopologyResponse)
+def nodes_topology(
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(Admin.get_current),
+):
+    """Visual topology: nodes as vertices, tunnels as directed edges."""
+    from app.db.models import Node as DBNode, Tunnel
+
+    query = db.query(DBNode)
+    if not admin.is_sudo:
+        dbadmin = crud.get_admin(db, admin.username)
+        query = query.filter(DBNode.tenant_id == dbadmin.tenant_id)
+    nodes = [
+        TopologyNode(
+            id=n.id,
+            name=n.name,
+            address=n.address,
+            status=n.status.value if hasattr(n.status, "value") else str(n.status),
+            role=getattr(n, "role", None),
+            region=n.region,
+            core_kind=getattr(n, "core_kind", None),
+        )
+        for n in query.all()
+    ]
+    edges: List[TopologyEdge] = []
+    for t in db.query(Tunnel).all():
+        relay = f"node:{t.relay_node_id}" if t.relay_node_id is not None else "panel"
+        exit_end = f"node:{t.exit_node_id}" if t.exit_node_id is not None else "panel"
+        if t.intermediate_node_id is not None:
+            transit = f"node:{t.intermediate_node_id}"
+            edges.append(
+                TopologyEdge(
+                    id=t.id,
+                    name=f"{t.name} (hop 1)",
+                    source=relay,
+                    target=transit,
+                    transport=t.transport,
+                    enabled=bool(t.enabled),
+                )
+            )
+            edges.append(
+                TopologyEdge(
+                    id=t.id * 10000 + 1,
+                    name=f"{t.name} (hop 2)",
+                    source=transit,
+                    target=exit_end,
+                    transport=t.transport,
+                    enabled=bool(t.enabled),
+                )
+            )
+        else:
+            edges.append(
+                TopologyEdge(
+                    id=t.id,
+                    name=t.name,
+                    source=relay,
+                    target=exit_end,
+                    transport=t.transport,
+                    enabled=bool(t.enabled),
+                )
+            )
+    return TopologyResponse(nodes=nodes, edges=edges)

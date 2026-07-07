@@ -12,13 +12,14 @@ import { Button, Callout, Card, Field, Input, Pill, useToast, SkeletonRows } fro
 import { IcPlus, IcUsers } from "../components/icons";
 
 const AWG_FIELDS: (keyof AmneziaWGParams)[] = [
-  "awg_jc", "awg_jmin", "awg_jmax", "awg_s1", "awg_s2", "awg_h1", "awg_h2", "awg_h3", "awg_h4",
+  "awg_jc", "awg_jmin", "awg_jmax", "awg_s1", "awg_s2", "awg_s3", "awg_s4",
+  "awg_h1", "awg_h2", "awg_h3", "awg_h4",
 ];
 
 const rnd = (min: number, max: number) => Math.floor(Math.random() * (max - min)) + min;
 
 // Sensible AmneziaWG obfuscation preset. H1–H4 must be distinct large ints.
-function amneziaPreset(): Required<AmneziaWGParams> {
+function amneziaPreset(): Pick<AmneziaWGParams, "awg_jc" | "awg_jmin" | "awg_jmax" | "awg_s1" | "awg_s2" | "awg_h1" | "awg_h2" | "awg_h3" | "awg_h4"> {
   const hs = new Set<number>();
   while (hs.size < 4) hs.add(rnd(0x10000000, 0x7fffffff));
   const [h1, h2, h3, h4] = [...hs];
@@ -35,16 +36,23 @@ function amneziaPreset(): Required<AmneziaWGParams> {
 type WgStatus = {
   plain_enabled: boolean;
   awg_enabled: boolean;
+  sg_wire_enabled?: boolean;
+  sg_wire_preset_rev?: string | null;
   runtime_ready: boolean;
   node_connected: boolean;
   needs_agent_upgrade: boolean;
 };
 
-const AmneziaNodeCard: FC<{ node: NodeItem; onSaved: () => void }> = ({ node, onSaved }) => {
+const AmneziaNodeCard: FC<{
+  node: NodeItem;
+  onSaved: () => void;
+  sgWireFlag?: boolean;
+}> = ({ node, onSaved, sgWireFlag }) => {
   const { t } = useTranslation();
   const toast = useToast();
   const [plainOn, setPlainOn] = useState(node.wireguard?.plain_enabled !== false);
   const [awgOn, setAwgOn] = useState(!!node.wireguard?.awg_enabled);
+  const [sgWireOn, setSgWireOn] = useState(!!node.wireguard?.sg_wire_enabled);
   const initial = () => {
     const v: Record<string, string> = {};
     for (const f of AWG_FIELDS) {
@@ -60,6 +68,7 @@ const AmneziaNodeCard: FC<{ node: NodeItem; onSaved: () => void }> = ({ node, on
     setVals(initial());
     setPlainOn(node.wireguard?.plain_enabled !== false);
     setAwgOn(!!node.wireguard?.awg_enabled);
+    setSgWireOn(!!node.wireguard?.sg_wire_enabled);
     /* eslint-disable-next-line */
   }, [node.id]);
 
@@ -73,8 +82,15 @@ const AmneziaNodeCard: FC<{ node: NodeItem; onSaved: () => void }> = ({ node, on
   useEffect(() => { loadStatus(); /* eslint-disable-next-line */ }, [node.id, node.wireguard]);
 
   const set = (f: string, val: string) => setVals((p) => ({ ...p, [f]: val }));
-  const fill = (p: Required<AmneziaWGParams>) =>
-    setVals(Object.fromEntries(AWG_FIELDS.map((f) => [f, String(p[f])])));
+  const fill = (p: Partial<AmneziaWGParams>) =>
+    setVals((prev) => {
+      const next = { ...prev };
+      for (const f of AWG_FIELDS) {
+        const v = p[f];
+        if (v !== undefined && v !== null) next[f] = String(v);
+      }
+      return next;
+    });
   const clearAll = () => setVals(Object.fromEntries(AWG_FIELDS.map((f) => [f, ""])));
 
   const saveBody = () => {
@@ -100,12 +116,15 @@ const AmneziaNodeCard: FC<{ node: NodeItem; onSaved: () => void }> = ({ node, on
       if (awgOn) {
         const body = saveBody();
         const hasParams = AWG_FIELDS.some((f) => body[f] !== null);
-        if (!hasParams) {
+        if (!hasParams && !sgWireOn) {
           const preset = amneziaPreset();
           await api.put(`/node/${node.id}/amneziawg`, preset);
-        } else {
+        } else if (hasParams) {
           await api.put(`/node/${node.id}/amneziawg`, body);
         }
+      }
+      if (sgWireFlag) {
+        await api.put(`/node/${node.id}/sigmaguard-wire`, { enabled: sgWireOn });
       }
       toast.push(t("common.saved"), "success");
       onSaved();
@@ -174,7 +193,27 @@ const AmneziaNodeCard: FC<{ node: NodeItem; onSaved: () => void }> = ({ node, on
           <input type="checkbox" checked={awgOn} onChange={(e) => setAwgOn(e.target.checked)} />
           {t("infra.enableAwgWg")}
         </label>
+        {sgWireFlag && (
+          <label className="nx-row" style={{ gap: 8, fontSize: 13 }} title={t("wireguard.sgWireHint")}>
+            <input
+              type="checkbox"
+              checked={sgWireOn}
+              onChange={(e) => {
+                setSgWireOn(e.target.checked);
+                if (e.target.checked) setAwgOn(true);
+              }}
+            />
+            {t("wireguard.sgWireEnable")}
+          </label>
+        )}
       </div>
+      {sgWireOn && status?.sg_wire_preset_rev && (
+        <div style={{ marginBottom: 10 }}>
+          <Callout tone="info">
+            {t("wireguard.sgWirePreset", { rev: status.sg_wire_preset_rev })}
+          </Callout>
+        </div>
+      )}
       {awgOn && <div className="nx-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
         {AWG_FIELDS.map((f) => (
           <Field key={f} label={f.replace("awg_", "").toUpperCase()}>
@@ -214,6 +253,11 @@ export const WireGuard: FC<{ embedded?: boolean }> = ({ embedded }) => {
     () => (admin?.is_sudo ? api.get("/nodes") : Promise.resolve([])),
     [admin?.is_sudo],
   );
+  const flags = useFetch<{ name: string; enabled: boolean }[]>(
+    () => (admin?.is_sudo ? api.get("/feature-flags") : Promise.resolve([])),
+    [admin?.is_sudo],
+  );
+  const sgWireFlag = !!(flags.data || []).find((f) => f.name === "sigmaguard_wire")?.enabled;
   const users = useFetch<{ total: number }>(() => api.get("/users?limit=1"), []);
 
   const wgNodeList = (nodes.data || []).filter(
@@ -286,7 +330,7 @@ export const WireGuard: FC<{ embedded?: boolean }> = ({ embedded }) => {
           <div className="nx-card-title" style={{ marginBottom: 4 }}>{t("wireguard.awgTitle")}</div>
           <p className="nx-faint" style={{ fontSize: 12, margin: "0 0 12px" }}>{t("wireguard.awgDescription")}</p>
           {wgNodeList.map((n) => (
-            <AmneziaNodeCard key={n.id} node={n} onSaved={() => nodes.reload()} />
+            <AmneziaNodeCard key={n.id} node={n} onSaved={() => nodes.reload()} sgWireFlag={sgWireFlag} />
           ))}
         </div>
       )}

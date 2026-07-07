@@ -13,6 +13,7 @@ from sqlalchemy import (
     Integer,
     String,
     Table,
+    Text,
     UniqueConstraint,
     func,
 )
@@ -43,6 +44,9 @@ class Admin(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     is_sudo = Column(Boolean, default=False)
     password_reset_at = Column(DateTime, nullable=True)
+    # Base32 TOTP secret for optional admin 2FA. NULL = 2FA disabled for this
+    # admin (login behaves exactly as before). Opt-in per admin.
+    totp_secret = Column(String(64), nullable=True, default=None)
     telegram_id = Column(BigInteger, nullable=True, default=None)
     discord_webhook = Column(String(1024), nullable=True, default=None)
     users_usage = Column(BigInteger, nullable=False, default=0)
@@ -88,8 +92,18 @@ class User(Base):
         index=True,
     )
     proxies = relationship("Proxy", back_populates="user", cascade="all, delete-orphan")
+    wg_peer = relationship("WgPeer", back_populates="user", uselist=False, cascade="all, delete-orphan")
     status = Column(Enum(UserStatus), nullable=False, default=UserStatus.active, index=True)
     used_traffic = Column(BigInteger, default=0)
+    # Bytes consumed after the plan quota was exhausted (limited/expired/etc.).
+    # Shown to admins/users; applied to used_traffic when the account is recharged.
+    overage_traffic = Column(BigInteger, nullable=False, server_default=text("0"), default=0)
+    # Informational upload/download split. NEVER used for quota enforcement —
+    # quota always uses the single authoritative ``used_traffic`` (up+down).
+    # Populated best-effort by the usage recorder so subscription clients that
+    # display upload/download separately (v2rayN, Nekoray, ...) show real data.
+    used_traffic_up = Column(BigInteger, nullable=False, server_default=text("0"), default=0)
+    used_traffic_down = Column(BigInteger, nullable=False, server_default=text("0"), default=0)
     node_usages = relationship("NodeUserUsage", back_populates="user", cascade="all, delete-orphan")
     notification_reminders = relationship("NotificationReminder", back_populates="user", cascade="all, delete-orphan")
     data_limit = Column(BigInteger, nullable=True)
@@ -102,6 +116,7 @@ class User(Base):
     expire = Column(Integer, nullable=True)
     admin_id = Column(Integer, ForeignKey("admins.id"), index=True)
     admin = relationship("Admin", back_populates="users")
+    sub_token = Column(String(32), unique=True, nullable=True, index=True)
     sub_revoked_at = Column(DateTime, nullable=True, default=None)
     sub_updated_at = Column(DateTime, nullable=True, default=None)
     sub_last_user_agent = Column(String(512), nullable=True, default=None)
@@ -110,6 +125,18 @@ class User(Base):
     online_at = Column(DateTime, nullable=True, default=None)
     on_hold_expire_duration = Column(BigInteger, nullable=True, default=None)
     on_hold_timeout = Column(DateTime, nullable=True, default=None)
+
+    # Concurrent device cap (distinct client IPs within 24h). Copied from Plan
+    # on apply; NULL/0 = unlimited.
+    device_limit = Column(Integer, nullable=True, default=None)
+    device_ips = Column(Text, nullable=True, default=None)
+    # Per-user speed limits stored in Mbps (UI unit). Xray policy converts to bytes/sec.
+    speed_limit_up = Column(BigInteger, nullable=True, default=None)
+    speed_limit_down = Column(BigInteger, nullable=True, default=None)
+    # Max continuous online session length (minutes). NULL/0 = unlimited.
+    session_limit_minutes = Column(Integer, nullable=True, default=None)
+    routing_preset = Column(String(64), nullable=True)
+    dns_policy = Column(JSON, nullable=True)
 
     # * Positive values: User will be deleted after the value of this field in days automatically.
     # * Negative values: User won't be deleted automatically at all.
@@ -222,6 +249,13 @@ class UserTemplate(Base):
     expire_duration = Column(BigInteger, default=0)  # in seconds
     username_prefix = Column(String(20), nullable=True)
     username_suffix = Column(String(20), nullable=True)
+    data_limit_reset_strategy = Column(
+        Enum(UserDataLimitResetStrategy),
+        nullable=True,
+    )
+    default_status = Column(Enum(UserStatus), nullable=True)
+    note = Column(String(500), nullable=True)
+    next_plan = Column(JSON, nullable=True)
 
     inbounds = relationship(
         "ProxyInbound", secondary=template_inbounds_association
@@ -281,11 +315,11 @@ class ProxyHost(Base):
         default=ProxyHostSecurity.inbound_default,
     )
     alpn = Column(
-        Enum(ProxyHostALPN),
+        Enum(ProxyHostALPN, name="alpn", create_type=False),
         unique=False,
         nullable=False,
-        default=ProxyHostSecurity.none,
-        server_default=ProxyHostSecurity.none.name
+        default=ProxyHostALPN.none,
+        server_default="none",
     )
     fingerprint = Column(
         Enum(ProxyHostFingerprint),
@@ -304,6 +338,21 @@ class ProxyHost(Base):
     noise_setting = Column(String(2000), nullable=True)
     random_user_agent = Column(Boolean, nullable=False, default=False, server_default='0')
     use_sni_as_host = Column(Boolean, nullable=False, default=False, server_default="0")
+    sort_order = Column(Integer, nullable=False, default=0, server_default="0")
+    override_sni_from_address = Column(Boolean, nullable=False, default=False, server_default="0")
+    keep_sni_blank = Column(Boolean, nullable=False, default=False, server_default="0")
+    pinned_peer_cert_sha256 = Column(Text, nullable=True)
+    verify_peer_cert_by_name = Column(String(256), nullable=True)
+    ech_config_list = Column(Text, nullable=True)
+    mux_params = Column(Text, nullable=True)
+    sockopt_params = Column(Text, nullable=True)
+    final_mask = Column(Text, nullable=True)
+    vless_route = Column(String(16), nullable=True)
+    exclude_from_sub_types = Column(Text, nullable=True)
+    mihomo_ip_version = Column(String(32), nullable=True)
+    external_proxy = Column(Text, nullable=True)
+    node_ids = Column(Text, nullable=True)
+    region = Column(String(64), nullable=True)
 
 
 class System(Base):
@@ -356,6 +405,14 @@ class Node(Base):
     port = Column(Integer, unique=False, nullable=False)
     api_port = Column(Integer, unique=False, nullable=False)
     xray_version = Column(String(32), nullable=True)
+    # Pinned SHA-256 fingerprint of the node's TLS server cert. Captured on the
+    # first successful connection (trust-on-first-use) and verified on every
+    # later connection, giving secure panel->node mTLS even with self-signed
+    # certs (no CA required). NULL = not yet pinned.
+    server_cert_sha256 = Column(String(64), nullable=True, default=None)
+    # Optional JSON merge-patch applied to this node's effective Xray config
+    # (outbounds/routing/inbounds fragments) after master filter + tunnels.
+    xray_config_override = Column(Text, nullable=True, default=None)
     status = Column(Enum(NodeStatus), nullable=False, default=NodeStatus.connecting)
     last_status_change = Column(DateTime, default=datetime.utcnow)
     message = Column(String(1024), nullable=True)
@@ -376,10 +433,20 @@ class Node(Base):
         uselist=False,
         cascade="all, delete-orphan",
     )
+    wg_interfaces = relationship(
+        "WgInterface",
+        back_populates="node",
+        cascade="all, delete-orphan",
+    )
     singbox = relationship(
         "NodeSingBox",
         back_populates="node",
         uselist=False,
+        cascade="all, delete-orphan",
+    )
+    service_bindings = relationship(
+        "NodeServiceBinding",
+        back_populates="node",
         cascade="all, delete-orphan",
     )
 
@@ -446,6 +513,12 @@ class NodeWireGuard(Base):
     awg_h2 = Column(BigInteger, nullable=True)
     awg_h3 = Column(BigInteger, nullable=True)
     awg_h4 = Column(BigInteger, nullable=True)
+    awg_s3 = Column(Integer, nullable=True)
+    awg_s4 = Column(Integer, nullable=True)
+
+    # SigmaGuard Wire: proprietary preset synced to awg listener (not public AWG).
+    sg_wire_enabled = Column(Boolean, nullable=False, server_default=text("0"), default=False)
+    sg_wire_preset_rev = Column(String(32), nullable=True)
 
 
 class NodeSingBox(Base):
@@ -488,6 +561,39 @@ class NodeSingBox(Base):
     tuic_port = Column(Integer, nullable=True)
     tuic_congestion_control = Column(String(16), nullable=False, server_default=text("'bbr'"), default="bbr")
 
+    # AnyTLS inbound (TCP/TLS via sing-box)
+    anytls_enabled = Column(Boolean, nullable=False, server_default=text("0"), default=False)
+    anytls_port = Column(Integer, nullable=True)
+
+
+class PanelService(Base):
+    """Master service catalog — define each protocol once."""
+
+    __tablename__ = "panel_services"
+
+    slug = Column(String(64), primary_key=True)
+    display_name = Column(String(128), nullable=False)
+    engine = Column(String(16), nullable=False)  # xray | wireguard | singbox
+    protocol = Column(String(32), nullable=False)
+    config = Column(JSON, nullable=False, default=dict)
+    is_active = Column(Boolean, nullable=False, server_default=text("1"), default=True)
+    sort_order = Column(Integer, nullable=False, server_default=text("0"), default=0)
+
+
+class NodeServiceBinding(Base):
+    """Which catalog services are enabled on a node."""
+
+    __tablename__ = "node_service_bindings"
+    __table_args__ = (UniqueConstraint("node_id", "service_slug"),)
+
+    id = Column(Integer, primary_key=True)
+    node_id = Column(Integer, ForeignKey("nodes.id", ondelete="CASCADE"), nullable=False, index=True)
+    service_slug = Column(String(64), ForeignKey("panel_services.slug"), nullable=False)
+    enabled = Column(Boolean, nullable=False, server_default=text("1"), default=True)
+    overrides = Column(JSON, nullable=True)
+    node = relationship("Node", back_populates="service_bindings")
+    service = relationship("PanelService")
+
 
 class NodeUserUsage(Base):
     __tablename__ = "node_user_usages"
@@ -501,6 +607,22 @@ class NodeUserUsage(Base):
     user = relationship("User", back_populates="node_usages")
     node_id = Column(Integer, ForeignKey("nodes.id"))
     node = relationship("Node", back_populates="user_usages")
+    used_traffic = Column(BigInteger, default=0)
+
+
+class NodeUserProtocolUsage(Base):
+    """Hourly per-user traffic split by protocol (informational analytics)."""
+
+    __tablename__ = "node_user_protocol_usages"
+    __table_args__ = (
+        UniqueConstraint("created_at", "user_id", "node_id", "protocol", name="uq_proto_usage_hour"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime, nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
+    node_id = Column(Integer, ForeignKey("nodes.id"), nullable=True, index=True)
+    protocol = Column(String(32), nullable=False, index=True)
     used_traffic = Column(BigInteger, default=0)
 
 
@@ -729,8 +851,11 @@ class ClientProbe(Base):
 class ClientDevice(Base):
     """A push-notification target registered by the SigmaGuard app (phase B).
 
-    One row per device token; re-registering the same token updates the owner
-    and metadata (upsert on ``token``).
+    One row per device token. Re-registering the same token only updates
+    metadata for its *current* owner (upsert scoped to ``(user_id, token)``);
+    a token already owned by a different user is rejected rather than
+    silently reassigned (see AUDIT_FINDINGS.md H4) — the owning user must
+    release it via ``DELETE /client/device-token`` first.
     """
 
     __tablename__ = "client_devices"
@@ -924,6 +1049,9 @@ class Tunnel(Base):
     # A NULL endpoint means "the panel's own local Xray core" (the panel host
     # acts as that end of the tunnel). Otherwise it points at a node.
     relay_node_id = Column(Integer, ForeignKey("nodes.id"), nullable=True, index=True)
+    # Optional transit hop (relay → transit → exit). NULL => classic 2-end tunnel.
+    intermediate_node_id = Column(Integer, ForeignKey("nodes.id"), nullable=True, index=True)
+    intermediate_port = Column(Integer, nullable=True)  # port the transit node listens on
     exit_node_id = Column(Integer, ForeignKey("nodes.id"), nullable=True, index=True)
     # Transport for the relay->exit hop: 'reality' | 'ws' | 'grpc' | 'tcp'.
     transport = Column(String(16), nullable=False, default="reality")
@@ -934,4 +1062,112 @@ class Tunnel(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     relay_node = relationship("Node", foreign_keys=[relay_node_id])
+    intermediate_node = relationship("Node", foreign_keys=[intermediate_node_id])
     exit_node = relationship("Node", foreign_keys=[exit_node_id])
+
+
+class WgInterface(Base):
+    """Auto-scaled WireGuard server interface on a node (plain WG only).
+
+    When ``wg_autoscale`` is enabled the panel shards plain WireGuard peers
+    across multiple kernel interfaces (wg0, wg2, …) instead of one /24. AWG
+    listeners (typically wg1) stay on the legacy ``node_wireguard`` path.
+    """
+
+    __tablename__ = "wg_interfaces"
+    __table_args__ = (UniqueConstraint("node_id", "name", name="uq_wg_interfaces_node_name"),)
+
+    id = Column(Integer, primary_key=True)
+    node_id = Column(Integer, ForeignKey("nodes.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String(32), nullable=False)
+    subnet = Column(String(64), nullable=False)
+    listen_port = Column(Integer, nullable=False)
+    private_key = Column(String(64), nullable=False)
+    public_key = Column(String(64), nullable=False)
+    peer_count = Column(Integer, nullable=False, server_default=text("0"), default=0)
+    max_peers = Column(Integer, nullable=False, server_default=text("200"), default=200)
+    slot_index = Column(Integer, nullable=False, server_default=text("0"), default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    node = relationship("Node", back_populates="wg_interfaces")
+    peers = relationship("WgPeer", back_populates="interface", cascade="all, delete-orphan")
+
+
+class WgPeer(Base):
+    """A plain WireGuard peer managed by the auto-scale planner."""
+
+    __tablename__ = "wg_peers"
+    __table_args__ = (
+        UniqueConstraint("user_id", name="uq_wg_peers_user_id"),
+        UniqueConstraint("interface_id", "address", name="uq_wg_peers_iface_address"),
+        UniqueConstraint("interface_id", "public_key", name="uq_wg_peers_iface_pubkey"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    interface_id = Column(Integer, ForeignKey("wg_interfaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    address = Column(String(64), nullable=False)
+    private_key = Column(String(64), nullable=False)
+    public_key = Column(String(64), nullable=False)
+    preshared_key = Column(String(64), nullable=True)
+    active = Column(Boolean, nullable=False, server_default=text("true"), default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    interface = relationship("WgInterface", back_populates="peers")
+    user = relationship("User", back_populates="wg_peer")
+
+
+class SubscriptionEndpoint(Base):
+    """Route subscription requests by host + path prefix (3x-ui style per-panel URLs)."""
+
+    __tablename__ = "subscription_endpoints"
+    __table_args__ = (
+        UniqueConstraint("slug", name="uq_subscription_endpoints_slug"),
+        UniqueConstraint("host", "path_prefix", name="uq_subscription_endpoints_host_path"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    slug = Column(String(64), nullable=False, index=True)
+    host = Column(String(255), nullable=True)
+    path_prefix = Column(String(64), nullable=False, index=True)
+    public_base_url = Column(String(512), nullable=False, server_default=text("''"))
+    listen_port = Column(Integer, nullable=True)
+    inbound_tag = Column(String(64), nullable=True, index=True)
+    export_mode = Column(String(32), nullable=False, server_default=text("'full'"))
+    format_default = Column(String(32), nullable=True)
+    legacy_panel_id = Column(String(64), nullable=True)
+    enabled = Column(Boolean, nullable=False, server_default=text("true"), default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    token_aliases = relationship(
+        "SubscriptionTokenAlias",
+        back_populates="endpoint",
+        cascade="all, delete-orphan",
+    )
+
+
+class SubscriptionTokenAlias(Base):
+    """Legacy subscription tokens (3x-ui subId) mapped to users.
+
+    Equivalent to panel.md ``legacy_sub_routes``: uniqueness is
+    ``(endpoint_id, token)`` — the same subId may exist on different panels.
+    """
+
+    __tablename__ = "subscription_token_aliases"
+    __table_args__ = (
+        UniqueConstraint(
+            "endpoint_id", "token", name="uq_subscription_token_aliases_endpoint_token"
+        ),
+    )
+
+    id = Column(Integer, primary_key=True)
+    token = Column(String(256), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    endpoint_id = Column(
+        Integer, ForeignKey("subscription_endpoints.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    source = Column(String(64), nullable=False, server_default=text("'manual'"))
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", backref="subscription_token_aliases")
+    endpoint = relationship("SubscriptionEndpoint", back_populates="token_aliases")

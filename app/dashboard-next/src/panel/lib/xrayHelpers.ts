@@ -35,6 +35,7 @@ export const NETWORKS = [
   "h2",
   "httpupgrade",
   "splithttp",
+  "xhttp",
   "quic",
 ] as const;
 export const SS_LEGACY_METHODS = [
@@ -72,6 +73,45 @@ export const FINGERPRINTS = [
   "random",
   "randomized",
 ];
+export const TLS_VERSIONS = ["", "1.0", "1.1", "1.2", "1.3"] as const;
+export const TLS_CIPHER_MODES = ["", "auto"] as const;
+export const TLS_CERT_USAGE = ["encipherment", "verify", "issue"] as const;
+export const ALPN_OPTIONS = ["h3", "h2", "http/1.1", "http/1.0"] as const;
+export const HOST_ALPN_PRESETS = ["", "h3", "h2", "http/1.1", "h2,http/1.1", "h3,h2,http/1.1"] as const;
+export const HOST_FINGERPRINT_PRESETS = [
+  "",
+  "chrome",
+  "firefox",
+  "safari",
+  "ios",
+  "android",
+  "edge",
+  "random",
+  "randomized",
+] as const;
+export const INBOUND_TRANSMISSIONS = [
+  { value: "tcp", label: "RAW" },
+  { value: "kcp", label: "mKCP" },
+  { value: "ws", label: "WebSocket" },
+  { value: "grpc", label: "gRPC" },
+  { value: "httpupgrade", label: "HTTPUpgrade" },
+  { value: "splithttp", label: "SplitHTTP" },
+  { value: "xhttp", label: "XHTTP" },
+  { value: "http", label: "H2-HTTP" },
+  { value: "h2", label: "HTTP/2" },
+  { value: "quic", label: "QUIC" },
+] as const;
+export const KEY_GEN_TYPES = [
+  { value: "none", label: "None" },
+  { value: "x25519", label: "X25519 (native)" },
+] as const;
+export const SOCKOPT_REAL_IP = [
+  { value: "direct", label: "Off / direct" },
+  { value: "cloudflare", label: "Cloudflare CDN" },
+  { value: "proxy", label: "L4 relay / Spectrum (PROXY)" },
+] as const;
+export const TPROXY_MODES = ["", "off", "redirect", "tproxy"] as const;
+export const TCP_CONGESTION = ["", "bbr", "cubic", "reno"] as const;
 export const SNIFF_OVERRIDES = ["http", "tls", "quic", "fakedns"];
 export const KCP_HEADERS = ["none", "srtp", "utp", "wechat-video", "dtls", "wireguard"];
 const SYSTEM_TAGS = new Set(["API_INBOUND", "API", "TUN_IN", "metrics_in"]);
@@ -239,468 +279,46 @@ export function applyWarpSafeRouting(cfg: Record<string, unknown>): Record<strin
   return next;
 }
 
-export type FallbackForm = {
-  dest: string;
-  path: string;
-  xver: string;
-  alpn: string;
-  name: string;
-};
+export const DEFAULT_HYSTERIA_INBOUND_TAG = "Hysteria2";
+export const DEFAULT_AMNEZIA_INBOUND_TAG = "AmneziaWG";
 
-export type InboundForm = {
-  tag: string;
-  listen: string;
-  port: string;
-  protocol: string;
-  network: string;
-  path: string;
-  host: string;
-  method: string;
-  ssPassword: string;
-  ssNetwork: string;
-  security: string;
-  sni: string;
-  alpn: string;
-  fingerprint: string;
-  allowInsecure: boolean;
-  realityDest: string;
-  realityServerNames: string;
-  realityPrivateKey: string;
-  realityPublicKey: string;
-  realityShortIds: string;
-  realitySpiderX: string;
-  realityXver: string;
-  sniffing: boolean;
-  sniffDestOverride: string;
-  flow: string;
-  kcpSeed: string;
-  kcpHeader: string;
-  grpcMultiMode: boolean;
-  xhttpMode: string;
-  tunnelAddress: string;
-  tunnelPort: string;
-  tunnelNetwork: string;
-  tunnelFollowRedirect: boolean;
-  wgSecretKey: string;
-  wgPeerPublicKey: string;
-  wgAllowedIPs: string;
-  wgMtu: string;
-  hyAuth: string;
-  hyUp: string;
-  hyDown: string;
-  hyUdpIdleTimeout: string;
-  fallbacks: FallbackForm[];
-};
-
-export const emptyFallback = (): FallbackForm => ({ dest: "", path: "", xver: "0", alpn: "", name: "" });
-
-export function supportsFallback(protocol: string): boolean {
-  return protocol === "vless" || protocol === "trojan";
-}
-
-export const defaultInboundForm = (): InboundForm => ({
-  tag: "",
-  listen: "0.0.0.0",
-  port: "443",
-  protocol: "vless",
-  network: "tcp",
-  path: "/",
-  host: "",
-  method: SS_LEGACY_METHODS[0],
-  ssPassword: "",
-  ssNetwork: "tcp,udp",
-  security: "none",
-  sni: "",
-  alpn: "",
-  fingerprint: "chrome",
-  allowInsecure: false,
-  realityDest: "",
-  realityServerNames: "",
-  realityPrivateKey: "",
-  realityPublicKey: "",
-  realityShortIds: "",
-  realitySpiderX: "",
-  realityXver: "0",
-  sniffing: true,
-  sniffDestOverride: "http,tls,quic",
-  flow: "",
-  kcpSeed: "",
-  kcpHeader: "none",
-  grpcMultiMode: false,
-  xhttpMode: "auto",
-  tunnelAddress: "",
-  tunnelPort: "0",
-  tunnelNetwork: "tcp,udp",
-  tunnelFollowRedirect: false,
-  wgSecretKey: "",
-  wgPeerPublicKey: "",
-  wgAllowedIPs: "0.0.0.0/0",
-  wgMtu: "1420",
-  hyAuth: "",
-  hyUp: "",
-  hyDown: "",
-  hyUdpIdleTimeout: "60",
-  fallbacks: [],
-});
-
-function readStreamHints(ss: Record<string, unknown>): {
-  network: string;
-  path: string;
-  host: string;
-  kcpSeed: string;
-  kcpHeader: string;
-} {
-  const network = String(ss.network || "tcp");
-  let path = "/";
-  let host = "";
-  let kcpSeed = "";
-  let kcpHeader = "none";
-  if (network === "ws") {
-    const ws = (ss.wsSettings || {}) as Record<string, unknown>;
-    path = String(ws.path || "/");
-    host = String(((ws.headers as Record<string, unknown>)?.Host) || "");
-  } else if (network === "grpc") {
-    const g = (ss.grpcSettings || {}) as Record<string, unknown>;
-    path = String(g.serviceName || "");
-  } else if (network === "http" || network === "h2") {
-    const h = (ss.httpSettings || ss.httpSettings || {}) as Record<string, unknown>;
-    path = String(h.path || "/");
-    host = String(h.host || "");
-  } else if (network === "httpupgrade") {
-    const u = (ss.httpupgradeSettings || {}) as Record<string, unknown>;
-    path = String(u.path || "/");
-    host = String(u.host || "");
-  } else if (network === "splithttp") {
-    const x = (ss.splithttpSettings || ss.xhttpSettings || {}) as Record<string, unknown>;
-    path = String(x.path || "/");
-    host = String(x.host || "");
-  } else if (network === "kcp") {
-    const k = (ss.kcpSettings || {}) as Record<string, unknown>;
-    const hdr = (k.header || {}) as Record<string, unknown>;
-    kcpSeed = String(k.seed || "");
-    kcpHeader = String(hdr.type || "none");
-  } else if (network === "quic") {
-    const q = (ss.quicSettings || {}) as Record<string, unknown>;
-    const hdr = (q.header || {}) as Record<string, unknown>;
-    path = String(q.key || "");
-    host = String(hdr.type || "");
-  }
-  return { network, path, host, kcpSeed, kcpHeader };
-}
-
-export function inboundToForm(i: Record<string, unknown>): InboundForm {
-  const ss = (i.streamSettings || {}) as Record<string, unknown>;
-  const sec = (ss.security as string) || "none";
-  const rs = (ss.realitySettings || {}) as Record<string, unknown>;
-  const ts = (ss.tlsSettings || ss.tls || {}) as Record<string, unknown>;
-  const sniff = i.sniffing as Record<string, unknown> | undefined;
-  const settings = (i.settings || {}) as Record<string, unknown>;
-  const clients = (settings.clients as unknown[]) || [];
-  const flow =
-    clients[0] && typeof clients[0] === "object"
-      ? String((clients[0] as Record<string, unknown>).flow || "")
-      : "";
-
-  const stream = readStreamHints(ss);
-  const grpc = (ss.grpcSettings || {}) as Record<string, unknown>;
-  const xhttp = (ss.splithttpSettings || ss.xhttpSettings || {}) as Record<string, unknown>;
-
-  const sniffOverride = Array.isArray(sniff?.destOverride)
-    ? (sniff.destOverride as string[]).join(",")
-    : "http,tls,quic";
-
-  const f = defaultInboundForm();
-  f.tag = String(i.tag || "");
-  f.listen = typeof i.listen === "string" ? i.listen : "0.0.0.0";
-  f.port = String(i.port || "");
-  f.protocol = String(i.protocol || "vless");
-  f.network = stream.network;
-  f.path = stream.path;
-  f.host = stream.host;
-  f.kcpSeed = stream.kcpSeed;
-  f.kcpHeader = stream.kcpHeader;
-  f.method = String(settings.method || settings.cipher || SS_LEGACY_METHODS[0]);
-  f.ssPassword = String(settings.password || "");
-  f.ssNetwork = String(settings.network || "tcp,udp");
-  f.security = sec;
-  f.sni = String(
-    ts.serverName ||
-      (Array.isArray(rs.serverNames) ? (rs.serverNames as string[])[0] : "") ||
-      "",
-  );
-  f.alpn = Array.isArray(ts.alpn) ? (ts.alpn as string[]).join(",") : "";
-  f.fingerprint = String(ts.fingerprint || rs.fingerprint || "");
-  f.allowInsecure = Boolean(ts.allowInsecure);
-  f.realityDest = String(rs.dest || "");
-  f.realityServerNames = Array.isArray(rs.serverNames) ? (rs.serverNames as string[]).join(",") : "";
-  f.realityPrivateKey = String(rs.privateKey || "");
-  f.realityPublicKey = String(rs.publicKey || "");
-  f.realityShortIds = Array.isArray(rs.shortIds) ? (rs.shortIds as string[]).join(",") : "";
-  f.realitySpiderX = String(rs.spiderX || "");
-  f.realityXver = String(rs.xver ?? "0");
-  f.sniffing = sniff?.enabled !== false;
-  f.sniffDestOverride = sniffOverride;
-  f.flow = flow;
-  f.grpcMultiMode = Boolean(grpc.multiMode);
-  f.xhttpMode = String(xhttp.mode || "auto");
-
-  const rawFallbacks = settings.fallbacks;
-  if (Array.isArray(rawFallbacks)) {
-    f.fallbacks = rawFallbacks.map((raw) => {
-      const fb = (raw || {}) as Record<string, unknown>;
-      return {
-        dest: fb.dest === undefined || fb.dest === null ? "" : String(fb.dest),
-        path: String(fb.path || ""),
-        xver: String(fb.xver ?? "0"),
-        alpn: String(fb.alpn || ""),
-        name: String(fb.name || ""),
-      };
-    });
-  }
-
-  if (f.protocol === "dokodemo-door") {
-    const addr = settings.address as string | undefined;
-    f.tunnelAddress = typeof addr === "string" ? addr : "";
-    f.tunnelPort = String(settings.port ?? "0");
-    f.tunnelNetwork = String(settings.network || "tcp,udp");
-    f.tunnelFollowRedirect = Boolean(settings.followRedirect);
-  }
-  if (f.protocol === "tun") {
-    f.tunnelAddress = String(settings.name || "xray0");
-    f.wgMtu = String(settings.mtu || "1500");
-    f.sniffing = false;
-  }
-  if (f.protocol === "wireguard" || f.protocol === "amneziawg") {
-    const peers = (settings.peers as Record<string, unknown>[]) || [];
-    f.wgSecretKey = String(settings.secretKey || "");
-    f.wgMtu = String(settings.mtu || "1420");
-    if (peers[0]) {
-      f.wgPeerPublicKey = String(peers[0].publicKey || "");
-      f.wgAllowedIPs = Array.isArray(peers[0].allowedIPs)
-        ? (peers[0].allowedIPs as string[]).join(",")
-        : "0.0.0.0/0";
-    }
-    if (settings[NXPANEL_INBOUND_KIND] === "amneziawg" || (f.protocol === "wireguard" && /amnezia|awg/i.test(String(i.tag || "")))) {
-      f.protocol = "amneziawg";
-    }
-  }
-  if (f.protocol === "hysteria") {
-    const hs = (ss.hysteriaSettings || {}) as Record<string, unknown>;
-    const hyClients = (settings.clients as Record<string, unknown>[]) || [];
-    f.hyAuth = String(hyClients[0]?.auth || hs.auth || "");
-    f.hyUp = String(hs.up || "");
-    f.hyDown = String(hs.down || "");
-    f.hyUdpIdleTimeout = hs.udpIdleTimeout != null ? String(hs.udpIdleTimeout) : "60";
-    if (!f.alpn) f.alpn = "h3";
-    if (!f.security || f.security === "none") f.security = "tls";
-  }
-  return f;
-}
-
-function applyTransport(stream: Record<string, unknown>, f: InboundForm) {
-  stream.network = f.network;
-  if (f.network === "ws") {
-    stream.wsSettings = {
-      path: f.path || "/",
-      headers: f.host ? { Host: f.host } : undefined,
-    };
-  } else if (f.network === "grpc") {
-    stream.grpcSettings = {
-      serviceName: f.path || "",
-      multiMode: f.grpcMultiMode || undefined,
-    };
-  } else if (f.network === "http" || f.network === "h2") {
-    stream.httpSettings = { path: f.path || "/", host: f.host ? [f.host] : undefined };
-  } else if (f.network === "httpupgrade") {
-    stream.httpupgradeSettings = { path: f.path || "/", host: f.host || undefined };
-  } else if (f.network === "splithttp") {
-    stream.splithttpSettings = {
-      path: f.path || "/",
-      host: f.host || undefined,
-      mode: f.xhttpMode || "auto",
-    };
-  } else if (f.network === "kcp") {
-    stream.kcpSettings = {
-      mtu: 1350,
-      tti: 50,
-      uplinkCapacity: 5,
-      downlinkCapacity: 20,
-      congestion: false,
-      readBufferSize: 2,
-      writeBufferSize: 2,
-      seed: f.kcpSeed || undefined,
-      header: { type: f.kcpHeader || "none" },
-    };
-  } else if (f.network === "quic") {
-    stream.quicSettings = {
-      security: f.security === "tls" ? "tls" : "none",
-      key: f.path || "",
-      header: { type: f.host || "none" },
-    };
-  }
-}
-
-function applySecurity(stream: Record<string, unknown>, f: InboundForm) {
-  if (f.security === "tls") {
-    stream.security = "tls";
-    stream.tlsSettings = {
-      serverName: f.sni || undefined,
-      alpn: f.alpn ? f.alpn.split(",").map((s) => s.trim()).filter(Boolean) : undefined,
-      fingerprint: f.fingerprint || undefined,
-      allowInsecure: f.allowInsecure || undefined,
-    };
-  } else if (f.security === "reality") {
-    stream.security = "reality";
-    stream.realitySettings = {
-      show: false,
-      dest: f.realityDest || `${f.sni || "www.google.com"}:443`,
-      xver: parseInt(f.realityXver, 10) || 0,
-      serverNames: f.realityServerNames
-        ? f.realityServerNames.split(",").map((s) => s.trim()).filter(Boolean)
-        : [f.sni || "www.google.com"],
-      privateKey: f.realityPrivateKey,
-      publicKey: f.realityPublicKey || undefined,
-      shortIds: f.realityShortIds
-        ? f.realityShortIds.split(",").map((s) => s.trim()).filter(Boolean)
-        : [""],
-      fingerprint: f.fingerprint || "chrome",
-      spiderX: f.realitySpiderX || undefined,
-    };
-  } else if (f.network !== "quic") {
-    stream.security = "none";
-  }
-}
-
-export function buildInboundFromForm(f: InboundForm): Record<string, unknown> {
-  const inbound: Record<string, unknown> = {
-    tag: f.tag.trim(),
-    listen: f.listen.trim() || "0.0.0.0",
-    port: parseInt(f.port, 10),
-    protocol: f.protocol,
-    settings: { clients: [] },
-  };
-
-  if (f.protocol === "vless") {
-    inbound.settings = { clients: [], decryption: "none" };
-    if (f.flow) (inbound.settings as Record<string, unknown>).clients = [{ flow: f.flow }];
-  } else if (f.protocol === "vmess") {
-    inbound.settings = { clients: [] };
-  } else if (f.protocol === "trojan") {
-    inbound.settings = { clients: [] };
-  } else if (f.protocol === "shadowsocks") {
-    const settings: Record<string, unknown> = {
-      clients: [],
-      method: f.method,
-      network: f.ssNetwork,
-    };
-    if (f.ssPassword.trim()) settings.password = f.ssPassword.trim();
-    inbound.settings = settings;
-  } else if (f.protocol === "http") {
-    inbound.settings = { accounts: [] };
-  } else if (f.protocol === "socks") {
-    inbound.settings = { auth: "noauth", accounts: [], udp: true };
-  } else if (f.protocol === "mixed") {
-    inbound.settings = { auth: "noauth", accounts: [], udp: true };
-  } else if (f.protocol === "dokodemo-door") {
-    inbound.settings = {
-      address: f.tunnelAddress || "8.8.8.8",
-      port: parseInt(f.tunnelPort, 10) || 0,
-      network: f.tunnelNetwork || "tcp,udp",
-      followRedirect: f.tunnelFollowRedirect,
-    };
-  } else if (f.protocol === "wireguard" || f.protocol === "amneziawg") {
-    const peers: Record<string, unknown>[] = [];
-    if (f.wgPeerPublicKey.trim()) {
-      peers.push({
-        publicKey: f.wgPeerPublicKey.trim(),
-        allowedIPs: f.wgAllowedIPs
-          ? f.wgAllowedIPs.split(",").map((s) => s.trim()).filter(Boolean)
-          : ["0.0.0.0/0"],
-      });
-    }
-    inbound.protocol = "wireguard";
-    inbound.settings = {
-      secretKey: f.wgSecretKey.trim(),
-      mtu: parseInt(f.wgMtu, 10) || 1420,
-      peers,
-      ...(f.protocol === "amneziawg" ? { [NXPANEL_INBOUND_KIND]: "amneziawg" } : {}),
-    };
-    delete inbound.streamSettings;
-    delete inbound.sniffing;
-  } else if (f.protocol === "hysteria") {
-    const auth = f.hyAuth.trim();
-    inbound.settings = {
-      version: 2,
-      clients: auth ? [{ auth }] : [],
-    };
-    const alpn = f.alpn
-      ? f.alpn.split(",").map((s) => s.trim()).filter(Boolean)
-      : ["h3"];
-    inbound.streamSettings = {
+export function defaultHysteriaInbound(
+  tag = DEFAULT_HYSTERIA_INBOUND_TAG,
+  port = "44333",
+): Record<string, unknown> {
+  const p = parseInt(port, 10) || 44333;
+  return {
+    tag,
+    listen: "0.0.0.0",
+    port: p,
+    protocol: "hysteria",
+    settings: { version: 2, clients: [] },
+    streamSettings: {
       network: "hysteria",
       security: "tls",
-      tlsSettings: {
-        serverName: f.sni.trim() || undefined,
-        alpn,
-        fingerprint: f.fingerprint && f.fingerprint !== "none" ? f.fingerprint : undefined,
-        allowInsecure: f.allowInsecure || undefined,
-      },
-      hysteriaSettings: {
-        version: 2,
-        ...(auth ? { auth } : {}),
-        ...(f.hyUp.trim() ? { up: f.hyUp.trim() } : {}),
-        ...(f.hyDown.trim() ? { down: f.hyDown.trim() } : {}),
-        ...(parseInt(f.hyUdpIdleTimeout, 10) > 0
-          ? { udpIdleTimeout: parseInt(f.hyUdpIdleTimeout, 10) }
-          : {}),
-      },
-    };
-  } else if (f.protocol === "tun") {
-    inbound.settings = {
-      name: f.tunnelAddress.trim() || "xray0",
-      mtu: parseInt(f.wgMtu, 10) || 1500,
-    };
-  }
+      tlsSettings: { alpn: ["h3"] },
+      hysteriaSettings: { version: 2 },
+    },
+  };
+}
 
-  if (supportsFallback(f.protocol) && f.fallbacks.length) {
-    const fallbacks = f.fallbacks
-      .filter((fb) => String(fb.dest).trim() !== "")
-      .map((fb) => {
-        const out: Record<string, unknown> = {};
-        const destRaw = String(fb.dest).trim();
-        const destNum = Number(destRaw);
-        out.dest = /^\d+$/.test(destRaw) ? destNum : destRaw;
-        const xver = parseInt(fb.xver, 10);
-        if (xver) out.xver = xver;
-        if (fb.path.trim()) out.path = fb.path.trim();
-        if (fb.alpn.trim()) out.alpn = fb.alpn.trim();
-        if (fb.name.trim()) out.name = fb.name.trim();
-        return out;
-      });
-    if (fallbacks.length) {
-      (inbound.settings as Record<string, unknown>).fallbacks = fallbacks;
-    }
-  }
-
-  if (supportsStream(f.protocol)) {
-    const stream: Record<string, unknown> = {};
-    applyTransport(stream, f);
-    applySecurity(stream, f);
-    inbound.streamSettings = stream;
-  }
-
-  if (f.sniffing && f.protocol !== "wireguard" && f.protocol !== "amneziawg" && f.protocol !== "hysteria" && f.protocol !== "tun" && f.protocol !== "dokodemo-door") {
-    const overrides = f.sniffDestOverride
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    inbound.sniffing = {
-      enabled: true,
-      destOverride: overrides.length ? overrides : ["http", "tls", "quic"],
-    };
-  }
-
-  return inbound;
+export function defaultAmneziaInbound(
+  tag = DEFAULT_AMNEZIA_INBOUND_TAG,
+  port = "51821",
+): Record<string, unknown> {
+  const p = parseInt(port, 10) || 51821;
+  return {
+    tag,
+    listen: "0.0.0.0",
+    port: p,
+    protocol: "wireguard",
+    settings: {
+      secretKey: "",
+      mtu: 1420,
+      peers: [],
+      [NXPANEL_INBOUND_KIND]: "amneziawg",
+    },
+  };
 }
 
 const toStrArray = (v: unknown): string[] => {
@@ -708,9 +326,6 @@ const toStrArray = (v: unknown): string[] => {
   if (typeof v === "string" && v) return [v];
   return [];
 };
-
-export const DEFAULT_HYSTERIA_INBOUND_TAG = "Hysteria2";
-export const DEFAULT_AMNEZIA_INBOUND_TAG = "AmneziaWG";
 
 function routingRuleInboundTags(config: Record<string, unknown>): string[] {
   const routing = (config.routing || {}) as Record<string, unknown>;
@@ -743,32 +358,6 @@ export function listRoutingInboundTags(config: Record<string, unknown>): string[
 export function hasInboundTag(config: Record<string, unknown>, tag: string): boolean {
   const inbounds = (config.inbounds || []) as Record<string, unknown>[];
   return inbounds.some((i) => String(i.tag || "") === tag);
-}
-
-export function defaultHysteriaInbound(
-  tag = DEFAULT_HYSTERIA_INBOUND_TAG,
-  port = "44333",
-): Record<string, unknown> {
-  const f = defaultInboundForm();
-  f.tag = tag;
-  f.port = port;
-  f.protocol = "hysteria";
-  f.alpn = "h3";
-  f.security = "tls";
-  f.sniffing = false;
-  return buildInboundFromForm(f);
-}
-
-export function defaultAmneziaInbound(
-  tag = DEFAULT_AMNEZIA_INBOUND_TAG,
-  port = "51821",
-): Record<string, unknown> {
-  const f = defaultInboundForm();
-  f.tag = tag;
-  f.port = port;
-  f.protocol = "amneziawg";
-  f.sniffing = false;
-  return buildInboundFromForm(f);
 }
 
 export function appendInboundIfMissing(

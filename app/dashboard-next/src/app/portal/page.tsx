@@ -17,6 +17,7 @@ interface PortalProfile {
   username: string;
   status: string;
   used_traffic: number;
+  overage_traffic?: number;
   data_limit: number | null;
   expire: number | null;
   public_subscription_url?: string;
@@ -279,6 +280,8 @@ function PortalBody() {
                 totalLabel={pt(lang, "total")}
                 pct={usagePct}
                 exhausted={usagePct >= 100}
+                overage={profile.overage_traffic ?? 0}
+                overageLabel={pt(lang, "overage")}
               />
             </div>
           ) : null}

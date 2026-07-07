@@ -4,8 +4,6 @@ from __future__ import annotations
 import json
 import time
 from typing import List, Optional
-from urllib.error import URLError
-from urllib.request import urlopen
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
@@ -23,10 +21,6 @@ router = APIRouter(
     prefix="/api",
     responses={401: responses._401, 403: responses._403},
 )
-
-_XRAY_RELEASES_CACHE: dict = {"at": 0.0, "tags": []}
-_XRAY_CACHE_TTL = 3600
-
 
 class DeploymentInfo(BaseModel):
     panel_region: str
@@ -94,7 +88,7 @@ class XrayUpgradeResult(BaseModel):
 
 
 @router.get("/system/version", response_model=PanelVersionInfo)
-def get_panel_version(response: Response):
+def get_panel_version(response: Response, _: Admin = Depends(Admin.check_sudo_admin)):
     from app import panel_version
 
     response.headers["Cache-Control"] = "no-store"
@@ -131,16 +125,11 @@ def get_update_job(job_id: str, _: Admin = Depends(Admin.check_sudo_admin)):
 
 @router.get("/xray/releases", response_model=List[XrayReleaseInfo])
 def list_xray_releases(_: Admin = Depends(Admin.check_sudo_admin)):
-    now = time.time()
-    if now - _XRAY_RELEASES_CACHE["at"] < _XRAY_CACHE_TTL and _XRAY_RELEASES_CACHE["tags"]:
-        return _XRAY_RELEASES_CACHE["tags"]
+    from app.utils.xray_releases import fetch_xray_releases
+
     try:
-        with urlopen(
-            "https://api.github.com/repos/XTLS/Xray-core/releases?per_page=30",
-            timeout=15,
-        ) as resp:
-            data = json.loads(resp.read().decode())
-    except (URLError, OSError, json.JSONDecodeError) as exc:
+        data = fetch_xray_releases()
+    except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Failed to fetch releases: {exc}") from exc
     tags = [
         XrayReleaseInfo(
@@ -151,8 +140,6 @@ def list_xray_releases(_: Admin = Depends(Admin.check_sudo_admin)):
         for item in data
         if item.get("tag_name")
     ]
-    _XRAY_RELEASES_CACHE["at"] = now
-    _XRAY_RELEASES_CACHE["tags"] = tags
     return tags
 
 
@@ -166,12 +153,13 @@ def upgrade_panel_xray(
     from app import xray
 
     try:
-        version = xu.install_xray_release(body.tag)
+        version = xu.install_xray_release(body.tag, stop_running=True)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     restart_warning = None
     try:
+        xray.core.version = xray.core.get_version()
         xray.core.restart(xray.config.include_db_users())
     except Exception as exc:
         # The new binary is installed; a failed restart is recoverable but must
@@ -179,6 +167,48 @@ def upgrade_panel_xray(
         logger.error("Xray %s installed but core restart failed: %s", version, exc)
         restart_warning = str(exc)
     return XrayUpgradeResult(version=version, scope="panel", restart_warning=restart_warning)
+
+
+@router.post("/system/xray/auto-upgrade")
+def trigger_xray_auto_upgrade(_: Admin = Depends(Admin.check_sudo_admin)):
+    """Upgrade panel + all Xray nodes to the newest GitHub release if outdated."""
+    from app.services.xray_auto_upgrade import run_xray_auto_upgrade
+
+    try:
+        return run_xray_auto_upgrade(force=False)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+class XrayAutoUpgradeSchedule(BaseModel):
+    enabled: bool = True
+    interval_seconds: int = 21600
+    include_prerelease: bool = True
+
+
+@router.get("/system/xray/auto-upgrade/schedule")
+def get_xray_auto_upgrade_schedule(_: Admin = Depends(Admin.check_sudo_admin)):
+    from app.utils.runtime_settings import xray_auto_upgrade_config
+
+    return xray_auto_upgrade_config()
+
+
+@router.put("/system/xray/auto-upgrade/schedule")
+def set_xray_auto_upgrade_schedule(
+    body: XrayAutoUpgradeSchedule,
+    _: Admin = Depends(Admin.check_sudo_admin),
+):
+    from app.jobs.xray_auto_upgrade import reschedule_xray_auto_upgrade_job
+    from app.utils.runtime_settings import set_value
+
+    interval = max(3600, min(int(body.interval_seconds), 604800))
+    set_value("xray_auto_upgrade_enabled", bool(body.enabled))
+    set_value("xray_auto_upgrade_interval", interval)
+    set_value("xray_auto_upgrade_include_prerelease", bool(body.include_prerelease))
+    reschedule_xray_auto_upgrade_job()
+    from app.utils.runtime_settings import xray_auto_upgrade_config
+
+    return xray_auto_upgrade_config()
 
 
 @router.post("/nodes/{node_id}/xray/version", response_model=XrayUpgradeResult)

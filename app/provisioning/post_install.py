@@ -19,6 +19,7 @@ logger = logging.getLogger("nexus-provision")
 class ProvisionExtras:
     enable_hysteria2: bool = True
     enable_tuic: bool = False
+    enable_anytls: bool = False
     tls_mode: str = "self_signed"  # self_signed | letsencrypt | none
     le_target: Optional[str] = None
     le_email: Optional[str] = None
@@ -28,6 +29,7 @@ class ProvisionExtras:
     region: Optional[str] = None
     enable_plain_wg_on_xray: bool = False
     enable_awg_on_xray: bool = False
+    enable_awg_wg: bool = False
 
 
 def _sync_singbox(node_id: int) -> None:
@@ -121,14 +123,31 @@ def run_post_provision(
     creds: provisioning.SSHCredentials,
     extras: ProvisionExtras,
 ) -> None:
-    """Configure sing-box TLS, optional LE, WG stack, and tunnel after agent registration."""
+    """Configure services, TLS, optional LE, and tunnel after agent registration."""
     with GetDB() as db:
         dbnode = crud.get_node_by_id(db, node_id)
         if not dbnode:
             return
 
-        wants_singbox = extras.enable_hysteria2 or extras.enable_tuic
-        if wants_singbox:
+        from app.services.materialize import provision_slug_list
+        from app.services.node_apply import set_node_services
+
+        is_wg_core = dbnode.core_kind == CoreKind.wireguard.value
+        slugs = provision_slug_list(
+            core_kind=dbnode.core_kind,
+            enable_hysteria2=extras.enable_hysteria2,
+            enable_tuic=extras.enable_tuic,
+            enable_anytls=extras.enable_anytls,
+            enable_plain_wg=is_wg_core or extras.enable_plain_wg_on_xray,
+            enable_awg=extras.enable_awg_on_xray or extras.enable_awg_wg,
+            enable_xray=dbnode.core_kind == CoreKind.xray.value,
+        )
+        if slugs:
+            set_node_services(db, dbnode, slugs, replace=False)
+            db.refresh(dbnode)
+
+        wants_singbox = extras.enable_hysteria2 or extras.enable_tuic or extras.enable_anytls
+        if wants_singbox and dbnode.singbox is None:
             sni = (extras.le_target or dbnode.address).strip()
             crud.provision_singbox_defaults(
                 db,
@@ -138,24 +157,16 @@ def run_post_provision(
                 sni=sni,
             )
             db.refresh(dbnode)
+            if extras.enable_anytls:
+                crud.upsert_node_singbox(db, dbnode, anytls_enabled=True, anytls_port=44335)
 
-        if dbnode.core_kind == CoreKind.xray.value and (
-            extras.enable_plain_wg_on_xray or extras.enable_awg_on_xray
-        ):
-            if dbnode.wireguard is None:
-                crud.provision_wireguard_defaults(
-                    db,
-                    dbnode,
-                    plain_enabled=extras.enable_plain_wg_on_xray,
-                    awg_enabled=extras.enable_awg_on_xray,
-                )
-            else:
-                crud.set_node_wg_stack(
-                    db,
-                    dbnode,
-                    plain_enabled=extras.enable_plain_wg_on_xray or dbnode.wireguard.plain_enabled,
-                    awg_enabled=extras.enable_awg_on_xray or dbnode.wireguard.awg_enabled,
-                )
+        if is_wg_core and dbnode.wireguard is None:
+            crud.provision_wireguard_defaults(
+                db,
+                dbnode,
+                plain_enabled=True,
+                awg_enabled=getattr(extras, "enable_awg_wg", False),
+            )
             db.refresh(dbnode)
 
         cfg = dbnode.singbox

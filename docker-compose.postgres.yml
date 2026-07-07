@@ -1,8 +1,8 @@
 # Production-oriented stack: NexusPanel + PostgreSQL + Redis.
 # Use with: docker compose -f docker-compose.postgres.yml up -d
 #
-# Set the matching values in your .env file, e.g.:
-#   SQLALCHEMY_DATABASE_URL=postgresql://nexuspanel:change-me@127.0.0.1:5432/nexuspanel
+# Set the matching values in /var/lib/nexuspanel/.env (runtime secrets), e.g.:
+#   SQLALCHEMY_DATABASE_URL=postgresql://nexuspanel:STRONG_SECRET@127.0.0.1:5432/nexuspanel
 #   REDIS_URL=redis://127.0.0.1:6379/0
 #
 # Build the panel image from this repo (recommended) instead of the upstream image.
@@ -13,16 +13,18 @@ services:
   nexuspanel:
     build: .
     restart: always
-    env_file: .env
+    env_file:
+      - .env
+      - /var/lib/nexuspanel/.env
     network_mode: host
     group_add:
       - "${DOCKER_GID:-988}"
     volumes:
       - /var/lib/nexuspanel:/var/lib/nexuspanel
       - .:/code
+      # docker/compose/buildx CLI ships in the image itself (see Dockerfile);
+      # only the socket needs to come from the host (AUDIT_FINDINGS.md C5).
       - /var/run/docker.sock:/var/run/docker.sock
-      - /usr/bin/docker:/usr/bin/docker:ro
-      - /usr/libexec/docker/cli-plugins:/usr/libexec/docker/cli-plugins:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -33,14 +35,13 @@ services:
     image: postgres:16-alpine
     restart: always
     network_mode: host
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-nexuspanel}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
-      POSTGRES_DB: ${POSTGRES_DB:-nexuspanel}
+    env_file:
+      - .env
+      - /var/lib/nexuspanel/.env
     volumes:
       - /var/lib/nexuspanel/postgres:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nexuspanel} -d ${POSTGRES_DB:-nexuspanel}"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-nexuspanel} -d $${POSTGRES_DB:-nexuspanel}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -49,6 +50,9 @@ services:
     image: redis:7-alpine
     restart: always
     network_mode: host
+    env_file:
+      - .env
+      - /var/lib/nexuspanel/.env
     command:
       - sh
       - -c
@@ -58,8 +62,6 @@ services:
         else
           exec redis-server --appendonly yes
         fi
-    environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     volumes:
       - /var/lib/nexuspanel/redis:/data
     healthcheck:

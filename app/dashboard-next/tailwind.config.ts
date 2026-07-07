@@ -5,12 +5,21 @@ const config: Config = {
   darkMode: "class",
   theme: {
     extend: {
-      fontFamily: {
-        sans: ["Vazirmatn", "Inter", "system-ui", "sans-serif"],
-        latin: ["Inter", "Vazirmatn", "system-ui", "sans-serif"],
-        mono: ["JetBrains Mono", "ui-monospace", "SFMono-Regular", "monospace"],
-      },
       colors: {
+        inbound: {
+          bg: "var(--bg)",
+          surface: "var(--surface)",
+          "surface-2": "var(--surface-2)",
+          border: "var(--border)",
+          accent: "var(--accent)",
+          "accent-hover": "var(--accent-hover)",
+          success: "var(--success)",
+          warning: "var(--warning)",
+          danger: "var(--danger)",
+          text: "var(--text)",
+          "text-muted": "var(--text-muted)",
+          "text-hint": "var(--text-hint)",
+        },
         bg: { DEFAULT: "#07090d", 2: "#0b0f15" },
         surface: { DEFAULT: "#11161d", 2: "#181f2a", 3: "#232c3a" },
         border: { DEFAULT: "#232c38", strong: "#2f3a48" },
@@ -19,6 +28,11 @@ const config: Config = {
         ok: { DEFAULT: "#34d399", soft: "rgba(52,211,153,0.18)" },
         warn: { DEFAULT: "#fbbf24", soft: "rgba(251,191,36,0.18)" },
         danger: { DEFAULT: "#f87171", soft: "rgba(248,113,113,0.18)" },
+      },
+      fontFamily: {
+        sans: ["Vazirmatn", "Inter", "system-ui", "sans-serif"],
+        latin: ["Inter", "Vazirmatn", "system-ui", "sans-serif"],
+        mono: ["JetBrains Mono", "ui-monospace", "SFMono-Regular", "monospace"],
       },
       borderRadius: { lg: "16px", md: "10px" },
       boxShadow: {

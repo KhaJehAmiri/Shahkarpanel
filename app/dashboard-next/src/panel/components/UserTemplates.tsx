@@ -21,11 +21,20 @@ export interface UserTemplateRow {
   username_prefix?: string | null;
   username_suffix?: string | null;
   inbounds?: Record<string, string[]>;
+  data_limit_reset_strategy?: string | null;
+  default_status?: string | null;
+  note?: string | null;
+  next_plan?: {
+    data_limit?: number | null;
+    expire?: number | null;
+    add_remaining_traffic?: boolean;
+    fire_on_either?: boolean;
+  } | null;
 }
 
-const PROTO_ORDER = ["vless", "vmess", "trojan", "shadowsocks", "wireguard", "amneziawg", "hysteria2", "tuic"];
+const PROTO_ORDER = ["vless", "vmess", "trojan", "shadowsocks", "wireguard", "amneziawg", "hysteria2", "tuic", "anytls"];
 
-const NATIVE_PROTOCOLS = ["wireguard", "amneziawg", "hysteria2", "tuic"] as const;
+const NATIVE_PROTOCOLS = ["wireguard", "amneziawg", "hysteria2", "tuic", "anytls"] as const;
 
 const PROTO_VISUAL: Record<string, { icon: string; hue: string; label: string }> = {
   vless: { icon: "⚡", hue: "#2ee0c4", label: "VLESS" },
@@ -36,6 +45,7 @@ const PROTO_VISUAL: Record<string, { icon: string; hue: string; label: string }>
   amneziawg: { icon: "🛡", hue: "#22d3ee", label: "AmneziaWG" },
   hysteria2: { icon: "🚀", hue: "#f472b6", label: "Hysteria2" },
   tuic: { icon: "◉", hue: "#34d399", label: "TUIC" },
+  anytls: { icon: "🛡", hue: "#a78bfa", label: "AnyTLS" },
 };
 
 export const UserTemplatesPanel: FC = () => {
@@ -66,8 +76,8 @@ export const UserTemplatesPanel: FC = () => {
           </div>
           <Button variant="primary" size="sm" onClick={() => setShow(true)}><IcPlus className="nx-ico" /> {t("users.addTemplate")}</Button>
         </div>
-        {loading ? <SkeletonRows rows={2} cols={3} />
-          : error ? <EmptyState title={t("common.error")} desc={error} />
+        {loading && !data ? <SkeletonRows rows={2} cols={3} />
+          : error && !data ? <EmptyState title={t("common.error")} desc={error} />
           : !data?.length ? <div className="nx-faint" style={{ fontSize: 13 }}>{t("common.noData")}</div>
           : (
             <div className="nx-table-wrap">
@@ -114,6 +124,16 @@ const TemplateFormModal: FC<{ row?: UserTemplateRow; onClose: () => void; onDone
     row?.data_limit ? bytesToDataLimitValue(row.data_limit, detectDataLimitUnit(row.data_limit)) : "",
   );
   const [expireDays, setExpireDays] = useState(row?.expire_duration ? String(Math.round(row.expire_duration / 86400)) : "");
+  const [resetStrategy, setResetStrategy] = useState(row?.data_limit_reset_strategy || "no_reset");
+  const [defaultStatus, setDefaultStatus] = useState(row?.default_status || "active");
+  const [note, setNote] = useState(row?.note || "");
+  const [nextPlanEnabled, setNextPlanEnabled] = useState(!!row?.next_plan);
+  const [nextDataLimit, setNextDataLimit] = useState(row?.next_plan?.data_limit ? String(row.next_plan.data_limit) : "");
+  const [nextExpireDays, setNextExpireDays] = useState(
+    row?.next_plan?.expire ? String(Math.round(row.next_plan.expire / 86400)) : "",
+  );
+  const [nextAddRemaining, setNextAddRemaining] = useState(!!row?.next_plan?.add_remaining_traffic);
+  const [nextFireEither, setNextFireEither] = useState(row?.next_plan?.fire_on_either !== false);
   const [inbSel, setInbSel] = useState<Record<string, string[]>>({});
   const [nativeOn, setNativeOn] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState(false);
@@ -167,7 +187,20 @@ const TemplateFormModal: FC<{ row?: UserTemplateRow; onClose: () => void; onDone
         data_limit: dataLimitValue ? dataLimitToBytes(dataLimitValue, dataLimitUnit) : 0,
         expire_duration: expireDays ? parseInt(expireDays, 10) * 86400 : 0,
         inbounds: inboundsBody,
+        data_limit_reset_strategy: resetStrategy,
+        default_status: defaultStatus,
+        note: note.trim() || null,
       };
+      if (nextPlanEnabled) {
+        body.next_plan = {
+          data_limit: nextDataLimit ? parseInt(nextDataLimit, 10) : 0,
+          expire: nextExpireDays ? parseInt(nextExpireDays, 10) * 86400 : 0,
+          add_remaining_traffic: nextAddRemaining,
+          fire_on_either: nextFireEither,
+        };
+      } else if (row?.next_plan) {
+        body.next_plan = null;
+      }
       if (row) {
         await api.put(`/user_template/${row.id}`, body);
       } else {
@@ -208,6 +241,48 @@ const TemplateFormModal: FC<{ row?: UserTemplateRow; onClose: () => void; onDone
           </Field>
           <Field label={`${t("users.expire")} (days)`} hint="0 = none"><Input type="number" min="0" value={expireDays} onChange={(e: any) => setExpireDays(e.target.value)} /></Field>
         </div>
+        <div className="nx-template-metrics">
+          <Field label={t("users.resetStrategy")}>
+            <Select value={resetStrategy} onChange={(e: any) => setResetStrategy(e.target.value)}>
+              {["no_reset", "day", "week", "month", "year"].map((r) => (
+                <option key={r} value={r}>{t(`users.resetStrategies.${r}`, r)}</option>
+              ))}
+            </Select>
+          </Field>
+          <Field label={t("users.templateDefaultStatus", { defaultValue: "Default status" })}>
+            <Select value={defaultStatus} onChange={(e: any) => setDefaultStatus(e.target.value)}>
+              <option value="active">{t("users.status.active")}</option>
+              <option value="on_hold">{t("users.status.on_hold")}</option>
+            </Select>
+          </Field>
+        </div>
+        <Field label={`${t("users.noteLabel")} (${t("common.optional")})`}>
+          <Input value={note} onChange={(e: any) => setNote(e.target.value)} />
+        </Field>
+        <Card style={{ padding: 14 }}>
+          <label className="nx-row" style={{ gap: 8, marginBottom: 10 }}>
+            <input type="checkbox" checked={nextPlanEnabled} onChange={(e) => setNextPlanEnabled(e.target.checked)} />
+            {t("users.nextPlan", { defaultValue: "Next plan (renewal)" })}
+          </label>
+          {nextPlanEnabled && (
+            <div className="nx-template-metrics">
+              <Field label={t("users.dataLimit")}>
+                <Input type="number" min="0" value={nextDataLimit} onChange={(e: any) => setNextDataLimit(e.target.value)} />
+              </Field>
+              <Field label={`${t("users.expire")} (days)`}>
+                <Input type="number" min="0" value={nextExpireDays} onChange={(e: any) => setNextExpireDays(e.target.value)} />
+              </Field>
+              <label className="nx-row" style={{ gap: 8, fontSize: 12 }}>
+                <input type="checkbox" checked={nextAddRemaining} onChange={(e) => setNextAddRemaining(e.target.checked)} />
+                {t("users.nextAddRemaining", { defaultValue: "Add remaining traffic" })}
+              </label>
+              <label className="nx-row" style={{ gap: 8, fontSize: 12 }}>
+                <input type="checkbox" checked={nextFireEither} onChange={(e) => setNextFireEither(e.target.checked)} />
+                {t("users.nextFireEither", { defaultValue: "Fire on either limit" })}
+              </label>
+            </div>
+          )}
+        </Card>
         <Field label={t("users.templateInbounds")} hint={t("users.templateInboundsHint")}>
           {inbounds.loading ? <SkeletonRows rows={2} cols={2} /> : (
             <div className="nx-inbound-matrix">

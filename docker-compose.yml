@@ -4,13 +4,37 @@ services:
   nexuspanel:
     build: .
     restart: always
-    env_file: .env
+    env_file:
+      - .env
+      - /var/lib/nexuspanel/.env
     network_mode: host
+    pid: host
+    cap_add:
+      - NET_ADMIN
     group_add:
       - "${DOCKER_GID:-988}"
     volumes:
       - /var/lib/nexuspanel:/var/lib/nexuspanel
+      # nginx mounts kept only for optional XRAY_EDGE_PROXY_ENABLED=true (legacy CDN edge).
+      - /etc/nginx/sites-available:/etc/nginx/sites-available
+      - /etc/nginx/sites-enabled:/etc/nginx/sites-enabled
+      - /etc/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - /etc/nginx/mime.types:/etc/nginx/mime.types:ro
+      - /etc/nginx/proxy_params:/etc/nginx/proxy_params:ro
+      - /etc/nginx/conf.d:/etc/nginx/conf.d:ro
+      - /etc/nginx/snippets:/etc/nginx/snippets:ro
+      - /etc/letsencrypt:/etc/letsencrypt
+      - /var/www/letsencrypt:/var/www/letsencrypt
+      - /var/lib/nginx:/var/lib/nginx
+      - /var/log/nginx:/var/log/nginx
+      - /run/nginx.pid:/run/nginx.pid
+      - /usr/sbin/nginx:/usr/sbin/nginx:ro
       - .:/code
+      - /opt/sigmaguard/wire:/opt/sigmaguard/wire:ro
+      # Only the socket is host-provided; the docker/compose/buildx CLI now
+      # ships in the image itself (see Dockerfile) instead of being bind-
+      # mounted from the host's /usr/bin and cli-plugins — one less place a
+      # host-side binary swap could affect the container (AUDIT_FINDINGS.md C5).
+      # The socket itself is still required for in-dashboard panel updates
+      # (app/system/update_jobs.py) and Postgres backup/restore (app/backup.py).
       - /var/run/docker.sock:/var/run/docker.sock
-      - /usr/bin/docker:/usr/bin/docker:ro
-      - /usr/libexec/docker/cli-plugins:/usr/libexec/docker/cli-plugins:ro

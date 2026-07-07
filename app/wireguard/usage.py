@@ -106,8 +106,13 @@ def collect_wg_usage_params(db=None) -> Tuple[Dict[int, List[dict]], Dict[int, f
 
             combined: Dict[str, dict] = {}
             interfaces = []
+            from app.wireguard.wg_manager import autoscale_enabled, collect_autoscale_transfer
+
             if plain_wg_enabled(cfg):
-                interfaces.append(cfg.interface)
+                if autoscale_enabled():
+                    combined = collect_autoscale_transfer(session, dbnode.id)
+                else:
+                    interfaces.append(cfg.interface)
             if amneziawg_enabled(cfg):
                 interfaces.append(cfg.awg_interface)
             for iface in interfaces:

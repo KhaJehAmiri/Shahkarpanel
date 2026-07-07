@@ -4,10 +4,12 @@ Functions for managing proxy hosts, users, user templates, nodes, and administra
 
 from datetime import datetime, timedelta
 from enum import Enum
+import secrets
+import time
 from typing import Dict, List, Optional, Tuple, Union
 
 from sqlalchemy import and_, delete, func, or_
-from sqlalchemy.orm import Query, Session, joinedload
+from sqlalchemy.orm import Query, Session, contains_eager, joinedload
 from sqlalchemy.sql.functions import coalesce
 
 from app.db.models import (
@@ -22,17 +24,22 @@ from app.db.models import (
     NodeUserUsage,
     NodeSingBox,
     NodeWireGuard,
+    NodeServiceBinding,
     NotificationReminder,
+    PanelService,
     Plan,
     Proxy,
     ProxyHost,
     ProxyInbound,
     ProxyTypes,
+    SubscriptionEndpoint,
+    SubscriptionTokenAlias,
     System,
     User,
     UserOrder,
     UserTemplate,
     UserUsageResetLogs,
+    excluded_inbounds_association,
 )
 from app.models.admin import AdminCreate, AdminModify, AdminPartialModify
 from app.models.node import CoreKind, NodeCreate, NodeModify, NodeStatus, NodeUsageResponse
@@ -51,7 +58,7 @@ from app.utils.helpers import calculate_expiration_days, calculate_usage_percent
 from config import NOTIFY_DAYS_LEFT, NOTIFY_REACHED_USAGE_PERCENT, USERS_AUTODELETE_DAYS
 
 
-def add_default_host(db: Session, inbound: ProxyInbound):
+def add_default_host(db: Session, inbound: ProxyInbound, *, commit: bool = True):
     """
     Adds a default host to a proxy inbound.
 
@@ -59,30 +66,102 @@ def add_default_host(db: Session, inbound: ProxyInbound):
         db (Session): Database session.
         inbound (ProxyInbound): Proxy inbound to add the default host to.
     """
-    host = ProxyHost(remark="Nexus ({USERNAME}) [{PROTOCOL} - {TRANSPORT}]", address="{SERVER_IP}", inbound=inbound)
+    host = ProxyHost(remark="{REGION_FLAG} {REGION_NAME} · {PROTOCOL}", address="{SERVER_IP}", inbound=inbound)
     db.add(host)
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
 
 
-def get_or_create_inbound(db: Session, inbound_tag: str) -> ProxyInbound:
+def get_or_create_inbound(
+    db: Session,
+    inbound_tag: str,
+    *,
+    inbound_cache: Optional[Dict[str, ProxyInbound]] = None,
+    commit: bool = True,
+) -> ProxyInbound:
     """
     Retrieves or creates a proxy inbound based on the given tag.
 
     Args:
         db (Session): Database session.
         inbound_tag (str): The tag of the inbound.
+        inbound_cache: Optional tag->ProxyInbound lookaside cache shared across
+            many calls (e.g. a migration batch importing thousands of users).
+            The set of inbounds is effectively static during such a batch, so
+            reusing this avoids a ``SELECT`` + session autoflush per lookup —
+            on a large uncommitted transaction that autoflush cost grows with
+            the session size and was the dominant cost of slow migrations.
+        commit: When False, defer the commit to the caller (batch imports
+            commit once at the end instead of once per inbound touched).
 
     Returns:
         ProxyInbound: The retrieved or newly created proxy inbound.
     """
+    if inbound_cache is not None:
+        cached = inbound_cache.get(inbound_tag)
+        if cached is not None:
+            return cached
     inbound = db.query(ProxyInbound).filter(ProxyInbound.tag == inbound_tag).first()
     if not inbound:
         inbound = ProxyInbound(tag=inbound_tag)
         db.add(inbound)
-        db.commit()
-        add_default_host(db, inbound)
-        db.refresh(inbound)
+        if commit:
+            db.commit()
+            add_default_host(db, inbound)
+            db.refresh(inbound)
+        else:
+            db.flush()
+            add_default_host(db, inbound, commit=False)
+    if inbound_cache is not None:
+        inbound_cache[inbound_tag] = inbound
     return inbound
+
+
+def _proxy_host_row(inbound, host: ProxyHostModify) -> ProxyHost:
+    from app.models.proxy import ProxyHostSecurity
+
+    try:
+        sec = host.security if not isinstance(host.security, str) else ProxyHostSecurity(host.security)
+    except ValueError:
+        sec = ProxyHostSecurity.inbound_default
+    if sec == ProxyHostSecurity.same:
+        sec = ProxyHostSecurity.inbound_default
+    return ProxyHost(
+        remark=host.remark,
+        address=host.address,
+        port=host.port,
+        path=host.path,
+        sni=host.sni,
+        host=host.host,
+        inbound=inbound,
+        security=sec,
+        alpn=host.alpn,
+        fingerprint=host.fingerprint,
+        allowinsecure=host.allowinsecure,
+        is_disabled=host.is_disabled,
+        mux_enable=host.mux_enable,
+        fragment_setting=host.fragment_setting,
+        noise_setting=host.noise_setting,
+        random_user_agent=host.random_user_agent,
+        use_sni_as_host=host.use_sni_as_host,
+        sort_order=getattr(host, "sort_order", 0) or 0,
+        override_sni_from_address=getattr(host, "override_sni_from_address", False) or False,
+        keep_sni_blank=getattr(host, "keep_sni_blank", False) or False,
+        pinned_peer_cert_sha256=getattr(host, "pinned_peer_cert_sha256", None),
+        verify_peer_cert_by_name=getattr(host, "verify_peer_cert_by_name", None),
+        ech_config_list=getattr(host, "ech_config_list", None),
+        mux_params=getattr(host, "mux_params", None),
+        sockopt_params=getattr(host, "sockopt_params", None),
+        final_mask=getattr(host, "final_mask", None),
+        vless_route=getattr(host, "vless_route", None),
+        exclude_from_sub_types=getattr(host, "exclude_from_sub_types", None),
+        mihomo_ip_version=getattr(host, "mihomo_ip_version", None),
+        external_proxy=getattr(host, "external_proxy", None),
+        node_ids=getattr(host, "node_ids", None),
+        region=getattr(host, "region", None),
+    )
 
 
 def get_hosts(db: Session, inbound_tag: str) -> List[ProxyHost]:
@@ -97,7 +176,7 @@ def get_hosts(db: Session, inbound_tag: str) -> List[ProxyHost]:
         List[ProxyHost]: List of hosts for the inbound.
     """
     inbound = get_or_create_inbound(db, inbound_tag)
-    return inbound.hosts
+    return sorted(inbound.hosts, key=lambda h: (h.sort_order or 0, h.id or 0))
 
 
 def add_host(db: Session, inbound_tag: str, host: ProxyHostModify) -> List[ProxyHost]:
@@ -113,20 +192,7 @@ def add_host(db: Session, inbound_tag: str, host: ProxyHostModify) -> List[Proxy
         List[ProxyHost]: Updated list of hosts for the inbound.
     """
     inbound = get_or_create_inbound(db, inbound_tag)
-    inbound.hosts.append(
-        ProxyHost(
-            remark=host.remark,
-            address=host.address,
-            port=host.port,
-            path=host.path,
-            sni=host.sni,
-            host=host.host,
-            inbound=inbound,
-            security=host.security,
-            alpn=host.alpn,
-            fingerprint=host.fingerprint
-        )
-    )
+    inbound.hosts.append(_proxy_host_row(inbound, host))
     db.commit()
     db.refresh(inbound)
     return inbound.hosts
@@ -145,27 +211,7 @@ def update_hosts(db: Session, inbound_tag: str, modified_hosts: List[ProxyHostMo
         List[ProxyHost]: Updated list of hosts for the inbound.
     """
     inbound = get_or_create_inbound(db, inbound_tag)
-    inbound.hosts = [
-        ProxyHost(
-            remark=host.remark,
-            address=host.address,
-            port=host.port,
-            path=host.path,
-            sni=host.sni,
-            host=host.host,
-            inbound=inbound,
-            security=host.security,
-            alpn=host.alpn,
-            fingerprint=host.fingerprint,
-            allowinsecure=host.allowinsecure,
-            is_disabled=host.is_disabled,
-            mux_enable=host.mux_enable,
-            fragment_setting=host.fragment_setting,
-            noise_setting=host.noise_setting,
-            random_user_agent=host.random_user_agent,
-            use_sni_as_host=host.use_sni_as_host,
-        ) for host in modified_hosts
-    ]
+    inbound.hosts = [_proxy_host_row(inbound, host) for host in modified_hosts]
     db.commit()
     db.refresh(inbound)
     return inbound.hosts
@@ -181,7 +227,12 @@ def get_user_queryset(db: Session) -> Query:
     Returns:
         Query: Base user query.
     """
-    return db.query(User).options(joinedload(User.admin)).options(joinedload(User.next_plan))
+    return (
+        db.query(User)
+        .options(joinedload(User.admin))
+        .options(joinedload(User.next_plan))
+        .options(joinedload(User.proxies).joinedload(Proxy.excluded_inbounds))
+    )
 
 
 def get_user(db: Session, username: str) -> Optional[User]:
@@ -212,54 +263,55 @@ def get_user_by_id(db: Session, user_id: int) -> Optional[User]:
     return get_user_queryset(db).filter(User.id == user_id).first()
 
 
+def get_user_by_sub_token(db: Session, sub_token: str) -> Optional[User]:
+    """Look up a user by their independent subscription token (32-char hex)."""
+    if not sub_token:
+        return None
+    return get_user_queryset(db).filter(User.sub_token == sub_token.lower()).first()
+
+
 UsersSortingOptions = Enum('UsersSortingOptions', {
     'username': User.username.asc(),
     'used_traffic': User.used_traffic.asc(),
     'data_limit': User.data_limit.asc(),
     'expire': User.expire.asc(),
     'created_at': User.created_at.asc(),
+    'id': User.id.asc(),
     '-username': User.username.desc(),
     '-used_traffic': User.used_traffic.desc(),
     '-data_limit': User.data_limit.desc(),
     '-expire': User.expire.desc(),
     '-created_at': User.created_at.desc(),
+    '-id': User.id.desc(),
 })
 
+_DEFAULT_USER_ORDER = (User.created_at.asc(), User.id.asc())
 
-def get_users(db: Session,
-              offset: Optional[int] = None,
-              limit: Optional[int] = None,
-              usernames: Optional[List[str]] = None,
-              search: Optional[str] = None,
-              status: Optional[Union[UserStatus, list]] = None,
-              sort: Optional[List[UsersSortingOptions]] = None,
-              admin: Optional[Admin] = None,
-              admins: Optional[List[str]] = None,
-              reset_strategy: Optional[Union[UserDataLimitResetStrategy, list]] = None,
-              return_with_count: bool = False) -> Union[List[User], Tuple[List[User], int]]:
-    """
-    Retrieves users based on various filters and options.
 
-    Args:
-        db (Session): Database session.
-        offset (Optional[int]): Number of records to skip.
-        limit (Optional[int]): Number of records to retrieve.
-        usernames (Optional[List[str]]): List of usernames to filter by.
-        search (Optional[str]): Search term to filter by username or note.
-        status (Optional[Union[UserStatus, list]]): User status or list of statuses to filter by.
-        sort (Optional[List[UsersSortingOptions]]): Sorting options.
-        admin (Optional[Admin]): Admin to filter users by.
-        admins (Optional[List[str]]): List of admin usernames to filter users by.
-        reset_strategy (Optional[Union[UserDataLimitResetStrategy, list]]): Data limit reset strategy to filter by.
-        return_with_count (bool): Whether to return the total count of users.
-
-    Returns:
-        Union[List[User], Tuple[List[User], int]]: List of users or tuple of users and total count.
-    """
-    query = get_user_queryset(db)
-
+def _apply_user_list_filters(
+    db: Session,
+    query: Query,
+    *,
+    search: Optional[str] = None,
+    usernames: Optional[List[str]] = None,
+    status: Optional[Union[UserStatus, list]] = None,
+    reset_strategy: Optional[Union[UserDataLimitResetStrategy, list]] = None,
+    admin: Optional[Admin] = None,
+    admins: Optional[List[str]] = None,
+    protocol: Optional[str] = None,
+    inbound_tag: Optional[str] = None,
+    source_slug: Optional[str] = None,
+    expiring_within_days: Optional[int] = None,
+    near_limit_percent: Optional[int] = None,
+) -> Query:
     if search:
-        query = query.filter(or_(User.username.ilike(f"%{search}%"), User.note.ilike(f"%{search}%")))
+        query = query.filter(
+            or_(
+                User.username.ilike(f"%{search}%"),
+                User.note.ilike(f"%{search}%"),
+                User.sub_token.ilike(f"%{search}%"),
+            )
+        )
 
     if usernames:
         query = query.filter(User.username.in_(usernames))
@@ -282,11 +334,125 @@ def get_users(db: Session,
     if admins:
         query = query.filter(User.admin.has(Admin.username.in_(admins)))
 
+    if protocol:
+        try:
+            proxy_type = ProxyTypes(protocol.lower())
+            query = query.filter(User.proxies.any(Proxy.type == proxy_type))
+        except ValueError:
+            query = query.filter(False)
+
+    if inbound_tag:
+        from app import xray
+
+        inbound = xray.config.inbounds_by_tag.get(inbound_tag)
+        if not inbound:
+            query = query.filter(False)
+        else:
+            proto_str = str(inbound.get("protocol") or "").lower()
+            try:
+                proxy_type = ProxyTypes(proto_str)
+            except ValueError:
+                query = query.filter(False)
+            else:
+                excluded_subq = (
+                    db.query(Proxy.user_id)
+                    .join(
+                        excluded_inbounds_association,
+                        Proxy.id == excluded_inbounds_association.c.proxy_id,
+                    )
+                    .filter(
+                        excluded_inbounds_association.c.inbound_tag == inbound_tag,
+                        Proxy.type == proxy_type,
+                    )
+                )
+                query = query.filter(
+                    User.proxies.any(Proxy.type == proxy_type),
+                    ~User.id.in_(excluded_subq),
+                )
+
+    if source_slug:
+        slug = source_slug.strip()
+        if slug:
+            query = query.filter(User.username.like(f"{slug}_%"))
+
+    if expiring_within_days is not None and expiring_within_days > 0:
+        now = int(time.time())
+        deadline = now + expiring_within_days * 86400
+        query = query.filter(
+            User.expire.isnot(None),
+            User.expire > now,
+            User.expire <= deadline,
+        )
+
+    if near_limit_percent is not None and near_limit_percent > 0:
+        query = query.filter(
+            User.data_limit.isnot(None),
+            User.data_limit > 0,
+            User.used_traffic * 100 >= User.data_limit * near_limit_percent,
+        )
+
+    return query
+
+
+def get_users(db: Session,
+              offset: Optional[int] = None,
+              limit: Optional[int] = None,
+              usernames: Optional[List[str]] = None,
+              search: Optional[str] = None,
+              status: Optional[Union[UserStatus, list]] = None,
+              sort: Optional[List[UsersSortingOptions]] = None,
+              admin: Optional[Admin] = None,
+              admins: Optional[List[str]] = None,
+              reset_strategy: Optional[Union[UserDataLimitResetStrategy, list]] = None,
+              protocol: Optional[str] = None,
+              inbound_tag: Optional[str] = None,
+              source_slug: Optional[str] = None,
+              expiring_within_days: Optional[int] = None,
+              near_limit_percent: Optional[int] = None,
+              return_with_count: bool = False) -> Union[List[User], Tuple[List[User], int]]:
+    """
+    Retrieves users based on various filters and options.
+
+    Args:
+        db (Session): Database session.
+        offset (Optional[int]): Number of records to skip.
+        limit (Optional[int]): Number of records to retrieve.
+        usernames (Optional[List[str]]): List of usernames to filter by.
+        search (Optional[str]): Search term to filter by username or note.
+        status (Optional[Union[UserStatus, list]]): User status or list of statuses to filter by.
+        sort (Optional[List[UsersSortingOptions]]): Sorting options.
+        admin (Optional[Admin]): Admin to filter users by.
+        admins (Optional[List[str]]): List of admin usernames to filter users by.
+        reset_strategy (Optional[Union[UserDataLimitResetStrategy, list]]): Data limit reset strategy to filter by.
+        return_with_count (bool): Whether to return the total count of users.
+
+    Returns:
+        Union[List[User], Tuple[List[User], int]]: List of users or tuple of users and total count.
+    """
+    query = get_user_queryset(db)
+    query = _apply_user_list_filters(
+        db,
+        query,
+        search=search,
+        usernames=usernames,
+        status=status,
+        reset_strategy=reset_strategy,
+        admin=admin,
+        admins=admins,
+        protocol=protocol,
+        inbound_tag=inbound_tag,
+        source_slug=source_slug,
+        expiring_within_days=expiring_within_days,
+        near_limit_percent=near_limit_percent,
+    )
+
     if return_with_count:
         count = query.count()
 
     if sort:
         query = query.order_by(*(opt.value for opt in sort))
+    else:
+        query = query.order_by(*_DEFAULT_USER_ORDER)
 
     if offset:
         query = query.offset(offset)
@@ -297,6 +463,42 @@ def get_users(db: Session,
         return query.all(), count
 
     return query.all()
+
+
+def get_user_list_filter_options(
+    db: Session,
+    *,
+    admin: Optional[Admin] = None,
+) -> Dict[str, object]:
+    """Source migration slugs and inbound tags for the users list filter UI."""
+    from app import xray
+
+    slug_set: List[str] = []
+    seen: set[str] = set()
+    for ep in list_subscription_endpoints(db):
+        for candidate in (ep.legacy_panel_id, ep.slug):
+            if candidate and candidate not in seen:
+                seen.add(candidate)
+                slug_set.append(candidate)
+
+    base_q = db.query(User.id)
+    if admin and not admin.is_sudo:
+        base_q = base_q.filter(User.admin_id == admin.id)
+
+    source_servers = []
+    for slug in sorted(slug_set):
+        count = base_q.filter(User.username.like(f"{slug}_%")).count()
+        if count:
+            source_servers.append({"slug": slug, "user_count": count})
+
+    inbound_tags = sorted(xray.config.inbounds_by_tag.keys())
+    protocols = sorted({str(v.value) for v in ProxyTypes})
+
+    return {
+        "source_servers": source_servers,
+        "inbound_tags": inbound_tags,
+        "protocols": protocols,
+    }
 
 
 def get_user_usages(db: Session, dbuser: User, start: datetime, end: datetime) -> List[UserUsageResponse]:
@@ -359,7 +561,14 @@ def get_users_count(db: Session, status: UserStatus = None, admin: Admin = None)
     return query.count()
 
 
-def create_user(db: Session, user: UserCreate, admin: Admin = None) -> User:
+def create_user(
+    db: Session,
+    user: UserCreate,
+    admin: Admin = None,
+    *,
+    commit: bool = True,
+    inbound_cache: Optional[Dict[str, ProxyInbound]] = None,
+) -> User:
     """
     Creates a new user with provided details.
 
@@ -367,6 +576,8 @@ def create_user(db: Session, user: UserCreate, admin: Admin = None) -> User:
         db (Session): Database session.
         user (UserCreate): User creation details.
         admin (Admin, optional): Admin associated with the user.
+        inbound_cache: Optional shared tag->ProxyInbound cache (see
+            ``get_or_create_inbound``) to speed up bulk imports.
 
     Returns:
         User: The created user object.
@@ -380,7 +591,8 @@ def create_user(db: Session, user: UserCreate, admin: Admin = None) -> User:
     proxies = []
     for proxy_type, settings in user.proxies.items():
         excluded_inbounds = [
-            get_or_create_inbound(db, tag) for tag in excluded_inbounds_tags[proxy_type]
+            get_or_create_inbound(db, tag, inbound_cache=inbound_cache, commit=commit)
+            for tag in excluded_inbounds_tags[proxy_type]
         ]
         proxies.append(
             Proxy(type=proxy_type.value,
@@ -401,6 +613,13 @@ def create_user(db: Session, user: UserCreate, admin: Admin = None) -> User:
         on_hold_timeout=(user.on_hold_timeout or None),
         auto_delete_in_days=user.auto_delete_in_days,
         client_profile=(user.client_profile or "normal"),
+        session_limit_minutes=getattr(user, "session_limit_minutes", None) or None,
+        device_limit=getattr(user, "device_limit", None),
+        speed_limit_up=getattr(user, "speed_limit_up", None),
+        speed_limit_down=getattr(user, "speed_limit_down", None),
+        routing_preset=getattr(user, "routing_preset", None),
+        dns_policy=getattr(user, "dns_policy", None),
+        sub_token=secrets.token_hex(16),
         next_plan=NextPlan(
             data_limit=user.next_plan.data_limit,
             expire=user.next_plan.expire,
@@ -416,14 +635,48 @@ def create_user(db: Session, user: UserCreate, admin: Admin = None) -> User:
         dbuser.portal_enabled = user.portal_enabled or bool(user.portal_password)
         dbuser.portal_password_reset_at = datetime.utcnow()
     db.add(dbuser)
-    db.commit()
-    db.refresh(dbuser)
+    if commit:
+        db.commit()
+        db.refresh(dbuser)
+    else:
+        db.flush()
     if user.portal_enabled or user.portal_password:
         from app.client.provision import ensure_app_proxies
 
         ensure_app_proxies(db, dbuser)
-        db.refresh(dbuser)
+        if commit:
+            db.refresh(dbuser)
     return dbuser
+
+
+def repair_shadowsocks_methods(db: Session) -> int:
+    """Align stored SS cipher with assigned inbounds for existing users."""
+    from app import xray
+    from app.xray.inbound_match import repair_shadowsocks_proxy_settings
+
+    fixed = 0
+    users = db.query(User).options(
+        joinedload(User.proxies).joinedload(Proxy.excluded_inbounds),
+    ).all()
+    for user in users:
+        ss_proxy = next((p for p in user.proxies if p.type == ProxyTypes.Shadowsocks), None)
+        if not ss_proxy:
+            continue
+        excluded = {i.tag for i in ss_proxy.excluded_inbounds}
+        tags = [
+            inbound["tag"]
+            for inbound in xray.config.product_inbounds_for_type(ProxyTypes.Shadowsocks)
+            if inbound["tag"] not in excluded
+        ]
+        if not tags:
+            continue
+        patched = repair_shadowsocks_proxy_settings(ss_proxy.settings, tags)
+        if patched:
+            ss_proxy.settings = patched
+            fixed += 1
+    if fixed:
+        db.commit()
+    return fixed
 
 
 def remove_user(db: Session, dbuser: User) -> User:
@@ -456,7 +709,14 @@ def remove_users(db: Session, dbusers: List[User]):
     return
 
 
-def update_user(db: Session, dbuser: User, modify: UserModify) -> User:
+def update_user(
+    db: Session,
+    dbuser: User,
+    modify: UserModify,
+    *,
+    commit: bool = True,
+    inbound_cache: Optional[Dict[str, ProxyInbound]] = None,
+) -> User:
     """
     Updates a user with new details.
 
@@ -464,12 +724,15 @@ def update_user(db: Session, dbuser: User, modify: UserModify) -> User:
         db (Session): Database session.
         dbuser (User): The user object to be updated.
         modify (UserModify): New details for the user.
+        inbound_cache: Optional shared tag->ProxyInbound cache (see
+            ``get_or_create_inbound``) to speed up bulk imports.
 
     Returns:
         User: The updated user object.
     """
     from app.models.proxy import apply_proxy_patch
 
+    needs_disconnect = False
     added_proxies: Dict[ProxyTypes, Proxy] = {}
     if modify.proxies:
         for proxy_type, patch in modify.proxies.items():
@@ -494,17 +757,41 @@ def update_user(db: Session, dbuser: User, modify: UserModify) -> User:
                 .where(Proxy.user == dbuser, Proxy.type == proxy_type) \
                 .first() or added_proxies.get(proxy_type)
             if dbproxy:
-                dbproxy.excluded_inbounds = [get_or_create_inbound(db, tag) for tag in tags]
+                dbproxy.excluded_inbounds = [
+                    get_or_create_inbound(db, tag, inbound_cache=inbound_cache, commit=commit)
+                    for tag in tags
+                ]
+
+        from app.xray.inbound_match import repair_shadowsocks_proxy_settings
+
+        ss_tags = modify.inbounds.get(ProxyTypes.Shadowsocks) or modify.inbounds.get("shadowsocks")
+        if ss_tags:
+            ss_proxy = db.query(Proxy).where(Proxy.user == dbuser, Proxy.type == ProxyTypes.Shadowsocks).first()
+            if ss_proxy:
+                patched = repair_shadowsocks_proxy_settings(ss_proxy.settings, ss_tags)
+                if patched:
+                    ss_proxy.settings = patched
 
     explicit_status = modify.status
     if explicit_status is not None:
         dbuser.status = explicit_status
         if explicit_status in (UserStatus.disabled, UserStatus.expired, UserStatus.limited):
             dbuser.online_at = None
+            needs_disconnect = True
         dbuser.last_status_change = datetime.utcnow()
 
     if modify.data_limit is not None:
         dbuser.data_limit = (modify.data_limit or None)
+        if dbuser.data_limit:
+            from app.quota import apply_overage_on_recharge
+
+            apply_overage_on_recharge(dbuser, dbuser.data_limit)
+            if int(dbuser.used_traffic or 0) > int(dbuser.data_limit):
+                dbuser.used_traffic = int(dbuser.data_limit)
+        else:
+            from app.quota import apply_overage_on_recharge
+
+            apply_overage_on_recharge(dbuser, 0)
         if explicit_status is None and dbuser.status not in (UserStatus.expired, UserStatus.disabled):
             if not dbuser.data_limit or dbuser.used_traffic < dbuser.data_limit:
                 if dbuser.status != UserStatus.on_hold:
@@ -519,6 +806,14 @@ def update_user(db: Session, dbuser: User, modify: UserModify) -> User:
 
             elif explicit_status is None:
                 dbuser.status = UserStatus.limited
+                needs_disconnect = True
+        elif (
+            explicit_status is None
+            and dbuser.data_limit
+            and int(dbuser.used_traffic or 0) >= int(dbuser.data_limit)
+            and dbuser.status == UserStatus.limited
+        ):
+            needs_disconnect = True
 
     if modify.expire is not None:
         dbuser.expire = (modify.expire or None)
@@ -534,11 +829,6 @@ def update_user(db: Session, dbuser: User, modify: UserModify) -> User:
                             delete_notification_reminder(db, reminder)
             else:
                 dbuser.status = UserStatus.expired
-
-    if explicit_status is not None:
-        dbuser.status = explicit_status
-        if explicit_status in (UserStatus.disabled, UserStatus.expired, UserStatus.limited):
-            dbuser.online_at = None
 
     if modify.note is not None:
         dbuser.note = modify.note or None
@@ -565,6 +855,20 @@ def update_user(db: Session, dbuser: User, modify: UserModify) -> User:
     elif dbuser.next_plan is not None:
         db.delete(dbuser.next_plan)
 
+    fields_set = getattr(modify, "model_fields_set", set())
+    if "routing_preset" in fields_set:
+        dbuser.routing_preset = modify.routing_preset or None
+    if "dns_policy" in fields_set:
+        dbuser.dns_policy = modify.dns_policy
+    if "session_limit_minutes" in fields_set:
+        dbuser.session_limit_minutes = modify.session_limit_minutes or None
+    if "device_limit" in fields_set:
+        dbuser.device_limit = modify.device_limit or None
+    if "speed_limit_up" in fields_set:
+        dbuser.speed_limit_up = modify.speed_limit_up or None
+    if "speed_limit_down" in fields_set:
+        dbuser.speed_limit_down = modify.speed_limit_down or None
+
     if modify.portal_enabled is not None:
         dbuser.portal_enabled = modify.portal_enabled
         if not modify.portal_enabled:
@@ -583,8 +887,22 @@ def update_user(db: Session, dbuser: User, modify: UserModify) -> User:
 
     dbuser.edit_at = datetime.utcnow()
 
-    db.commit()
-    db.refresh(dbuser)
+    from app.quota import reactivate_if_quota_available, disconnect_user_everywhere
+
+    # Do not undo an admin-forced ``limited`` unless they also changed the package.
+    if explicit_status != UserStatus.limited or modify.data_limit is not None:
+        reactivate_if_quota_available(dbuser)
+    if dbuser.status == UserStatus.active:
+        needs_disconnect = False
+
+    if commit:
+        db.commit()
+        db.refresh(dbuser)
+        if needs_disconnect:
+            disconnect_user_everywhere(dbuser)
+    else:
+        db.flush()
+
     return dbuser
 
 
@@ -606,6 +924,9 @@ def reset_user_data_usage(db: Session, dbuser: User) -> User:
     db.add(usage_log)
 
     dbuser.used_traffic = 0
+    dbuser.used_traffic_up = 0
+    dbuser.used_traffic_down = 0
+    dbuser.overage_traffic = 0
     dbuser.node_usages.clear()
     if dbuser.status not in (UserStatus.expired, UserStatus.disabled):
         dbuser.status = UserStatus.active
@@ -646,9 +967,21 @@ def reset_user_by_next(db: Session, dbuser: User) -> User:
 
     dbuser.data_limit = dbuser.next_plan.data_limit + \
         (0 if dbuser.next_plan.add_remaining_traffic else dbuser.data_limit - dbuser.used_traffic)
-    dbuser.expire = dbuser.next_plan.expire
+    # next_plan.expire is a *duration* in seconds (same unit as UserTemplate.
+    # expire_duration), not an absolute timestamp. Convert it relative to now so
+    # activating the next plan grants the intended window instead of an epoch in
+    # the past. 0/None means "no expiry".
+    if dbuser.next_plan.expire:
+        dbuser.expire = int(
+            (datetime.utcnow() + timedelta(seconds=dbuser.next_plan.expire)).timestamp()
+        )
+    else:
+        dbuser.expire = None
 
     dbuser.used_traffic = 0
+    dbuser.used_traffic_up = 0
+    dbuser.used_traffic_down = 0
+    dbuser.overage_traffic = 0
     db.delete(dbuser.next_plan)
     dbuser.next_plan = None
     db.add(dbuser)
@@ -672,6 +1005,7 @@ def revoke_user_sub(db: Session, dbuser: User) -> User:
     from app.models.proxy import ProxySettings
 
     dbuser.sub_revoked_at = datetime.utcnow()
+    dbuser.sub_token = secrets.token_hex(16)
 
     # Rotate each proxy's credentials in place. We deliberately do NOT route this
     # through update_user(): that expects a UserModify (it reads modify-only
@@ -681,6 +1015,15 @@ def revoke_user_sub(db: Session, dbuser: User) -> User:
         settings.revoke()
         dbproxy.settings = settings.dict(no_obj=True)
 
+    db.commit()
+    db.refresh(dbuser)
+    return dbuser
+
+
+def rotate_user_sub_link(db: Session, dbuser: User) -> User:
+    """Rotate subscription URL only (sub_token); proxy credentials stay unchanged."""
+    dbuser.sub_token = secrets.token_hex(16)
+    dbuser.sub_revoked_at = None
     db.commit()
     db.refresh(dbuser)
     return dbuser
@@ -721,6 +1064,9 @@ def reset_all_users_data_usage(db: Session, admin: Optional[Admin] = None):
 
     for dbuser in query.all():
         dbuser.used_traffic = 0
+        dbuser.used_traffic_up = 0
+        dbuser.used_traffic_down = 0
+        dbuser.overage_traffic = 0
         if dbuser.status not in [UserStatus.on_hold, UserStatus.expired, UserStatus.disabled]:
             dbuser.status = UserStatus.active
         dbuser.usage_logs.clear()
@@ -1066,6 +1412,14 @@ def update_admin(db: Session, dbadmin: Admin, modified_admin: AdminModify) -> Ad
     return dbadmin
 
 
+def set_admin_totp_secret(db: Session, dbadmin: Admin, secret: Optional[str]) -> Admin:
+    """Enable (secret) or disable (None) TOTP 2FA for an admin."""
+    dbadmin.totp_secret = secret
+    db.commit()
+    db.refresh(dbadmin)
+    return dbadmin
+
+
 def partial_update_admin(db: Session, dbadmin: Admin, modified_admin: AdminPartialModify) -> Admin:
     """
     Partially updates an admin's details.
@@ -1214,6 +1568,18 @@ def create_user_template(db: Session, user_template: UserTemplateCreate) -> User
         expire_duration=user_template.expire_duration,
         username_prefix=user_template.username_prefix,
         username_suffix=user_template.username_suffix,
+        data_limit_reset_strategy=getattr(user_template, "data_limit_reset_strategy", None),
+        default_status=getattr(user_template, "default_status", None),
+        note=getattr(user_template, "note", None),
+        next_plan=(
+            user_template.next_plan
+            if isinstance(getattr(user_template, "next_plan", None), dict)
+            else (
+                user_template.next_plan.model_dump()
+                if getattr(user_template, "next_plan", None) is not None
+                else None
+            )
+        ),
         inbounds=inbound_records,
     )
     db.add(dbuser_template)
@@ -1245,6 +1611,18 @@ def update_user_template(
         dbuser_template.username_prefix = modified_user_template.username_prefix
     if modified_user_template.username_suffix is not None:
         dbuser_template.username_suffix = modified_user_template.username_suffix
+    if getattr(modified_user_template, "data_limit_reset_strategy", None) is not None:
+        dbuser_template.data_limit_reset_strategy = modified_user_template.data_limit_reset_strategy
+    if getattr(modified_user_template, "default_status", None) is not None:
+        dbuser_template.default_status = modified_user_template.default_status
+    if getattr(modified_user_template, "note", None) is not None:
+        dbuser_template.note = modified_user_template.note
+    if getattr(modified_user_template, "next_plan", None) is not None:
+        dbuser_template.next_plan = (
+            modified_user_template.next_plan.model_dump()
+            if modified_user_template.next_plan is not None
+            else None
+        )
 
     if modified_user_template.inbounds:
         inbound_tags: List[str] = []
@@ -1405,6 +1783,36 @@ def get_nodes_usage(db: Session, start: datetime, end: datetime) -> List[NodeUsa
             pass
 
     return list(usages.values())
+
+
+def get_protocol_usage(
+    db: Session,
+    start: datetime,
+    end: datetime,
+    user_id: Optional[int] = None,
+) -> List[dict]:
+    """Aggregate hourly per-protocol usage in a date range."""
+    from sqlalchemy import func
+
+    from app.db.models import NodeUserProtocolUsage
+
+    cond = and_(
+        NodeUserProtocolUsage.created_at >= start,
+        NodeUserProtocolUsage.created_at <= end,
+    )
+    if user_id is not None:
+        cond = and_(cond, NodeUserProtocolUsage.user_id == user_id)
+
+    rows = (
+        db.query(
+            NodeUserProtocolUsage.protocol,
+            func.sum(NodeUserProtocolUsage.used_traffic).label("bytes"),
+        )
+        .filter(cond)
+        .group_by(NodeUserProtocolUsage.protocol)
+        .all()
+    )
+    return [{"protocol": r[0], "used_traffic": int(r[1] or 0)} for r in rows]
 
 
 def create_node(db: Session, node: NodeCreate) -> Node:
@@ -1604,9 +2012,32 @@ def set_node_wireguard(db: Session, dbnode: Node, *, interface: str = "wg0",
 
 
 _AWG_FIELDS = (
-    "awg_jc", "awg_jmin", "awg_jmax", "awg_s1", "awg_s2",
+    "awg_jc", "awg_jmin", "awg_jmax", "awg_s1", "awg_s2", "awg_s3", "awg_s4",
     "awg_h1", "awg_h2", "awg_h3", "awg_h4",
 )
+
+
+def set_node_sg_wire(db: Session, dbnode: Node, *, enabled: bool) -> "NodeWireGuard":
+    """Enable/disable SigmaGuard Wire on a node and apply the deployment preset."""
+    from app import feature_flags
+
+    if not feature_flags.is_enabled("sigmaguard_wire"):
+        raise ValueError("SigmaGuard Wire feature flag is disabled")
+    cfg = dbnode.wireguard
+    if cfg is None:
+        raise ValueError("Node has no WireGuard configuration")
+    if enabled:
+        from app.sigmaguard_wire.bridge import apply_preset_to_node
+
+        apply_preset_to_node(cfg)
+        cfg.awg_enabled = True
+        ensure_awg_server_keys(db, dbnode)
+        cfg.sg_wire_enabled = True
+    else:
+        cfg.sg_wire_enabled = False
+    db.commit()
+    db.refresh(cfg)
+    return cfg
 
 
 def set_node_amnezia(db: Session, dbnode: Node, params: Dict[str, Optional[int]]) -> "NodeWireGuard":
@@ -1630,11 +2061,33 @@ def set_node_amnezia(db: Session, dbnode: Node, params: Dict[str, Optional[int]]
 
 
 def get_wireguard_nodes(db: Session, enabled_only: bool = True) -> List[Node]:
-    """Return nodes whose core_kind is 'wireguard'."""
-    query = db.query(Node).filter(Node.core_kind == CoreKind.wireguard.value)
+    """Return nodes that serve WireGuard (legacy core_kind or service binding)."""
+    wg_ids = (
+        db.query(NodeServiceBinding.node_id)
+        .filter(
+            NodeServiceBinding.enabled.is_(True),
+            NodeServiceBinding.service_slug.in_(("wireguard-plain", "amneziawg")),
+        )
+        .distinct()
+    )
+    query = (
+        db.query(Node)
+        .outerjoin(NodeWireGuard, NodeWireGuard.node_id == Node.id)
+        .options(contains_eager(Node.wireguard))
+        .filter(
+            or_(
+                Node.core_kind == CoreKind.wireguard.value,
+                Node.id.in_(wg_ids),
+                and_(
+                    NodeWireGuard.node_id.isnot(None),
+                    or_(NodeWireGuard.plain_enabled.is_(True), NodeWireGuard.awg_enabled.is_(True)),
+                ),
+            )
+        )
+    )
     if enabled_only:
         query = query.filter(Node.status != NodeStatus.disabled)
-    return query.all()
+    return query.distinct().all()
 
 
 def get_singbox_nodes(db: Session, enabled_only: bool = True) -> List[Node]:
@@ -1644,11 +2097,19 @@ def get_singbox_nodes(db: Session, enabled_only: bool = True) -> List[Node]:
     a normal node, so membership is defined by the presence of a NodeSingBox
     row with at least one protocol enabled.
     """
-    query = db.query(Node).join(NodeSingBox, NodeSingBox.node_id == Node.id)
+    query = (
+        db.query(Node)
+        .join(NodeSingBox, NodeSingBox.node_id == Node.id)
+        .options(contains_eager(Node.singbox))
+    )
     if enabled_only:
         query = query.filter(
             Node.status != NodeStatus.disabled,
-            or_(NodeSingBox.hysteria2_enabled.is_(True), NodeSingBox.tuic_enabled.is_(True)),
+            or_(
+                NodeSingBox.hysteria2_enabled.is_(True),
+                NodeSingBox.tuic_enabled.is_(True),
+                NodeSingBox.anytls_enabled.is_(True),
+            ),
         )
     return query.all()
 
@@ -1694,6 +2155,92 @@ def upsert_node_singbox(db: Session, dbnode: Node, **fields) -> "NodeSingBox":
     db.commit()
     db.refresh(cfg)
     return cfg
+
+
+def seed_panel_services(db: Session) -> None:
+    """Ensure catalog rows exist (idempotent)."""
+    from app.services.catalog import SERVICE_SEEDS
+
+    for row in SERVICE_SEEDS:
+        existing = db.query(PanelService).filter(PanelService.slug == row["slug"]).first()
+        if existing:
+            continue
+        db.add(
+            PanelService(
+                slug=row["slug"],
+                display_name=row["display_name"],
+                engine=row["engine"],
+                protocol=row["protocol"],
+                config=row.get("config") or {},
+                sort_order=int(row.get("sort_order") or 0),
+            )
+        )
+    db.commit()
+
+
+def get_panel_services(db: Session, active_only: bool = True) -> List[PanelService]:
+    q = db.query(PanelService).order_by(PanelService.sort_order, PanelService.slug)
+    if active_only:
+        q = q.filter(PanelService.is_active.is_(True))
+    return q.all()
+
+
+def get_node_service_bindings(
+    db: Session, node_id: int, *, enabled_only: bool = False
+) -> List[NodeServiceBinding]:
+    q = (
+        db.query(NodeServiceBinding)
+        .options(joinedload(NodeServiceBinding.service))
+        .filter(NodeServiceBinding.node_id == node_id)
+    )
+    if enabled_only:
+        q = q.filter(NodeServiceBinding.enabled.is_(True))
+    return q.all()
+
+
+def set_node_service_bindings(
+    db: Session,
+    node_id: int,
+    slugs: List[str],
+    *,
+    replace: bool = True,
+) -> List[str]:
+    """Enable ``slugs`` on a node; disable others when ``replace`` is True."""
+    seed_panel_services(db)
+    valid = {s.slug for s in get_panel_services(db)}
+    slugs = [s for s in slugs if s in valid]
+
+    if replace:
+        db.query(NodeServiceBinding).filter(NodeServiceBinding.node_id == node_id).delete()
+
+    enabled: List[str] = []
+    for slug in slugs:
+        row = (
+            db.query(NodeServiceBinding)
+            .filter(NodeServiceBinding.node_id == node_id, NodeServiceBinding.service_slug == slug)
+            .first()
+        )
+        if row is None:
+            row = NodeServiceBinding(node_id=node_id, service_slug=slug, enabled=True)
+            db.add(row)
+        else:
+            row.enabled = True
+        enabled.append(slug)
+    db.commit()
+    return enabled
+
+
+def node_has_service(db: Session, node_id: int, slug: str) -> bool:
+    return (
+        db.query(NodeServiceBinding)
+        .filter(
+            NodeServiceBinding.node_id == node_id,
+            NodeServiceBinding.service_slug == slug,
+            NodeServiceBinding.enabled.is_(True),
+        )
+        .first()
+        is not None
+    )
 
 
 def update_node_health(db: Session, dbnode: Node, latency_ms: Optional[float]) -> Node:
@@ -1914,3 +2461,188 @@ def count_online_users(db: Session, hours: int = 24, admin: Admin = None):
     if admin:
         query = query.filter(User.admin == admin)
     return query.scalar()
+
+
+# --- Subscription endpoints & token aliases ---
+
+
+def list_subscription_endpoints(db: Session, *, enabled_only: bool = False) -> List[SubscriptionEndpoint]:
+    q = db.query(SubscriptionEndpoint).order_by(SubscriptionEndpoint.id.asc())
+    if enabled_only:
+        q = q.filter(SubscriptionEndpoint.enabled.is_(True))
+    return q.all()
+
+
+def get_subscription_endpoint(db: Session, endpoint_id: int) -> Optional[SubscriptionEndpoint]:
+    return db.query(SubscriptionEndpoint).filter(SubscriptionEndpoint.id == endpoint_id).first()
+
+
+def get_subscription_endpoint_by_slug(db: Session, slug: str) -> Optional[SubscriptionEndpoint]:
+    return db.query(SubscriptionEndpoint).filter(SubscriptionEndpoint.slug == slug).first()
+
+
+def get_subscription_endpoint_by_inbound_tag(
+    db: Session, inbound_tag: str
+) -> Optional[SubscriptionEndpoint]:
+    """Explicit per-inbound override (``export_mode=inbound_only``, one row per tag)."""
+    if not inbound_tag:
+        return None
+    return (
+        db.query(SubscriptionEndpoint)
+        .filter(SubscriptionEndpoint.inbound_tag == inbound_tag)
+        .first()
+    )
+
+
+def get_subscription_endpoint_by_host_path(
+    db: Session,
+    host: Optional[str],
+    path_prefix: str,
+    *,
+    enabled_only: bool = True,
+) -> Optional[SubscriptionEndpoint]:
+    prefix = (path_prefix or "").strip().strip("/")
+    if not prefix:
+        return None
+    q = db.query(SubscriptionEndpoint).filter(SubscriptionEndpoint.path_prefix == prefix)
+    if enabled_only:
+        q = q.filter(SubscriptionEndpoint.enabled.is_(True))
+    if host:
+        q = q.filter(SubscriptionEndpoint.host == host.strip().lower().split(":")[0])
+    else:
+        q = q.filter(SubscriptionEndpoint.host.is_(None))
+    return q.first()
+
+
+def upsert_subscription_endpoint(db: Session, data: dict) -> tuple[SubscriptionEndpoint, bool]:
+    """Insert or update by slug, then by ``(host, path_prefix)``.
+
+    Returns ``(endpoint, created)``. When host/path already exists under another
+    slug, the existing row is updated in place and its slug is kept.
+    """
+    slug = data.get("slug")
+    if not slug:
+        raise ValueError("slug is required")
+
+    ep = get_subscription_endpoint_by_slug(db, slug)
+    if ep:
+        return update_subscription_endpoint(db, ep, data), False
+
+    path_prefix = data.get("path_prefix")
+    if path_prefix:
+        ep = get_subscription_endpoint_by_host_path(
+            db, data.get("host"), path_prefix, enabled_only=False
+        )
+        if ep:
+            merge = dict(data)
+            if ep.slug != slug:
+                merge.pop("slug", None)
+            return update_subscription_endpoint(db, ep, merge), False
+
+    return create_subscription_endpoint(db, data), True
+
+
+def get_default_subscription_endpoint(db: Session) -> Optional[SubscriptionEndpoint]:
+    ep = get_subscription_endpoint_by_slug(db, "default")
+    if ep:
+        return ep
+    return (
+        db.query(SubscriptionEndpoint)
+        .filter(SubscriptionEndpoint.enabled.is_(True))
+        .order_by(SubscriptionEndpoint.id.asc())
+        .first()
+    )
+
+
+def create_subscription_endpoint(db: Session, data: dict) -> SubscriptionEndpoint:
+    ep = SubscriptionEndpoint(**data)
+    db.add(ep)
+    db.commit()
+    db.refresh(ep)
+    return ep
+
+
+def update_subscription_endpoint(
+    db: Session, ep: SubscriptionEndpoint, data: dict
+) -> SubscriptionEndpoint:
+    for key, val in data.items():
+        if val is not None or key in ("host", "inbound_tag", "listen_port", "format_default", "legacy_panel_id"):
+            setattr(ep, key, val)
+    db.commit()
+    db.refresh(ep)
+    return ep
+
+
+def remove_subscription_endpoint(db: Session, ep: SubscriptionEndpoint) -> None:
+    db.delete(ep)
+    db.commit()
+
+
+def get_subscription_token_alias(
+    db: Session,
+    token: str,
+    *,
+    endpoint_id: Optional[int] = None,
+) -> Optional[SubscriptionTokenAlias]:
+    """Resolve legacy subId — always scoped by endpoint when host is known (panel.md §10)."""
+    if not token:
+        return None
+    q = db.query(SubscriptionTokenAlias).filter(SubscriptionTokenAlias.token == token)
+    if endpoint_id is not None:
+        return q.filter(SubscriptionTokenAlias.endpoint_id == endpoint_id).first()
+    return q.filter(SubscriptionTokenAlias.endpoint_id.is_(None)).first()
+
+
+def create_subscription_token_alias(
+    db: Session, data: dict, *, commit: bool = True
+) -> SubscriptionTokenAlias:
+    alias = SubscriptionTokenAlias(**data)
+    db.add(alias)
+    if commit:
+        db.commit()
+        db.refresh(alias)
+    else:
+        db.flush()
+    return alias
+
+
+def upsert_subscription_token_alias(
+    db: Session,
+    *,
+    token: str,
+    user_id: int,
+    endpoint_id: Optional[int] = None,
+    source: str = "manual",
+    commit: bool = True,
+) -> SubscriptionTokenAlias:
+    existing = get_subscription_token_alias(db, token, endpoint_id=endpoint_id)
+    if existing:
+        existing.user_id = user_id
+        existing.source = source
+        if commit:
+            db.commit()
+            db.refresh(existing)
+        else:
+            db.flush()
+        return existing
+    return create_subscription_token_alias(
+        db,
+        {
+            "token": token,
+            "user_id": user_id,
+            "endpoint_id": endpoint_id,
+            "source": source,
+        },
+        commit=commit,
+    )
+
+
+def list_subscription_token_aliases_for_user(
+    db: Session, user_id: int
+) -> List[SubscriptionTokenAlias]:
+    return (
+        db.query(SubscriptionTokenAlias)
+        .filter(SubscriptionTokenAlias.user_id == user_id)
+        .order_by(SubscriptionTokenAlias.id.asc())
+        .all()
+    )

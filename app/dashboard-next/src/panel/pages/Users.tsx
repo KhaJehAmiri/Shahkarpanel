@@ -10,7 +10,7 @@ import {
 } from "../lib/data-limit";
 import { PageHeader } from "../components/Shell";
 import {
-  Button, Callout, Card, Checkbox, CopyField, Drawer, EmptyState, Field, Input, Modal, Pill, Select,
+  Button, Callout, Card, Checkbox, CopyField, Drawer, EmptyState, Field, Input, Modal, Pill, Pager, Select,
   SkeletonRows, Toggle, UsageBar, useToast,
 } from "../components/ui";
 import { QR } from "../components/QR";
@@ -18,33 +18,35 @@ import { absoluteUrl } from "../lib/url";
 import { resolveSubscribeBrowserUrl, resolveWgUrl } from "../../lib/subscribe-url";
 import { copyToClipboard } from "../lib/clipboard";
 import { IcEdit, IcExternal, IcEye, IcPlus, IcRefresh, IcShare, IcTrash } from "../components/icons";
-import { UserTemplatesPanel } from "../components/UserTemplates";
+import { UserTemplatesPanel, UserTemplateRow } from "../components/UserTemplates";
+import { BulkInboundModal } from "../components/BulkInboundModal";
+import { BulkExtendModal, BulkResetUsageModal } from "../components/BulkUserActionModals";
+import { BulkCreateUsersModal } from "../components/BulkCreateUsersModal";
+import { UserProtocolChips } from "../components/UserProtocolChips";
 import { useApp } from "../context/AppContext";
 import { useCopilot } from "../copilot/CopilotContext";
-import { NXPANEL_WG_KIND, protocolAssignable, userDisplayProtocols, userWgStackLabels, wgKindForSubmit } from "../lib/userHelpers";
+import {
+  NXPANEL_WG_KIND,
+  defaultProtoInboundTags,
+  deriveSsMethodFromInbounds,
+  generateRandomUsername,
+  inboundMatchesSsMethod,
+  protocolAssignable,
+  toggleSsInboundTag,
+  userDisplayProtocols,
+  userWgStackLabels,
+  wgKindForSubmit,
+} from "../lib/userHelpers";
+import { flattenUserInbounds, inferSourceSlug } from "../lib/userListHelpers";
+import { summarizeProxyCredentials } from "../lib/userCredentials";
 
-const PAGE = 12;
+const PAGE_SIZES = [12, 25, 50];
 const STATUSES = ["active", "disabled", "expired", "limited", "on_hold"];
-const SS_METHODS = [
-  "chacha20-ietf-poly1305",
-  "aes-256-gcm",
-  "aes-128-gcm",
-  "2022-blake3-aes-256-gcm",
-  "2022-blake3-aes-128-gcm",
-  "2022-blake3-chacha20-poly1305",
-];
 const FLOWS = [
   { v: "", labelKey: "users.flowNone" },
   { v: "xtls-rprx-vision", labelKey: "" },
 ];
 
-function isSs2022(method: string): boolean {
-  return method.startsWith("2022-blake3");
-}
-
-function inboundMatchesSsMethod(inboundMethod: string | null | undefined, userMethod: string): boolean {
-  return isSs2022(inboundMethod || "") === isSs2022(userMethod);
-}
 const PROTO_LABEL: Record<string, string> = {
   vless: "VLESS",
   vmess: "VMess",
@@ -54,11 +56,12 @@ const PROTO_LABEL: Record<string, string> = {
   amneziawg: "AmneziaWG",
   hysteria2: "Hysteria2",
   tuic: "TUIC",
+  anytls: "AnyTLS",
 };
 
-const NATIVE_PROTOCOLS = ["wireguard", "amneziawg", "hysteria2", "tuic"] as const;
+const NATIVE_PROTOCOLS = ["wireguard", "amneziawg", "hysteria2", "tuic", "anytls"] as const;
 
-const PROTO_ORDER = ["vless", "vmess", "trojan", "shadowsocks", "wireguard", "amneziawg", "hysteria2", "tuic"];
+const PROTO_ORDER = ["vless", "vmess", "trojan", "shadowsocks", "wireguard", "amneziawg", "hysteria2", "tuic", "anytls"];
 
 const PROTO_VISUAL: Record<string, { icon: string; hue: string }> = {
   vless: { icon: "⚡", hue: "#2ee0c4" },
@@ -69,6 +72,7 @@ const PROTO_VISUAL: Record<string, { icon: string; hue: string }> = {
   amneziawg: { icon: "🛡", hue: "#22d3ee" },
   hysteria2: { icon: "🚀", hue: "#f472b6" },
   tuic: { icon: "◉", hue: "#34d399" },
+  anytls: { icon: "🛡", hue: "#a78bfa" },
 };
 
 export const Users: FC = () => {
@@ -79,13 +83,56 @@ export const Users: FC = () => {
   const { consumeIntent } = useCopilot();
   const toast = useToast();
   const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(PAGE_SIZES[0]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [protocolFilter, setProtocolFilter] = useState("");
+  const [sourceFilter, setSourceFilter] = useState("");
+  const [inboundFilter, setInboundFilter] = useState("");
+  const [expiringSoon, setExpiringSoon] = useState(false);
+  const [nearLimit, setNearLimit] = useState(false);
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [createWg, setCreateWg] = useState(false);
   const [editUser, setEditUser] = useState<UserItem | null>(null);
   const [viewUser, setViewUser] = useState<UserItem | null>(null);
   const [showImport, setShowImport] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [showBulkInbound, setShowBulkInbound] = useState(false);
+  const [showBulkExtend, setShowBulkExtend] = useState(false);
+  const [showBulkReset, setShowBulkReset] = useState(false);
+  const [showBulkCreate, setShowBulkCreate] = useState(false);
+
+  interface UserFilterOptions {
+    source_servers: Array<{ slug: string; user_count: number }>;
+    inbound_tags: string[];
+    protocols: string[];
+  }
+  const filterOptions = useFetch<UserFilterOptions>(() => api.get("/users/filter-options"), []);
+
+  const templates = useFetch<UserTemplateRow[]>(() => api.get("/user_template"), []);
+  const inboundsList = useFetch<InboundsByProtocol>(() => api.get("/inbounds"), []);
+  const inboundTags = useMemo(() => {
+    const ib = inboundsList.data;
+    if (!ib) return [] as string[];
+    const tags = new Set<string>();
+    Object.values(ib).forEach((rows) => rows?.forEach((r) => tags.add(r.tag)));
+    return Array.from(tags).sort();
+  }, [inboundsList.data]);
+
+  const toggleSelected = (username: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(username)) next.delete(username);
+      else next.add(username);
+      return next;
+    });
+  };
+  const selectAllOnPage = () => {
+    if (!data?.users.length) return;
+    setSelected(new Set(data.users.map((u) => u.username)));
+  };
+  const clearSelection = () => setSelected(new Set());
 
   // The Copilot can deep-link straight into "create user" (optionally WireGuard).
   useEffect(() => {
@@ -96,17 +143,47 @@ export const Users: FC = () => {
 
   const query = useMemo(() => {
     const p = new URLSearchParams();
-    p.set("offset", String(page * PAGE));
-    p.set("limit", String(PAGE));
+    p.set("offset", String(page * pageSize));
+    p.set("limit", String(pageSize));
     if (search.trim()) p.set("search", search.trim());
     if (statusFilter) p.set("status", statusFilter);
+    if (protocolFilter) p.set("protocol", protocolFilter);
+    if (sourceFilter) p.set("source_slug", sourceFilter);
+    if (inboundFilter) p.set("inbound_tag", inboundFilter);
+    if (expiringSoon) p.set("expiring_within_days", "7");
+    if (nearLimit) p.set("near_limit_percent", "85");
+    p.set("sort", "created_at");
     return p.toString();
-  }, [page, search, statusFilter]);
+  }, [page, pageSize, search, statusFilter, protocolFilter, sourceFilter, inboundFilter, expiringSoon, nearLimit]);
+
+  const activeFilterCount = useMemo(() => {
+    let n = 0;
+    if (protocolFilter) n += 1;
+    if (sourceFilter) n += 1;
+    if (inboundFilter) n += 1;
+    if (expiringSoon) n += 1;
+    if (nearLimit) n += 1;
+    return n;
+  }, [protocolFilter, sourceFilter, inboundFilter, expiringSoon, nearLimit]);
+
+  const knownSourceSlugs = useMemo(
+    () => (filterOptions.data?.source_servers || []).map((s) => s.slug),
+    [filterOptions.data],
+  );
+
+  const clearAdvancedFilters = () => {
+    setProtocolFilter("");
+    setSourceFilter("");
+    setInboundFilter("");
+    setExpiringSoon(false);
+    setNearLimit(false);
+    setPage(0);
+  };
 
   const { data, loading, error, reload } = useFetch<UsersResponse>(() => api.get(`/users?${query}`), [query]);
   useLiveReload(reload, 30000);
   const total = data?.total ?? 0;
-  const pages = Math.max(1, Math.ceil(total / PAGE));
+  const pages = Math.max(1, Math.ceil(total / pageSize));
 
   const toggleUser = async (u: UserItem) => {
     const next = u.status === "disabled" ? "active" : "disabled";
@@ -145,6 +222,16 @@ export const Users: FC = () => {
             </Button>
           )}
           {canWrite && <Button variant="ghost" onClick={() => setShowImport(true)}>{t("users.import")}</Button>}
+          {canWrite && (
+            <Button variant="ghost" onClick={() => setShowBulkCreate(true)}>
+              {t("bulkCreate.short")}
+            </Button>
+          )}
+          {canWrite && (
+            <Button variant="ghost" onClick={() => setShowBulkInbound(true)}>
+              {t("bulkInbound.short")}
+            </Button>
+          )}
           {canWrite && <Button variant="primary" onClick={() => setShowCreate(true)}><IcPlus className="nx-ico" /> {t("common.create")}</Button>}
         </>}
       />
@@ -152,39 +239,146 @@ export const Users: FC = () => {
       {admin?.is_sudo && <UserTemplatesPanel />}
 
       <Card className="nx-toolbar nx-mb-20">
-        <div className="nx-toolbar-inner">
-          <Input placeholder={t("users.searchPlaceholder")} value={search} onChange={(e: any) => { setSearch(e.target.value); setPage(0); }} style={{ maxWidth: 320 }} />
-          <Select value={statusFilter} onChange={(e: any) => { setStatusFilter(e.target.value); setPage(0); }} style={{ maxWidth: 200 }}>
+        <div className="nx-toolbar-inner" style={{ flexWrap: "wrap", gap: 10 }}>
+          <Input
+            placeholder={t("users.searchPlaceholder")}
+            value={search}
+            onChange={(e: any) => { setSearch(e.target.value); setPage(0); }}
+            style={{ maxWidth: 280, minWidth: 180 }}
+          />
+          <Select value={statusFilter} onChange={(e: any) => { setStatusFilter(e.target.value); setPage(0); }} style={{ maxWidth: 180 }}>
             <option value="">{t("common.all")} — {t("common.status")}</option>
             {STATUSES.map((s) => <option key={s} value={s}>{t(`users.status.${s}`)}</option>)}
           </Select>
+          <Button
+            size="sm"
+            variant={showAdvancedFilters || activeFilterCount > 0 ? "primary" : "ghost"}
+            onClick={() => setShowAdvancedFilters((v) => !v)}
+          >
+            {t("users.filters.advanced")}
+            {activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
+          </Button>
+          {activeFilterCount > 0 && (
+            <Button size="sm" variant="ghost" onClick={clearAdvancedFilters}>{t("users.filters.clear")}</Button>
+          )}
           <div className="nx-spacer" />
+          <Select
+            value={String(pageSize)}
+            onChange={(e: any) => { setPageSize(parseInt(e.target.value, 10)); setPage(0); }}
+            style={{ maxWidth: 100 }}
+            title={t("users.perPage")}
+          >
+            {PAGE_SIZES.map((n) => <option key={n} value={n}>{n} {t("users.perPage")}</option>)}
+          </Select>
           <span className="nx-faint" style={{ fontSize: 12 }}>{t("common.total")}: {total}</span>
         </div>
+        {(showAdvancedFilters || activeFilterCount > 0) && (
+          <div className="nx-toolbar-inner" style={{ flexWrap: "wrap", gap: 10, marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--nx-border, rgba(255,255,255,.08))" }}>
+            <Select value={protocolFilter} onChange={(e: any) => { setProtocolFilter(e.target.value); setPage(0); }} style={{ maxWidth: 180 }}>
+              <option value="">{t("users.filters.allProtocols")}</option>
+              {(filterOptions.data?.protocols || PROTO_ORDER).map((p) => (
+                <option key={p} value={p}>{PROTO_LABEL[p] || p}</option>
+              ))}
+            </Select>
+            <Select value={sourceFilter} onChange={(e: any) => { setSourceFilter(e.target.value); setPage(0); }} style={{ maxWidth: 200 }}>
+              <option value="">{t("users.filters.allSources")}</option>
+              {(filterOptions.data?.source_servers || []).map((s) => (
+                <option key={s.slug} value={s.slug}>{s.slug} ({s.user_count})</option>
+              ))}
+            </Select>
+            <Select value={inboundFilter} onChange={(e: any) => { setInboundFilter(e.target.value); setPage(0); }} style={{ maxWidth: 220 }}>
+              <option value="">{t("users.filters.allInbounds")}</option>
+              {(filterOptions.data?.inbound_tags || inboundTags).map((tag) => (
+                <option key={tag} value={tag}>{tag}</option>
+              ))}
+            </Select>
+            <label className="nx-row" style={{ gap: 6, fontSize: 12 }}>
+              <Checkbox checked={expiringSoon} onChange={() => { setExpiringSoon((v) => !v); setPage(0); }} />
+              {t("users.filters.expiringSoon")}
+            </label>
+            <label className="nx-row" style={{ gap: 6, fontSize: 12 }}>
+              <Checkbox checked={nearLimit} onChange={() => { setNearLimit((v) => !v); setPage(0); }} />
+              {t("users.filters.nearLimit")}
+            </label>
+          </div>
+        )}
       </Card>
 
+      {canWrite && selected.size > 0 && (
+        <Card className="nx-mb-20" style={{ padding: "12px 16px" }}>
+          <div className="nx-row" style={{ flexWrap: "wrap", gap: 10 }}>
+            <span style={{ fontWeight: 600 }}>{t("bulkInbound.selectedCount", { n: selected.size })}</span>
+            <Button size="sm" variant="primary" onClick={() => setShowBulkExtend(true)}>{t("bulkExtend.short")}</Button>
+            <Button size="sm" variant="ghost" onClick={() => setShowBulkInbound(true)}>{t("bulkInbound.assign")}</Button>
+            <Button size="sm" variant="ghost" onClick={() => setShowBulkReset(true)}>{t("bulkReset.short")}</Button>
+            <Button size="sm" variant="ghost" onClick={clearSelection}>{t("bulkInbound.clearSelection")}</Button>
+          </div>
+        </Card>
+      )}
+
       <Card pad0>
-        {loading ? <div style={{ padding: 20 }}><SkeletonRows rows={6} cols={5} /></div>
-          : error ? <EmptyState title={t("common.error")} desc={error} action={<Button onClick={reload}>{t("common.retry")}</Button>} />
+        {loading && !data ? <div style={{ padding: 20 }}><SkeletonRows rows={6} cols={5} /></div>
+          : error && !data ? <EmptyState title={t("common.error")} desc={error} action={<Button onClick={() => reload({ background: false })}>{t("common.retry")}</Button>} />
           : !data?.users.length ? <EmptyState title={t("common.noData")} action={<Button variant="primary" onClick={() => setShowCreate(true)}><IcPlus className="nx-ico" /> {t("common.create")}</Button>} />
           : (
             <div className="nx-table-wrap">
               <table className="nx-table">
                 <thead><tr>
-                  <th>{t("common.username")}</th><th>{t("common.status")}</th><th>{t("common.protocols")}</th>
+                  {canWrite && (
+                    <th style={{ width: 40 }}>
+                      <Checkbox
+                        checked={!!data?.users.length && data.users.every((u) => selected.has(u.username))}
+                        onChange={() => {
+                          if (data?.users.every((u) => selected.has(u.username))) clearSelection();
+                          else selectAllOnPage();
+                        }}
+                      />
+                    </th>
+                  )}
+                  <th>{t("common.username")}</th><th>{t("common.status")}</th>
+                  <th>{t("users.filters.serverInbound")}</th>
+                  <th style={{ width: 156 }}>{t("common.protocols")}</th>
                   <th>{t("users.used")}</th><th>{t("users.expire")}</th><th style={{ textAlign: "end" }}>{t("common.actions")}</th>
                 </tr></thead>
                 <tbody>
                   {data.users.map((u) => {
                     const pct = usagePct(u.used_traffic, u.data_limit);
                     const protos = userDisplayProtocols(u.proxies as Record<string, unknown> | undefined);
+                    const inboundTagsList = flattenUserInbounds(u.inbounds);
+                    const sourceSlug = inferSourceSlug(u.username, knownSourceSlugs);
                     return (
                       <tr key={u.username} style={{ cursor: "pointer" }} onClick={() => setViewUser(u)}>
+                        {canWrite && (
+                          <td onClick={(e) => e.stopPropagation()}>
+                            <Checkbox
+                              checked={selected.has(u.username)}
+                              onChange={() => toggleSelected(u.username)}
+                            />
+                          </td>
+                        )}
                         <td style={{ fontWeight: 600 }}>{u.username}{u.note ? <div className="nx-faint" style={{ fontWeight: 400, fontSize: 11 }}>{u.note}</div> : null}</td>
                         <td><Pill tone={statusTone(u.status)} dot>{t(`users.status.${u.status}`, u.status)}</Pill></td>
-                        <td><div className="nx-row" style={{ gap: 4 }}>{protos.length ? protos.map((p) => <Pill key={p} tone="accent">{PROTO_LABEL[p] || p}</Pill>) : <span className="nx-faint">—</span>}</div></td>
+                        <td style={{ maxWidth: 200 }}>
+                          {sourceSlug ? (
+                            <Pill tone="default">{sourceSlug}</Pill>
+                          ) : (
+                            <span className="nx-faint">—</span>
+                          )}
+                          {inboundTagsList.length > 0 ? (
+                            <div className="nx-faint" style={{ fontSize: 11, marginTop: 4, lineHeight: 1.35 }} title={inboundTagsList.join(", ")}>
+                              {inboundTagsList.slice(0, 2).join(", ")}
+                              {inboundTagsList.length > 2 ? ` +${inboundTagsList.length - 2}` : ""}
+                            </div>
+                          ) : null}
+                        </td>
+                        <td><UserProtocolChips protos={protos} /></td>
                         <td style={{ minWidth: 170 }}>
                           <div style={{ fontSize: 12 }}>{formatBytes(u.used_traffic)} / {u.data_limit ? formatBytes(u.data_limit) : t("users.unlimited")}</div>
+                          {(u.overage_traffic ?? 0) > 0 ? (
+                            <div className="nx-faint" style={{ fontSize: 11, marginTop: 2, color: "var(--nx-danger, #ef4444)" }}>
+                              +{formatBytes(u.overage_traffic!)} {t("users.overage")}
+                            </div>
+                          ) : null}
                           {u.data_limit ? <div style={{ marginTop: 5 }}><UsageBar pct={pct} /></div> : null}
                         </td>
                         <td>{u.expire ? formatDate(u.expire, i18n.language) : <span className="nx-faint">{t("users.never")}</span>}</td>
@@ -205,21 +399,57 @@ export const Users: FC = () => {
           )}
       </Card>
 
-      {total > PAGE && (
-        <div className="nx-row" style={{ justifyContent: "space-between", marginTop: 14 }}>
-          <span className="nx-faint" style={{ fontSize: 12 }}>{t("users.showing", { from: page * PAGE + 1, to: Math.min((page + 1) * PAGE, total), total })}</span>
-          <div className="nx-row">
-            <Button size="sm" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>{t("users.prev")}</Button>
-            <span className="nx-faint" style={{ fontSize: 12 }}>{page + 1} / {pages}</span>
-            <Button size="sm" disabled={page + 1 >= pages} onClick={() => setPage((p) => p + 1)}>{t("users.next")}</Button>
-          </div>
-        </div>
+      {total > pageSize && (
+        <Pager
+          page={page}
+          pages={pages}
+          onPage={setPage}
+          summary={t("users.showing", {
+            from: page * pageSize + 1,
+            to: Math.min((page + 1) * pageSize, total),
+            total,
+          })}
+        />
       )}
 
       {showCreate && <UserFormDrawer mode="create" presetWireguard={createWg} onClose={() => setShowCreate(false)} onDone={() => { setShowCreate(false); reload(); }} />}
       {editUser && <UserFormDrawer mode="edit" user={editUser} onClose={() => setEditUser(null)} onDone={() => { setEditUser(null); reload(); }} />}
       {showImport && <UserImportWizard onClose={() => setShowImport(false)} onDone={() => { setShowImport(false); reload(); }} />}
       {viewUser && <UserDetail username={viewUser.username} onClose={() => setViewUser(null)} onEdit={() => { setEditUser(viewUser); setViewUser(null); }} />}
+      {showBulkInbound && (
+        <BulkInboundModal
+          open
+          onClose={() => setShowBulkInbound(false)}
+          onDone={() => { clearSelection(); reload(); }}
+          selectedUsernames={Array.from(selected)}
+          totalUsers={total}
+          inboundTags={inboundTags}
+        />
+      )}
+      {showBulkExtend && (
+        <BulkExtendModal
+          open
+          onClose={() => setShowBulkExtend(false)}
+          onDone={() => { clearSelection(); reload(); }}
+          selectedUsernames={Array.from(selected)}
+        />
+      )}
+      {showBulkReset && (
+        <BulkResetUsageModal
+          open
+          onClose={() => setShowBulkReset(false)}
+          onDone={() => { clearSelection(); reload(); }}
+          selectedUsernames={Array.from(selected)}
+        />
+      )}
+      {showBulkCreate && (
+        <BulkCreateUsersModal
+          open
+          onClose={() => setShowBulkCreate(false)}
+          onDone={() => reload()}
+          templates={templates.data || []}
+        />
+      )}
     </div>
   );
 };
@@ -229,9 +459,12 @@ type ProtoState = { enabled: boolean; tags: string[]; flow: string; method: stri
 
 const WIZARD_STEPS = ["wizardStep1", "wizardStep2", "wizardStep3"] as const;
 
+type UserFormTab = "protocols" | "plan" | "advanced";
+
 const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireguard?: boolean; onClose: () => void; onDone: () => void }> = ({ mode, user, presetWireguard, onClose, onDone }) => {
   const { t } = useTranslation();
   const { admin, isEnabled, expertMode } = useApp();
+  const canWrite = !!admin?.is_sudo || admin?.role !== "support";
   const toast = useToast();
   const inbounds = useFetch<InboundsByProtocol>(() => api.get("/inbounds"), []);
   const nodes = useFetch<NodeItem[]>(() => api.get("/nodes"), []);
@@ -242,6 +475,7 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
   }, []);
   const hasHy2Node = (nodes.data || []).some((n) => n.singbox?.hysteria2_enabled);
   const hasTuicNode = (nodes.data || []).some((n) => n.singbox?.tuic_enabled);
+  const hasAnytlsNode = (nodes.data || []).some((n) => n.singbox?.anytls_enabled);
   const hasPlainWgNode = (nodes.data || []).some(
     (n) => n.core_kind === "wireguard" && n.wireguard?.plain_enabled !== false,
   );
@@ -252,16 +486,25 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
     () => (admin?.is_sudo ? api.get("/user_template") : Promise.resolve([])),
     [admin?.is_sudo],
   );
+  const routingPresets = useFetch<{ presets: Record<string, { label: string }> }>(
+    () => api.get("/routing/presets"),
+    [],
+  );
+  const dnsPresets = useFetch<{ presets: Record<string, { label: string }> }>(
+    () => api.get("/routing/dns-presets"),
+    [],
+  );
   const [templateId, setTemplateId] = useState("");
 
-  const [username, setUsername] = useState(user?.username || "");
+  const [username, setUsername] = useState(
+    user?.username || (mode === "create" ? generateRandomUsername() : ""),
+  );
   const [dataLimitUnit, setDataLimitUnit] = useState<DataLimitUnit>(
-    user?.data_limit ? detectDataLimitUnit(user.data_limit) : "MB",
+    user?.data_limit ? detectDataLimitUnit(user.data_limit) : "GB",
   );
   const [dataLimitValue, setDataLimitValue] = useState(
     user?.data_limit ? bytesToDataLimitValue(user.data_limit, detectDataLimitUnit(user.data_limit)) : "",
   );
-  const [unlimited, setUnlimited] = useState(!user?.data_limit);
   const [expireDate, setExpireDate] = useState(user?.expire ? new Date(user.expire * 1000).toISOString().slice(0, 10) : "");
   const [noExpire, setNoExpire] = useState(!user?.expire);
   const [status, setStatus] = useState(
@@ -269,37 +512,129 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
   );
   const [reset, setReset] = useState(user?.data_limit_reset_strategy || "no_reset");
   const [clientProfile, setClientProfile] = useState(user?.client_profile || "normal");
+  const [routingPreset, setRoutingPreset] = useState(user?.routing_preset || "");
+  const [dnsPreset, setDnsPreset] = useState(
+    (user?.dns_policy && typeof user.dns_policy === "object" && "preset" in user.dns_policy
+      ? String((user.dns_policy as { preset?: string }).preset || "")
+      : "") || "",
+  );
+  const [speedUp, setSpeedUp] = useState(
+    user?.speed_limit_up != null ? String(user.speed_limit_up) : "",
+  );
+  const [speedDown, setSpeedDown] = useState(
+    user?.speed_limit_down != null ? String(user.speed_limit_down) : "",
+  );
+  const [deviceLimit, setDeviceLimit] = useState(
+    user?.device_limit != null ? String(user.device_limit) : "",
+  );
+  const [sessionLimitMinutes, setSessionLimitMinutes] = useState(
+    user?.session_limit_minutes != null ? String(user.session_limit_minutes) : "",
+  );
   const [note, setNote] = useState(user?.note || "");
   const [portalEnabled, setPortalEnabled] = useState(!!user?.portal_enabled);
   const [portalPassword, setPortalPassword] = useState("");
   const [protos, setProtos] = useState<Record<string, ProtoState>>({});
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState(false);
+  const [loadingEdit, setLoadingEdit] = useState(mode === "edit");
+  const [fetchedUser, setFetchedUser] = useState<UserItem | null>(null);
+  const [subToken, setSubToken] = useState("");
+  const [subscriptionUrl, setSubscriptionUrl] = useState("");
+  const [subRevokedAt, setSubRevokedAt] = useState<string | null>(null);
+  const [credBusy, setCredBusy] = useState(false);
+  const [formTab, setFormTab] = useState<UserFormTab>("protocols");
   const [wizardStep, setWizardStep] = useState(1);
   const useWizard = mode === "create" && !expertMode && !templateId;
+  const tabbedForm = !useWizard;
+  const editProfile = mode === "edit" ? (fetchedUser ?? user) : user;
+
+  const applyCredentialRefresh = (record: UserItem) => {
+    setFetchedUser(record);
+    hydrateFromUser(record);
+    setSubToken(record.sub_token || "");
+    setSubscriptionUrl(record.subscription_url || record.public_subscription_url || "");
+    setSubRevokedAt(record.sub_revoked_at || null);
+  };
+
+  const hydrateFromUser = (record: UserItem) => {
+    setDataLimitUnit(record.data_limit ? detectDataLimitUnit(record.data_limit) : "GB");
+    setDataLimitValue(
+      record.data_limit
+        ? bytesToDataLimitValue(record.data_limit, detectDataLimitUnit(record.data_limit))
+        : "",
+    );
+    setExpireDate(record.expire ? new Date(record.expire * 1000).toISOString().slice(0, 10) : "");
+    setNoExpire(!record.expire);
+    setStatus(
+      ["active", "on_hold", "disabled", "limited", "expired"].includes(record.status)
+        ? record.status
+        : "active",
+    );
+    setReset(record.data_limit_reset_strategy || "no_reset");
+    setClientProfile(record.client_profile || "normal");
+    setRoutingPreset(record.routing_preset || "");
+    setDnsPreset(
+      record.dns_policy && typeof record.dns_policy === "object" && "preset" in record.dns_policy
+        ? String((record.dns_policy as { preset?: string }).preset || "")
+        : "",
+    );
+    setSpeedUp(record.speed_limit_up != null ? String(record.speed_limit_up) : "");
+    setSpeedDown(record.speed_limit_down != null ? String(record.speed_limit_down) : "");
+    setDeviceLimit(record.device_limit != null ? String(record.device_limit) : "");
+    setSessionLimitMinutes(
+      record.session_limit_minutes != null ? String(record.session_limit_minutes) : "",
+    );
+    setNote(record.note || "");
+    setPortalEnabled(!!record.portal_enabled);
+    setPortalPassword("");
+  };
+
+  useEffect(() => {
+    if (mode !== "edit" || !user?.username) {
+      setLoadingEdit(false);
+      return;
+    }
+    let cancelled = false;
+    setLoadingEdit(true);
+    api.get<UserItem>(`/user/${encodeURIComponent(user.username)}`)
+      .then((full) => {
+        if (cancelled) return;
+        applyCredentialRefresh(full);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) {
+          toast.push(e instanceof Error ? e.message : t("common.error"), "error");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingEdit(false);
+      });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, user?.username]);
 
   // Initialize protocol state once inbounds + user are known.
   useEffect(() => {
     if (!inbounds.data) return;
+    const profile = mode === "edit" ? (fetchedUser ?? user) : user;
     const awgInboundTags = (inbounds.data.amneziawg || []).map((i) => i.tag);
     const next: Record<string, ProtoState> = {};
-    const userProtos = user?.proxies ? Object.keys(user.proxies) : [];
+    const userProtos = profile?.proxies ? Object.keys(profile.proxies) : [];
     Object.keys(inbounds.data).forEach((proto) => {
       if (proto === "amneziawg") return;
       const tags = inbounds.data![proto].map((i) => i.tag);
       const enabled = mode === "edit" ? userProtos.includes(proto) : false;
-      const selected = user?.inbounds?.[proto] || tags;
+      const selected = profile?.inbounds?.[proto] || tags;
       next[proto] = {
         enabled,
         tags: enabled ? selected.filter((s) => tags.includes(s)) : tags,
-        flow: user?.proxies?.[proto]?.flow || "",
-        method: user?.proxies?.[proto]?.method || "chacha20-ietf-poly1305",
+        flow: profile?.proxies?.[proto]?.flow || "",
+        method: profile?.proxies?.[proto]?.method || "chacha20-ietf-poly1305",
       };
     });
     // WireGuard is a first-class protocol that is *not* an Xray inbound, so it
     // never comes back from /inbounds. Surface it as a synthetic toggle: the
     // server generates the peer keypair + allocates the IP automatically.
-    const wgSettings = user?.proxies?.wireguard as {
+    const wgSettings = profile?.proxies?.wireguard as {
       awg_address?: string;
       address?: string;
       nexusPanelKind?: string;
@@ -310,7 +645,7 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
     next["amneziawg"] = {
       enabled: mode === "edit" ? userProtos.includes("wireguard") && (wgKind === "amneziawg" || wgKind === "both" || (hasAwgPeer && !hasPlainPeer && !wgKind)) : false,
       tags: mode === "edit"
-        ? (user?.inbounds?.wireguard || []).filter((t) => awgInboundTags.includes(t))
+        ? (profile?.inbounds?.wireguard || []).filter((t) => awgInboundTags.includes(t))
         : awgInboundTags,
       flow: "",
       method: "",
@@ -337,7 +672,7 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
       next["wireguard"].enabled = false;
       next["amneziawg"].enabled = true;
     }
-    for (const p of ["hysteria2", "tuic"]) {
+    for (const p of ["hysteria2", "tuic", "anytls"]) {
       next[p] = {
         enabled: mode === "edit" ? userProtos.includes(p) : false,
         tags: [],
@@ -346,20 +681,55 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
       };
     }
     setProtos(next);
-    const exp: Record<string, boolean> = {};
-    Object.entries(next).forEach(([p, v]) => { exp[p] = v.enabled; });
-    setExpanded(exp);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inbounds.data]);
+  }, [inbounds.data, mode, fetchedUser, user?.username, presetWireguard]);
+
+  const credentialLines = useMemo(
+    () => summarizeProxyCredentials(editProfile?.proxies),
+    [editProfile?.proxies],
+  );
+
+  const handleRevokeSub = async () => {
+    if (!user?.username || credBusy) return;
+    if (!confirm(t("users.revokeSubFullConfirm"))) return;
+    setCredBusy(true);
+    try {
+      const full = await api.post<UserItem>(`/user/${encodeURIComponent(user.username)}/revoke_sub`);
+      applyCredentialRefresh(full);
+      toast.push(t("users.revokeSubDone"), "success");
+    } catch (e: unknown) {
+      toast.push(e instanceof Error ? e.message : t("common.error"), "error");
+    } finally {
+      setCredBusy(false);
+    }
+  };
+
+  const handleRotateSub = async () => {
+    if (!user?.username || credBusy) return;
+    if (!confirm(t("users.rotateSubLinkConfirm"))) return;
+    setCredBusy(true);
+    try {
+      const full = await api.post<UserItem>(`/user/${encodeURIComponent(user.username)}/rotate_sub`);
+      applyCredentialRefresh(full);
+      toast.push(t("common.saved"), "success");
+    } catch (e: unknown) {
+      toast.push(e instanceof Error ? e.message : t("common.error"), "error");
+    } finally {
+      setCredBusy(false);
+    }
+  };
 
   const setProto = (p: string, patch: Partial<ProtoState>) => {
     setProtos((s) => ({ ...s, [p]: { ...s[p], ...patch } }));
-    if (patch.enabled === true) setExpanded((e) => ({ ...e, [p]: true }));
-    if (patch.enabled === false) setExpanded((e) => ({ ...e, [p]: false }));
   };
   const toggleTag = (p: string, tag: string) => setProtos((s) => {
     const cur = s[p];
-    const tags = cur.tags.includes(tag) ? cur.tags.filter((x) => x !== tag) : [...cur.tags, tag];
+    const ibList = p === "amneziawg"
+      ? (inbounds.data?.amneziawg || [])
+      : (inbounds.data?.[p] || []);
+    const tags = p === "shadowsocks"
+      ? toggleSsInboundTag(cur.tags, tag, ibList)
+      : (cur.tags.includes(tag) ? cur.tags.filter((x) => x !== tag) : [...cur.tags, tag]);
     return { ...s, [p]: { ...cur, tags } };
   });
 
@@ -412,7 +782,7 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
       const inb: Record<string, string[]> = {};
       apiProtos.forEach(([p, v]) => {
         const s: any = {};
-        const existing = mode === "edit" ? user?.proxies?.[p] : undefined;
+        const existing = mode === "edit" ? editProfile?.proxies?.[p] : undefined;
         if (p === "vless" || p === "vmess" || p === "trojan") {
           if (v.flow) s.flow = v.flow;
           if (p === "vless" || p === "vmess") {
@@ -421,7 +791,9 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
         }
         if (p === "trojan" && existing?.password) s.password = existing.password;
         if (p === "shadowsocks") {
-          s.method = v.method;
+          const method = deriveSsMethodFromInbounds(v.tags, inbounds.data?.shadowsocks || [])
+            || (existing?.method as string | undefined);
+          if (method) s.method = method;
           if (existing?.password) s.password = existing.password;
         }
         if (p === "wireguard" && existing) {
@@ -450,11 +822,30 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
       const body: any = {
         proxies,
         inbounds: inb,
-        data_limit: unlimited || !dataLimitValue ? 0 : dataLimitToBytes(dataLimitValue, dataLimitUnit),
+        data_limit: !dataLimitValue.trim() ? 0 : dataLimitToBytes(dataLimitValue, dataLimitUnit),
         data_limit_reset_strategy: reset,
         note: note || "",
         client_profile: clientProfile,
       };
+      if (mode === "edit") {
+        body.routing_preset = routingPreset || null;
+        body.dns_policy = dnsPreset ? { preset: dnsPreset } : null;
+        body.speed_limit_up = speedUp.trim() ? parseInt(speedUp, 10) : null;
+        body.speed_limit_down = speedDown.trim() ? parseInt(speedDown, 10) : null;
+        body.device_limit = deviceLimit.trim() ? parseInt(deviceLimit, 10) : null;
+        body.session_limit_minutes = sessionLimitMinutes.trim()
+          ? parseInt(sessionLimitMinutes, 10)
+          : null;
+      } else {
+        if (routingPreset) body.routing_preset = routingPreset;
+        if (dnsPreset) body.dns_policy = { preset: dnsPreset };
+        if (speedUp.trim()) body.speed_limit_up = parseInt(speedUp, 10);
+        if (speedDown.trim()) body.speed_limit_down = parseInt(speedDown, 10);
+        if (deviceLimit.trim()) body.device_limit = parseInt(deviceLimit, 10);
+        if (sessionLimitMinutes.trim()) {
+          body.session_limit_minutes = parseInt(sessionLimitMinutes, 10);
+        }
+      }
       if (status === "on_hold") {
         body.status = "on_hold";
         body.on_hold_expire_duration = !noExpire && expireDate
@@ -474,7 +865,8 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
       }
 
       if (mode === "create") {
-        body.username = username.trim();
+        const finalUsername = username.trim() || generateRandomUsername();
+        body.username = finalUsername;
         await api.post("/user", body);
         toast.push(t("common.created"), "success");
       } else {
@@ -496,19 +888,36 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
   const toggleWizardProto = (p: string) => {
     const enabling = !protos[p]?.enabled;
     const isNative = NATIVE_PROTOCOLS.includes(p as typeof NATIVE_PROTOCOLS[number]);
-    const tags = p === "amneziawg"
-      ? (inbounds.data?.amneziawg?.map((i) => i.tag) || [])
-      : (inbounds.data?.[p]?.map((i) => i.tag) || []);
+    const tags = enabling && !isNative ? defaultProtoInboundTags(p, inbounds.data ?? undefined) : [];
     setProto(p, {
       enabled: enabling,
-      ...(enabling && !isNative ? { tags } : {}),
-      ...(enabling && p === "amneziawg" ? { tags } : {}),
+      ...(enabling && tags.length ? { tags } : {}),
+    });
+  };
+
+  const allProtosSelected = availableProtos.length > 0
+    && availableProtos.every((p) => protos[p]?.enabled);
+
+  const toggleAllProtos = () => {
+    const on = !allProtosSelected;
+    setProtos((prev) => {
+      const next = { ...prev };
+      for (const p of availableProtos) {
+        if (!next[p]) continue;
+        const isNative = NATIVE_PROTOCOLS.includes(p as typeof NATIVE_PROTOCOLS[number]);
+        const tags = on && !isNative ? defaultProtoInboundTags(p, inbounds.data ?? undefined) : [];
+        next[p] = {
+          ...next[p],
+          enabled: on,
+          ...(on && tags.length ? { tags } : {}),
+        };
+      }
+      return next;
     });
   };
 
   const wizardNext = () => {
     if (wizardStep === 1) {
-      if (!username.trim()) { toast.push(t("users.usernameRequired"), "error"); return; }
       setWizardStep(2);
       return;
     }
@@ -519,19 +928,129 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
   };
 
   const showIdentity = !useWizard || wizardStep === 1;
-  const showProtocols = !useWizard || wizardStep === 2;
-  const showLimits = !useWizard || wizardStep === 3;
+  const showProtocols = useWizard ? wizardStep === 2 : formTab === "protocols";
+  const showPlan = useWizard ? wizardStep === 3 : formTab === "plan";
+  const showAdvanced = tabbedForm && formTab === "advanced";
+
+  const protoWarnings = useMemo(() => {
+    const lines: string[] = [];
+    if (protos.hysteria2?.enabled && !hasHy2Node) lines.push(t("users.singboxNoHy2"));
+    if (protos.tuic?.enabled && !hasTuicNode) lines.push(t("users.singboxNoTuic"));
+    if (protos.anytls?.enabled && !hasAnytlsNode) lines.push(t("users.singboxNoAnytls"));
+    if (protos.amneziawg?.enabled && !hasAwgNode) lines.push(t("users.awgNoNode"));
+    if (protos.wireguard?.enabled && !hasPlainWgNode) lines.push(t("users.wgNoNode"));
+    return lines;
+  }, [protos, hasHy2Node, hasTuicNode, hasAnytlsNode, hasAwgNode, hasPlainWgNode, t]);
+
+  const enabledProtoDetailRows = useMemo(
+    () => availableProtos.filter((p) => {
+      const v = protos[p];
+      if (!v?.enabled) return false;
+      if (p === "wireguard" || p === "hysteria2" || p === "tuic" || p === "anytls") return false;
+      if (p === "amneziawg") return (inbounds.data?.amneziawg?.length || 0) > 0;
+      return (inbounds.data?.[p]?.length || 0) > 0 || p === "vless" || p === "trojan";
+    }),
+    [availableProtos, protos, inbounds.data],
+  );
+
+  const renderProtoDetail = (p: string, v: ProtoState) => {
+    const ibList = p === "amneziawg" ? (inbounds.data?.amneziawg || []) : (inbounds.data?.[p] || []);
+    const ssRef = p === "shadowsocks"
+      ? (deriveSsMethodFromInbounds(v.tags, ibList) || "")
+      : "";
+    return (
+      <div key={p} className="nx-user-form-proto-detail">
+        <div className="nx-user-form-proto-detail-head">{PROTO_LABEL[p] || p}</div>
+        {p === "vless" && (
+          <div className="nx-row" style={{ gap: 8 }}>
+            <Select value={v.flow} onChange={(e: any) => setProto(p, { flow: e.target.value })} style={{ maxWidth: 240 }}>
+              <option value="">{t("users.flowNone")}</option>
+              {FLOWS.map((f) => <option key={f.v} value={f.v}>{f.labelKey ? t(f.labelKey) : f.v}</option>)}
+            </Select>
+          </div>
+        )}
+        {p === "trojan" && (
+          <div className="nx-row" style={{ gap: 8 }}>
+            <Select value={v.flow} onChange={(e: any) => setProto(p, { flow: e.target.value })} style={{ maxWidth: 240 }}>
+              {FLOWS.map((f) => <option key={f.v} value={f.v}>{f.labelKey ? t(f.labelKey) : f.v}</option>)}
+            </Select>
+          </div>
+        )}
+        {p === "amneziawg" && ibList.length > 0 && (
+          <div className="nx-user-form-inbound-chips">
+            {ibList.map((i) => (
+              <button
+                key={i.tag}
+                type="button"
+                className={`nx-user-form-chip ${v.tags.includes(i.tag) ? "on" : ""}`}
+                onClick={() => toggleTag(p, i.tag)}
+              >
+                {i.tag}
+              </button>
+            ))}
+          </div>
+        )}
+        {p !== "amneziawg" && ibList.length > 0 && (
+          <div className="nx-user-form-inbound-chips">
+            {ibList.map((i) => {
+              const compatible = p !== "shadowsocks" || !ssRef || inboundMatchesSsMethod(i.ss_method, ssRef);
+              return (
+                <button
+                  key={i.tag}
+                  type="button"
+                  disabled={!compatible}
+                  title={compatible ? undefined : t("users.ssInboundMismatch")}
+                  className={`nx-user-form-chip ${v.tags.includes(i.tag) ? "on" : ""}`}
+                  onClick={() => compatible && toggleTag(p, i.tag)}
+                >
+                  {i.tag}
+                  {p === "shadowsocks" && i.ss_method ? ` · ${i.ss_method}` : ""}
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {p === "shadowsocks" && (
+          <div className="nx-faint" style={{ fontSize: 12 }}>
+            {v.tags.length
+              ? t("users.ssMethodValue", { method: deriveSsMethodFromInbounds(v.tags, ibList) || v.method })
+              : t("users.ssMethodFromInbound")}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <Drawer
       open
-      wide={!useWizard}
+      wide={useWizard}
       overlayClassName={useWizard ? "centered" : ""}
-      drawerClassName={useWizard ? "wizard-mode" : ""}
+      drawerClassName={useWizard ? "wizard-mode" : "nx-user-form-drawer"}
       title={mode === "create" ? t("common.create") : `${t("common.edit")} — ${user?.username}`}
       onClose={onClose}
     >
-      <div className={`nx-stack nx-user-form ${useWizard ? "compact" : ""}`}>
+      <div className={`nx-stack nx-user-form ${useWizard ? "compact" : ""} ${tabbedForm ? "nx-user-form-tabbed" : ""}`}>
+        {mode === "edit" && loadingEdit && (
+          <div className="nx-faint" style={{ fontSize: 13, padding: "4px 0 14px" }}>{t("common.loading")}</div>
+        )}
+
+        {tabbedForm && !loadingEdit && (
+          <div className="nx-user-form-tabstrip" role="tablist">
+            {(["protocols", "plan", "advanced"] as UserFormTab[]).map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                role="tab"
+                aria-selected={formTab === tab}
+                className={`nx-user-form-tab ${formTab === tab ? "active" : ""}`}
+                onClick={() => setFormTab(tab)}
+              >
+                {t(`users.formTab${tab.charAt(0).toUpperCase()}${tab.slice(1)}`)}
+              </button>
+            ))}
+          </div>
+        )}
         {useWizard && (
           <div className="nx-wizard-steps">
             {WIZARD_STEPS.map((key, idx) => {
@@ -550,14 +1069,38 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
           </div>
         )}
 
+        <div className={useWizard ? "nx-user-form-main" : undefined}>
         {mode === "create" && templateId ? (
           <Callout tone="info">{t("users.templateHint")}</Callout>
         ) : null}
         {showIdentity && mode === "create" && (
           <>
-            <Field label={t("common.username")} hint={t("users.usernameHint")}>
-              <Input value={username} onChange={(e: any) => setUsername(e.target.value)} autoFocus />
-            </Field>
+            {templateId ? (
+              <Field label={t("common.username")} hint={t("users.usernameHint")}>
+                <Input value={username} onChange={(e: any) => setUsername(e.target.value)} autoFocus />
+              </Field>
+            ) : (
+              <Field label={t("common.username")} hint={t("users.usernameAutoHint")}>
+                <div className="nx-input-group">
+                  <Input
+                    value={username}
+                    onChange={(e: any) => setUsername(e.target.value)}
+                    placeholder={t("users.usernameHint")}
+                    dir="ltr"
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    className="nx-input-group-btn"
+                    title={t("users.usernameRegenerate")}
+                    aria-label={t("users.usernameRegenerate")}
+                    onClick={() => setUsername(generateRandomUsername())}
+                  >
+                    <IcRefresh className="nx-ico" />
+                  </button>
+                </div>
+              </Field>
+            )}
             {!useWizard && templates.data && templates.data.length > 0 && (
               <Field label={t("users.template")}>
                 <select className="nx-input" value={templateId} onChange={(e) => setTemplateId(e.target.value)}>
@@ -572,259 +1115,262 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
         )}
 
         {showProtocols && (
-        <div className="nx-field">
-          <div className="nx-row" style={{ justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-            <label className="nx-label" style={{ margin: 0 }}>{useWizard ? t("users.wizardPickProto") : t("users.protocolsTitle")}</label>
-            {useWizard && enabledProtos.length > 0 && (
-              <Pill tone="accent">{t("users.wizardSelectedCount", { n: enabledProtos.length })}</Pill>
-            )}
-          </div>
-          {useWizard && <div className="nx-faint" style={{ fontSize: 12, marginBottom: 10 }}>{t("users.wizardPickProtoHint")}</div>}
-          {protos.hysteria2?.enabled && !hasHy2Node && (
-            <Callout tone="warn" className="compact">{t("users.singboxNoHy2")}</Callout>
+        <div className="nx-user-form-pane">
+          {(useWizard || tabbedForm) && (
+            <div className="nx-row" style={{ justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+              <p className="nx-user-form-proto-lead" style={{ margin: 0 }}>
+                {useWizard ? t("users.wizardPickProtoHint") : t("users.formTabProtocolsHint")}
+              </p>
+              <div className="nx-row" style={{ gap: 8, flexWrap: "wrap" }}>
+                {availableProtos.length > 0 && (
+                  <Button size="sm" variant="ghost" type="button" onClick={toggleAllProtos}>
+                    {allProtosSelected ? t("users.deselectAllProtos") : t("users.selectAllProtos")}
+                  </Button>
+                )}
+                {enabledProtos.length > 0 && (
+                  <Pill tone="accent">{t("users.wizardSelectedCount", { n: enabledProtos.length })}</Pill>
+                )}
+              </div>
+            </div>
           )}
-          {protos.tuic?.enabled && !hasTuicNode && (
-            <Callout tone="warn" className="compact">{t("users.singboxNoTuic")}</Callout>
-          )}
-          {protos.amneziawg?.enabled && !hasAwgNode && (
-            <Callout tone="warn" className="compact">{t("users.awgNoNode")}</Callout>
-          )}
-          {protos.wireguard?.enabled && !hasPlainWgNode && (
-            <Callout tone="warn" className="compact">{t("users.wgNoNode")}</Callout>
-          )}
+          {protoWarnings.map((line) => (
+            <div key={line} className="nx-user-form-warn-line">{line}</div>
+          ))}
           {inbounds.loading ? <SkeletonRows rows={2} cols={1} />
             : !Object.keys(protos).length ? <div className="nx-faint" style={{ fontSize: 12 }}>{t("common.noData")}</div>
-            : useWizard && !availableProtos.length ? (
+            : !availableProtos.length ? (
               <EmptyState
                 title={t("users.noProtocolsAvailable")}
                 desc={t("users.noProtocolsAvailableHint")}
                 action={<Link to="/connection?tab=inbounds"><Button variant="primary">{t("users.openConnectionHub")}</Button></Link>}
               />
-            ) : useWizard ? (
-              <div className="nx-proto-pick">
-                {availableProtos.map((p) => {
-                  const vis = PROTO_VISUAL[p] || { icon: "🔗", hue: "var(--nx-accent)" };
-                  const selected = !!protos[p]?.enabled;
-                  return (
-                    <button
-                      key={p}
-                      type="button"
-                      className={`nx-proto-pick-card ${selected ? "selected" : ""}`}
-                      style={{ "--proto-hue": vis.hue } as React.CSSProperties}
-                      onClick={() => toggleWizardProto(p)}
-                    >
-                      <span className="nx-proto-pick-check">✓</span>
-                      <span className="nx-proto-icon">{vis.icon}</span>
-                      <b>{PROTO_LABEL[p] || p}</b>
-                      <small>
-                        {p === "amneziawg" && (inbounds.data?.amneziawg?.length || 0) > 0
-                          ? t("users.inboundCount", { n: inbounds.data?.amneziawg?.length || 0 })
-                          : NATIVE_PROTOCOLS.includes(p as typeof NATIVE_PROTOCOLS[number])
-                            ? t("users.wgNativePeer")
-                            : t("users.inboundCount", { n: inbounds.data?.[p]?.length || 0 })}
-                      </small>
-                    </button>
-                  );
-                })}
-              </div>
             ) : (
-              <div className="nx-stack" style={{ gap: 8 }}>
-                {availableProtos.map((p) => [p, protos[p]] as const).map(([p, v]) => (
-                  <div key={p} className={`nx-proto ${v.enabled ? "on" : ""}`}>
-                    <div className="nx-proto-head" onClick={() => v.enabled && setExpanded((e) => ({ ...e, [p]: !e[p] }))}>
-                      <div className="nx-row" style={{ gap: 10 }}>
-                        <span onClick={(e) => e.stopPropagation()}>
-                          <Checkbox checked={v.enabled} onChange={() => setProto(p, { enabled: !v.enabled })} />
-                        </span>
+              <>
+                <div className="nx-proto-pick">
+                  {availableProtos.map((p) => {
+                    const vis = PROTO_VISUAL[p] || { icon: "🔗", hue: "var(--nx-accent)" };
+                    const selected = !!protos[p]?.enabled;
+                    return (
+                      <button
+                        key={p}
+                        type="button"
+                        className={`nx-proto-pick-card ${selected ? "selected" : ""}`}
+                        style={{ "--proto-hue": vis.hue } as React.CSSProperties}
+                        onClick={() => toggleWizardProto(p)}
+                      >
+                        <span className="nx-proto-pick-check">✓</span>
+                        <span className="nx-proto-icon">{vis.icon}</span>
                         <b>{PROTO_LABEL[p] || p}</b>
-                        <span className="nx-faint" style={{ fontSize: 11 }}>
+                        <small>
                           {NATIVE_PROTOCOLS.includes(p as typeof NATIVE_PROTOCOLS[number])
                             ? t("users.wgNativePeer")
                             : t("users.inboundCount", { n: inbounds.data?.[p]?.length || 0 })}
-                        </span>
-                        {v.enabled && <span className="nx-faint" style={{ fontSize: 10 }}>{expanded[p] ? "▾" : "▸"}</span>}
-                      </div>
-                    </div>
-                    {v.enabled && expanded[p] && (
-                      <div style={{ marginTop: 10, paddingInlineStart: 28 }}>
-                        {p === "amneziawg" ? (
-                          <>
-                            <div className="nx-faint" style={{ fontSize: 12, marginBottom: 8 }}>{t("users.awgHint")}</div>
-                            {(inbounds.data?.amneziawg?.length || 0) > 0 && (
-                              <div className="nx-row" style={{ gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
-                                {inbounds.data?.amneziawg?.map((i) => (
-                                  <button
-                                    key={i.tag}
-                                    type="button"
-                                    className={`nx-btn sm ${v.tags.includes(i.tag) ? "primary" : ""}`}
-                                    onClick={() => toggleTag(p, i.tag)}
-                                  >
-                                    {v.tags.includes(i.tag) ? "✓ " : ""}{i.tag} <span style={{ opacity: 0.6 }}>:{i.port}</span>
-                                  </button>
-                                ))}
-                              </div>
-                            )}
-                          </>
-                        ) : p === "wireguard" ? (
-                          <div className="nx-faint" style={{ fontSize: 12, marginBottom: 8 }}>{t("users.wgHint")}</div>
-                        ) : p === "hysteria2" ? (
-                          <div className="nx-faint" style={{ fontSize: 12, marginBottom: 8 }}>{t("users.hy2Hint")}</div>
-                        ) : p === "tuic" ? (
-                          <div className="nx-faint" style={{ fontSize: 12, marginBottom: 8 }}>{t("users.tuicHint")}</div>
-                        ) : (
-                        <div className="nx-row" style={{ gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
-                          {inbounds.data?.[p]?.map((i) => {
-                            const compatible = p !== "shadowsocks" || inboundMatchesSsMethod(i.ss_method, v.method);
-                            return (
-                              <button
-                                key={i.tag}
-                                type="button"
-                                disabled={!compatible}
-                                title={compatible ? undefined : t("users.ssInboundMismatch")}
-                                className={`nx-btn sm ${v.tags.includes(i.tag) ? "primary" : ""}`}
-                                style={compatible ? undefined : { opacity: 0.45 }}
-                                onClick={() => compatible && toggleTag(p, i.tag)}
-                              >
-                                {v.tags.includes(i.tag) ? "✓ " : ""}{i.tag} <span style={{ opacity: 0.6 }}>:{i.port}</span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                        )}
-                        {p === "vless" && (
-                          <div className="nx-row" style={{ gap: 8 }}>
-                            <span className="nx-faint" style={{ fontSize: 12 }}>{t("users.flowLabel")}</span>
-                            <Select value={v.flow} onChange={(e: any) => setProto(p, { flow: e.target.value })} style={{ maxWidth: 220 }}>
-                              {FLOWS.map((f) => <option key={f.v} value={f.v}>{f.labelKey ? t(f.labelKey) : f.v}</option>)}
-                            </Select>
-                          </div>
-                        )}
-                        {p === "shadowsocks" && (
-                          <div className="nx-row" style={{ gap: 8, flexWrap: "wrap" }}>
-                            <span className="nx-faint" style={{ fontSize: 12 }}>{t("users.methodLabel")}</span>
-                            <Select
-                              value={v.method}
-                              onChange={(e: any) => {
-                                const method = e.target.value;
-                                const compatibleTags = (inbounds.data?.[p] || [])
-                                  .filter((ib) => inboundMatchesSsMethod(ib.ss_method, method))
-                                  .map((ib) => ib.tag);
-                                setProto(p, {
-                                  method,
-                                  tags: v.tags.filter((tag) => compatibleTags.includes(tag)),
-                                });
-                              }}
-                              style={{ maxWidth: 260 }}
-                            >
-                              {SS_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
-                            </Select>
-                          </div>
-                        )}
-                        {p === "trojan" && (
-                          <div className="nx-row" style={{ gap: 8 }}>
-                            <span className="nx-faint" style={{ fontSize: 12 }}>{t("users.flowLabel")}</span>
-                            <Select value={v.flow} onChange={(e: any) => setProto(p, { flow: e.target.value })} style={{ maxWidth: 220 }}>
-                              {FLOWS.map((f) => <option key={f.v} value={f.v}>{f.labelKey ? t(f.labelKey) : f.v}</option>)}
-                            </Select>
-                          </div>
-                        )}
-                      </div>
-                    )}
+                        </small>
+                      </button>
+                    );
+                  })}
+                </div>
+                {enabledProtoDetailRows.length > 0 && (
+                  <div className="nx-user-form-proto-details">
+                    <div className="nx-faint" style={{ fontSize: 12, fontWeight: 600 }}>{t("users.inboundSettings")}</div>
+                    {enabledProtoDetailRows.map((p) => renderProtoDetail(p, protos[p]))}
                   </div>
-                ))}
-              </div>
+                )}
+              </>
             )}
         </div>
         )}
 
-        {showLimits && (
-        <>
+        {showPlan && (
+        <div className="nx-user-form-pane">
         {useWizard && wizardStep === 3 && (
           <Callout tone="info" title={t("users.wizardReview")}>
-            <b>{username}</b> · {enabledProtos.map(([p]) => PROTO_LABEL[p] || p).join(", ")}
+            <b>{username.trim() || t("users.usernameWillAuto")}</b> · {enabledProtos.map(([p]) => PROTO_LABEL[p] || p).join(", ")}
           </Callout>
         )}
-        <div className="nx-user-form-grid">
-          <Field label={t("users.dataLimit")}>
-            <div className="nx-row" style={{ gap: 8 }}>
-              <Input
-                type="number"
-                min="0"
-                step={dataLimitUnit === "MB" ? "1" : "0.001"}
-                value={unlimited ? "" : dataLimitValue}
-                disabled={unlimited}
-                placeholder="∞"
-                onChange={(e: any) => setDataLimitValue(e.target.value)}
-                style={{ flex: 1 }}
-              />
-              <Select
-                value={dataLimitUnit}
-                disabled={unlimited}
-                onChange={(e: any) => setDataLimitUnit(e.target.value as DataLimitUnit)}
-                style={{ width: 88 }}
-              >
-                <option value="MB">MB</option>
-                <option value="GB">GB</option>
+          <div className="nx-user-form-grid">
+            <Field label={t("users.dataLimit")} hint={t("users.dataLimitHint")}>
+              <div className="nx-row" style={{ gap: 8 }}>
+                <Input
+                  type="number"
+                  min="0"
+                  step={dataLimitUnit === "MB" ? "1" : "0.001"}
+                  value={dataLimitValue}
+                  placeholder={t("users.unlimited")}
+                  onChange={(e: any) => setDataLimitValue(e.target.value)}
+                  style={{ flex: 1 }}
+                  dir="ltr"
+                />
+                <Select
+                  value={dataLimitUnit}
+                  onChange={(e: any) => setDataLimitUnit(e.target.value as DataLimitUnit)}
+                  style={{ width: 88 }}
+                >
+                  <option value="MB">MB</option>
+                  <option value="GB">GB</option>
+                </Select>
+              </div>
+            </Field>
+            <Field label={t("common.status")}>
+              <Select value={status} onChange={(e: any) => setStatus(e.target.value)}>
+                <option value="active">{t("users.status.active")}</option>
+                <option value="on_hold">{t("users.status.on_hold")}</option>
+                {mode === "edit" && <option value="disabled">{t("users.status.disabled")}</option>}
               </Select>
-              <label className="nx-row" style={{ gap: 6, fontSize: 12, whiteSpace: "nowrap" }}>
-                <Checkbox checked={unlimited} onChange={() => setUnlimited((u) => !u)} /> ∞
-              </label>
-            </div>
-          </Field>
-          <Field label={t("common.status")}>
-            <Select value={status} onChange={(e: any) => setStatus(e.target.value)}>
-              <option value="active">{t("users.status.active")}</option>
-              <option value="on_hold">{t("users.status.on_hold")}</option>
-              {mode === "edit" && <option value="disabled">{t("users.status.disabled")}</option>}
-            </Select>
-          </Field>
-          <div style={{ gridColumn: "1 / -1" }}>
-          <Field label={t("users.expire")}>
-            <div className="nx-row" style={{ gap: 8, flexWrap: "wrap" }}>
-              <Input type="date" value={noExpire ? "" : expireDate} disabled={noExpire} onChange={(e: any) => setExpireDate(e.target.value)} style={{ maxWidth: 200 }} />
-              <label className="nx-row" style={{ gap: 6, fontSize: 12, whiteSpace: "nowrap" }}>
-                <Checkbox checked={noExpire} onChange={() => setNoExpire((u) => !u)} /> {t("users.never")}
-              </label>
-              <div className="nx-row" style={{ gap: 4 }}>
-                {[30, 60, 90].map((d) => <Button key={d} size="sm" variant="ghost" onClick={() => preset(d)}>{d}d</Button>)}
+            </Field>
+            <Field label={t("users.expire")}>
+              <div className="nx-row" style={{ gap: 8, flexWrap: "wrap" }}>
+                <Input type="date" value={noExpire ? "" : expireDate} disabled={noExpire} onChange={(e: any) => setExpireDate(e.target.value)} style={{ flex: 1, minWidth: 140, maxWidth: 200 }} />
+                <label className="nx-row" style={{ gap: 6, fontSize: 12, whiteSpace: "nowrap" }}>
+                  <Checkbox checked={noExpire} onChange={() => setNoExpire((u) => !u)} /> {t("users.never")}
+                </label>
+              </div>
+              {!noExpire && (
+                <div className="nx-row" style={{ gap: 4, marginTop: 8 }}>
+                  {[30, 60, 90].map((d) => <Button key={d} size="sm" variant="ghost" onClick={() => preset(d)}>{d}d</Button>)}
+                </div>
+              )}
+            </Field>
+            <Field label={t("users.resetStrategy")}>
+              <Select value={reset} onChange={(e: any) => setReset(e.target.value)}>
+                {["no_reset", "day", "week", "month", "year"].map((r) => <option key={r} value={r}>{t(`users.resetStrategies.${r}`, r)}</option>)}
+              </Select>
+            </Field>
+            {(!useWizard || wizardStep === 3) && (
+              <Field label={t("users.clientProfile")}>
+                <Select value={clientProfile} onChange={(e: any) => setClientProfile(e.target.value)}>
+                  {["normal", "gamer", "trader"].map((p) => (
+                    <option key={p} value={p}>{t(`users.profile.${p}`)}</option>
+                  ))}
+                </Select>
+              </Field>
+            )}
+          </div>
+          {(!useWizard || wizardStep === 3) && (
+            <>
+              <div
+                style={{
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: "var(--nx-text-dim)",
+                  marginTop: 6,
+                  marginBottom: 2,
+                }}
+              >
+                {t("users.sectionPerformance")}
+              </div>
+              <div className="nx-user-form-grid">
+                <Field label={t("users.speedUp")}>
+                  <Input type="number" min={0} placeholder="Mbps" value={speedUp} onChange={(e: any) => setSpeedUp(e.target.value)} dir="ltr" />
+                </Field>
+                <Field label={t("users.speedDown")}>
+                  <Input type="number" min={0} placeholder="Mbps" value={speedDown} onChange={(e: any) => setSpeedDown(e.target.value)} dir="ltr" />
+                </Field>
+                <Field label={t("users.deviceLimit")} hint={t("users.deviceLimitHint")}>
+                  <Input type="number" min={0} value={deviceLimit} onChange={(e: any) => setDeviceLimit(e.target.value)} placeholder={t("common.none")} dir="ltr" />
+                </Field>
+              </div>
+            </>
+          )}
+        </div>
+        )}
+
+        {showAdvanced && (
+        <div className="nx-user-form-pane">
+          {mode === "edit" && canWrite && (
+            <div className="nx-user-form-proto-detail" style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>
+                {t("users.subSecuritySection")}
+              </div>
+              <p className="nx-faint" style={{ fontSize: 12, margin: "0 0 12px", lineHeight: 1.5 }}>
+                {t("users.subSecurityHint")}
+              </p>
+              {subToken ? (
+                <Field label={t("users.subToken")} hint={t("users.subTokenHint")}>
+                  <CopyField value={subToken} />
+                </Field>
+              ) : null}
+              {subscriptionUrl ? (
+                <div style={{ marginTop: 10 }}>
+                  <Field label={t("users.subscriptionLink")}>
+                    <CopyField value={absoluteUrl(subscriptionUrl)} />
+                  </Field>
+                </div>
+              ) : null}
+              {credentialLines.length > 0 ? (
+                <div style={{ marginTop: 10 }}>
+                  <Field label={t("users.proxyCredentials")}>
+                    <div className="nx-faint" style={{ fontSize: 12, lineHeight: 1.6, fontFamily: "var(--nx-mono, monospace)" }}>
+                      {credentialLines.map((line) => <div key={line}>{line}</div>)}
+                    </div>
+                  </Field>
+                </div>
+              ) : null}
+              {subRevokedAt ? (
+                <div style={{ marginTop: 10 }}>
+                  <Callout tone="warn">
+                    {t("users.subRevokedAt", { date: formatDate(subRevokedAt) })}
+                  </Callout>
+                </div>
+              ) : null}
+              <div className="nx-row" style={{ gap: 8, marginTop: 14, flexWrap: "wrap" }}>
+                <Button
+                  size="sm"
+                  variant="danger"
+                  disabled={credBusy || loadingEdit}
+                  onClick={handleRevokeSub}
+                >
+                  {t("users.revokeSubFull")}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={credBusy || loadingEdit}
+                  onClick={handleRotateSub}
+                >
+                  {t("users.rotateSubLink")}
+                </Button>
               </div>
             </div>
-          </Field>
+          )}
+          <div className="nx-user-form-grid">
+            <Field label={t("users.sessionLimit", { defaultValue: "Session limit (minutes)" })}>
+              <Input type="number" min="0" value={sessionLimitMinutes} onChange={(e: any) => setSessionLimitMinutes(e.target.value)} placeholder={t("common.none")} />
+            </Field>
+            {routingPresets.data && (
+              <Field label={t("users.routingPreset", { defaultValue: "Routing preset" })}>
+                <Select value={routingPreset} onChange={(e: any) => setRoutingPreset(e.target.value)}>
+                  <option value="">{t("common.none", { defaultValue: "None" })}</option>
+                  {Object.entries(routingPresets.data.presets || {}).map(([id, meta]) => (
+                    <option key={id} value={id}>{meta.label || id}</option>
+                  ))}
+                </Select>
+              </Field>
+            )}
+            {dnsPresets.data && (
+              <Field label={t("users.dnsPreset", { defaultValue: "DNS policy" })}>
+                <Select value={dnsPreset} onChange={(e: any) => setDnsPreset(e.target.value)}>
+                  <option value="">{t("common.none", { defaultValue: "None" })}</option>
+                  {Object.entries(dnsPresets.data.presets || {}).map(([id, meta]) => (
+                    <option key={id} value={id}>{meta.label || id}</option>
+                  ))}
+                </Select>
+              </Field>
+            )}
+            <div style={{ gridColumn: "1 / -1" }}>
+              <Field label={t("users.noteLabel")}>
+                <Input value={note} onChange={(e: any) => setNote(e.target.value)} placeholder={t("common.optional")} />
+              </Field>
+            </div>
           </div>
-          {(!useWizard || wizardStep !== 3) && (
-          <Field label={t("users.resetStrategy")}>
-            <Select value={reset} onChange={(e: any) => setReset(e.target.value)}>
-              {["no_reset", "day", "week", "month", "year"].map((r) => <option key={r} value={r}>{t(`users.resetStrategies.${r}`, r)}</option>)}
-            </Select>
-          </Field>
-          )}
-          {(!useWizard || wizardStep !== 3) && (
-          <Field label={t("users.clientProfile")} hint={t("users.clientProfileHint")}>
-            <Select value={clientProfile} onChange={(e: any) => setClientProfile(e.target.value)}>
-              {["normal", "gamer", "trader"].map((p) => (
-                <option key={p} value={p}>{t(`users.profile.${p}`)}</option>
-              ))}
-            </Select>
-          </Field>
-          )}
-          {(!useWizard || wizardStep !== 3) && (
-          <Field label={`${t("users.noteLabel")} (${t("common.optional")})`}><Input value={note} onChange={(e: any) => setNote(e.target.value)} /></Field>
-          )}
-          {(!useWizard || wizardStep !== 3) && isEnabled("user_portal") && (
-            <Card style={{ padding: 14, gridColumn: "1 / -1" }}>
-              <div className="nx-card-title" style={{ fontSize: 13, marginBottom: 10 }}>{t("users.portalSection")}</div>
-              {mode === "create" && (
-                <div className="nx-faint" style={{ fontSize: 12, marginBottom: 8 }}>{t("users.portalCreateHint")}</div>
-              )}
-              <label className="nx-row" style={{ gap: 8, marginBottom: 10 }}>
-                <input type="checkbox" checked={portalEnabled} onChange={(e) => setPortalEnabled(e.target.checked)} />
-                {t("users.portalEnabled")}
+          {isEnabled("user_portal") && (
+            <div className="nx-user-form-proto-detail" style={{ marginTop: 4 }}>
+              <label className="nx-row" style={{ gap: 8, marginBottom: portalEnabled ? 12 : 0 }}>
+                <Checkbox checked={portalEnabled} onChange={() => setPortalEnabled((v) => !v)} />
+                <span style={{ fontSize: 13, fontWeight: 600 }}>{t("users.portalEnabled")}</span>
               </label>
               {portalEnabled && (
-                <Field
-                  label={t("users.portalPassword")}
-                  hint={mode === "create" ? t("users.portalCreateHint") : t("users.portalPasswordHint")}
-                >
+                <Field label={t("users.portalPassword")} hint={mode === "edit" ? t("users.portalPasswordHint") : t("users.portalCreateHint")}>
                   <Input
                     type="password"
                     value={portalPassword}
@@ -833,15 +1379,14 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
                   />
                 </Field>
               )}
-              <div className="nx-faint" style={{ fontSize: 11, marginTop: 6 }}>
-                {t("users.portalUrl")}: <code>/portal/</code>
-              </div>
-            </Card>
+            </div>
           )}
         </div>
-        </>
         )}
-        <div className="nx-row" style={{ justifyContent: "space-between", gap: 10, marginTop: 8, paddingTop: 14, borderTop: "1px solid var(--nx-border)" }}>
+
+        </div>
+
+        <div className="nx-user-form-foot">
           <div>
             {useWizard && wizardStep > 1 && (
               <Button variant="ghost" onClick={() => setWizardStep((s) => s - 1)}>{t("users.prev")}</Button>
@@ -852,14 +1397,14 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
             {useWizard && wizardStep < 3 ? (
               <Button variant="primary" onClick={wizardNext}>{t("users.next")}</Button>
             ) : (
-              <Button variant="primary" disabled={busy || (mode === "create" && !username.trim())} onClick={submit}>
+              <Button variant="primary" disabled={busy || loadingEdit} onClick={submit}>
                 {mode === "create" ? t("common.create") : t("common.save")}
               </Button>
             )}
           </div>
         </div>
         {useWizard && (
-          <div className="nx-faint" style={{ fontSize: 11, textAlign: "center", marginTop: 8 }}>{t("users.wizardExpertLink")}</div>
+          <div className="nx-faint nx-user-form-wizard-hint">{t("users.wizardExpertLink")}</div>
         )}
       </div>
     </Drawer>
@@ -1016,12 +1561,31 @@ const UserDetail: FC<{ username: string; onClose: () => void; onEdit: () => void
   const [sellPlan, setSellPlan] = useState(false);
   const billingOn = isEnabled("billing");
 
+  const [showOtherLinks, setShowOtherLinks] = useState(false);
+
   const pct = data ? usagePct(data.used_traffic, data.data_limit) : 0;
   const remaining = data ? remainingPct(data.used_traffic, data.data_limit) : null;
-  const subUrl = absoluteUrl(data?.public_subscription_url || data?.subscription_url);
+  // A per-inbound/per-panel endpoint that actually matches this user's own
+  // inbounds (e.g. a migrated panel's domain, or a dedicated per-inbound
+  // Listen Domain) is the one link that's actually correct for them — show
+  // that as THE main link instead of the generic panel-default one whenever
+  // it exists, so admins don't have to dig through the full endpoint list.
+  const recommended = (data?.subscription_urls || []).find((u) => u.recommended && u.url);
+  const subUrl = absoluteUrl(
+    recommended?.url || data?.public_subscription_url || data?.subscription_url,
+  );
+  const clientImportUrl = absoluteUrl(
+    data?.client_subscription_url
+      || recommended?.import_url
+      || subUrl,
+  );
+  const profileTitle = data?.subscription_profile_title?.trim() || "NexusPanel";
+  const otherLinks = (data?.subscription_urls || []).filter((u) => {
+    const uUrl = u.url ? absoluteUrl(u.url) : "";
+    return uUrl && uUrl !== subUrl;
+  });
   const subscribeBrowserUrl = resolveSubscribeBrowserUrl(subUrl);
-  const rawLinks = data?.links || [];
-  const links = rawLinks.map((l) => absoluteUrl(l));
+  const links = data?.links || [];
   const wgStacks = data ? userWgStackLabels(data.proxies?.wireguard as { address?: string; awg_address?: string; nexusPanelKind?: string }) : [];
   const hasWireguard = wgStacks.includes("wireguard");
   const hasAmneziaWg = wgStacks.includes("amneziawg");
@@ -1090,6 +1654,13 @@ const UserDetail: FC<{ username: string; onClose: () => void; onEdit: () => void
               <div className="nx-statbox-v">{formatBytes(data.used_traffic)}</div>
               {data.data_limit ? <div className="nx-faint" style={{ fontSize: 11, marginTop: 4 }}>{t("users.of")} {formatBytes(data.data_limit)}</div> : <div className="nx-faint" style={{ fontSize: 11, marginTop: 4 }}>{t("users.unlimited")}</div>}
             </div>
+            {(data.overage_traffic ?? 0) > 0 ? (
+              <div className="nx-statbox">
+                <div className="nx-statbox-k">{t("users.overage")}</div>
+                <div className="nx-statbox-v" style={{ color: "var(--nx-danger, #ef4444)" }}>{formatBytes(data.overage_traffic!)}</div>
+                <div className="nx-faint" style={{ fontSize: 11, marginTop: 4 }}>{t("users.overageHint")}</div>
+              </div>
+            ) : null}
             <div className="nx-statbox">
               <div className="nx-statbox-k">{t("users.remaining")}</div>
               <div className="nx-statbox-v">{remaining !== null ? `${remaining.toFixed(0)}%` : "∞"}</div>
@@ -1129,6 +1700,40 @@ const UserDetail: FC<{ username: string; onClose: () => void; onEdit: () => void
                   </Callout>
                   <div className="nx-center"><div className="nx-qr-frame"><QR value={subUrl} size={200} /></div></div>
                   <CopyField label={t("users.subUrlClient")} value={subUrl} />
+                  {profileTitle && profileTitle !== "NexusPanel" && (
+                    <p className="nx-faint" style={{ fontSize: 12, margin: 0 }}>
+                      {t("users.subProfileTitleHint")}: <strong dir="ltr">{profileTitle}</strong>
+                    </p>
+                  )}
+                  {otherLinks.length > 0 && (
+                    <div className="nx-stack" style={{ gap: 8 }}>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setShowOtherLinks((v) => !v)}
+                      >
+                        {showOtherLinks
+                          ? t("users.hideOtherLinks")
+                          : t("users.showOtherLinks", { n: otherLinks.length })}
+                      </Button>
+                      {showOtherLinks && (
+                        <>
+                          <p className="nx-faint" style={{ fontSize: 12, margin: "0 0 4px" }}>
+                            {t("users.otherLinksHint")}
+                          </p>
+                          {otherLinks.map((u) => (
+                            <CopyField
+                              key={u.slug + u.url}
+                              label={[u.label, u.inbound_tag, u.export_mode]
+                                .filter(Boolean)
+                                .join(" · ")}
+                              value={absoluteUrl(u.url)}
+                            />
+                          ))}
+                        </>
+                      )}
+                    </div>
+                  )}
                   {subscribeBrowserUrl && subscribeBrowserUrl !== subUrl && (
                     <>
                       <CopyField label={t("users.subUrlBrowser")} value={subscribeBrowserUrl} />
@@ -1162,9 +1767,23 @@ const UserDetail: FC<{ username: string; onClose: () => void; onEdit: () => void
 
               {tab === "configs" && links.length > 0 && (
                 <div className="nx-stack" style={{ gap: 12 }}>
-                  <div className="nx-pager">
-                    {links.map((l, i) => (
-                      <button key={i} type="button" className={`nx-chip ${activeLink === i ? "active" : ""}`} onClick={() => setActiveLink(i)}>{proxyKind(l)} · #{i + 1}</button>
+                  <div className="nx-config-account-meta">
+                    <span>{t("users.used")}: <b>{formatBytes(data.used_traffic)}</b>{data.data_limit ? ` / ${formatBytes(data.data_limit)}` : ` · ${t("users.unlimited")}`}</span>
+                    <span>{t("users.expire")}: <b>{data.expire ? formatDate(data.expire, i18n.language) : t("users.never")}</b></span>
+                  </div>
+                  <p className="nx-faint" style={{ fontSize: 12, margin: 0 }}>{t("users.configAccountMeta")}</p>
+                  <div className="nx-config-list">
+                    {(data.link_items?.length ? data.link_items : links.map((link) => ({ link, protocol: proxyKind(link), remark: "", region_flag: "", region_name: "" }))).map((item, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        className={`nx-config-list-item ${activeLink === i ? "active" : ""}`}
+                        onClick={() => setActiveLink(i)}
+                      >
+                        <span className="nx-config-list-proto">{String(item.protocol || proxyKind(item.link)).toUpperCase()}</span>
+                        {item.region_flag ? <span className="nx-config-list-flag">{item.region_flag}</span> : null}
+                        <span className="nx-config-list-title">{item.remark || item.region_name || `${proxyKind(item.link)} #${i + 1}`}</span>
+                      </button>
                     ))}
                   </div>
                   <div className="nx-center"><div className="nx-qr-frame"><QR value={links[activeLink]} size={170} /></div></div>

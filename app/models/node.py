@@ -40,6 +40,8 @@ class NodeSingBoxConfig(BaseModel):
     tuic_enabled: bool = False
     tuic_port: Optional[int] = None
     tuic_congestion_control: str = "bbr"
+    anytls_enabled: bool = False
+    anytls_port: Optional[int] = None
     tls_trusted: bool = False
     tls_issuer: Optional[str] = None
     tls_expires_at: Optional[datetime] = None
@@ -75,6 +77,10 @@ class NodeWireGuardConfig(BaseModel):
     awg_h2: Optional[int] = None
     awg_h3: Optional[int] = None
     awg_h4: Optional[int] = None
+    awg_s3: Optional[int] = None
+    awg_s4: Optional[int] = None
+    sg_wire_enabled: bool = False
+    sg_wire_preset_rev: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -134,6 +140,8 @@ class NodeResponse(Node):
     xray_version: Optional[str] = None
     status: NodeStatus
     message: Optional[str] = None
+    # Pinned TLS cert fingerprint (SHA-256 hex); null until first connect.
+    server_cert_sha256: Optional[str] = None
     latency_ms: Optional[float] = None
     last_health: Optional[datetime] = None
     wireguard: Optional[NodeWireGuardConfig] = None

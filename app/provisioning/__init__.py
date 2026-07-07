@@ -18,6 +18,8 @@ import shlex
 from dataclasses import dataclass
 from typing import Optional
 
+from app.xray.network_defaults import host_network_tuning_shell
+
 __all__ = [
     "ProvisioningError",
     "ProvisioningUnavailable",
@@ -97,6 +99,7 @@ def build_install_command(
     node_api_port: int = 62051,
     control_secret: Optional[str] = None,
     force_image_rebuild: bool = False,
+    client_cert_pem: Optional[str] = None,
 ) -> str:
     """Build the self-contained bash command that provisions a fresh server.
 
@@ -109,12 +112,19 @@ def build_install_command(
     container is started with ``--cap-add=NET_ADMIN`` and IP forwarding enabled so
     it can create/manage the WireGuard interface, and ``NODE_CONTROL_SECRET`` is
     injected (when configured) so the panel's REST control plane is authenticated.
+
+    ``client_cert_pem`` is the panel's own TLS certificate (the single persistent
+    cert it presents on every RPyC/REST connection — see ``app.xray.operations.get_tls``).
+    When provided it is written to the node and wired up as ``SSL_CLIENT_CERT_FILE``
+    so the node's ``SSLAuthenticator``/uvicorn TLS layer requires and verifies a
+    client certificate on every connection (real mutual TLS), instead of accepting
+    control connections from anyone who reaches the port (AUDIT_FINDINGS.md H11).
     """
     if not panel_address:
         raise ProvisioningError("panel_address is required")
     if not bootstrap_token:
         raise ProvisioningError("bootstrap_token is required")
-    if role not in ("direct", "relay", "exit"):
+    if role not in ("direct", "relay", "transit", "exit"):
         raise ProvisioningError(f"invalid role: {role}")
     if core_kind not in ("xray", "wireguard"):
         raise ProvisioningError(f"invalid core_kind: {core_kind}")
@@ -145,7 +155,35 @@ def build_install_command(
         f"-e NODE_CONTROL_SECRET={q(control_secret)} " if control_secret else ""
     )
 
+    client_cert_path = "/var/lib/nexuspanel-node/panel_client_ca.pem"
+    cert_env = ""
+    write_client_cert = ""
+    if client_cert_pem:
+        cert_env = f"-e SSL_CLIENT_CERT_FILE={q(client_cert_path)} "
+        write_client_cert = (
+            f"printf '%s' {q(client_cert_pem)} > {q(client_cert_path)}; "
+            f"chmod 600 {q(client_cert_path)}; "
+        )
+
     bundle_url = f"{panel_url.rstrip('/')}/api/nodes/agent-bundle?token={bootstrap_token}"
+
+    wg_host_egress = ""
+    if core_kind == "wireguard":
+        # Host-network agent: NAT/FORWARD must exist on the host (container may lack iptables).
+        wg_host_egress = (
+            "WG_OUT=$(ip route get 8.8.8.8 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i==\"dev\") print $(i+1)}'); "
+            "if [ -n \"$WG_OUT\" ]; then "
+            "for SUB in 10.10.0.0/24 10.11.0.0/24; do "
+            "iptables -t nat -C POSTROUTING -s \"$SUB\" -o \"$WG_OUT\" -j MASQUERADE 2>/dev/null "
+            "|| iptables -t nat -A POSTROUTING -s \"$SUB\" -o \"$WG_OUT\" -j MASQUERADE; "
+            "done; "
+            "for IF in wg0 wg1; do "
+            "iptables -C FORWARD -i \"$IF\" -j ACCEPT 2>/dev/null || iptables -A FORWARD -i \"$IF\" -j ACCEPT; "
+            "iptables -C FORWARD -o \"$IF\" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null "
+            "|| iptables -A FORWARD -o \"$IF\" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT; "
+            "done; "
+            "fi; "
+        )
 
     # If the image tag is not on the remote host, try pull then build from the
     # panel's bundled node-agent source (nexuspanel/node is not on Docker Hub).
@@ -166,17 +204,24 @@ def build_install_command(
         "sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true; "
         "grep -q '^net.ipv4.ip_forward=1' /etc/sysctl.conf 2>/dev/null "
         "|| echo 'net.ipv4.ip_forward=1' >> /etc/sysctl.conf; "
+        f"{host_network_tuning_shell()}; "
         "docker rm -f nexusnode >/dev/null 2>&1 || true; "
         "mkdir -p /var/lib/nexuspanel-node; "
+        f"{write_client_cert}"
         f"{ensure_image}"
         # --cap-add=NET_ADMIN + host network let the agent manage the wg interface.
         # ip_forward is set on the host above; --sysctl is invalid with --network=host.
-        "docker run -d --name nexusnode --restart=always --network=host "
+        # --init runs tini as PID 1 so daemons that double-fork and detach
+        # (amneziawg-go) get reaped when they exit instead of piling up as
+        # zombies under the Python agent, which never calls wait() on them.
+        "docker run -d --name nexusnode --restart=always --network=host --init "
         "--cap-add=NET_ADMIN --device /dev/net/tun:/dev/net/tun "
         "-v /var/lib/nexuspanel-node:/var/lib/nexuspanel-node "
         "-e SERVICE_PROTOCOL=rpyc "
         f"{secret_env}"
+        f"{cert_env}"
         "\"$NP_IMG\"; "
+        f"{wg_host_egress}"
         "PUBLIC_IP=$(curl -fsSL https://api.ipify.org || hostname -I | awk '{print $1}'); "
         f"{bootstrap_curl}"
     )
@@ -227,7 +272,22 @@ def run_remote_command(
         )
         if creds.private_key:
             import io
-            pkey = paramiko.RSAKey.from_private_key(io.StringIO(creds.private_key))
+
+            key_data = io.StringIO(creds.private_key)
+            pkey = None
+            for key_cls in (
+                paramiko.Ed25519Key,
+                paramiko.RSAKey,
+                paramiko.ECDSAKey,
+            ):
+                try:
+                    key_data.seek(0)
+                    pkey = key_cls.from_private_key(key_data)
+                    break
+                except Exception:
+                    continue
+            if pkey is None:
+                raise ProvisioningError("unsupported SSH private key format")
             connect_kwargs["pkey"] = pkey
         else:
             connect_kwargs["password"] = creds.password

@@ -4,11 +4,13 @@ import { useState } from "react";
 import type { Platform } from "@/lib/apps";
 import type { QuicClientApp } from "@/lib/quic-apps";
 import { copyToClipboard } from "@/lib/clipboard";
+import { openDeepLink } from "@/lib/deepLink";
 
 interface Props {
   app: QuicClientApp;
   platform: Platform;
   shareUrl: string;
+  singboxSubUrl: string;
   importLabel: string;
   downloadLabel: string;
   pasteFallback: (name: string) => string;
@@ -17,19 +19,11 @@ interface Props {
   onToast: (msg: string, kind?: "ok" | "error") => void;
 }
 
-function openDeepLink(href: string) {
-  const a = document.createElement("a");
-  a.href = href;
-  a.rel = "noopener";
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-}
-
 export function SubQuicAppTile({
   app,
   platform,
   shareUrl,
+  singboxSubUrl,
   importLabel,
   downloadLabel,
   pasteFallback,
@@ -38,23 +32,24 @@ export function SubQuicAppTile({
   onToast,
 }: Props) {
   const [busy, setBusy] = useState(false);
-  const deepLink = app.buildScheme(shareUrl);
+  const importUrl = app.importViaSingboxSub && singboxSubUrl ? singboxSubUrl : shareUrl;
+  const deepLink = app.buildScheme(shareUrl, { singboxSubUrl });
   const dl = app.download?.[platform];
 
   async function importInApp() {
-    if (!shareUrl) return;
+    if (!importUrl) return;
     setBusy(true);
     const finish = () => setBusy(false);
 
     if (app.copyFirst) {
-      const ok = await copyToClipboard(shareUrl);
+      const ok = await copyToClipboard(importUrl);
       if (!ok) {
         onToast(noResponse, "error");
         finish();
         return;
       }
       onToast(clipboardHint.replace("{app}", app.name), "ok");
-      if (deepLink !== shareUrl) {
+      if (deepLink !== importUrl) {
         try {
           openDeepLink(deepLink);
         } catch { /* clipboard is primary */ }
@@ -74,7 +69,7 @@ export function SubQuicAppTile({
       window.removeEventListener("blur", onBlur);
       finish();
       if (!blurred && Date.now() - start < 1500) {
-        const ok = await copyToClipboard(shareUrl);
+        const ok = await copyToClipboard(importUrl);
         onToast(ok ? pasteFallback(app.name) : noResponse, ok ? "ok" : "error");
       }
     }, 1200);
@@ -97,7 +92,7 @@ export function SubQuicAppTile({
       </div>
       <button
         type="button"
-        disabled={busy || !shareUrl}
+        disabled={busy || !importUrl}
         onClick={importInApp}
         className="sub-btn-primary"
         style={{ flexShrink: 0 }}

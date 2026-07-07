@@ -1,6 +1,16 @@
 import { InboundsByProtocol, NodeItem } from "../api/types";
 import { NXPANEL_INBOUND_KIND } from "./xrayHelpers";
 
+const USERNAME_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
+
+/** Random 8-char username (same style as bulk create). */
+export function generateRandomUsername(length = 8): string {
+  return Array.from(
+    { length },
+    () => USERNAME_ALPHABET[Math.floor(Math.random() * USERNAME_ALPHABET.length)],
+  ).join("");
+}
+
 type WgSettings = {
   address?: string | null;
   awg_address?: string | null;
@@ -60,9 +70,67 @@ export function protocolAssignable(
       return nodeList.some((n) => !!n.singbox?.hysteria2_enabled);
     case "tuic":
       return nodeList.some((n) => !!n.singbox?.tuic_enabled);
+    case "anytls":
+      return nodeList.some((n) => !!n.singbox?.anytls_enabled);
     default:
       return (inbounds?.[proto]?.length || 0) > 0;
   }
 }
 
 export { NXPANEL_INBOUND_KIND as NXPANEL_WG_KIND };
+
+export type SsInboundMeta = { tag: string; ss_method?: string | null };
+
+export function isSs2022Method(method: string): boolean {
+  return method.startsWith("2022-blake3");
+}
+
+/** Legacy vs SS-2022 family must match between user proxy and inbound. */
+export function inboundMatchesSsMethod(
+  inboundMethod: string | null | undefined,
+  userMethod: string,
+): boolean {
+  return isSs2022Method(inboundMethod || "") === isSs2022Method(userMethod);
+}
+
+export function ssMethodFromInbound(ib: { ss_method?: string | null }): string {
+  const m = (ib.ss_method || "").trim();
+  return m || "chacha20-ietf-poly1305";
+}
+
+/** Cipher comes from the first selected SS inbound (inbound is source of truth). */
+export function deriveSsMethodFromInbounds(
+  tags: string[],
+  inboundList: SsInboundMeta[],
+): string | null {
+  const first = inboundList.find((ib) => tags.includes(ib.tag));
+  return first ? ssMethodFromInbound(first) : null;
+}
+
+export function defaultSsInboundTags(inboundList: SsInboundMeta[]): string[] {
+  const first = inboundList[0];
+  return first ? [first.tag] : [];
+}
+
+export function defaultProtoInboundTags(
+  proto: string,
+  inbounds: InboundsByProtocol | undefined,
+): string[] {
+  if (proto === "amneziawg") return inbounds?.amneziawg?.map((i) => i.tag) || [];
+  if (proto === "shadowsocks") return defaultSsInboundTags(inbounds?.shadowsocks || []);
+  return inbounds?.[proto]?.map((i) => i.tag) || [];
+}
+
+export function toggleSsInboundTag(
+  tags: string[],
+  tag: string,
+  inboundList: SsInboundMeta[],
+): string[] {
+  if (tags.includes(tag)) return tags.filter((t) => t !== tag);
+  const ib = inboundList.find((i) => i.tag === tag);
+  if (!ib) return tags;
+  if (!tags.length) return [tag];
+  const ref = ssMethodFromInbound(inboundList.find((i) => i.tag === tags[0]) || ib);
+  if (!inboundMatchesSsMethod(ib.ss_method, ref)) return tags;
+  return [...tags, tag];
+}

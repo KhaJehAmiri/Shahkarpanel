@@ -243,21 +243,30 @@ const CloseButton: FC<{ onClose: () => void }> = ({ onClose }) => {
 /* -------------------------------- Modal -------------------------------- */
 export const Modal: FC<{
   open: boolean; title: ReactNode; onClose: () => void; children: ReactNode; footer?: ReactNode;
-  wide?: boolean; formWide?: boolean; hideHead?: boolean;
-}> = ({ open, title, onClose, children, footer, wide, formWide, hideHead }) => {
+  wide?: boolean; formWide?: boolean; hideHead?: boolean; className?: string;
+  dismissOnOverlay?: boolean; overlayClassName?: string;
+}> = ({ open, title, onClose, children, footer, wide, formWide, hideHead, className,
+  dismissOnOverlay = true, overlayClassName = "",
+}) => {
   useEffect(() => {
     if (!open) return;
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
     return () => {
       document.body.style.overflow = prev;
+      window.removeEventListener("keydown", onKey);
     };
-  }, [open]);
+  }, [open, onClose]);
 
   if (!open || typeof document === "undefined") return null;
-  const modalCls = ["nx-modal", wide && "wide", formWide && "form-wide"].filter(Boolean).join(" ");
+  const modalCls = ["nx-modal", wide && "wide", formWide && "form-wide", className].filter(Boolean).join(" ");
+  const overlayCls = ["nx-overlay", overlayClassName].filter(Boolean).join(" ");
   return createPortal(
-    <div className="nx-overlay" onClick={onClose}>
+    <div className={overlayCls} onClick={dismissOnOverlay ? onClose : undefined}>
       <div className={modalCls} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
         {!hideHead && (
         <div className="nx-modal-head">
@@ -435,16 +444,128 @@ export function usePagedList<T>(items: T[] | null | undefined, pageSize = 20) {
   };
 }
 
-export const Pager: FC<{ page: number; pages: number; onPage: (p: number) => void }> = ({ page, pages, onPage }) => {
+/* ------------------------------- Pager --------------------------------- */
+function buildPageWindow(page: number, pages: number): (number | "ellipsis")[] {
+  if (pages <= 7) {
+    return Array.from({ length: pages }, (_, i) => i + 1);
+  }
+  const cur = page + 1;
+  const near = new Set(
+    [1, pages, cur - 1, cur, cur + 1].filter((n) => n >= 1 && n <= pages),
+  );
+  const sorted = [...near].sort((a, b) => a - b);
+  const window: (number | "ellipsis")[] = [];
+  for (let i = 0; i < sorted.length; i++) {
+    if (i > 0 && sorted[i] - sorted[i - 1] > 1) window.push("ellipsis");
+    window.push(sorted[i]);
+  }
+  return window;
+}
+
+/**
+ * Pagination with first/last, numbered pages, and jump-to-page input.
+ * Pass `summary` for a left-side label (e.g. "Showing 1–12 of 5222").
+ */
+export const Pager: FC<{
+  page: number;
+  pages: number;
+  onPage: (p: number) => void;
+  summary?: ReactNode;
+}> = ({ page, pages, onPage, summary }) => {
   const { t } = useTranslation();
+  const [jump, setJump] = useState("");
+
   if (pages <= 1) return null;
-  return (
-    <div className="nx-row" style={{ justifyContent: "flex-end", gap: 8, marginTop: 10 }}>
-      <Button size="sm" disabled={page === 0} onClick={() => onPage(page - 1)}>{t("users.prev")}</Button>
-      <span className="nx-faint" style={{ fontSize: 12 }}>{page + 1} / {pages}</span>
-      <Button size="sm" disabled={page + 1 >= pages} onClick={() => onPage(page + 1)}>{t("users.next")}</Button>
+
+  const goTo = (p: number) => {
+    onPage(Math.max(0, Math.min(pages - 1, p)));
+  };
+
+  const submitJump = () => {
+    const n = parseInt(jump.trim(), 10);
+    if (!Number.isFinite(n) || n < 1 || n > pages) return;
+    goTo(n - 1);
+    setJump("");
+  };
+
+  const pageWindow = buildPageWindow(page, pages);
+
+  const controls = (
+    <div className="nx-pager">
+      <Button
+        size="sm"
+        variant="ghost"
+        disabled={page === 0}
+        onClick={() => goTo(0)}
+        title={t("pagination.first")}
+        aria-label={t("pagination.first")}
+      >
+        «
+      </Button>
+      <Button size="sm" variant="ghost" disabled={page === 0} onClick={() => goTo(page - 1)}>
+        {t("users.prev")}
+      </Button>
+      <div className="nx-pager-nums">
+        {pageWindow.map((item, idx) =>
+          item === "ellipsis" ? (
+            <span key={`e-${idx}`} className="nx-pager-ellipsis">…</span>
+          ) : (
+            <button
+              key={item}
+              type="button"
+              className={`nx-pager-num ${item === page + 1 ? "active" : ""}`}
+              onClick={() => goTo(item - 1)}
+              aria-current={item === page + 1 ? "page" : undefined}
+            >
+              {item}
+            </button>
+          ),
+        )}
+      </div>
+      <Button size="sm" variant="ghost" disabled={page + 1 >= pages} onClick={() => goTo(page + 1)}>
+        {t("users.next")}
+      </Button>
+      <Button
+        size="sm"
+        variant="ghost"
+        disabled={page + 1 >= pages}
+        onClick={() => goTo(pages - 1)}
+        title={t("pagination.last")}
+        aria-label={t("pagination.last")}
+      >
+        »
+      </Button>
+      <form
+        className="nx-pager-jump"
+        onSubmit={(e) => { e.preventDefault(); submitJump(); }}
+      >
+        <Input
+          type="number"
+          min={1}
+          max={pages}
+          value={jump}
+          onChange={(e) => setJump(e.target.value)}
+          placeholder={t("pagination.page")}
+          aria-label={t("pagination.goTo")}
+          dir="ltr"
+        />
+        <Button size="sm" variant="ghost" type="submit" disabled={!jump.trim()}>
+          {t("pagination.go")}
+        </Button>
+      </form>
     </div>
   );
+
+  if (summary) {
+    return (
+      <div className="nx-pager-bar">
+        <span className="nx-faint" style={{ fontSize: 12 }}>{summary}</span>
+        {controls}
+      </div>
+    );
+  }
+
+  return <div style={{ marginTop: 10 }}>{controls}</div>;
 };
 
 /* ------------------------------ Loading -------------------------------- */

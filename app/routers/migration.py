@@ -1,0 +1,150 @@
+"""3x-ui migration API."""
+from __future__ import annotations
+
+from typing import List, Optional
+
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from pydantic import BaseModel, Field
+
+from app.db import Session, get_db
+from app.migration.sqlite_dump import save_uploaded_backup
+from app.migration.three_x_ui import MigrationFetchError, MigrationResult, PanelSource, run_batch
+from app.models.admin import Admin
+from app.utils import responses
+
+router = APIRouter(
+    tags=["Migration"],
+    prefix="/api/migration",
+    responses={401: responses._401, 403: responses._403},
+)
+
+
+class ThreeXUIPanelIn(BaseModel):
+    slug: str = Field(..., min_length=1, max_length=64)
+    base_url: str = ""
+    username: str = ""
+    password: str = ""
+    backup_path: str = ""
+    legacy_panel_id: str = ""
+
+
+class ThreeXUIMigrateRequest(BaseModel):
+    panels: List[ThreeXUIPanelIn]
+    dry_run: bool = True
+
+
+@router.post("/3x-ui/upload")
+async def upload_backup_file(
+    file: UploadFile = File(...),
+    _: Admin = Depends(Admin.check_sudo_admin),
+):
+    """Upload a 3x-ui .dump / .db backup; returns server path for migration wizard."""
+    name = (file.filename or "backup.dump").strip()
+    lower = name.lower()
+    if not lower.endswith((".dump", ".sql", ".db", ".sqlite", ".sqlite3", ".json")):
+        raise HTTPException(
+            status_code=400,
+            detail="Supported backup types: .dump, .sql, .db, .sqlite, .json",
+        )
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Empty backup file")
+    if len(content) > 100 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Backup file too large (max 100MB)")
+    try:
+        path = save_uploaded_backup(content, name)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Cannot save backup: {exc}") from exc
+    return {"path": path, "filename": name}
+
+
+@router.post("/3x-ui/dry-run")
+def migration_dry_run(
+    body: ThreeXUIMigrateRequest,
+    db: Session = Depends(get_db),
+    _: Admin = Depends(Admin.check_sudo_admin),
+):
+    return _run_migration(body, db)
+
+
+@router.post("/3x-ui/run")
+def migration_run(
+    body: ThreeXUIMigrateRequest,
+    db: Session = Depends(get_db),
+    _: Admin = Depends(Admin.check_sudo_admin),
+):
+    result = _run_migration(body, db)
+    try:
+        from app import app
+        from app.routers import api_router
+        from app.subscription.route_registry import refresh_subscription_routes
+
+        refresh_subscription_routes(app, api_router)
+        from app.services.edge_proxy import sync_subscription_legacy_nginx
+
+        sync_subscription_legacy_nginx(db)
+    except Exception:
+        pass
+    if not body.dry_run:
+        try:
+            from app.xray.serving import sync_core_users_now
+
+            sync_core_users_now()
+        except Exception:
+            pass
+    return result
+
+
+def _result_dict(r: MigrationResult) -> dict:
+    return {
+        "panel_slug": r.panel_slug,
+        "applied": r.applied,
+        "endpoint": r.endpoint,
+        "inbound_tags": r.inbound_tags,
+        "user_count": r.user_count,
+        "alias_count": r.alias_count,
+        "users_created": r.users_created,
+        "users_updated": r.users_updated,
+        "aliases_created": r.aliases_created,
+        "hosts_created": r.hosts_created,
+        "validation": r.validation,
+        "warnings": r.warnings,
+        "error": r.error,
+    }
+
+
+def _run_migration(body: ThreeXUIMigrateRequest, db: Session) -> dict:
+    sources = [PanelSource(**p.model_dump()) for p in body.panels]
+    if not sources:
+        raise HTTPException(status_code=400, detail="Add at least one panel")
+    for src in sources:
+        slug = (src.slug or "").strip()
+        if not slug:
+            raise HTTPException(status_code=400, detail="Each panel needs a slug")
+        has_api = bool((src.base_url or "").strip())
+        has_backup = bool((src.backup_path or "").strip())
+        if has_api and has_backup:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Panel «{slug}»: use either live API or backup file, not both",
+            )
+        if not has_api and not has_backup:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Panel «{slug}»: provide panel URL (API) or backup file path",
+            )
+        if has_api and (not (src.username or "").strip() or not (src.password or "").strip()):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Panel «{slug}»: admin username and password required for API import",
+            )
+    try:
+        batch = run_batch(db, sources, dry_run=body.dry_run)
+    except MigrationFetchError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Migration failed: {exc}") from exc
+    payload: dict = {"results": [_result_dict(r) for r in batch.results]}
+    if batch.uuid_collisions:
+        payload["uuid_collisions"] = batch.uuid_collisions
+    return payload

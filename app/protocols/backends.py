@@ -30,9 +30,9 @@ class XrayBackend(ProtocolBackend):
 class SingBoxBackend(ProtocolBackend):
     name = "sing-box"
     available = True
-    protocols = ("hysteria2", "tuic")
-    transports = ("quic",)
-    description = "Sing-box engine (Hysteria2 / TUIC on nodes)."
+    protocols = ("hysteria2", "tuic", "anytls")
+    transports = ("quic", "tcp")
+    description = "Sing-box engine (Hysteria2 / TUIC / AnyTLS on nodes)."
 
 
 class Hysteria2Backend(ProtocolBackend):
@@ -49,3 +49,11 @@ class TuicBackend(ProtocolBackend):
     protocols = ("tuic",)
     transports = ("quic",)
     description = "TUIC v5 via sing-box."
+
+
+class AnyTLSBackend(ProtocolBackend):
+    name = "anytls"
+    available = True
+    protocols = ("anytls",)
+    transports = ("tcp",)
+    description = "AnyTLS via sing-box."

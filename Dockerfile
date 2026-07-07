@@ -45,8 +45,20 @@ COPY --from=build /usr/local/bin /usr/local/bin
 COPY --from=build /usr/local/share/xray /usr/local/share/xray
 
 # git + docker CLI + runuser for entrypoint privilege drop.
+# procps provides `pgrep`, used by the Xray core health-check job
+# (app/jobs/0_xray_core.py) and _kill_stale_stdin_xray() to find/reap stray
+# `xray run -config stdin:` processes. Without it those checks always see
+# zero matching processes and the health check restarts a perfectly healthy
+# core on every tick (~every JOB_CORE_HEALTH_CHECK_INTERVAL seconds).
+# docker-cli/docker-compose/docker-buildx (client-only, no dockerd/containerd)
+# let the panel drive the HOST'S docker daemon through the bind-mounted
+# /var/run/docker.sock for in-dashboard updates and Postgres backup/restore
+# (app/system/update_jobs.py, app/backup.py) — the panel never runs its own
+# daemon. Shipping the client in the image (instead of bind-mounting the
+# host's /usr/bin/docker + cli-plugins, as before) removes a host-binary
+# trust dependency from docker-compose.yml (see AUDIT_FINDINGS.md C5).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git docker.io util-linux \
+    && apt-get install -y --no-install-recommends git docker-cli docker-compose docker-buildx util-linux procps iproute2 postgresql-client \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 1000 nexuspanel 2>/dev/null || true \
     && useradd --uid 1000 --gid 1000 --create-home --home-dir /home/nexuspanel nexuspanel 2>/dev/null || true

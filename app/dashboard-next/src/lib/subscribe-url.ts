@@ -26,28 +26,63 @@ export function resolvePublicSubUrl(
   return pub || raw || "";
 }
 
+/** Strip #fragment (used before /sing-box, /wireguard, etc.). */
+export function stripSubUrlFragment(url: string): string {
+  return (url || "").replace(/#.*$/, "");
+}
+
+/**
+ * URL for VPN app import — includes #title with quota/expiry for v2rayNG (ignores HTTP headers).
+ * Use only for deep links / "open in app", not for plain copy+paste import.
+ */
+export function resolveClientImportUrl(
+  info: {
+    client_subscription_url?: string;
+    public_subscription_url?: string;
+    subscription_url?: string;
+    subscription_profile_title?: string;
+  } | null,
+  token: string,
+): string {
+  const client = info?.client_subscription_url?.trim();
+  if (client) return client;
+
+  const base = stripSubUrlFragment(resolvePublicSubUrl(info, token)).replace(/\/?$/, "/");
+  const title = info?.subscription_profile_title?.trim();
+  if (base && title) {
+    return `${base}#${encodeURIComponent(title)}`;
+  }
+  return base || resolvePublicSubUrl(info, token);
+}
+
+export function resolveSingboxSubUrl(subUrl: string): string {
+  if (!subUrl) return "";
+  return stripSubUrlFragment(subUrl).replace(/\/?$/, "/sing-box");
+}
+
 export function resolveWgUrl(subUrl: string, variant: "plain" | "awg" = "plain"): string {
   if (!subUrl) return "";
-  const base = subUrl.replace(/\/?$/, "/wireguard");
+  const base = stripSubUrlFragment(subUrl).replace(/\/?$/, "/wireguard");
   return variant === "awg" ? `${base}?variant=awg` : base;
 }
 
 export function resolveHysteria2Url(subUrl: string): string {
   if (!subUrl) return "";
-  return subUrl.replace(/\/?$/, "/hysteria2");
+  return stripSubUrlFragment(subUrl).replace(/\/?$/, "/hysteria2");
 }
 
 export function resolveTuicUrl(subUrl: string): string {
   if (!subUrl) return "";
-  return subUrl.replace(/\/?$/, "/tuic");
+  return stripSubUrlFragment(subUrl).replace(/\/?$/, "/tuic");
 }
 
 /** Browser-friendly setup page (/subscribe/?token=…) from a /sub/{token}/ URL. */
 export function resolveSubscribeBrowserUrl(subUrl: string): string {
   if (!subUrl) return "";
+  const bare = stripSubUrlFragment(subUrl);
   try {
     const base = typeof window !== "undefined" ? window.location.origin : "https://localhost";
-    const u = new URL(subUrl, base);
+    const u = new URL(bare, base);
     const m = u.pathname.match(/\/sub\/([^/]+)\/?$/);
     const token = m?.[1];
     if (token) return `${u.origin}/subscribe/?token=${encodeURIComponent(token)}`;

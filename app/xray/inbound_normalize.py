@@ -4,8 +4,230 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Dict, List
 
+from xray_api.types.account import ShadowsocksMethods, is_ss2022
+
+from app.models.proxy import _is_valid_ss2022_key
+
 
 NXPANEL_INBOUND_KIND = "nexusPanelKind"
+
+# Xray destOverride accepts only these protocols (bittorrent is routing-only).
+SNIFF_DEST_OVERRIDE_ALLOWED = frozenset({"http", "tls", "quic", "fakedns"})
+SNIFF_DEST_OVERRIDE_DEFAULT = ["http", "tls", "quic"]
+
+DEFAULT_REALITY_TARGET = "www.cloudflare.com:443"
+
+
+def _reality_target_from_settings(rs: Dict[str, Any]) -> str:
+    for key in ("target", "dest"):
+        if key not in rs:
+            continue
+        val = str(rs.get(key) or "").strip()
+        if val:
+            return val
+    names = rs.get("serverNames") or rs.get("serverName")
+    if isinstance(names, list):
+        for name in names:
+            sni = str(name or "").strip()
+            if sni:
+                return f"{sni}:443"
+    elif isinstance(names, str) and names.strip():
+        return f"{names.strip()}:443"
+    return DEFAULT_REALITY_TARGET
+
+
+def _normalize_reality_settings(rs: Dict[str, Any]) -> bool:
+    if not isinstance(rs, dict):
+        return False
+
+    changed = False
+    if "target" in rs and not str(rs.get("target") or "").strip():
+        rs.pop("target", None)
+        changed = True
+
+    target = _reality_target_from_settings(rs)
+    if str(rs.get("target") or "").strip() != target:
+        rs["target"] = target
+        changed = True
+
+    if "dest" in rs:
+        rs.pop("dest", None)
+        changed = True
+
+    return changed
+
+
+def _normalize_inbound_stream(stream: Dict[str, Any]) -> bool:
+    changed = False
+    if migrate_legacy_quic_stream_settings(stream):
+        changed = True
+    tls = stream.get("tlsSettings")
+    if isinstance(tls, dict) and _normalize_tls_ech_fields(tls):
+        changed = True
+    if str(stream.get("security") or "").lower() == "reality":
+        rs = stream.get("realitySettings")
+        if not isinstance(rs, dict):
+            rs = {}
+            stream["realitySettings"] = rs
+            changed = True
+        if _normalize_reality_settings(rs):
+            changed = True
+    return changed
+
+
+def normalize_ss2022_psk(value: str, method: str | ShadowsocksMethods) -> str | None:
+    """Return a standard-base64 SS-2022 PSK, fixing legacy URL-safe keys from the UI."""
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        cipher = method if isinstance(method, ShadowsocksMethods) else ShadowsocksMethods(method)
+    except ValueError:
+        return None
+
+    if _is_valid_ss2022_key(raw, cipher):
+        return raw
+
+    # Dashboard used to emit URL-safe base64 (RFC 4648 §5) for generated passwords.
+    candidate = raw.replace("-", "+").replace("_", "/")
+    pad = (-len(candidate) % 4)
+    if pad:
+        candidate += "=" * pad
+    if _is_valid_ss2022_key(candidate, cipher):
+        return candidate
+    return None
+
+
+def _normalize_shadowsocks_settings(settings: Dict[str, Any]) -> bool:
+    method = str(settings.get("method") or "")
+    if not is_ss2022(method):
+        return False
+
+    key = str(settings.get("password") or settings.get("key") or "").strip()
+    normalized = normalize_ss2022_psk(key, method)
+    if not normalized:
+        return False
+
+    changed = normalized != key or "key" in settings
+    settings["password"] = normalized
+    settings.pop("key", None)
+    return changed
+
+
+def _normalize_sniffing(sniff: Dict[str, Any]) -> bool:
+    if not isinstance(sniff, dict):
+        return False
+
+    dest = sniff.get("destOverride")
+    if not isinstance(dest, list):
+        return False
+
+    seen: set[str] = set()
+    filtered: List[str] = []
+    for item in dest:
+        proto = str(item).strip().lower()
+        if proto not in SNIFF_DEST_OVERRIDE_ALLOWED or proto in seen:
+            continue
+        seen.add(proto)
+        filtered.append(proto)
+
+    if filtered == dest:
+        return False
+
+    if filtered:
+        sniff["destOverride"] = filtered
+    else:
+        sniff.pop("destOverride", None)
+        if sniff.get("enabled") is not False:
+            sniff["destOverride"] = list(SNIFF_DEST_OVERRIDE_DEFAULT)
+    return True
+
+
+def normalize_vless_inbound_settings(settings: dict) -> bool:
+    """Ensure VLESS inbounds always have ``decryption`` (Xray requires it)."""
+    if not isinstance(settings, dict):
+        return False
+    changed = False
+    dec = str(settings.get("decryption") or "").strip()
+    enc_raw = settings.get("encryption")
+    enc = str(enc_raw).strip() if enc_raw is not None else ""
+
+    if not dec:
+        settings["decryption"] = "none"
+        changed = True
+
+    if enc.lower() == "none":
+        if settings.pop("encryption", None) is not None:
+            changed = True
+
+    return changed
+
+
+def _ech_to_string(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        s = value.strip()
+        return s or None
+    if isinstance(value, list):
+        parts = [str(x).strip() for x in value if str(x).strip()]
+        return parts[0] if parts else None
+    s = str(value).strip()
+    return s or None
+
+
+def migrate_legacy_quic_stream_settings(stream: Dict[str, Any]) -> bool:
+    """Upgrade legacy ``network: quic`` to XHTTP stream-one H3 (Xray 26+)."""
+    if str(stream.get("network") or "").lower() != "quic":
+        return False
+
+    quic = dict(stream.get("quicSettings") or {})
+    key = str(quic.get("key") or "").strip()
+    if key and not key.startswith("/"):
+        path = f"/{key}"
+    else:
+        path = key or "/"
+
+    stream.pop("quicSettings", None)
+    stream["network"] = "xhttp"
+
+    xh = dict(stream.get("xhttpSettings") or {})
+    if not str(xh.get("path") or "").strip():
+        xh["path"] = path
+    xh["mode"] = "stream-one"
+    stream["xhttpSettings"] = xh
+
+    sec = str(stream.get("security") or "").lower()
+    if sec in ("", "none"):
+        stream["security"] = "tls"
+
+    tls = stream.get("tlsSettings")
+    if not isinstance(tls, dict):
+        tls = {}
+        stream["tlsSettings"] = tls
+
+    alpn = tls.get("alpn")
+    if not isinstance(alpn, list):
+        alpn = []
+    if "h3" not in alpn:
+        tls["alpn"] = ["h3"] + [a for a in alpn if a != "h3"]
+
+    return True
+
+
+def _normalize_tls_ech_fields(tls: Dict[str, Any]) -> bool:
+    changed = False
+    for key in ("echServerKeys", "echConfigList"):
+        if key not in tls:
+            continue
+        normalized = _ech_to_string(tls.get(key))
+        if normalized is None:
+            if tls.pop(key, None) is not None:
+                changed = True
+        elif tls.get(key) != normalized:
+            tls[key] = normalized
+            changed = True
+    return changed
 
 
 def normalize_core_config_payload(payload: dict) -> dict:
@@ -37,7 +259,25 @@ def normalize_core_config_payload(payload: dict) -> dict:
     changed = False
 
     for inbound in inbounds:
+        stream = inbound.get("streamSettings")
+        if isinstance(stream, dict) and _normalize_inbound_stream(stream):
+            changed = True
+
+        sniff = inbound.get("sniffing")
+        if isinstance(sniff, dict) and _normalize_sniffing(sniff):
+            changed = True
+
         proto = str(inbound.get("protocol") or "").lower()
+        if proto == "shadowsocks":
+            settings = inbound.get("settings")
+            if isinstance(settings, dict) and _normalize_shadowsocks_settings(settings):
+                changed = True
+
+        if proto == "vless":
+            settings = inbound.get("settings")
+            if isinstance(settings, dict) and normalize_vless_inbound_settings(settings):
+                changed = True
+
         if proto not in ("wireguard", "amneziawg"):
             continue
 
@@ -74,4 +314,7 @@ def normalize_core_config_payload(payload: dict) -> dict:
         changed = True
 
     data["inbounds"] = inbounds
-    return data
+
+    from app.xray.warp_routing import apply_warp_safe_routing
+
+    return apply_warp_safe_routing(data)

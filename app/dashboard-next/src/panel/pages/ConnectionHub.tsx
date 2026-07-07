@@ -2,7 +2,7 @@ import { FC } from "react";
 import { useTranslation } from "react-i18next";
 import { useApp } from "../context/AppContext";
 import { HubLayout } from "../components/HubLayout";
-import { SudoOnly } from "../components/SudoGate";
+import { CoreReadGate } from "../components/SudoGate";
 import { XrayConfigsHub } from "../components/xray/XrayConfigsHub";
 import { Inbounds } from "./Inbounds";
 import { Hosts } from "./Hosts";
@@ -10,8 +10,8 @@ import { Callout } from "../components/ui";
 
 export const ConnectionHub: FC = () => {
   const { t } = useTranslation();
-  const { admin, expertMode } = useApp();
-  const isSudo = !!admin?.is_sudo;
+  const { expertMode, hasPermission } = useApp();
+  const canReadCore = hasPermission("core:read");
 
   return (
     <HubLayout
@@ -21,33 +21,33 @@ export const ConnectionHub: FC = () => {
       defaultTab="inbounds"
       tabs={[
         { id: "inbounds", label: t("hub.tabInbounds") },
-        { id: "outbounds", label: t("hub.tabOutbounds"), hidden: !isSudo },
-        { id: "routing", label: t("hub.tabRouting"), hidden: !isSudo },
+        { id: "outbounds", label: t("hub.tabOutbounds"), hidden: !canReadCore },
+        { id: "routing", label: t("hub.tabRouting"), hidden: !canReadCore },
         { id: "hosts", label: t("hub.tabHosts") },
-        { id: "advanced", label: t("hub.tabAdvanced"), hidden: !expertMode || !isSudo },
+        { id: "advanced", label: t("hub.tabAdvanced"), hidden: !expertMode || !canReadCore },
       ]}
     >
       {(tab) => {
         if (tab === "outbounds") {
           return (
-            <SudoOnly>
+            <CoreReadGate>
               <XrayConfigsHub visibleTabs={["outbounds"]} initialTab="outbounds" />
-            </SudoOnly>
+            </CoreReadGate>
           );
         }
         if (tab === "routing") {
           return (
-            <SudoOnly>
+            <CoreReadGate>
               <XrayConfigsHub visibleTabs={["routing"]} initialTab="routing" />
-            </SudoOnly>
+            </CoreReadGate>
           );
         }
         if (tab === "hosts") return <Hosts embedded />;
         if (tab === "advanced") {
           return (
-            <SudoOnly>
+            <CoreReadGate>
               <XrayConfigsHub visibleTabs={["dns", "basics", "json"]} initialTab="dns" />
-            </SudoOnly>
+            </CoreReadGate>
           );
         }
         return (

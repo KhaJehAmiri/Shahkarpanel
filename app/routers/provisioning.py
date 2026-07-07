@@ -50,6 +50,13 @@ def _panel_url() -> str:
         raise HTTPException(status_code=422, detail=str(exc))
 
 
+def _client_cert_pem(db: Session) -> Optional[str]:
+    """The panel's own TLS certificate, pushed to new nodes as SSL_CLIENT_CERT_FILE
+    so the node's RPyC/REST control channel requires real mutual TLS (H11)."""
+    tls = crud.get_tls_certificate(db)
+    return tls.certificate if tls else None
+
+
 class ProvisionRequest(BaseModel):
     name: str
     host: str
@@ -67,6 +74,7 @@ class ProvisionRequest(BaseModel):
     # sing-box stack (xray nodes)
     enable_hysteria2: bool = True
     enable_tuic: bool = False
+    enable_anytls: bool = False
     tls_mode: str = "self_signed"  # self_signed | letsencrypt | none
     tls_self_signed: bool = True
     le_target: Optional[str] = None
@@ -152,6 +160,7 @@ def install_command(
             node_port=NODE_DEFAULT_PORT, node_api_port=NODE_DEFAULT_API_PORT,
             control_secret=NODE_CONTROL_SECRET or None,
             force_image_rebuild=rebuild,
+            client_cert_pem=_client_cert_pem(db),
         )
     except provisioning.ProvisioningError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
@@ -169,7 +178,7 @@ def provision_node(
     _require_enabled()
     if not NODE_BOOTSTRAP_TOKEN:
         raise HTTPException(status_code=400, detail="NODE_BOOTSTRAP_TOKEN is not set.")
-    if body.role not in ("direct", "relay", "exit"):
+    if body.role not in ("direct", "relay", "transit", "exit"):
         raise HTTPException(status_code=422, detail="invalid role")
     if body.core_kind not in ("xray", "wireguard"):
         raise HTTPException(status_code=422, detail="invalid core_kind")
@@ -192,6 +201,7 @@ def provision_node(
             region=body.region, image=NODE_AGENT_IMAGE,
             node_port=NODE_DEFAULT_PORT, node_api_port=NODE_DEFAULT_API_PORT,
             control_secret=NODE_CONTROL_SECRET or None,
+            client_cert_pem=_client_cert_pem(db),
         )
         return ProvisionResponse(
             status="manual", node_role=body.role, install_command=cmd,
@@ -214,6 +224,7 @@ def provision_node(
             node_port=NODE_DEFAULT_PORT, node_api_port=NODE_DEFAULT_API_PORT,
             control_secret=NODE_CONTROL_SECRET or None,
             force_image_rebuild=body.refresh_agent,
+            client_cert_pem=_client_cert_pem(db),
         )
     except provisioning.ProvisioningError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
@@ -312,6 +323,7 @@ def provision_node(
     extras = ProvisionExtras(
         enable_hysteria2=body.enable_hysteria2,
         enable_tuic=body.enable_tuic,
+        enable_anytls=body.enable_anytls,
         tls_mode=tls_mode,
         le_target=(body.le_target or "").strip() or None,
         le_email=(body.le_email or "").strip() or None,
@@ -321,6 +333,7 @@ def provision_node(
         region=body.region or dbnode.region,
         enable_plain_wg_on_xray=body.enable_plain_wg_on_xray,
         enable_awg_on_xray=body.enable_awg_on_xray,
+        enable_awg_wg=body.enable_awg_wg,
     )
     job_id = provision_jobs.start_job(
         node_id=dbnode.id,

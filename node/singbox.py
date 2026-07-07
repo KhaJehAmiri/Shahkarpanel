@@ -25,7 +25,8 @@ logger = logging.getLogger("nexus-node-singbox")
 
 # Protocols this engine serves. Kept narrow on purpose; everything else stays
 # on Xray.
-SUPPORTED_TYPES = ("hysteria2", "tuic")
+SUPPORTED_TYPES = ("hysteria2", "tuic", "anytls")
+QUIC_TYPES = ("hysteria2", "tuic")
 
 
 @dataclass
@@ -42,7 +43,7 @@ class SingBoxUser:
 
 @dataclass
 class SingBoxInbound:
-    type: str                      # "hysteria2" | "tuic"
+    type: str                      # "hysteria2" | "tuic" | "anytls"
     tag: str
     listen_port: int
     users: List[SingBoxUser] = field(default_factory=list)
@@ -52,9 +53,15 @@ class SingBoxInbound:
     key_path: Optional[str] = None
     # Protocol extras
     congestion_control: str = "bbr"          # tuic
-    up_mbps: Optional[int] = None            # hysteria2
+    up_mbps: Optional[int] = None            # hysteria2 (legacy brutal; avoid)
     down_mbps: Optional[int] = None          # hysteria2
     obfs_password: Optional[str] = None      # hysteria2 (salamander)
+    ignore_client_bandwidth: bool = False    # hysteria2 → BBR on clients
+    heartbeat: Optional[str] = None          # tuic
+    auth_timeout: Optional[str] = None       # tuic
+    zero_rtt_handshake: Optional[bool] = None  # tuic
+    udp_timeout: Optional[str] = None
+    reuse_addr: Optional[bool] = None
 
     @classmethod
     def from_dict(cls, d: dict) -> "SingBoxInbound":
@@ -70,24 +77,35 @@ class SingBoxInbound:
             up_mbps=d.get("up_mbps"),
             down_mbps=d.get("down_mbps"),
             obfs_password=d.get("obfs_password") or None,
+            ignore_client_bandwidth=bool(d.get("ignore_client_bandwidth")),
+            heartbeat=d.get("heartbeat"),
+            auth_timeout=d.get("auth_timeout"),
+            zero_rtt_handshake=d.get("zero_rtt_handshake"),
+            udp_timeout=d.get("udp_timeout"),
+            reuse_addr=d.get("reuse_addr"),
         )
 
 
 @dataclass
 class SingBoxSpec:
     inbounds: List[SingBoxInbound] = field(default_factory=list)
-    # Local Clash API used to read per-user traffic counters.
+    traffic_limits: List[dict] = field(default_factory=list)
     clash_api_port: int = 9095
     clash_api_secret: str = ""
+    v2ray_api_port: int = 0
     log_level: str = "warn"
 
     @classmethod
     def from_dict(cls, data: dict) -> "SingBoxSpec":
+        clash_port = int(data.get("clash_api_port", 9095))
+        v2ray_port = int(data.get("v2ray_api_port") or 0) or (clash_port + 100)
         return cls(
             inbounds=[SingBoxInbound.from_dict(i) for i in (data.get("inbounds") or [])
                       if i.get("type") in SUPPORTED_TYPES],
-            clash_api_port=int(data.get("clash_api_port", 9095)),
+            traffic_limits=list(data.get("traffic_limits") or []),
+            clash_api_port=clash_port,
             clash_api_secret=data.get("clash_api_secret", ""),
+            v2ray_api_port=v2ray_port,
             log_level=data.get("log_level", "warn"),
         )
 
@@ -100,7 +118,7 @@ def _tls_block(inbound: SingBoxInbound) -> dict:
         "certificate_path": inbound.certificate_path,
         "key_path": inbound.key_path,
     }
-    if inbound.type in SUPPORTED_TYPES:
+    if inbound.type in QUIC_TYPES:
         tls["alpn"] = ["h3"]
     return tls
 
@@ -113,6 +131,10 @@ def _render_inbound(inbound: SingBoxInbound) -> dict:
         "listen_port": inbound.listen_port,
         "tls": _tls_block(inbound),
     }
+    if inbound.udp_timeout:
+        base["udp_timeout"] = inbound.udp_timeout
+    if inbound.reuse_addr is not None:
+        base["reuse_addr"] = inbound.reuse_addr
     if inbound.type == "hysteria2":
         base["users"] = [{"name": u.name, "password": u.password or ""} for u in inbound.users]
         if inbound.up_mbps:
@@ -121,29 +143,51 @@ def _render_inbound(inbound: SingBoxInbound) -> dict:
             base["down_mbps"] = inbound.down_mbps
         if inbound.obfs_password:
             base["obfs"] = {"type": "salamander", "password": inbound.obfs_password}
+        if inbound.ignore_client_bandwidth:
+            base["ignore_client_bandwidth"] = True
     elif inbound.type == "tuic":
         base["users"] = [
             {"name": u.name, "uuid": u.uuid or "", "password": u.password or ""}
             for u in inbound.users
         ]
         base["congestion_control"] = inbound.congestion_control
+        if inbound.heartbeat:
+            base["heartbeat"] = inbound.heartbeat
+        if inbound.auth_timeout:
+            base["auth_timeout"] = inbound.auth_timeout
+        if inbound.zero_rtt_handshake is not None:
+            base["zero_rtt_handshake"] = inbound.zero_rtt_handshake
+    elif inbound.type == "anytls":
+        base["users"] = [{"name": u.name, "password": u.password or ""} for u in inbound.users]
     return base
 
 
 def render_config(spec: SingBoxSpec) -> dict:
     """Render the full sing-box server config (dict, ready to ``json.dump``)."""
+    inbound_tags = [i.tag for i in spec.inbounds]
+    user_names = sorted({u.name for i in spec.inbounds for u in i.users})
+    v2ray_port = spec.v2ray_api_port or (spec.clash_api_port + 100)
+    experimental: dict = {
+        "clash_api": {
+            "external_controller": f"127.0.0.1:{spec.clash_api_port}",
+            "secret": spec.clash_api_secret,
+        },
+        "cache_file": {"enabled": True, "path": "/var/lib/nexusnode/singbox-cache.db"},
+    }
+    if inbound_tags and user_names:
+        experimental["v2ray_api"] = {
+            "listen": f"127.0.0.1:{v2ray_port}",
+            "stats": {
+                "enabled": True,
+                "inbounds": inbound_tags,
+                "users": user_names,
+            },
+        }
     return {
         "log": {"level": spec.log_level, "timestamp": True},
         "inbounds": [_render_inbound(i) for i in spec.inbounds],
         "outbounds": [{"type": "direct", "tag": "direct"}],
-        # Clash API exposes connection/traffic counters we poll per user tag.
-        "experimental": {
-            "clash_api": {
-                "external_controller": f"127.0.0.1:{spec.clash_api_port}",
-                "secret": spec.clash_api_secret,
-            },
-            "cache_file": {"enabled": True, "path": "/var/lib/nexusnode/singbox-cache.db"},
-        },
+        "experimental": experimental,
     }
 
 
@@ -211,6 +255,7 @@ class SingBoxManager:
         self._proc: Optional[subprocess.Popen] = None
         self._clash_port = 9095
         self._clash_secret = ""
+        self._v2ray_port = 9195
 
     @staticmethod
     def _default_run(cmd, check=True):
@@ -239,12 +284,26 @@ class SingBoxManager:
         """Bring sing-box to the desired state (idempotent restart)."""
         self._clash_port = spec.clash_api_port
         self._clash_secret = spec.clash_api_secret
+        self._v2ray_port = spec.v2ray_api_port or (spec.clash_api_port + 100)
         self.write_config(spec)
         # No inbounds → ensure the engine is stopped rather than running idle.
         if not spec.inbounds:
             self.stop()
             return
+        if not self.check_config():
+            logger.error("sing-box config invalid; refusing restart")
+            raise RuntimeError("sing-box config check failed")
         self.restart()
+        try:
+            from speed_limit import SpeedLimitManager, port_limits_from_spec, tune_udp_quic_stack
+
+            if any(ib.type in QUIC_TYPES for ib in spec.inbounds):
+                tune_udp_quic_stack()
+            limits = port_limits_from_spec({"traffic_limits": spec.traffic_limits})
+            if limits:
+                SpeedLimitManager().apply_ports(limits)
+        except Exception as exc:
+            logger.warning("sing-box port speed limits not applied: %s", exc)
         logger.info("Applied sing-box spec (%d inbounds)", len(spec.inbounds))
 
     def restart(self) -> None:
@@ -268,7 +327,16 @@ class SingBoxManager:
         return bool(self._proc and self._proc.poll() is None)
 
     def get_transfer(self) -> Dict[str, dict]:
-        """Per-user ``{name: {"rx", "tx"}}`` from the local Clash API."""
+        """Per-user interval bytes via sing-box V2Ray API (reset-on-read)."""
+        from v2ray_stats import query_user_transfer
+
+        try:
+            out = query_user_transfer("127.0.0.1", self._v2ray_port, reset=True)
+            if out:
+                return out
+        except Exception:
+            pass
+        # Legacy nodes without with_v2ray_api — best-effort active connections only.
         secret = f"?secret={self._clash_secret}" if self._clash_secret else ""
         url = f"http://127.0.0.1:{self._clash_port}/connections{secret}"
         try:

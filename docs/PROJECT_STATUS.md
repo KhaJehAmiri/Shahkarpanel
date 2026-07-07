@@ -23,10 +23,10 @@
 
 | Item | Value |
 |------|-------|
-| Panel | `http://91.220.8.251:8000` |
+| Panel | `http://YOUR_PANEL_IP:8000` |
 | Dashboard | `/dashboard/` |
 | Subscribe | `/subscribe/?token=…` |
-| Test node | `wireguard1` · id=**1** · `178.83.45.253` |
+| Test node | `wireguard1` · id=**1** · `YOUR_WG_NODE_IP` |
 | Test user | `alireza` · id=**5** |
 | Repo path | `/opt/nexuspanel` |
 
@@ -130,7 +130,7 @@ docs/CLIENT_API.md
 10. ~~Tunnel loopback E2E~~ — disabled on prod; was test-only (`panel-loopback-e2e`)
 11. ~~VLESS+Reality~~ — `VLESS TCP` inbound on :8443 with Reality (run `scripts/setup_panel_stack.py`)
 12. ~~SS-2022~~ — `SS-2022` inbound on :8388 + alireza wired
-13. **LE on wireguard1** — blocked: no DNS A record to `178.83.45.253` (needs domain)
+13. **LE on wireguard1** — blocked: no DNS A record to `YOUR_WG_NODE_IP` (needs domain)
 14. **Node image rebuild** — blocked: no SSH creds on this host (`WG_NODE_SSH_PASSWORD`)
 15. **Tunnel production E2E** — needs Iran relay Xray node + foreign exit node (not loopback)
 
@@ -141,7 +141,7 @@ Paste:
 ```
 کانواس nexuspanel-central و docs/CENTRAL-HANDOFF.md را بخوان.
 می‌خواهم ممیزی امنیتی کامل — از صف P0 در کانواس شروع کن.
-نود wireguard1 (178.83.45.253) · کاربر alireza.
+نود wireguard1 (YOUR_WG_NODE_IP) · کاربر alireza.
 ```
 
 Legacy detail: this file + `AUDIT-CLOSURE.md`. Visual: **only** `nexuspanel-central.canvas.tsx`.

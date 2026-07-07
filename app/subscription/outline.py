@@ -27,15 +27,24 @@ class OutlineConfiguration:
         }
         return config
 
-    def add(self, remark: str, address: str, inbound: dict, settings: dict):
+    def add(self, remark: str, address: str, inbound: dict, settings: dict, **kwargs):
         if inbound["protocol"] != "shadowsocks":
             return
+
+        method = settings["method"]
+        password = settings["password"]
+        if str(method).startswith("2022-"):
+            server_key = inbound.get("ss_password")
+            if not server_key:
+                return
+            method = inbound.get("ss_method") or method
+            password = f"{server_key}:{password}"
 
         outbound = self.make_outbound(
             remark=remark,
             address=address,
             port=inbound["port"],
-            password=settings["password"],
-            method=settings["method"],
+            password=password,
+            method=method,
         )
         self.add_directly(outbound)

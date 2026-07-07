@@ -194,7 +194,7 @@ def _row_to_user_create(row: ImportRow) -> UserCreate:
         inbounds[pt] = filter_inbound_tags(pt, known, proxy_settings)
     if not inbounds:
         for pt in proxies:
-            if pt in (ProxyTypes.WireGuard, ProxyTypes.Hysteria2, ProxyTypes.TUIC):
+            if pt in (ProxyTypes.WireGuard, ProxyTypes.Hysteria2, ProxyTypes.TUIC, ProxyTypes.AnyTLS):
                 inbounds[pt] = []
                 continue
             ins = xray.config.inbounds_by_protocol.get(pt.value) or []

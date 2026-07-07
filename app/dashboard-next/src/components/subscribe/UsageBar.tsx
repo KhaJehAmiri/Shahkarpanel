@@ -7,6 +7,8 @@ interface Props {
   totalLabel: string;
   pct: number;
   exhausted?: boolean;
+  overage?: number;
+  overageLabel?: string;
 }
 
 function fmt(n: number): string {
@@ -16,7 +18,7 @@ function fmt(n: number): string {
   return `${n} B`;
 }
 
-export function UsageBar({ used, total, usedLabel, totalLabel, pct, exhausted }: Props) {
+export function UsageBar({ used, total, usedLabel, totalLabel, pct, exhausted, overage = 0, overageLabel }: Props) {
   const tone = exhausted || pct >= 100 ? "danger" : pct >= 85 ? "warn" : "ok";
   const displayPct = total ? pct : 0;
 
@@ -36,6 +38,11 @@ export function UsageBar({ used, total, usedLabel, totalLabel, pct, exhausted }:
       <div className="sub-usage-track">
         <div className={`sub-usage-fill ${tone}`} style={{ width: `${total ? displayPct : 4}%` }} />
       </div>
+      {overage > 0 && overageLabel ? (
+        <div className="sub-usage-overage" style={{ marginTop: 8, fontSize: 12, color: "var(--sub-danger, #ef4444)" }}>
+          {overageLabel}: <strong dir="ltr">{fmt(overage)}</strong>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -2,6 +2,7 @@ export interface AdminInfo {
   username: string;
   is_sudo: boolean;
   role?: string | null;
+  permissions?: string[];
   max_users?: number | null;
   max_nodes?: number | null;
   tenant_id?: number | null;
@@ -33,6 +34,7 @@ export interface UserItem {
   username: string;
   status: string;
   used_traffic: number;
+  overage_traffic?: number;
   data_limit: number | null;
   expire: number | null;
   online_at: string | null;
@@ -42,10 +44,37 @@ export interface UserItem {
   proxies?: Record<string, any>;
   inbounds?: Record<string, string[]>;
   links?: string[];
+  link_items?: Array<{
+    link: string;
+    protocol: string;
+    remark: string;
+    region_flag?: string;
+    region_name?: string;
+    address_hint?: string;
+  }>;
   subscription_url?: string;
   public_subscription_url?: string;
+  client_subscription_url?: string;
+  subscription_profile_title?: string;
+  subscription_urls?: Array<{
+    label: string;
+    slug: string;
+    url: string;
+    import_url?: string;
+    export_mode: string;
+    inbound_tag?: string | null;
+    recommended?: boolean;
+  }>;
   portal_enabled?: boolean;
   client_profile?: string | null;
+  routing_preset?: string | null;
+  dns_policy?: { preset?: string } | Record<string, unknown> | null;
+  session_limit_minutes?: number | null;
+  speed_limit_up?: number | null;
+  speed_limit_down?: number | null;
+  device_limit?: number | null;
+  sub_token?: string | null;
+  sub_revoked_at?: string | null;
 }
 
 export type ClientProfile = "gamer" | "trader" | "normal";
@@ -80,6 +109,8 @@ export interface NodeSingBoxConfig {
   tuic_enabled?: boolean;
   tuic_port?: number | null;
   tuic_congestion_control?: string;
+  anytls_enabled?: boolean;
+  anytls_port?: number | null;
   tls_trusted?: boolean;
   tls_issuer?: string | null;
   tls_expires_at?: string | null;
@@ -102,10 +133,14 @@ export interface AmneziaWGParams {
   awg_jmax?: number | null;
   awg_s1?: number | null;
   awg_s2?: number | null;
+  awg_s3?: number | null;
+  awg_s4?: number | null;
   awg_h1?: number | null;
   awg_h2?: number | null;
   awg_h3?: number | null;
   awg_h4?: number | null;
+  sg_wire_enabled?: boolean;
+  sg_wire_preset_rev?: string | null;
 }
 
 export interface InboundInfo {
@@ -177,12 +212,30 @@ export interface Branding {
   domain?: string | null;
 }
 
+export interface TunnelHealthCheck {
+  kind?: string;
+  node_id?: number;
+  connected?: boolean;
+  address?: string;
+  port?: number;
+  reachable?: boolean;
+  error?: string;
+}
+
+export interface TunnelHealth {
+  healthy: boolean;
+  checks: Record<string, TunnelHealthCheck>;
+}
+
 export interface Tunnel {
   id: number;
   name: string;
   enabled: boolean;
   relay_node_id: number | null;
+  intermediate_node_id?: number | null;
+  intermediate_port?: number | null;
   exit_node_id: number | null;
+  hops?: number;
   relay_kind: "panel" | "node";
   exit_kind: "panel" | "node";
   transport: string;

@@ -71,6 +71,7 @@ def _portal_profile(dbuser: User) -> PortalProfile:
         username=user.username,
         status=user.status.value,
         used_traffic=user.used_traffic,
+        overage_traffic=int(getattr(user, "overage_traffic", 0) or 0),
         data_limit=user.data_limit,
         expire=user.expire,
         subscription_url=user.subscription_url,

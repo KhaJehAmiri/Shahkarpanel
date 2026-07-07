@@ -3,16 +3,26 @@ from dotenv import load_dotenv
 import os
 from pathlib import Path
 
+RUNTIME_ENV_PATH = Path(
+    os.environ.get("NEXUSPANEL_RUNTIME_ENV", "/var/lib/nexuspanel/.env")
+)
+
 
 def _load_env_file() -> None:
-    """Load .env when readable. Docker Compose already injects env_file vars."""
-    path = Path(os.environ.get("DOTENV_PATH", ".env"))
-    if not path.is_file() or not os.access(path, os.R_OK):
-        return
-    try:
-        load_dotenv(path)
-    except OSError:
-        pass
+    """Load repo .env then runtime secrets from outside the git checkout.
+
+    Docker Compose may inject both via ``env_file``; this mirrors that order
+    when the panel runs directly (``python main.py``) or when only one file
+    was loaded. Runtime secrets always win over repo .env (M16).
+    """
+    repo_env = Path(os.environ.get("DOTENV_PATH", ".env"))
+    for path in (repo_env, RUNTIME_ENV_PATH):
+        if not path.is_file() or not os.access(path, os.R_OK):
+            continue
+        try:
+            load_dotenv(path, override=(path == RUNTIME_ENV_PATH))
+        except OSError:
+            pass
 
 
 _load_env_file()
@@ -42,8 +52,9 @@ EVENTS_RETENTION_DAYS = config("EVENTS_RETENTION_DAYS", cast=int, default=30)
 LOG_JSON = config("LOG_JSON", cast=bool, default=False)
 
 # Optional static token for scraping the Prometheus /api/metrics endpoint.
-# When set, a request with header `Authorization: Bearer <token>` (or `?token=`)
-# is accepted without an admin session. When empty, a sudo admin token is required.
+# When set, send header `Authorization: Bearer <METRICS_TOKEN>` only — query
+# `?token=` is not accepted (tokens in URLs leak via logs and reverse proxies).
+# When empty, a sudo admin bearer token is required.
 METRICS_TOKEN = config("METRICS_TOKEN", default="")
 
 # Cluster / reliability
@@ -52,14 +63,28 @@ METRICS_TOKEN = config("METRICS_TOKEN", default="")
 NODE_BOOTSTRAP_TOKEN = config("NODE_BOOTSTRAP_TOKEN", default="")
 # Shared secret for REST node control API (header X-Nexus-Control-Secret). Empty = disabled.
 NODE_CONTROL_SECRET = config("NODE_CONTROL_SECRET", default="")
-# When True, panel verifies node agent TLS certificates (requires valid certs on nodes).
+# Node agent certs are self-signed with no SAN (see node/certificate.py), so the
+# panel always pins the exact cert content on first connect and rejects any later
+# cert change as a possible MITM (TOFU, see verify_or_capture_pin/server_cert_sha256)
+# regardless of this flag. NODE_SSL_VERIFY additionally enables strict hostname/SAN
+# matching on top of that pin — only turn this on if nodes are provisioned with
+# CA-issued certs whose SAN matches their address, otherwise connections will fail.
 NODE_SSL_VERIFY = config("NODE_SSL_VERIFY", cast=bool, default=False)
 NODE_BOOTSTRAP_MAX_ATTEMPTS = config("NODE_BOOTSTRAP_MAX_ATTEMPTS", cast=int, default=20)
 NODE_BOOTSTRAP_WINDOW_SECONDS = config("NODE_BOOTSTRAP_WINDOW_SECONDS", cast=int, default=3600)
 LOGIN_MAX_ATTEMPTS = config("LOGIN_MAX_ATTEMPTS", cast=int, default=10)
 LOGIN_MAX_WINDOW_SECONDS = config("LOGIN_MAX_WINDOW_SECONDS", cast=int, default=900)
-# False = accept first connect to new servers (normal for one-click node install).
-PROVISIONING_SSH_STRICT_HOST_KEY = config("PROVISIONING_SSH_STRICT_HOST_KEY", cast=bool, default=False)
+# Optional OIDC/OAuth admin SSO (leave issuer empty to disable).
+OIDC_ISSUER = config("OIDC_ISSUER", default="")
+OIDC_CLIENT_ID = config("OIDC_CLIENT_ID", default="")
+OIDC_CLIENT_SECRET = config("OIDC_CLIENT_SECRET", default="")
+OIDC_REDIRECT_URI = config("OIDC_REDIRECT_URI", default="")
+OIDC_USERNAME_CLAIM = config("OIDC_USERNAME_CLAIM", default="preferred_username")
+# Optional Content-Security-Policy header value (empty = omit header).
+SECURITY_CSP = config("SECURITY_CSP", default="")
+# True = verify SSH host keys on node provisioning (secure default). Set False only
+# for lab/staging one-click install where servers are ephemeral (AUDIT M15).
+PROVISIONING_SSH_STRICT_HOST_KEY = config("PROVISIONING_SSH_STRICT_HOST_KEY", cast=bool, default=True)
 # Interval (seconds) for the cluster failover detector. 0 disables it.
 CLUSTER_FAILOVER_CHECK_INTERVAL = config("CLUSTER_FAILOVER_CHECK_INTERVAL", cast=int, default=0)
 
@@ -70,6 +95,9 @@ PANEL_GITHUB_BRANCH = config("PANEL_GITHUB_BRANCH", default="master")
 CLUSTER_NODE_DOWN_SECONDS = config("CLUSTER_NODE_DOWN_SECONDS", cast=int, default=180)
 # Automatically disable a persistently-down node (failover). Off by default.
 CLUSTER_AUTO_DISABLE_DOWN_NODES = config("CLUSTER_AUTO_DISABLE_DOWN_NODES", cast=bool, default=False)
+# Attempt an automatic reconnect for a down node before declaring it down. On by
+# default: cheap self-heal for transient blips (network, node restart).
+CLUSTER_AUTO_RECONNECT_DOWN_NODES = config("CLUSTER_AUTO_RECONNECT_DOWN_NODES", cast=bool, default=True)
 
 # OpenTelemetry tracing
 OTEL_ENABLED = config("OTEL_ENABLED", cast=bool, default=False)
@@ -154,6 +182,28 @@ VITE_BASE_API = f"http://127.0.0.1:{UVICORN_PORT}/api/" \
 
 XRAY_JSON = config("XRAY_JSON", default="./xray_config.json")
 WARP_DATA = config("WARP_DATA", default="./warp_account.json")
+
+# Automatic WARP outbound health-check + self-heal (see app/jobs/warp_health.py).
+# The default hostname almost always resolves to the same anycast IP, so a
+# blocked/dead endpoint needs an alternate IP:port to actually recover — not
+# just a fresh DNS lookup. Candidates are "ip:port" pairs from Cloudflare's
+# published consumer-WARP ingress ranges; tune per-network if your ISP blocks
+# a different subset. https://developers.cloudflare.com/cloudflare-one/connections/connect-devices/warp/deployment/firewall/
+JOB_WARP_HEALTH_CHECK_ENABLED = config("JOB_WARP_HEALTH_CHECK_ENABLED", cast=bool, default=True)
+JOB_WARP_HEALTH_CHECK_INTERVAL = config("JOB_WARP_HEALTH_CHECK_INTERVAL", cast=int, default=60)
+WARP_HEALTH_FAILURE_THRESHOLD = config("WARP_HEALTH_FAILURE_THRESHOLD", cast=int, default=2)
+WARP_HEALTH_REMEDIATION_COOLDOWN = config("WARP_HEALTH_REMEDIATION_COOLDOWN", cast=int, default=180)
+WARP_CANDIDATE_ENDPOINTS = [
+    ep.strip()
+    for ep in config(
+        "WARP_CANDIDATE_ENDPOINTS",
+        default=(
+            "162.159.192.1:2408,162.159.192.1:500,162.159.192.1:1701,162.159.192.1:4500,"
+            "188.114.96.1:2408,188.114.97.1:2408,162.159.195.1:2408,188.114.96.1:894"
+        ),
+    ).split(",")
+    if ep.strip()
+]
 XRAY_FALLBACKS_INBOUND_TAG = config("XRAY_FALLBACKS_INBOUND_TAG", cast=str, default="") or config(
     "XRAY_FALLBACK_INBOUND_TAG", cast=str, default=""
 )
@@ -162,6 +212,17 @@ XRAY_ASSETS_PATH = config("XRAY_ASSETS_PATH", default="/usr/local/share/xray")
 XRAY_EXCLUDE_INBOUND_TAGS = config("XRAY_EXCLUDE_INBOUND_TAGS", default='').split()
 XRAY_SUBSCRIPTION_URL_PREFIX = config("XRAY_SUBSCRIPTION_URL_PREFIX", default="").strip("/")
 XRAY_SUBSCRIPTION_PATH = config("XRAY_SUBSCRIPTION_PATH", default="sub").strip("/")
+# 3x-ui style CDN: hosts override subscription address/port/TLS; Xray bind is separate.
+# Runtime loopback+strip TLS for ws/grpc CDN hosts (when origin nginx or manual bridge exists).
+XRAY_CDN_RUNTIME_ENABLED = config("XRAY_CDN_RUNTIME_ENABLED", cast=bool, default=True)
+# Optional origin nginx vhosts for proxy domains only (never the panel web vhost).
+_cdn_origin_raw = config("XRAY_CDN_ORIGIN_NGINX", default="")
+if _cdn_origin_raw == "":
+    XRAY_CDN_ORIGIN_NGINX = config("XRAY_EDGE_PROXY_ENABLED", cast=bool, default=True)
+else:
+    XRAY_CDN_ORIGIN_NGINX = config("XRAY_CDN_ORIGIN_NGINX", cast=bool)
+# Deprecated alias — use XRAY_CDN_ORIGIN_NGINX.
+XRAY_EDGE_PROXY_ENABLED = XRAY_CDN_ORIGIN_NGINX
 
 TELEGRAM_API_TOKEN = config("TELEGRAM_API_TOKEN", default="")
 TELEGRAM_ADMIN_ID = config(
@@ -173,7 +234,8 @@ TELEGRAM_PROXY_URL = config("TELEGRAM_PROXY_URL", default="")
 TELEGRAM_LOGGER_CHANNEL_ID = config("TELEGRAM_LOGGER_CHANNEL_ID", cast=int, default=0)
 TELEGRAM_DEFAULT_VLESS_FLOW = config("TELEGRAM_DEFAULT_VLESS_FLOW", default="")
 
-JWT_ACCESS_TOKEN_EXPIRE_MINUTES = config("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", cast=int, default=1440)
+JWT_ACCESS_TOKEN_EXPIRE_MINUTES = config("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", cast=int, default=60)
+JWT_REFRESH_TOKEN_EXPIRE_DAYS = config("JWT_REFRESH_TOKEN_EXPIRE_DAYS", cast=int, default=7)
 
 CUSTOM_TEMPLATES_DIRECTORY = config("CUSTOM_TEMPLATES_DIRECTORY", default=None)
 SUBSCRIPTION_PAGE_TEMPLATE = config("SUBSCRIPTION_PAGE_TEMPLATE", default="subscription/index.html")
@@ -197,6 +259,12 @@ EXTERNAL_CONFIG = config("EXTERNAL_CONFIG", default="", cast=str)
 LOGIN_NOTIFY_WHITE_LIST = [ip.strip() for ip in config("LOGIN_NOTIFY_WHITE_LIST",
                                                        default="", cast=str).split(",") if ip.strip()]
 
+# Admin login IP allow-list. Comma-separated IPs or CIDRs (v4/v6). When set,
+# admin token issuance is only allowed from these networks. Empty = allow all
+# (backward compatible).
+ADMIN_IP_ALLOWLIST = [ip.strip() for ip in config("ADMIN_IP_ALLOWLIST",
+                                                  default="", cast=str).split(",") if ip.strip()]
+
 USE_CUSTOM_JSON_DEFAULT = config("USE_CUSTOM_JSON_DEFAULT", default=False, cast=bool)
 USE_CUSTOM_JSON_FOR_V2RAYN = config("USE_CUSTOM_JSON_FOR_V2RAYN", default=False, cast=bool)
 USE_CUSTOM_JSON_FOR_V2RAYNG = config("USE_CUSTOM_JSON_FOR_V2RAYNG", default=False, cast=bool)
@@ -218,6 +286,20 @@ EXPIRED_STATUS_TEXT = config("EXPIRED_STATUS_TEXT", default="Expired")
 LIMITED_STATUS_TEXT = config("LIMITED_STATUS_TEXT", default="Limited")
 DISABLED_STATUS_TEXT = config("DISABLED_STATUS_TEXT", default="Disabled")
 ONHOLD_STATUS_TEXT = config("ONHOLD_STATUS_TEXT", default="On-Hold")
+
+# Shown as proxy/server name inside VPN apps when subscription export is blocked.
+SUB_BLOCKED_DATA_LIMIT_MESSAGE = config(
+    "SUB_BLOCKED_DATA_LIMIT_MESSAGE",
+    default="🪫 حجم اینترنت تمام شده — برای تمدید با پشتیبانی تماس بگیرید",
+)
+SUB_BLOCKED_EXPIRED_MESSAGE = config(
+    "SUB_BLOCKED_EXPIRED_MESSAGE",
+    default="⌛ اعتبار اشتراک تمام شده — برای تمدید با پشتیبانی تماس بگیرید",
+)
+SUB_BLOCKED_INACTIVE_MESSAGE = config(
+    "SUB_BLOCKED_INACTIVE_MESSAGE",
+    default="❌ حساب غیرفعال است — با پشتیبانی تماس بگیرید",
+)
 
 USERS_AUTODELETE_DAYS = config("USERS_AUTODELETE_DAYS", default=-1, cast=int)
 USER_AUTODELETE_INCLUDE_LIMITED_ACCOUNTS = config("USER_AUTODELETE_INCLUDE_LIMITED_ACCOUNTS", default=False, cast=bool)
@@ -279,6 +361,7 @@ DISABLE_RECORDING_NODE_USAGE = config("DISABLE_RECORDING_NODE_USAGE", cast=bool,
 SUB_UPDATE_INTERVAL = config("SUB_UPDATE_INTERVAL", default="12")
 SUB_SUPPORT_URL = config("SUB_SUPPORT_URL", default="https://t.me/")
 SUB_PROFILE_TITLE = config("SUB_PROFILE_TITLE", default="NexusPanel")
+SUB_PROFILE_TITLE_DYNAMIC = config("SUB_PROFILE_TITLE_DYNAMIC", default=True, cast=bool)
 
 # Installer / first-run defaults
 PANEL_DEFAULT_LANG = config("PANEL_DEFAULT_LANG", default="en")
@@ -300,9 +383,44 @@ APNS_USE_SANDBOX = config("APNS_USE_SANDBOX", cast=bool, default=True)
 
 # Interval jobs, all values are in seconds
 JOB_CORE_HEALTH_CHECK_INTERVAL = config("JOB_CORE_HEALTH_CHECK_INTERVAL", cast=int, default=10)
+# When the main core's *process* is alive but its gRPC stats API does not answer,
+# a single timeout is almost always transient (CPU spike, GC pause, brief gRPC
+# congestion) — restarting the whole core on it disconnects every user for
+# nothing. Retry the probe a few times within the tick, and only restart once
+# this many *consecutive* health ticks have all failed.
+#   CORE_HEALTH_API_TIMEOUT           — per-probe gRPC timeout (seconds)
+#   CORE_HEALTH_API_RETRIES           — extra in-tick retries after the first miss
+#   CORE_HEALTH_API_FAILURE_THRESHOLD — consecutive failed ticks before restart
+#                                       (1 restores the old restart-on-first-miss)
+CORE_HEALTH_API_TIMEOUT = config("CORE_HEALTH_API_TIMEOUT", cast=int, default=5)
+CORE_HEALTH_API_RETRIES = config("CORE_HEALTH_API_RETRIES", cast=int, default=2)
+CORE_HEALTH_API_FAILURE_THRESHOLD = config("CORE_HEALTH_API_FAILURE_THRESHOLD", cast=int, default=3)
+
+# Every core restart is a brief all-user outage between the old process dying and
+# the new one binding the inbound ports. Xray exits within well under a second on
+# SIGTERM and its ports free immediately, so the normal outage is ~1s; these caps
+# only bound the *worst* case (a wedged process or a lingering port owner).
+#   XRAY_RESTART_STOP_TIMEOUT         — graceful SIGTERM wait before SIGKILL (s)
+#   XRAY_RESTART_PORT_RECLAIM_TIMEOUT — how long to wait for inbound ports to free (s)
+XRAY_RESTART_STOP_TIMEOUT = config("XRAY_RESTART_STOP_TIMEOUT", cast=float, default=3.0)
+XRAY_RESTART_PORT_RECLAIM_TIMEOUT = config("XRAY_RESTART_PORT_RECLAIM_TIMEOUT", cast=float, default=3.0)
 JOB_CORE_USER_RECONCILE_INTERVAL = config("JOB_CORE_USER_RECONCILE_INTERVAL", cast=int, default=45)
+# Opt-in: periodically flush idle AWG peer endpoints during the health-check tick.
+# Off by default — endpoint reconcile (`reconcile_awg_endpoints`) already runs every tick.
+JOB_AWG_FLUSH_STALE_PEERS = config("JOB_AWG_FLUSH_STALE_PEERS", cast=bool, default=False)
 JOB_RECORD_NODE_USAGES_INTERVAL = config("JOB_RECORD_NODE_USAGES_INTERVAL", cast=int, default=30)
-JOB_RECORD_USER_USAGES_INTERVAL = config("JOB_RECORD_USER_USAGES_INTERVAL", cast=int, default=10)
+JOB_RECORD_USER_USAGES_INTERVAL = config("JOB_RECORD_USER_USAGES_INTERVAL", cast=int, default=5)
+# Fail-closed: after this many blind usage cycles, disconnect all active users on local inbounds.
+# 0 disables mass disconnect (logging only). Default 6 cycles ≈ 30s at 5s interval.
+BILLING_BLIND_DISCONNECT_CYCLES = config("BILLING_BLIND_DISCONNECT_CYCLES", cast=int, default=6)
+# Verified-escalation for the rare case where a non-billable (limited/expired/disabled)
+# user keeps transferring on an already-established session after the live handler-API
+# remove blocked their new connections. We re-assert the hot remove every usage tick and
+# only escalate to a real (batched) core restart — which briefly drops everyone — once a
+# user has kept leaking for this many *consecutive* ticks, proving a genuinely abusive
+# long-lived session rather than a connection that is merely closing.
+# 0 disables the restart escalation entirely (hot remove only; accept a bounded leak).
+LIMITED_LEAK_RESTART_STREAK = config("LIMITED_LEAK_RESTART_STREAK", cast=int, default=3)
 JOB_BILL_USAGE_INTERVAL = config("JOB_BILL_USAGE_INTERVAL", cast=int, default=3600)
 
 # Usage-based billing (phase 3): minor units charged per GB of user traffic.
@@ -310,13 +428,20 @@ JOB_BILL_USAGE_INTERVAL = config("JOB_BILL_USAGE_INTERVAL", cast=int, default=36
 USAGE_BILLING_RATE_PER_GB = config("USAGE_BILLING_RATE_PER_GB", cast=int, default=0)
 WALLET_LOW_BALANCE_THRESHOLD = config("WALLET_LOW_BALANCE_THRESHOLD", cast=int, default=10000)
 
-# Payment gateways (phase 4). Demo provider is for staging; disable in production.
-PAYMENT_DEMO_ENABLED = config("PAYMENT_DEMO_ENABLED", cast=bool, default=True)
+# Payment gateways (phase 4). Demo provider is staging-only; opt in explicitly.
+PAYMENT_DEMO_ENABLED = config("PAYMENT_DEMO_ENABLED", cast=bool, default=False)
 PORTAL_DIRECT_PAYMENT = config("PORTAL_DIRECT_PAYMENT", cast=bool, default=True)
 PAYMENT_MIN_AMOUNT = config("PAYMENT_MIN_AMOUNT", cast=int, default=100)
 PAYMENT_MAX_AMOUNT = config("PAYMENT_MAX_AMOUNT", cast=int, default=100_000_000)
 
 # Sub-reseller limits (phase 5).
 SUB_RESELLER_MAX_PER_PARENT = config("SUB_RESELLER_MAX_PER_PARENT", cast=int, default=10)
-JOB_REVIEW_USERS_INTERVAL = config("JOB_REVIEW_USERS_INTERVAL", cast=int, default=10)
+JOB_REVIEW_USERS_INTERVAL = config("JOB_REVIEW_USERS_INTERVAL", cast=int, default=5)
 JOB_SEND_NOTIFICATIONS_INTERVAL = config("JOB_SEND_NOTIFICATIONS_INTERVAL", cast=int, default=30)
+
+# Auto-upgrade Xray-core on panel + Xray nodes when a newer GitHub release exists.
+XRAY_AUTO_UPGRADE_ENABLED = config("XRAY_AUTO_UPGRADE_ENABLED", cast=bool, default=True)
+XRAY_AUTO_UPGRADE_INTERVAL = config("XRAY_AUTO_UPGRADE_INTERVAL", cast=int, default=21600)
+XRAY_AUTO_UPGRADE_INCLUDE_PRERELEASE = config(
+    "XRAY_AUTO_UPGRADE_INCLUDE_PRERELEASE", cast=bool, default=False
+)

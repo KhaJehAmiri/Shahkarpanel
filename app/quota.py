@@ -2,16 +2,91 @@
 from __future__ import annotations
 
 import logging
+import time
+from datetime import datetime
 from typing import Iterable, List, Optional, Sequence, Tuple
 
 from sqlalchemy.orm import Session
 
-from app import xray
 from app.db import crud
 from app.db.models import User
 from app.models.user import UserStatus
 
 logger = logging.getLogger("nexus-quota")
+
+_force_disconnect_after: dict[int, float] = {}
+_FORCE_DISCONNECT_COOLDOWN_SEC = 15.0
+
+# Consecutive usage ticks each non-billable user has kept leaking traffic after
+# the live handler-API remove. Only a sustained streak escalates to a restart.
+_leak_streak: dict[int, int] = {}
+
+# A user who is already ``limited`` is excluded from the generated core config,
+# so re-asserting their disconnect on every review tick is pointless churn.
+# Disconnect is now a live handler-API remove (no restart), but re-issuing it
+# for the same user every few seconds is still wasteful, so keep it as an
+# occasional safety net: re-assert at most once per this window per user.
+_limited_redisconnect_after: dict[int, float] = {}
+_LIMITED_REDISCONNECT_COOLDOWN_SEC = 300.0
+
+
+def quota_exhausted(dbuser: User) -> bool:
+    """True when a finite data limit exists and usage has reached it."""
+    if not dbuser.data_limit or dbuser.data_limit <= 0:
+        return False
+    return int(dbuser.used_traffic) >= int(dbuser.data_limit)
+
+
+def reactivate_if_quota_available(dbuser: User) -> bool:
+    """Move ``limited`` → ``active`` when quota headroom exists (e.g. after recharge)."""
+    if dbuser.status != UserStatus.limited or quota_exhausted(dbuser):
+        return False
+    if int(getattr(dbuser, "overage_traffic", 0) or 0) > 0:
+        return False
+    dbuser.status = UserStatus.active
+    dbuser.last_status_change = datetime.utcnow()
+    return True
+
+
+def apply_overage_on_recharge(dbuser: User, new_data_limit: Optional[int]) -> None:
+    """Apply accumulated post-limit bytes against a recharged package.
+
+    ``used_traffic`` already holds billable bytes up to the old limit; ``overage_traffic``
+    holds everything consumed while limited/expired. On recharge both must count toward
+    the new package — not overage alone.
+    """
+    overage = int(getattr(dbuser, "overage_traffic", 0) or 0)
+    if overage <= 0:
+        return
+    if not new_data_limit or new_data_limit <= 0:
+        dbuser.used_traffic = int(dbuser.used_traffic or 0) + overage
+        dbuser.overage_traffic = 0
+        logger.info(
+            'User "%s" unlimited recharge absorbed %s bytes overage into used=%s',
+            dbuser.username,
+            overage,
+            dbuser.used_traffic,
+        )
+        return
+    limit = int(new_data_limit)
+    total_consumed = int(dbuser.used_traffic or 0) + overage
+    dbuser.used_traffic = min(total_consumed, limit)
+    dbuser.overage_traffic = max(0, total_consumed - limit)
+    logger.info(
+        'User "%s" recharge applied total=%s (used+overage) against limit=%s → used=%s overage=%s',
+        dbuser.username,
+        total_consumed,
+        limit,
+        dbuser.used_traffic,
+        dbuser.overage_traffic,
+    )
+
+
+def remaining_traffic(dbuser: User) -> Optional[int]:
+    """Billable bytes left in the current package (None = unlimited)."""
+    if not dbuser.data_limit or dbuser.data_limit <= 0:
+        return None
+    return max(0, int(dbuser.data_limit) - int(dbuser.used_traffic or 0))
 
 
 def clamp_usage_delta(used: int, limit: Optional[int], delta: int) -> int:
@@ -34,11 +109,16 @@ def enforce_usage_cap(db: Session, dbuser: User) -> bool:
     return True
 
 
-def limit_user_quota(db: Session, dbuser: User, *, cap_usage: bool = True) -> bool:
+def limit_user_quota(db: Session, dbuser: User, *, cap_usage: bool = True, disconnect: bool = True) -> bool:
     """Move an active user to ``limited`` and stop serving traffic.
 
     The user row, proxy keys, and WG address are preserved for recharge.
     Only the live peer/inbound is removed until quota is restored.
+
+    ``disconnect=False`` performs the DB status change only and skips the live
+    disconnect, so a caller processing many users in one tick can collect them
+    and issue a single batched ``disconnect_users_everywhere`` instead of one
+    disconnect pass per user (see ``record_usages``).
     """
     if cap_usage:
         enforce_usage_cap(db, dbuser)
@@ -49,9 +129,179 @@ def limit_user_quota(db: Session, dbuser: User, *, cap_usage: bool = True) -> bo
         return False
 
     crud.update_user_status(db, dbuser, UserStatus.limited)
-    xray.operations.remove_user_immediate(dbuser)
+    if disconnect:
+        disconnect_user_everywhere(dbuser)
     logger.info('User "%s" limited at %s/%s bytes', dbuser.username, dbuser.used_traffic, dbuser.data_limit)
     return True
+
+
+def flush_live_serving(*, force_restart: bool = False) -> None:
+    """Push current DB user statuses to every live core/node once."""
+    from app.xray.serving import sync_core_users_now
+
+    sync_core_users_now(force_restart=force_restart)
+
+    try:
+        from app.xray.operations import push_connected_nodes_config_sync
+
+        push_connected_nodes_config_sync()
+    except Exception:
+        logger.exception("Node Xray config push during live serving flush failed")
+
+
+def disconnect_users_everywhere(dbusers: Sequence[User]) -> bool:
+    """Drop a *set* of users from every live path **without disconnecting anyone else**.
+
+    Removes the users through the Xray handler gRPC API (add/remove-user) on the
+    main core and every connected node — the same live-mutation path 3x-ui uses
+    — so unrelated users keep their sessions. A full-core restart is issued only
+    as a fallback when the main core's API is unreachable (the sole way to
+    converge a dead core), and even then just **once** for the whole batch.
+
+    This blocks the users' *new* connections instantly. A stubborn, already
+    established session that keeps transferring after removal (e.g. a long-lived
+    SS-2022 or bulk TCP stream that bypasses the quota) is caught and force-cut
+    by the traffic-verified ``enforce_disconnect_for_non_billable`` escalation —
+    something 3x-ui never does. Returns True when at least one user was handled.
+    """
+    users = list(dbusers)
+    if not users:
+        return False
+
+    hot_ok = False
+    try:
+        from app.xray.serving import hot_disconnect_users
+
+        hot_ok = hot_disconnect_users(users)
+    except Exception:
+        logger.exception("Main-core hot disconnect failed; falling back to restart")
+
+    if hot_ok:
+        try:
+            from app.xray.operations import hot_disconnect_users_on_nodes
+
+            hot_disconnect_users_on_nodes(users)
+        except Exception:
+            logger.debug("Node hot disconnect skipped", exc_info=True)
+    else:
+        # Core down / API unreachable — a rebuild + restart is the only way to
+        # converge. Issued once for the whole batch (never once per user).
+        flush_live_serving(force_restart=True)
+
+    try:
+        from app.db import GetDB
+        from app.wireguard.wg_manager import toggle_peer
+
+        with GetDB() as db:
+            for dbuser in users:
+                try:
+                    toggle_peer(db, dbuser.id, active=False)
+                except Exception:
+                    logger.debug("WG peer toggle skipped for user %s", dbuser.id, exc_info=True)
+    except Exception:
+        logger.debug("WG peer toggle during disconnect skipped", exc_info=True)
+
+    try:
+        from app.singbox.operations import sync_user_change
+
+        sync_user_change()
+    except Exception:
+        logger.debug("sing-box sync during disconnect skipped", exc_info=True)
+
+    return True
+
+
+def disconnect_user_everywhere(dbuser: User) -> None:
+    """Drop a single user from every live core/node path (Xray, SS, sing-box, WG)."""
+    disconnect_users_everywhere([dbuser])
+
+
+def disconnect_limited_users_if_due(dbusers: Sequence[User]) -> bool:
+    """Safety-net disconnect for already-``limited`` users, rate-limited per user.
+
+    The review job would otherwise re-issue a disconnect for *every* limited
+    user on *every* 5s tick. Since a limited user is already absent from the
+    generated config, re-asserting the (now live handler-API) disconnect only
+    needs to happen rarely. Fire at most once per
+    ``_LIMITED_REDISCONNECT_COOLDOWN_SEC`` per user and collapse everything due
+    this tick into a single batched pass.
+    """
+    now = time.monotonic()
+    due: List[User] = []
+    for dbuser in dbusers:
+        if now >= _limited_redisconnect_after.get(dbuser.id, 0.0):
+            _limited_redisconnect_after[dbuser.id] = now + _LIMITED_REDISCONNECT_COOLDOWN_SEC
+            due.append(dbuser)
+    return disconnect_users_everywhere(due)
+
+
+def enforce_disconnect_for_non_billable(db, uids: Iterable[int]) -> None:
+    """Verified enforcement for non-billable users that still emit traffic.
+
+    Called every usage tick with the uids that reported traffic. For any user
+    that is no longer billable (limited/expired/disabled) we first re-assert the
+    live handler-API remove (cheap, no restart) — this alone stops all *new*
+    connections. Only when a user keeps leaking on an already-established
+    session for ``LIMITED_LEAK_RESTART_STREAK`` *consecutive* ticks do we
+    escalate to a single batched core restart to hard-cut the stubborn session.
+    A user who stops leaking (session closed) has their streak cleared, so a
+    naturally-closing connection never triggers a restart. This is the
+    "better than 3x-ui" guarantee: 3x-ui removes the user and then lets any
+    established session keep transferring indefinitely.
+    """
+    if not uids:
+        return
+    rows = (
+        db.query(User)
+        .filter(User.id.in_(list(uids)), User.status.notin_((
+            UserStatus.active,
+            UserStatus.on_hold,
+        )))
+        .all()
+    )
+    if not rows:
+        # Nobody non-billable is leaking this tick — clear all streaks.
+        _leak_streak.clear()
+        return
+
+    from config import LIMITED_LEAK_RESTART_STREAK
+
+    leaking_ids = {dbuser.id for dbuser in rows}
+    # Decay streaks for users who stopped leaking since the last tick.
+    for uid in list(_leak_streak.keys()):
+        if uid not in leaking_ids:
+            del _leak_streak[uid]
+
+    # Step 1: cheap, restart-free re-assert of the hot remove for every leaker.
+    try:
+        from app.xray.serving import hot_disconnect_users
+
+        hot_disconnect_users(rows)
+    except Exception:
+        logger.debug("Hot re-assert during non-billable enforcement skipped", exc_info=True)
+
+    # Step 2: escalate only genuinely stubborn sessions (bounded, cooldown-gated).
+    now = time.monotonic()
+    to_hard_cut: List[User] = []
+    for dbuser in rows:
+        streak = _leak_streak.get(dbuser.id, 0) + 1
+        _leak_streak[dbuser.id] = streak
+        if LIMITED_LEAK_RESTART_STREAK <= 0 or streak < LIMITED_LEAK_RESTART_STREAK:
+            continue
+        if now < _force_disconnect_after.get(dbuser.id, 0):
+            continue
+        _force_disconnect_after[dbuser.id] = now + _FORCE_DISCONNECT_COOLDOWN_SEC
+        _leak_streak.pop(dbuser.id, None)
+        logger.warning(
+            'User "%s" (%s) kept transferring on an established session after hot '
+            "remove — escalating to a batched core restart to hard-cut it",
+            dbuser.username,
+            dbuser.status,
+        )
+        to_hard_cut.append(dbuser)
+
+    if to_hard_cut:
+        flush_live_serving(force_restart=True)
 
 
 def clamp_usage_entries(

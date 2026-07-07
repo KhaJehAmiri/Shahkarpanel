@@ -17,15 +17,15 @@
 کانواس nexuspanel-central و docs/CENTRAL-HANDOFF.md را بخوان.
 سیستم دو وجهی است: (۱) NexusPanel عمومی /sub/ (۲) SigmaGuard /api/v2/client/.
 می‌خواهم ممیزی امنیتی کامل — از صف P0 شروع کن (هر دو لایه).
-مسیر: /opt/nexuspanel · پنل: http://91.220.8.251:8000
+مسیر: /opt/nexuspanel · پنل: http://YOUR_PANEL_IP:8000
 ```
 
 ### طراحی / ساخت SigmaGuard (اپ)
 ```
-کانواس nexuspanel-central و docs/CENTRAL-HANDOFF.md را بخوان.
+/opt/SIGMAGUARD_HANDOFF.md و /opt/WORKSPACE.md را بخوان.
 وجه ۱: پنل AGPL برای اپراتورها با /sub/ · وجه ۲: SigmaGuard اختصاصی ما.
 همچنین بخوان: /opt/sigmaguard/SIGMAGUARD_APP_BRIEF.md و docs/CLIENT_API.md
-مسیر پنل: /opt/nexuspanel · اپ: /opt/sigmaguard
+مسیر پنل: /opt/nexuspanel · اپ: /opt/sigmaguard (شامل wire/ برای UDP)
 ```
 
 ---
@@ -58,8 +58,8 @@
 | **کلاینت** | v2rayNG، Hiddify، sing-box، Clash، WireGuard، AmneziaWG | Flutter UI + Rust core |
 | **API** | `/sub/{token}/` · QR · `.conf` WG/AWG | `/api/v2/client/*` · negotiate · probe · telemetry |
 | **پروفایل** | — | Gamer / Trader / Regular (`client_profile`) |
-| **Repo** | `/opt/nexuspanel` (AGPL · منتشرشدنی) | `/opt/sigmaguard` (اختصاصی · Flutter بعدی) |
-| **مستندات** | `docs/PUBLIC_DEPLOYMENT.md` | `SIGMAGUARD_APP_BRIEF.md` · `docs/CLIENT_API.md` |
+| **Repo** | `/opt/nexuspanel` (AGPL · منتشرشدنی) | `/opt/sigmaguard` (اپ + `wire/` اختصاصی) |
+| **مستندات** | `docs/PUBLIC_DEPLOYMENT.md` | `SIGMAGUARD_APP_BRIEF.md` · `docs/CLIENT_API.md` · `/opt/SIGMAGUARD_HANDOFF.md` |
 | **وضعیت** | production · subscribe زنده | Client API ~۹۰٪ · اپ Flutter ~۱۰٪ (G05) |
 
 **قانون طلایی:** هر چیزی که Client API سرو می‌دهد، از همان subscription/config لایه ۱ قابل ساخت است. اپراتور عمومی **هرگز** به SigmaGuard نیاز ندارد؛ SigmaGuard لایهٔ **افزایشی** روی همان پنل است.
@@ -83,11 +83,11 @@
 
 | مورد | مقدار |
 |------|--------|
-| پنل | `https://91.220.8.251/dashboard/` (nginx TLS · LE IP-cert · :8000 فقط localhost) |
-| لینک ساب | `https://91.220.8.251/sub/{token}/` — `XRAY_SUBSCRIPTION_URL_PREFIX` ست شد؛ fallback به `PANEL_PUBLIC_ADDRESS` در `public_url.py`؛ نصب (`setup_https.sh`) خودکار ست می‌کند |
+| پنل | `https://YOUR_PANEL_IP/dashboard/` (nginx TLS · LE IP-cert · :8000 فقط localhost) |
+| لینک ساب | `https://YOUR_PANEL_IP/sub/{token}/` — `XRAY_SUBSCRIPTION_URL_PREFIX` ست شد؛ fallback به `PANEL_PUBLIC_ADDRESS` در `public_url.py`؛ نصب (`setup_https.sh`) خودکار ست می‌کند |
 | مخزن | `/opt/nexuspanel` |
 | DB تولید | `/var/lib/nexuspanel/db.sqlite3` |
-| نود تست | `wireguard1` · id=1 · `178.83.45.253` |
+| نود تست | `wireguard1` · id=1 · `YOUR_WG_NODE_IP` |
 | کاربر تست | `alireza` · id=5 · UUID VLESS WS فعال |
 | pytest | **306 passed**, 1 skipped |
 
@@ -282,6 +282,7 @@ sudo scripts/setup_https.sh --domain panel.example.com --email you@example.com
 | **docs/CENTRAL-HANDOFF.md** | هر دو | **مرجع مرکزی — مدل دو وجهی** |
 | docs/PUBLIC_DEPLOYMENT.md | ۱ | اپراتور · subscribe · بدون اپ اختصاصی |
 | docs/CLIENT_API.md | ۲ | قرارداد `/api/v2/client/*` |
+| `/opt/SIGMAGUARD_HANDOFF.md` | ۲ | **مرجع اکوسیستم SigmaGuard — چت جدید از اینجا** |
 | `/opt/sigmaguard/SIGMAGUARD_APP_BRIEF.md` | ۲ | طراحی کامل اپ · UX · roadmap |
 | `/opt/sigmaguard/README.md` | ۲ | ساختار repo اپ |
 | docs/PROJECT_STATUS.md | هر دو | تاریخچه فازها |

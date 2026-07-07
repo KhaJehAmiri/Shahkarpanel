@@ -12,11 +12,12 @@ import {
   Button, Callout, Card, CardHead, EmptyState, Field, Input, Modal, Pill, Select, SkeletonRows, Tabs, Toggle, useToast,
 } from "../components/ui";
 import { CommercialSettings } from "../components/CommercialSettings";
+import { MigrationWizard } from "../components/MigrationWizard";
 import { IcPlus, IcDownload, IcTrash, IcKey, IcSun, IcMoon, IcEdit } from "../components/icons";
 
 export const System: FC = () => {
   const { t } = useTranslation();
-  const { admin, isEnabled } = useApp();
+  const { admin, isEnabled, hasPermission } = useApp();
   const groups = useMemo(() => {
     const general = {
       id: "general",
@@ -26,30 +27,35 @@ export const System: FC = () => {
         { id: "apikeys", label: t("system.tabApiKeys") },
       ],
     };
-    if (!admin?.is_sudo) return [general];
-    return [
-      general,
-      {
-        id: "maintenance",
-        label: t("system.groupMaintenance"),
-        tabs: [
-          { id: "flags", label: t("system.tabFlags") },
-          { id: "updates", label: t("system.tabUpdates") },
-          { id: "deployment", label: t("system.tabDeployment") },
-          { id: "xray", label: t("system.tabXray") },
-          { id: "backup", label: t("system.tabBackup") },
-        ],
-      },
-      {
-        id: "access",
-        label: t("system.groupAccess"),
-        tabs: [
-          { id: "admins", label: t("system.tabAdmins") },
-          ...(isEnabled("billing") ? [{ id: "commercial", label: t("system.tabCommercial") }] : []),
-        ],
-      },
+    const maintenanceTabs = [
+      ...(admin?.is_sudo
+        ? [
+            { id: "flags", label: t("system.tabFlags") },
+            { id: "updates", label: t("system.tabUpdates") },
+            { id: "deployment", label: t("system.tabDeployment") },
+            { id: "migration", label: t("system.tabMigration", { defaultValue: "3x-ui migration" }) },
+            { id: "xray", label: t("system.tabXray") },
+          ]
+        : []),
+      ...(hasPermission("backup:read") ? [{ id: "backup", label: t("system.tabBackup") }] : []),
     ];
-  }, [admin?.is_sudo, isEnabled, t]);
+    const accessTabs = admin?.is_sudo
+      ? [
+          { id: "admins", label: t("system.tabAdmins") },
+          { id: "audit", label: t("system.tabAudit", { defaultValue: "Audit log" }) },
+          { id: "rbac", label: t("system.tabRbac", { defaultValue: "Access matrix" }) },
+          ...(isEnabled("billing") ? [{ id: "commercial", label: t("system.tabCommercial") }] : []),
+        ]
+      : [];
+    const out = [general];
+    if (maintenanceTabs.length) {
+      out.push({ id: "maintenance", label: t("system.groupMaintenance"), tabs: maintenanceTabs });
+    }
+    if (accessTabs.length) {
+      out.push({ id: "access", label: t("system.groupAccess"), tabs: accessTabs });
+    }
+    return out;
+  }, [admin?.is_sudo, hasPermission, isEnabled, t]);
 
   const [searchParams] = useSearchParams();
   const [group, setGroup] = useState(groups[0]?.id || "general");
@@ -107,9 +113,12 @@ export const System: FC = () => {
       {tab === "commercial" && <CommercialSettings />}
       {tab === "updates" && <UpdatesTab />}
       {tab === "deployment" && <DeploymentTab />}
+      {tab === "migration" && admin?.is_sudo && <MigrationWizard />}
       {tab === "xray" && <XrayCoreTab />}
       {tab === "backup" && <BackupTab />}
       {tab === "admins" && <AdminsTab />}
+      {tab === "audit" && <AuditTab />}
+      {tab === "rbac" && <RbacTab />}
       {tab === "apikeys" && <ApiKeysTab />}
       {tab === "about" && <AboutTab />}
     </div>
@@ -196,11 +205,57 @@ const XrayCoreTab: FC = () => {
   const toast = useToast();
   const deploy = useFetch<DeploymentInfo>(() => api.get("/system/deployment"), []);
   const releases = useFetch<{ tag: string }[]>(() => api.get("/xray/releases"), []);
+  const autoSchedule = useFetch<{ enabled: boolean; interval_seconds: number; include_prerelease: boolean }>(
+    () => api.get("/system/xray/auto-upgrade/schedule"),
+    [],
+  );
   const [tag, setTag] = useState("");
   const [scope, setScope] = useState<"panel" | "node">("panel");
   const [nodeId, setNodeId] = useState("");
+  const [autoEnabled, setAutoEnabled] = useState(true);
+  const [autoIntervalHours, setAutoIntervalHours] = useState("6");
+  const [autoPrerelease, setAutoPrerelease] = useState(true);
   const nodes = useFetch<{ id: number; name: string; core_kind?: string }[]>(() => api.get("/nodes"), []);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!autoSchedule.data) return;
+    setAutoEnabled(!!autoSchedule.data.enabled);
+    setAutoIntervalHours(String(Math.round((autoSchedule.data.interval_seconds || 21600) / 3600)));
+    setAutoPrerelease(autoSchedule.data.include_prerelease !== false);
+  }, [autoSchedule.data]);
+
+  const saveAutoSchedule = async () => {
+    setBusy(true);
+    try {
+      const hours = parseFloat(autoIntervalHours) || 6;
+      await api.put("/system/xray/auto-upgrade/schedule", {
+        enabled: autoEnabled,
+        interval_seconds: Math.max(3600, Math.round(hours * 3600)),
+        include_prerelease: autoPrerelease,
+      });
+      toast.push(t("common.saved"), "success");
+      autoSchedule.reload();
+    } catch (e: any) {
+      toast.push(e.message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const triggerAutoUpgrade = async () => {
+    if (!confirm(t("system.xrayAutoUpgradeConfirm", { defaultValue: "Run fleet Xray auto-upgrade now?" }))) return;
+    setBusy(true);
+    try {
+      const res = await api.post<Record<string, unknown>>("/system/xray/auto-upgrade");
+      toast.push(JSON.stringify(res).slice(0, 120), "success");
+      deploy.reload();
+    } catch (e: any) {
+      toast.push(e.message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const apply = async () => {
     if (!tag) return;
@@ -274,6 +329,29 @@ const XrayCoreTab: FC = () => {
           </Button>
         </div>
         <Callout tone="info">{t("system.xrayAlsoInInfra")}</Callout>
+
+        <Card style={{ marginTop: 8 }}>
+          <CardHead title={t("system.xrayAutoUpgrade", { defaultValue: "Fleet auto-upgrade" })} />
+          <div className="nx-stack" style={{ gap: 12 }}>
+            <label className="nx-row" style={{ gap: 8 }}>
+              <input type="checkbox" checked={autoEnabled} onChange={(e) => setAutoEnabled(e.target.checked)} />
+              {t("system.xrayAutoUpgradeEnabled", { defaultValue: "Enable scheduled auto-upgrade" })}
+            </label>
+            <Field label={t("system.xrayAutoUpgradeInterval", { defaultValue: "Check interval (hours)" })}>
+              <Input type="number" min="1" max="168" value={autoIntervalHours} onChange={(e: any) => setAutoIntervalHours(e.target.value)} style={{ maxWidth: 120 }} />
+            </Field>
+            <label className="nx-row" style={{ gap: 8, fontSize: 13 }}>
+              <input type="checkbox" checked={autoPrerelease} onChange={(e) => setAutoPrerelease(e.target.checked)} />
+              {t("system.xrayAutoUpgradePrerelease", { defaultValue: "Include pre-releases" })}
+            </label>
+            <div className="nx-row" style={{ gap: 8, justifyContent: "flex-end" }}>
+              <Button disabled={busy} onClick={saveAutoSchedule}>{t("common.save")}</Button>
+              <Button variant="primary" disabled={busy} onClick={triggerAutoUpgrade}>
+                {t("system.xrayAutoUpgradeRun", { defaultValue: "Run now" })}
+              </Button>
+            </div>
+          </div>
+        </Card>
       </div>
     </Card>
   );
@@ -343,8 +421,16 @@ const UpdatesTab: FC = () => {
 const BackupTab: FC = () => {
   const { t } = useTranslation();
   const toast = useToast();
+  const { hasPermission } = useApp();
+  const canWrite = hasPermission("backup:write");
   const [busy, setBusy] = useState(false);
+  const [scheduleHours, setScheduleHours] = useState("");
   const { data, loading, reload } = useFetch<string[]>(() => api.get("/backups"), []);
+  const schedule = useFetch<{ enabled: boolean; interval_hours: number }>(() => api.get("/backups/schedule"), []);
+
+  useEffect(() => {
+    if (schedule.data) setScheduleHours(String(schedule.data.interval_hours || 0));
+  }, [schedule.data]);
 
   const create = async () => {
     setBusy(true);
@@ -352,9 +438,50 @@ const BackupTab: FC = () => {
     catch (e: any) { toast.push(e.message, "error"); } finally { setBusy(false); }
   };
 
+  const saveSchedule = async () => {
+    setBusy(true);
+    try {
+      const hours = parseInt(scheduleHours, 10);
+      await api.put("/backups/schedule", { interval_hours: Number.isFinite(hours) ? hours : 0 });
+      toast.push(t("common.saved"), "success");
+      schedule.reload();
+    } catch (e: any) {
+      toast.push(e.message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <Card>
-      <CardHead title={t("system.tabBackup")} actions={<Button variant="primary" disabled={busy} onClick={create}><IcDownload className="nx-ico" /> {t("system.createBackup")}</Button>} />
+      <CardHead
+        title={t("system.tabBackup")}
+        actions={canWrite ? (
+          <Button variant="primary" disabled={busy} onClick={create}>
+            <IcDownload className="nx-ico" /> {t("system.createBackup")}
+          </Button>
+        ) : undefined}
+      />
+      {schedule.data && (
+        <div className="nx-stack" style={{ gap: 10, marginBottom: 14 }}>
+          <Callout tone={schedule.data.enabled ? "ok" : "info"}>
+            {schedule.data.enabled
+              ? t("system.backupScheduleOn", {
+                  defaultValue: "Automatic backups every {{hours}}h",
+                  hours: schedule.data.interval_hours,
+                })
+              : t("system.backupScheduleOff", { defaultValue: "Scheduled backups disabled" })}
+          </Callout>
+          {canWrite && (
+            <Field label={t("system.backupIntervalHours", { defaultValue: "Backup interval (hours, 0=off)" })}>
+              <div className="nx-row" style={{ gap: 8 }}>
+                <Input type="number" min="0" max="168" value={scheduleHours} onChange={(e: any) => setScheduleHours(e.target.value)} style={{ maxWidth: 120 }} />
+                <Button disabled={busy} onClick={saveSchedule}>{t("common.save")}</Button>
+              </div>
+            </Field>
+          )}
+        </div>
+      )}
       <div className="nx-card-desc" style={{ marginBottom: 14 }}>{t("system.backupList")}</div>
       {loading ? <SkeletonRows rows={3} cols={1} />
         : !data?.length ? <div className="nx-muted">{t("common.noData")}</div>
@@ -362,13 +489,15 @@ const BackupTab: FC = () => {
             {data.map((b) => (
               <div key={b} className="nx-row" style={{ justifyContent: "space-between", background: "var(--nx-surface-2)", padding: "10px 14px", borderRadius: 8 }}>
                 <span className="nx-mono" style={{ fontSize: 12 }}>{b}</span>
-                <Button size="sm" variant="danger" onClick={async () => {
-                  if (!confirm(t("system.restoreConfirm"))) return;
-                  try {
-                    await api.post(`/backups/${encodeURIComponent(b)}/restore`);
-                    toast.push(t("system.restoreDone"), "success");
-                  } catch (e: any) { toast.push(e.message, "error"); }
-                }}>{t("system.restore")}</Button>
+                {canWrite && (
+                  <Button size="sm" variant="danger" onClick={async () => {
+                    if (!confirm(t("system.restoreConfirm"))) return;
+                    try {
+                      await api.post(`/backups/${encodeURIComponent(b)}/restore`);
+                      toast.push(t("system.restoreDone"), "success");
+                    } catch (e: any) { toast.push(e.message, "error"); }
+                  }}>{t("system.restore")}</Button>
+                )}
               </div>
             ))}
           </div>}
@@ -664,5 +793,155 @@ const EditAdminModal: FC<{ admin: AdminRow; onClose: () => void; onDone: () => v
         </Field>
       </div>
     </Modal>
+  );
+};
+
+type AuditEvent = { id: number; type: string; payload?: Record<string, unknown> | null; created_at: string };
+
+const AuditTab: FC = () => {
+  const { t } = useTranslation();
+  const toast = useToast();
+  const { data, loading, error, reload } = useFetch<AuditEvent[]>(() => api.get("/events?limit=200"), []);
+  const sessions = useFetch<{ sessions: { username: string; ip: string; is_sudo: boolean; logged_at: string }[] }>(
+    () => api.get("/admin/sessions"),
+    [],
+  );
+  useLiveReload(reload, 60000);
+
+  const revokeSessions = async (username: string) => {
+    if (!confirm(t("system.revokeSessionsConfirm", { defaultValue: "Revoke all sessions for {{user}}?", user: username }))) return;
+    try {
+      await api.post("/admin/sessions/revoke", { username });
+      toast.push(t("system.revokeSessionsDone", { defaultValue: "Sessions revoked" }), "success");
+      sessions.reload();
+    } catch (e: any) {
+      toast.push(e.message, "error");
+    }
+  };
+
+  return (
+    <div className="nx-stack" style={{ gap: 16 }}>
+      <Card pad0>
+        <CardHead title={t("system.adminSessions", { defaultValue: "Admin login sessions" })} />
+        {sessions.loading ? <div style={{ padding: 20 }}><SkeletonRows rows={3} cols={4} /></div>
+          : !sessions.data?.sessions?.length ? <EmptyState title={t("common.noData")} />
+          : (
+            <div className="nx-table-wrap">
+              <table className="nx-table">
+                <thead><tr><th>{t("common.username")}</th><th>IP</th><th>{t("common.time")}</th><th style={{ textAlign: "end" }}>{t("common.actions")}</th></tr></thead>
+                <tbody>
+                  {sessions.data.sessions.map((s, idx) => (
+                    <tr key={`${s.username}-${s.logged_at}-${idx}`}>
+                      <td>{s.username}{s.is_sudo ? " · sudo" : ""}</td>
+                      <td className="nx-mono" style={{ fontSize: 12 }}>{s.ip || "—"}</td>
+                      <td className="nx-faint" style={{ fontSize: 12 }}>{new Date(s.logged_at).toLocaleString()}</td>
+                      <td>
+                        <div className="nx-row" style={{ justifyContent: "flex-end" }}>
+                          <Button size="sm" variant="danger" onClick={() => revokeSessions(s.username)}>
+                            {t("system.revokeSessions", { defaultValue: "Revoke all" })}
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+      </Card>
+
+      <Card pad0>
+        <CardHead title={t("system.tabAudit", { defaultValue: "Audit log" })} />
+        {loading ? <div style={{ padding: 20 }}><SkeletonRows rows={6} cols={3} /></div>
+          : error ? <EmptyState title={t("common.error")} desc={error} />
+          : !data?.length ? <EmptyState title={t("common.noData")} />
+          : (
+            <div className="nx-table-wrap">
+              <table className="nx-table">
+                <thead><tr><th>ID</th><th>{t("common.type", { defaultValue: "Type" })}</th><th>{t("common.time", { defaultValue: "Time" })}</th><th>{t("common.details", { defaultValue: "Details" })}</th></tr></thead>
+                <tbody>
+                  {data.map((ev) => (
+                    <tr key={ev.id}>
+                      <td className="nx-mono">{ev.id}</td>
+                      <td><Pill>{ev.type}</Pill></td>
+                      <td className="nx-faint" style={{ fontSize: 12 }}>{new Date(ev.created_at).toLocaleString()}</td>
+                      <td className="nx-mono" style={{ fontSize: 11, maxWidth: 420, overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {ev.payload ? JSON.stringify(ev.payload) : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+      </Card>
+    </div>
+  );
+};
+
+type RbacMatrix = { permissions: string[]; roles: Record<string, string[]> };
+
+const RbacTab: FC = () => {
+  const { t } = useTranslation();
+  const toast = useToast();
+  const { data, loading, error, reload } = useFetch<RbacMatrix>(() => api.get("/admin/rbac/matrix"), []);
+  const [busyRole, setBusyRole] = useState<string | null>(null);
+
+  const togglePerm = async (role: string, perm: string, checked: boolean) => {
+    if (!data) return;
+    const current = new Set(data.roles[role] || []);
+    if (checked) current.add(perm); else current.delete(perm);
+    setBusyRole(role);
+    try {
+      await api.put(`/admin/rbac/roles/${encodeURIComponent(role)}`, { permissions: [...current] });
+      toast.push(t("common.saved"), "success");
+      reload();
+    } catch (e: any) {
+      toast.push(e.message, "error");
+    } finally {
+      setBusyRole(null);
+    }
+  };
+
+  if (loading) return <SkeletonRows rows={6} cols={4} />;
+  if (error) return <EmptyState title={t("common.error")} desc={error} />;
+  if (!data) return null;
+
+  const roles = Object.keys(data.roles);
+
+  return (
+    <Card pad0>
+      <CardHead title={t("system.tabRbac", { defaultValue: "Access matrix" })} />
+      <div className="nx-table-wrap" style={{ overflowX: "auto" }}>
+        <table className="nx-table">
+          <thead>
+            <tr>
+              <th>{t("system.permission", { defaultValue: "Permission" })}</th>
+              {roles.map((r) => <th key={r}>{r}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {data.permissions.map((perm) => (
+              <tr key={perm}>
+                <td className="nx-mono" style={{ fontSize: 12 }}>{perm}</td>
+                {roles.map((role) => {
+                  const on = (data.roles[role] || []).includes(perm);
+                  return (
+                    <td key={role}>
+                      <input
+                        type="checkbox"
+                        checked={on}
+                        disabled={busyRole === role || role === "sudo"}
+                        onChange={(e) => togglePerm(role, perm, e.target.checked)}
+                      />
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
   );
 };

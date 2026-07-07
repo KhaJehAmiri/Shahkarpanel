@@ -31,6 +31,7 @@ class EventType(str, Enum):
     node_connected = "node_connected"
     node_error = "node_error"
     node_down = "node_down"
+    node_recovered = "node_recovered"
 
     # Traffic intelligence (phase 5)
     heavy_user_detected = "heavy_user_detected"

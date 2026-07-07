@@ -1,0 +1,202 @@
+/* Edit Host — scrollable shell (form-wide modals default to overflow:visible and clip content) */
+
+.nx-overlay.nx-host-editor-overlay {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 24px 16px 32px;
+}
+
+.nx-modal.nx-host-editor-shell {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  width: 100%;
+  max-width: min(820px, 100%);
+  max-height: min(88vh, 900px);
+  margin: auto;
+  overflow: hidden;
+}
+
+.nx-host-editor-shell .nx-modal-head {
+  flex-shrink: 0;
+}
+
+.nx-host-editor-shell .nx-modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0 !important;
+  overflow: hidden;
+}
+
+.nx-host-editor-shell .nx-modal-foot {
+  flex-shrink: 0;
+  background: var(--nx-surface-2);
+}
+
+.nx-host-editor-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.nx-host-editor-shell .nx-host-modal-tabs {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--nx-border);
+}
+
+.nx-host-editor-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 20px 20px;
+  overscroll-behavior: contain;
+}
+
+.nx-host-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.nx-host-section:last-child {
+  margin-bottom: 0;
+}
+
+.nx-host-section-title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--nx-text-faint);
+}
+
+.nx-host-modal-grid {
+  display: grid;
+  gap: 14px 16px;
+  grid-template-columns: 1fr;
+  align-items: start;
+}
+
+@media (min-width: 640px) {
+  .nx-host-modal-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.nx-host-span-2 {
+  grid-column: 1 / -1;
+}
+
+.nx-host-token-panel {
+  grid-column: 1 / -1;
+  padding: 10px 12px;
+  border-radius: var(--nx-radius-sm, 8px);
+  border: 1px solid var(--nx-border);
+  background: var(--nx-surface-2);
+}
+
+.nx-host-token-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.nx-host-placeholder-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--nx-text-dim);
+}
+
+.nx-host-placeholders {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: 88px;
+  overflow-y: auto;
+}
+
+.nx-host-chip {
+  padding: 4px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--nx-border);
+  background: var(--nx-surface);
+  font-size: 10.5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--nx-accent, #818cf8);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.nx-host-chip:hover {
+  border-color: rgba(99, 102, 241, 0.45);
+  background: rgba(99, 102, 241, 0.08);
+}
+
+.nx-host-callout {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--nx-text-dim);
+  padding: 10px 12px;
+  border-radius: var(--nx-radius-sm, 8px);
+  border: 1px solid var(--nx-border);
+  background: var(--nx-surface-2);
+}
+
+.nx-host-callout.warn {
+  border-color: color-mix(in srgb, var(--nx-warn) 35%, var(--nx-border));
+  background: var(--nx-warn-soft);
+  color: var(--nx-text);
+}
+
+.nx-host-toggles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px 14px;
+  grid-column: 1 / -1;
+}
+
+.nx-host-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.nx-host-toggle-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--nx-text);
+}
+
+.nx-host-editor-shell .nx-field .nx-hint {
+  font-size: 11px;
+  line-height: 1.45;
+  max-width: 52ch;
+}
+
+.nx-host-json-field {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 639px) {
+  .nx-host-span-2,
+  .nx-host-token-panel,
+  .nx-host-callout,
+  .nx-host-toggles,
+  .nx-host-json-field {
+    grid-column: auto;
+  }
+}

@@ -18,7 +18,11 @@ export const OutboundModal: FC<{
   editIdx: number | null;
   preset: OutboundForm | null;
   onClose: () => void;
-  onApply: (o: Record<string, unknown>[]) => void;
+  onApply: (payload: {
+    outbound: Record<string, unknown>;
+    mode: "create" | "update";
+    originalTag?: string;
+  }) => void | Promise<void>;
 }> = ({ outbounds, editIdx, preset, onClose, onApply }) => {
   const { t } = useTranslation();
   const toast = useToast();
@@ -97,7 +101,7 @@ export const OutboundModal: FC<{
     }
   };
 
-  const submit = () => {
+  const submit = async () => {
     let ob: Record<string, unknown>;
     if (tab === "json") {
       const parsed = parseJson();
@@ -120,10 +124,12 @@ export const OutboundModal: FC<{
       ob = finalizeOutboundFromForm(f, rawRef);
     }
 
-    const next = [...outbounds];
-    if (editIdx != null) next[editIdx] = ob;
-    else next.push(ob);
-    onApply(next);
+    if (editIdx != null) {
+      const originalTag = String(outbounds[editIdx]?.tag || ob.tag || "");
+      await onApply({ outbound: ob, mode: "update", originalTag });
+    } else {
+      await onApply({ outbound: ob, mode: "create" });
+    }
   };
 
   const modalTitle = isNew ? (

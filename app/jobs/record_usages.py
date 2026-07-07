@@ -11,9 +11,9 @@ from sqlalchemy.exc import OperationalError as SAOperationalError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.dml import Insert
 
-from app import scheduler, xray
+from app import scheduler, xray, logger
 from app.db import GetDB, crud
-from app.db.models import Admin, NodeUsage, NodeUserUsage, System, User
+from app.db.models import Admin, NodeUserProtocolUsage, NodeUsage, NodeUserUsage, System, User
 from app.models.user import UserStatus
 from app.quota import clamp_usage_entries, limit_user_quota
 from config import (
@@ -70,6 +70,70 @@ def safe_execute(db: Session, stmt, params=None):
     else:
         db.connection().execute(stmt, params)
         db.commit()
+
+
+def record_user_protocol_stats(
+    params: list,
+    node_id: Union[int, None],
+    protocol: str,
+    consumption_factor: int = 1,
+):
+    """Best-effort per-protocol hourly breakdown (informational only)."""
+    if not params or not protocol:
+        return
+
+    created_at = datetime.fromisoformat(datetime.utcnow().strftime("%Y-%m-%dT%H:00:00"))
+    proto = str(protocol)[:32]
+
+    with GetDB() as db:
+        select_stmt = select(NodeUserProtocolUsage.user_id).where(
+            and_(
+                NodeUserProtocolUsage.node_id == node_id,
+                NodeUserProtocolUsage.created_at == created_at,
+                NodeUserProtocolUsage.protocol == proto,
+            )
+        )
+        existings = {r[0] for r in db.execute(select_stmt).fetchall()}
+        to_insert = []
+        for p in params:
+            uid = int(p["uid"])
+            if uid in existings:
+                continue
+            to_insert.append(
+                {
+                    "uid": uid,
+                    "created_at": created_at,
+                    "node_id": node_id,
+                    "protocol": proto,
+                    "used_traffic": 0,
+                }
+            )
+        if to_insert:
+            stmt = insert(NodeUserProtocolUsage).values(
+                user_id=bindparam("uid"),
+                created_at=bindparam("created_at"),
+                node_id=bindparam("node_id"),
+                protocol=bindparam("protocol"),
+                used_traffic=0,
+            )
+            safe_execute(db, stmt, to_insert)
+
+        stmt = (
+            update(NodeUserProtocolUsage)
+            .values(
+                used_traffic=NodeUserProtocolUsage.used_traffic
+                + bindparam("value") * consumption_factor
+            )
+            .where(
+                and_(
+                    NodeUserProtocolUsage.user_id == bindparam("uid"),
+                    NodeUserProtocolUsage.node_id == node_id,
+                    NodeUserProtocolUsage.created_at == created_at,
+                    NodeUserProtocolUsage.protocol == proto,
+                )
+            )
+        )
+        safe_execute(db, stmt, params)
 
 
 def record_user_stats(params: list, node_id: Union[int, None],
@@ -137,11 +201,30 @@ def record_node_stats(params: dict, node_id: Union[int, None]):
 def get_users_stats(api: XRayAPI):
     try:
         params = defaultdict(int)
+        up_params = defaultdict(int)
+        down_params = defaultdict(int)
         for stat in filter(attrgetter('value'), api.get_users_stats(reset=True, timeout=30)):
-            params[stat.name.split('.', 1)[0]] += stat.value
-        params = list({"uid": uid, "value": value} for uid, value in params.items())
+            uid = stat.name.split('.', 1)[0]
+            params[uid] += stat.value
+            # Preserve the up/down split (Xray reports uplink/downlink per user)
+            # so the subscription header can show real upload/download.
+            link = getattr(stat, "link", None)
+            if link == "uplink":
+                up_params[uid] += stat.value
+            elif link == "downlink":
+                down_params[uid] += stat.value
+        params = list(
+            {
+                "uid": uid,
+                "value": value,
+                "up": up_params.get(uid, 0),
+                "down": down_params.get(uid, 0),
+            }
+            for uid, value in params.items()
+        )
         return params
-    except xray_exc.XrayError:
+    except xray_exc.XrayError as exc:
+        logger.warning("get_users_stats failed: %s", exc)
         return []
 
 
@@ -175,6 +258,58 @@ def aggregate_user_usage(api_params: dict, usage_coefficient: dict) -> list:
         for param in params:
             users_usage[param['uid']] += int(param['value'] * coefficient)
     return [{"uid": uid, "value": value} for uid, value in users_usage.items()]
+
+
+def aggregate_user_split(api_params: dict, usage_coefficient: dict) -> tuple:
+    """Aggregate per-user upload/download bytes across every source.
+
+    Returns ``(ups, downs)`` mapping ``uid -> bytes``. Collectors that don't
+    report a split (WireGuard / sing-box emit a combined ``value``) are counted
+    as download. Purely informational — never used for quota enforcement.
+    """
+    ups = defaultdict(int)
+    downs = defaultdict(int)
+    for node_id, params in api_params.items():
+        coefficient = usage_coefficient.get(node_id, 1)
+        for param in params:
+            up = int(param.get("up", 0) * coefficient)
+            down = int(param.get("down", 0) * coefficient)
+            if not up and not down:
+                down = int(param.get("value", 0) * coefficient)
+            ups[param["uid"]] += up
+            downs[param["uid"]] += down
+    return ups, downs
+
+
+def record_overage_usages(api_params: dict, usage_coefficient: dict) -> None:
+    """Accumulate bytes used while non-billable (post-quota) into ``overage_traffic``."""
+    users_usage = aggregate_user_usage(api_params, usage_coefficient)
+    if not users_usage:
+        return
+
+    with GetDB() as db:
+        uids = [int(u["uid"]) for u in users_usage]
+        overage_ids = {
+            row[0]
+            for row in db.query(User.id)
+            .filter(User.id.in_(uids), User.status.notin_(BILLABLE_STATUSES))
+            .all()
+        }
+
+    overage_usage = [
+        u for u in users_usage
+        if int(u["uid"]) in overage_ids and int(u["value"]) > 0
+    ]
+    if not overage_usage:
+        return
+
+    with GetDB() as db:
+        stmt = (
+            update(User)
+            .where(User.id == bindparam("uid"))
+            .values(overage_traffic=User.overage_traffic + bindparam("value"))
+        )
+        safe_execute(db, stmt, overage_usage)
 
 
 def record_aggregated_user_usages(api_params: dict, usage_coefficient: dict):
@@ -248,10 +383,19 @@ def record_aggregated_user_usages(api_params: dict, usage_coefficient: dict):
                 .all()
             ]
 
+        # Move every capped user to ``limited`` first, then drop them all in a
+        # single batched pass. Doing the disconnect inline per user meant N users
+        # hitting their cap in the same 5s tick triggered N separate disconnect
+        # passes back-to-back; one batched call handles the whole set at once.
+        newly_limited = []
         for uid in hit_limit_uids:
             dbuser = crud.get_user_by_id(db, uid)
-            if dbuser:
-                limit_user_quota(db, dbuser, cap_usage=True)
+            if dbuser and limit_user_quota(db, dbuser, cap_usage=True, disconnect=False):
+                newly_limited.append(dbuser)
+        if newly_limited:
+            from app.quota import disconnect_users_everywhere
+
+            disconnect_users_everywhere(newly_limited)
 
         admin_data = [{"admin_id": admin_id, "value": value} for admin_id, value in admin_usage.items()]
         if admin_data:
@@ -259,6 +403,28 @@ def record_aggregated_user_usages(api_params: dict, usage_coefficient: dict):
                 where(Admin.id == bindparam('admin_id')). \
                 values(users_usage=Admin.users_usage + bindparam('value'))
             safe_execute(db, admin_update_stmt, admin_data)
+
+    # Best-effort upload/download split write. Deliberately separate from the
+    # authoritative used_traffic path above and wrapped in try/except so a split
+    # failure can never disrupt billing.
+    try:
+        ups, downs = aggregate_user_split(api_params, usage_coefficient)
+        split_rows = [
+            {"uid": int(uid), "up": ups.get(uid, 0), "down": downs.get(uid, 0)}
+            for uid in set(ups) | set(downs)
+            if int(uid) in billable_ids and (ups.get(uid, 0) or downs.get(uid, 0))
+        ]
+        if split_rows:
+            with GetDB() as db:
+                split_stmt = update(User). \
+                    where(User.id == bindparam('uid')). \
+                    values(
+                        used_traffic_up=User.used_traffic_up + bindparam('up'),
+                        used_traffic_down=User.used_traffic_down + bindparam('down'),
+                    )
+                safe_execute(db, split_stmt, split_rows)
+    except Exception:
+        logger.debug("up/down split accounting skipped", exc_info=True)
 
     if DISABLE_RECORDING_NODE_USAGE:
         return
@@ -271,52 +437,93 @@ def record_aggregated_user_usages(api_params: dict, usage_coefficient: dict):
 
 def collect_user_usage_params() -> tuple:
     """Gather raw per-user stats from the local Xray core and every connected
-    node.  Returns ``(api_params, usage_coefficient)`` in the shape expected by
-    :func:`record_aggregated_user_usages`.
-
-    This is the hook point for additional usage sources: a WireGuard collector
-    appends ``node_id -> [{"uid", "value"}]`` entries here so its bytes merge
-    into the same central ``User.used_traffic``.
+    node.  Returns ``(api_params, usage_coefficient, protocol_map)`` where
+    ``protocol_map`` maps ``node_id -> protocol label`` for analytics.
     """
     api_instances = {None: xray.api}
-    usage_coefficient = {None: 1}  # default usage coefficient for the main api instance
+    usage_coefficient = {None: 1}
+    protocol_map: dict[Union[int, None], str] = {None: "xray"}
 
     for node_id, node in list(xray.nodes.items()):
         if node.connected and node.started:
             api_instances[node_id] = node.api
-            usage_coefficient[node_id] = node.usage_coefficient  # fetch the usage coefficient
+            usage_coefficient[node_id] = node.usage_coefficient
+            protocol_map[node_id] = "xray"
 
     with ThreadPoolExecutor(max_workers=10) as executor:
         futures = {node_id: executor.submit(get_users_stats, api) for node_id, api in api_instances.items()}
     api_params = {node_id: future.result() for node_id, future in futures.items()}
 
-    # Fold native WireGuard usage into the same dicts so it merges into the one
-    # central User.used_traffic (no second DB write path). Best-effort: a WG
-    # failure must never drop Xray accounting.
     try:
         from app.wireguard.usage import collect_wg_usage_params, merge_wg_usage
 
         wg_params, wg_coefficient = collect_wg_usage_params()
         merge_wg_usage(api_params, usage_coefficient, wg_params, wg_coefficient)
+        for node_id in wg_params:
+            if wg_params.get(node_id):
+                protocol_map[node_id] = "wireguard"
     except Exception:
         pass
 
-    # Same for sing-box (Hysteria2/TUIC) usage — best-effort fold into the one
-    # central User.used_traffic.
     try:
         from app.singbox.usage import collect_singbox_usage_params, merge_singbox_usage
 
         sb_params, sb_coefficient = collect_singbox_usage_params()
         merge_singbox_usage(api_params, usage_coefficient, sb_params, sb_coefficient)
+        for node_id in sb_params:
+            if sb_params.get(node_id):
+                protocol_map[node_id] = "singbox"
     except Exception:
         pass
 
-    return api_params, usage_coefficient
+    return api_params, usage_coefficient, protocol_map
+
+
+def record_protocol_breakdown(
+    api_params: dict,
+    usage_coefficient: dict,
+    protocol_map: dict,
+    billable_ids: set,
+):
+    if DISABLE_RECORDING_NODE_USAGE:
+        return
+    for node_id, params in api_params.items():
+        if not params:
+            continue
+        proto = protocol_map.get(node_id, "xray")
+        filtered = [p for p in params if int(p["uid"]) in billable_ids]
+        if filtered:
+            record_user_protocol_stats(
+                filtered, node_id, proto, usage_coefficient.get(node_id, 1)
+            )
 
 
 def record_user_usages():
-    api_params, usage_coefficient = collect_user_usage_params()
+    api_params, usage_coefficient, protocol_map = collect_user_usage_params()
+    uids = {int(p["uid"]) for params in api_params.values() for p in params}
+    if uids:
+        with GetDB() as db:
+            from app.quota import enforce_disconnect_for_non_billable
+
+            enforce_disconnect_for_non_billable(db, uids)
+    billable_ids: set = set()
+    with GetDB() as db:
+        uids = {int(p["uid"]) for params in api_params.values() for p in params}
+        if uids:
+            billable_ids = {
+                row[0]
+                for row in db.query(User.id)
+                .filter(User.id.in_(uids), User.status.in_(BILLABLE_STATUSES))
+                .all()
+            }
     record_aggregated_user_usages(api_params, usage_coefficient)
+    record_overage_usages(api_params, usage_coefficient)
+    if billable_ids:
+        record_protocol_breakdown(api_params, usage_coefficient, protocol_map, billable_ids)
+
+    from app.billing_guard import check_billing_integrity
+
+    check_billing_integrity(xray)
 
 
 def record_node_usages():

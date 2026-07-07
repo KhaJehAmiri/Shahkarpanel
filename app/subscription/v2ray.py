@@ -22,12 +22,53 @@ from config import (
 )
 
 
+from app.subscription.tls_client import _sni_candidates
+
+
+def _coerce_sni(value) -> str:
+    items = _sni_candidates(value)
+    return items[0] if items else ""
+
+
+def _mask_address_hint(address: str) -> str:
+    addr = (address or "").strip()
+    if not addr:
+        return ""
+    if "." in addr and len(addr) > 6:
+        parts = addr.split(".")
+        if len(parts) == 4:
+            return f"{parts[0]}.****.{parts[-1]}"
+    if len(addr) > 6:
+        return f"{addr[:3]}****{addr[-4:]}"
+    return addr
+
+
 class V2rayShareLink(str):
     def __init__(self):
         self.links = []
+        self.link_items: list[dict] = []
 
-    def add_link(self, link):
+    def add_link(
+        self,
+        link: str,
+        *,
+        remark: str = "",
+        protocol: str = "",
+        region_flag: str = "",
+        region_name: str = "",
+        address: str = "",
+    ):
         self.links.append(link)
+        self.link_items.append(
+            {
+                "link": link,
+                "protocol": protocol or (link.split("://", 1)[0] if "://" in link else "link"),
+                "remark": remark,
+                "region_flag": region_flag,
+                "region_name": region_name,
+                "address_hint": _mask_address_hint(address),
+            }
+        )
 
     def render(self, reverse=False):
         if EXTERNAL_CONFIG:
@@ -36,9 +77,19 @@ class V2rayShareLink(str):
             self.links.reverse()
         return self.links
 
-    def add(self, remark: str, address: str, inbound: dict, settings: dict):
+    def add(
+        self,
+        remark: str,
+        address: str,
+        inbound: dict,
+        settings: dict,
+        *,
+        region_flag: str = "",
+        region_name: str = "",
+    ):
         net = inbound["network"]
         multi_mode = inbound.get("multiMode", False)
+        sni = _coerce_sni(inbound.get("sni"))
         old_path: str = inbound["path"]
 
         if net in ["grpc", "gun"]:
@@ -60,7 +111,7 @@ class V2rayShareLink(str):
                 id=settings["id"],
                 net=net,
                 tls=inbound["tls"],
-                sni=inbound.get("sni", ""),
+                sni=sni,
                 fp=inbound.get("fp", ""),
                 alpn=inbound.get("alpn", ""),
                 pbk=inbound.get("pbk", ""),
@@ -92,7 +143,7 @@ class V2rayShareLink(str):
                 flow=settings.get("flow", ""),
                 net=net,
                 tls=inbound["tls"],
-                sni=inbound.get("sni", ""),
+                sni=sni,
                 fp=inbound.get("fp", ""),
                 alpn=inbound.get("alpn", ""),
                 pbk=inbound.get("pbk", ""),
@@ -103,6 +154,11 @@ class V2rayShareLink(str):
                 type=inbound["header_type"],
                 ais=inbound.get("ais", ""),
                 fs=inbound.get("fragment_setting", ""),
+                encryption=inbound.get("vless_encryption", ""),
+                ech=inbound.get("ech_config_list", ""),
+                pcs=inbound.get("cert_pin_sha256", "") or "",
+                vcn=inbound.get("verify_peer_cert_by_name", "") or "",
+                fm=inbound.get("final_mask_fm", "") or "",
                 multiMode=multi_mode,
                 sc_max_each_post_bytes=inbound.get('scMaxEachPostBytes', 1000000),
                 sc_max_concurrent_posts=inbound.get('scMaxConcurrentPosts', 100),
@@ -124,7 +180,7 @@ class V2rayShareLink(str):
                 flow=settings.get("flow", ""),
                 net=net,
                 tls=inbound["tls"],
-                sni=inbound.get("sni", ""),
+                sni=sni,
                 fp=inbound.get("fp", ""),
                 alpn=inbound.get("alpn", ""),
                 pbk=inbound.get("pbk", ""),
@@ -148,6 +204,14 @@ class V2rayShareLink(str):
             )
 
         elif inbound["protocol"] == "shadowsocks":
+            # Plain ss:// URIs cannot carry TLS/Reality/WebSocket overlays. Those
+            # inbounds are exported via v2ray-json, sing-box, and clash subscriptions.
+            tls_mode = str(inbound.get("tls") or "none").lower()
+            net = str(inbound.get("network") or "tcp").lower()
+            header = str(inbound.get("header_type") or "none").lower()
+            if tls_mode not in ("", "none") or net not in ("tcp", "raw") or header not in ("", "none"):
+                return
+
             method = settings["method"]
             password = settings["password"]
             # Shadowsocks-2022: the connecting password is serverKey:userKey and
@@ -169,7 +233,15 @@ class V2rayShareLink(str):
         else:
             return
 
-        self.add_link(link=link)
+        self.add_link(
+            link=link,
+            remark=remark,
+            protocol=str(inbound.get("protocol") or ""),
+            region_flag=region_flag,
+            region_name=region_name,
+            address=address,
+        )
+
 
     @classmethod
     def vmess(
@@ -300,9 +372,16 @@ class V2rayShareLink(str):
               heartbeatPeriod: int = 0,
               keepAlivePeriod: int = 0,
               xmux: dict = {},
+              encryption: str = "",
+              ech: str = "",
+              pcs: str = "",
+              vcn: str = "",
+              fm: str = "",
               ):
 
         payload = {"security": tls, "type": net}
+        if encryption and encryption not in ("none", ""):
+            payload["encryption"] = encryption
         if type:
             payload["headerType"] = type
         if flow and (tls in ('tls', 'reality') and net in ('tcp', 'raw', 'kcp') and type != 'http'):
@@ -360,6 +439,14 @@ class V2rayShareLink(str):
             payload["fp"] = fp
             if alpn:
                 payload["alpn"] = alpn
+            if ech:
+                payload["ech"] = ech
+            if pcs:
+                payload["pcs"] = pcs
+            if vcn:
+                payload["vcn"] = vcn
+            if fm:
+                payload["fm"] = fm
             if fs:
                 payload["fragment"] = fs
             if ais:
@@ -372,6 +459,8 @@ class V2rayShareLink(str):
             payload["sid"] = sid
             if spx:
                 payload["spx"] = spx
+            if fm:
+                payload["fm"] = fm
 
         return (
             "vless://"
@@ -537,19 +626,31 @@ class V2rayJsonConfig(str):
         return json.dumps(self.config, indent=4, cls=UUIDEncoder)
 
     @staticmethod
-    def tls_config(sni=None, fp=None, alpn=None, ais: bool = False) -> dict:
+    def tls_config(
+        sni=None,
+        fp=None,
+        alpn=None,
+        ais: bool = False,
+        ech_config_list: str | None = None,
+        cert_pin_sha256: str | None = None,
+    ) -> dict:
 
         tlsSettings = {}
         if sni is not None:
             tlsSettings["serverName"] = sni
-
-        tlsSettings['allowInsecure'] = ais if ais else False
 
         if fp:
             tlsSettings["fingerprint"] = fp
         if alpn:
             tlsSettings["alpn"] = [alpn] if not isinstance(
                 alpn, list) else alpn
+        if ech_config_list:
+            tlsSettings["echConfigList"] = ech_config_list
+        if cert_pin_sha256:
+            tlsSettings["pinnedPeerCertSha256"] = cert_pin_sha256
+        elif ais:
+            # Xray 26+ removed allowInsecure; legacy ais flag cannot be exported.
+            pass
 
         tlsSettings["show"] = False
 
@@ -822,11 +923,11 @@ class V2rayJsonConfig(str):
         }
 
     @staticmethod
-    def vless_config(address=None, port=None, id=None, flow="") -> dict:
+    def vless_config(address=None, port=None, id=None, flow="", encryption="none") -> dict:
         user = {
             "id": id,
             "security": "auto",
-            "encryption": "none",
+            "encryption": encryption or "none",
             "email": "NexusPanel",
             "alterId": 0,
         }
@@ -939,7 +1040,13 @@ class V2rayJsonConfig(str):
                             noGRPCHeader: bool = False,
                             heartbeatPeriod: int = 0,
                             keepAlivePeriod: int = 0,
+                            ech_config_list: str = "",
+                            cert_pin_sha256: str = "",
                             ) -> dict:
+
+        from app.xray.network_defaults import default_tls_fingerprint
+
+        fp = default_tls_fingerprint(tls=tls, existing=fp)
 
         if net == "ws":
             network_setting = self.ws_config(
@@ -977,7 +1084,14 @@ class V2rayJsonConfig(str):
             network_setting = {}
 
         if tls == "tls":
-            tls_settings = self.tls_config(sni=sni, fp=fp, alpn=alpn, ais=ais)
+            tls_settings = self.tls_config(
+                sni=sni,
+                fp=fp,
+                alpn=alpn,
+                ais=ais,
+                ech_config_list=ech_config_list or None,
+                cert_pin_sha256=cert_pin_sha256 or None,
+            )
         elif tls == "reality":
             tls_settings = self.reality_config(
                 sni=sni, fp=fp, pbk=pbk, sid=sid, spx=spx)
@@ -996,7 +1110,7 @@ class V2rayJsonConfig(str):
                                           tls_settings=tls_settings,
                                           sockopt=sockopt)
 
-    def add(self, remark: str, address: str, inbound: dict, settings: dict):
+    def add(self, remark: str, address: str, inbound: dict, settings: dict, **kwargs):
 
         net = inbound['network']
         protocol = inbound['protocol']
@@ -1037,7 +1151,8 @@ class V2rayJsonConfig(str):
             outbound["settings"] = self.vless_config(address=address,
                                                      port=port,
                                                      id=settings['id'],
-                                                     flow=flow)
+                                                     flow=flow,
+                                                     encryption=inbound.get('vless_encryption') or 'none')
 
         elif inbound['protocol'] == 'trojan':
             outbound["settings"] = self.trojan_config(address=address,
@@ -1045,10 +1160,21 @@ class V2rayJsonConfig(str):
                                                       password=settings['password'])
 
         elif inbound['protocol'] == 'shadowsocks':
+            method = settings['method']
+            password = settings['password']
+            # Shadowsocks-2022: client outbound password is serverKey:userKey
+            # (same as share links); the inbound carries the server PSK.
+            if str(method).startswith("2022-"):
+                server_key = inbound.get("ss_password")
+                inbound_method = inbound.get("ss_method") or method
+                if not server_key:
+                    return
+                method = inbound_method
+                password = f"{server_key}:{password}"
             outbound["settings"] = self.shadowsocks_config(address=address,
                                                            port=port,
-                                                           password=settings['password'],
-                                                           method=settings['method'])
+                                                           password=password,
+                                                           method=method)
 
         outbounds = [outbound]
         dialer_proxy = ''
@@ -1061,7 +1187,7 @@ class V2rayJsonConfig(str):
         outbound["streamSettings"] = self.make_stream_setting(
             net=net,
             tls=tls,
-            sni=inbound['sni'],
+            sni=_coerce_sni(inbound.get("sni")),
             host=inbound['host'],
             path=path,
             alpn=alpn.rsplit(sep=",") if alpn else None,
@@ -1083,7 +1209,18 @@ class V2rayJsonConfig(str):
             noGRPCHeader=inbound.get("noGRPCHeader", False),
             heartbeatPeriod=inbound.get("heartbeatPeriod", 0),
             keepAlivePeriod=inbound.get("keepAlivePeriod", 0),
+            ech_config_list=inbound.get("ech_config_list", "") or "",
+            cert_pin_sha256=inbound.get("cert_pin_sha256", "") or "",
         )
+        stream = outbound["streamSettings"]
+        if inbound.get("_host_sockopt"):
+            stream["sockopt"] = inbound["_host_sockopt"]
+        if inbound.get("_host_final_mask"):
+            existing = stream.get("finalmask")
+            if isinstance(existing, dict):
+                stream["finalmask"] = {**existing, **inbound["_host_final_mask"]}
+            else:
+                stream["finalmask"] = inbound["_host_final_mask"]
 
         mux_json = json.loads(self.mux_template)
         mux_config = mux_json["v2ray"]

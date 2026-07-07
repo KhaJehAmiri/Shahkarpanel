@@ -79,6 +79,13 @@ class User(BaseModel):
 
     next_plan: Optional[NextPlanModel] = Field(None, nullable=True)
 
+    device_limit: Optional[int] = Field(None, nullable=True, ge=0)
+    speed_limit_up: Optional[int] = Field(None, nullable=True, ge=0, description="Upload cap in Mbps")
+    speed_limit_down: Optional[int] = Field(None, nullable=True, ge=0, description="Download cap in Mbps")
+    routing_preset: Optional[str] = Field(None, nullable=True)
+    dns_policy: Optional[dict] = Field(None, nullable=True)
+    session_limit_minutes: Optional[int] = Field(None, nullable=True, ge=0)
+
     # SigmaGuard client profile. None on a patch = leave unchanged.
     client_profile: Optional[str] = Field(default=None, nullable=True)
 
@@ -180,6 +187,11 @@ class UserCreate(User):
     def validate_inbounds(cls, inbounds, values, **kwargs):
         proxies = values.data.get("proxies", [])
 
+        from app.xray.inbound_match import align_shadowsocks_from_inbounds, inbound_matches_proxy
+
+        if inbounds and proxies:
+            align_shadowsocks_from_inbounds(proxies, inbounds)
+
         # delete inbounds that are for protocols not activated
         for proxy_type in inbounds.copy():
             if proxy_type not in proxies:
@@ -188,7 +200,7 @@ class UserCreate(User):
         # check by proxies to ensure that every protocol has inbounds set
         for proxy_type in proxies:
             ptype = proxy_type if isinstance(proxy_type, ProxyTypes) else ProxyTypes(str(proxy_type))
-            if ptype in (ProxyTypes.WireGuard, ProxyTypes.Hysteria2, ProxyTypes.TUIC):
+            if ptype in (ProxyTypes.WireGuard, ProxyTypes.Hysteria2, ProxyTypes.TUIC, ProxyTypes.AnyTLS):
                 inbounds[proxy_type] = inbounds.get(proxy_type) or []
                 continue
 
@@ -196,8 +208,6 @@ class UserCreate(User):
                 tags = inbounds[proxy_type]
                 if not tags:
                     raise ValueError(f"{proxy_type} inbounds cannot be empty")
-
-                from app.xray.inbound_match import inbound_matches_proxy
 
                 proxy_settings = proxies.get(proxy_type)
                 for tag in tags:
@@ -208,8 +218,6 @@ class UserCreate(User):
                             f"Inbound {tag} is not compatible with {proxy_type} settings"
                         )
             else:
-                from app.xray.inbound_match import inbound_matches_proxy
-
                 proxy_settings = proxies.get(proxy_type)
                 inbounds[proxy_type] = [
                     i["tag"]
@@ -281,9 +289,11 @@ class UserModify(User):
         # check with inbounds, "proxies" is optional on modifying
         # so inbounds particularly can be modified
         if inbounds:
-            from app.xray.inbound_match import inbound_matches_proxy
+            from app.xray.inbound_match import align_shadowsocks_from_inbounds, inbound_matches_proxy
 
             proxies = values.data.get("proxies") or {}
+            if proxies:
+                align_shadowsocks_from_inbounds(proxies, inbounds)
             for proxy_type, tags in inbounds.items():
                 for tag in tags:
                     if tag not in xray.config.inbounds_by_tag:
@@ -319,17 +329,38 @@ class UserModify(User):
         return status
 
 
+class SubscriptionLinkItem(BaseModel):
+    link: str
+    protocol: str = ""
+    remark: str = ""
+    region_flag: str = ""
+    region_name: str = ""
+    address_hint: str = ""
+
+
 class UserResponse(User):
+    id: Optional[int] = None
     username: str
     status: UserStatus
     used_traffic: int
+    used_traffic_up: int = 0
+    used_traffic_down: int = 0
+    overage_traffic: int = 0
     lifetime_used_traffic: int = 0
     created_at: datetime
+    sub_token: Optional[str] = None
+    session_limit_minutes: Optional[int] = None
+    routing_preset: Optional[str] = None
+    dns_policy: Optional[dict] = None
     sub_revoked_at: Optional[datetime] = None
     portal_enabled: bool = False
     links: List[str] = []
+    link_items: List[SubscriptionLinkItem] = []
     subscription_url: str = ""
     public_subscription_url: str = ""
+    client_subscription_url: str = ""
+    subscription_profile_title: str = ""
+    subscription_urls: List[dict] = []
     proxies: dict
     excluded_inbounds: Dict[ProxyTypes, List[str]] = {}
 
@@ -342,6 +373,10 @@ class UserResponse(User):
             self.links = generate_v2ray_links(
                 self.proxies, self.inbounds, extra_data=self.model_dump(), reverse=False,
             )
+        if not self.link_items and self.links:
+            from app.subscription.share import link_items_from_urls
+
+            self.link_items = [SubscriptionLinkItem(**item) for item in link_items_from_urls(self.links)]
         return self
 
     @model_validator(mode="after")
@@ -349,18 +384,28 @@ class UserResponse(User):
         if not self.subscription_url:
             salt = secrets.token_hex(8)
             url_prefix = (XRAY_SUBSCRIPTION_URL_PREFIX).replace('*', salt)
-            # One stable token per username — never changes between API calls.
-            # After a revoke the epoch-0 stable token is rejected by
-            # get_validated_sub, so re-key deterministically from the
-            # revocation time (still stable until the next revoke).
-            issued_at = None
-            if self.sub_revoked_at:
-                revoked_utc = self.sub_revoked_at.replace(tzinfo=timezone.utc)
-                issued_at = int(revoked_utc.timestamp()) + 1
-            token = create_subscription_token(self.username, issued_at=issued_at)
+            if getattr(self, "sub_token", None):
+                token = self.sub_token
+            else:
+                # Legacy signed token — stable per username until revoke.
+                issued_at = None
+                if self.sub_revoked_at:
+                    revoked_utc = self.sub_revoked_at.replace(tzinfo=timezone.utc)
+                    issued_at = int(revoked_utc.timestamp()) + 1
+                token = create_subscription_token(self.username, issued_at=issued_at)
             self.subscription_url = f"{url_prefix}/{XRAY_SUBSCRIPTION_PATH}/{token}"
-        from app.subscription.public_url import public_subscription_url
+        from app.subscription.public_url import public_subscription_url, list_user_subscription_urls
+        from app.subscription.userinfo import format_subscription_profile_title, subscription_client_import_url
+
         self.public_subscription_url = public_subscription_url(self)
+        self.subscription_profile_title = format_subscription_profile_title(self)
+        self.client_subscription_url = subscription_client_import_url(
+            self.public_subscription_url, self
+        )
+        try:
+            self.subscription_urls = list_user_subscription_urls(self)
+        except Exception:
+            self.subscription_urls = []
         return self
 
     @field_validator("proxies", mode="before")
@@ -369,7 +414,7 @@ class UserResponse(User):
             v = {p.type: p.settings for p in v}
         return super().validate_proxies(v, values, **kwargs)
 
-    @field_validator("used_traffic", "lifetime_used_traffic", mode='before')
+    @field_validator("used_traffic", "used_traffic_up", "used_traffic_down", "overage_traffic", "lifetime_used_traffic", mode='before')
     def cast_to_int(cls, v):
         if v is None:  # Allow None values
             return v
@@ -389,13 +434,70 @@ class SubscriptionUserResponse(UserResponse):
     config_available: bool = True
     block_reason: str | None = None
     public_subscription_url: str | None = None
+    subscription_urls: List[dict] = []
     hysteria2_link: str | None = None
     tuic_link: str | None = None
+    anytls_link: str | None = None
+    wireguard_uri: str | None = None
+    link_items: List[SubscriptionLinkItem] = []
     model_config = ConfigDict(from_attributes=True)
 
 
+class UserListItem(BaseModel):
+    """Lightweight row for GET /users — skips subscription link generation."""
+
+    id: Optional[int] = None
+    username: str
+    status: UserStatus
+    used_traffic: int
+    used_traffic_up: int = 0
+    used_traffic_down: int = 0
+    overage_traffic: int = 0
+    created_at: datetime
+    expire: Optional[int] = None
+    data_limit: Optional[int] = None
+    data_limit_reset_strategy: UserDataLimitResetStrategy = UserDataLimitResetStrategy.no_reset
+    note: Optional[str] = None
+    online_at: Optional[datetime] = None
+    portal_enabled: bool = False
+    proxies: Dict[str, Any] = {}
+    inbounds: Dict[str, List[str]] = {}
+    admin: Optional[Admin] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("proxies", mode="before")
+    @classmethod
+    def proxies_dict(cls, v):
+        if isinstance(v, list):
+            out: Dict[str, Any] = {}
+            for proxy in v:
+                key = proxy.type.value if hasattr(proxy.type, "value") else str(proxy.type)
+                settings = proxy.settings
+                out[key] = settings if isinstance(settings, dict) else dict(settings or {})
+            return out
+        return v or {}
+
+    @field_validator(
+        "used_traffic",
+        "used_traffic_up",
+        "used_traffic_down",
+        "overage_traffic",
+        mode="before",
+    )
+    @classmethod
+    def cast_to_int(cls, v):
+        if v is None:
+            return v
+        if isinstance(v, float):
+            return int(v)
+        if isinstance(v, int):
+            return v
+        raise ValueError("must be an integer or a float, not a string")
+
+
 class UsersResponse(BaseModel):
-    users: List[UserResponse]
+    users: List[UserListItem]
     total: int
 
 

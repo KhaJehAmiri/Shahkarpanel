@@ -3,11 +3,13 @@
 import { useState } from "react";
 import type { ClientApp, Platform } from "@/lib/apps";
 import { copyToClipboard } from "@/lib/clipboard";
+import { openDeepLink } from "@/lib/deepLink";
 
 interface Props {
   app: ClientApp;
   platform: Platform;
   subUrl: string;
+  profileName?: string;
   importLabel: string;
   downloadLabel: string;
   pasteFallback: (name: string) => string;
@@ -17,20 +19,11 @@ interface Props {
   onToast: (msg: string, kind?: "ok" | "error") => void;
 }
 
-function openDeepLink(href: string) {
-  const a = document.createElement("a");
-  a.href = href;
-  a.rel = "noopener";
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-}
-
 export function SubAppTile({
-  app, platform, subUrl, importLabel, downloadLabel, pasteFallback, streisandHint, clipboardHint, noResponse, onToast,
+  app, platform, subUrl, profileName = "NexusPanel", importLabel, downloadLabel, pasteFallback, streisandHint, clipboardHint, noResponse, onToast,
 }: Props) {
   const [busy, setBusy] = useState(false);
-  const deepLink = app.buildScheme(subUrl, { name: "NexusPanel" });
+  const deepLink = app.buildScheme(subUrl, { name: profileName });
   const dl = app.download?.[platform];
   const copyFirst = platform === "macos" || platform === "ios" || app.id === "hiddify";
 

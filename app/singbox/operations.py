@@ -25,6 +25,7 @@ SERVED_STATUSES = (UserStatus.active,)
 _PROTOCOL_BY_TYPE = {
     ProxyTypes.Hysteria2: "hysteria2",
     ProxyTypes.TUIC: "tuic",
+    ProxyTypes.AnyTLS: "anytls",
 }
 
 
@@ -34,7 +35,7 @@ def collect_singbox_users(db) -> List[SBUser]:
     users: List[SBUser] = []
     proxies = (
         db.query(Proxy)
-        .filter(Proxy.type.in_([ProxyTypes.Hysteria2, ProxyTypes.TUIC]))
+        .filter(Proxy.type.in_([ProxyTypes.Hysteria2, ProxyTypes.TUIC, ProxyTypes.AnyTLS]))
         .all()
     )
     for proxy in proxies:
@@ -51,6 +52,8 @@ def collect_singbox_users(db) -> List[SBUser]:
                 password=settings.get("password"),
                 uuid=str(settings.get("uuid")) if settings.get("uuid") else None,
                 active=bool(user and user.status in SERVED_STATUSES),
+                speed_limit_up=getattr(user, "speed_limit_up", None) if user else None,
+                speed_limit_down=getattr(user, "speed_limit_down", None) if user else None,
             )
         )
     return users
@@ -63,10 +66,16 @@ def _node_object(node_id: int):
     if node is None:
         return None
     try:
-        if not node.connected:
-            return None
+        conn = getattr(node, "connection", None)
+        if conn is None or conn.closed:
+            node.connect()
+        else:
+            conn.ping()
     except Exception:
-        return None
+        try:
+            node.connect()
+        except Exception:
+            return None
     return node
 
 
@@ -85,6 +94,8 @@ def _cfg_to_dict(cfg) -> dict:
         "tuic_enabled": cfg.tuic_enabled,
         "tuic_port": cfg.tuic_port,
         "tuic_congestion_control": cfg.tuic_congestion_control,
+        "anytls_enabled": cfg.anytls_enabled,
+        "anytls_port": cfg.anytls_port,
     }
 
 

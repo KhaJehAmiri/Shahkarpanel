@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { ClientApp, Platform } from "@/lib/apps";
 import { copyToClipboard } from "@/lib/clipboard";
+import { openDeepLink } from "@/lib/deepLink";
 
 interface Props {
   app: ClientApp;
@@ -43,15 +44,7 @@ export function AppTile({
     window.addEventListener("blur", onBlur, { once: true });
     const start = Date.now();
     try {
-      // We use an anchor click rather than location assignment because some
-      // browsers (esp. iOS Safari) handle custom URL schemes more reliably
-      // when triggered from a synchronous user gesture.
-      const a = document.createElement("a");
-      a.href = deepLink;
-      a.rel = "noopener";
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+      openDeepLink(deepLink);
     } catch {
       /* ignore */
     }

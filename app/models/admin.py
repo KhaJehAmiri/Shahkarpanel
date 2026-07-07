@@ -16,6 +16,12 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/admin/token")  # Admin view 
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
+    refresh_token: Optional[str] = None
+    expires_in: Optional[int] = None
+
+
+class AdminRefreshBody(BaseModel):
+    refresh_token: str
 
 
 class Admin(BaseModel):

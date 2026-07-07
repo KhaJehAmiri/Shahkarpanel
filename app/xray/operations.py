@@ -1,3 +1,4 @@
+import threading
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
@@ -6,6 +7,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app import logger, xray
 from app.db import GetDB, crud
 from app.models.node import NodeStatus
+from app.models.proxy import ProxyTypes
 from app.models.user import UserResponse
 from app.utils.concurrency import threaded_function
 from app.xray.node import XRayNode
@@ -62,8 +64,8 @@ def sync_core_users():
 
 
 @threaded_function
-def sync_core_users_async():
-    schedule_core_sync()
+def sync_core_users_async(*, full: bool = False):
+    schedule_core_sync(full=full)
 
 
 def _sync_wireguard():
@@ -81,17 +83,23 @@ def _sync_wireguard():
 
 
 def _sync_wireguard_node(node_id: int, node_object):
-    """Best-effort: push the current peer set to a node that just connected."""
+    """Best-effort: push WG peers and sing-box to a node that just connected."""
     try:
-        from app.models.node import CoreKind
         from app.wireguard.operations import sync_node
+        from app.wireguard.sync import amneziawg_enabled, plain_wg_enabled
 
         with GetDB() as db:
             dbnode = crud.get_node_by_id(db, node_id)
-            if dbnode and dbnode.core_kind == CoreKind.wireguard.value:
-                sync_node(db, dbnode, node_object=node_object)
+            if not dbnode or dbnode.wireguard is None:
+                pass
+            else:
+                cfg = dbnode.wireguard
+                if plain_wg_enabled(cfg) or amneziawg_enabled(cfg):
+                    ok = sync_node(db, dbnode, node_object=node_object)
+                    if not ok:
+                        logger.warning("WireGuard sync to node %s did not apply (client unavailable or no specs)", node_id)
     except Exception:
-        pass
+        logger.exception("WireGuard sync to node %s raised", node_id)
     # A normal Xray node may *also* carry a sing-box config (Hysteria2/TUIC);
     # push it when the node connects.
     try:
@@ -118,9 +126,44 @@ def _remove_user_from_inbound_sync(api: XRayAPI, inbound_tag: str, email: str):
         pass
 
 
+def hot_disconnect_users_on_nodes(dbusers) -> None:
+    """Remove users from every connected remote node via the handler API.
+
+    Mirrors the main-core hot path: blocks the users' new connections on each
+    node with zero impact on anyone else — no ``node.restart()``. Best-effort;
+    SS-2022 accounts (no gRPC CipherType) are skipped and converge on the next
+    full node reconcile.
+    """
+    emails = {f"{u.id}.{u.username}" for u in dbusers}
+    if not emails:
+        return
+    for node in list(xray.nodes.values()):
+        if not node.connected or not node.started:
+            continue
+        try:
+            with GetDB() as db:
+                from app.services.xray_node import node_xray_inbound_tags
+
+                allowed = node_xray_inbound_tags(db, node.id)
+        except Exception:
+            allowed = None
+        tags = allowed if allowed is not None else list(xray.config.inbounds_by_tag.keys())
+        for inbound_tag in tags:
+            for email in emails:
+                _remove_user_from_inbound(node.api, inbound_tag, email)
+
+
 def remove_user_immediate(dbuser: "DBUser"):
-    """Stop serving immediately — rebuild core from DB (excludes non-active users)."""
-    sync_core_users_now()
+    """Stop serving a user immediately via the live handler API (no restart).
+
+    Removes the user from the main core and every connected node through the
+    gRPC add/remove-user path, so their new connections are blocked at once
+    while everyone else stays connected. Falls back to a full-core restart only
+    when the main core's API is unreachable.
+    """
+    from app.quota import disconnect_users_everywhere
+
+    disconnect_users_everywhere([dbuser])
 
 
 def remove_user(dbuser: "DBUser"):
@@ -144,7 +187,9 @@ def _push_user_to_nodes(dbuser: "DBUser"):
             # so skip the hot-add handler call that would raise for them.
             if getattr(account, "is_2022", False):
                 continue
-            if getattr(account, 'flow', None) and (
+            if proxy_type == ProxyTypes.Trojan:
+                account.flow = XTLSFlows.NONE
+            elif getattr(account, 'flow', None) and (
                 inbound.get('network', 'tcp') not in ('tcp', 'kcp')
                 or (
                     inbound.get('network', 'tcp') in ('tcp', 'kcp')
@@ -154,7 +199,16 @@ def _push_user_to_nodes(dbuser: "DBUser"):
             ):
                 account.flow = XTLSFlows.NONE
             for node in list(xray.nodes.values()):
-                if node.connected and node.started:
+                if not node.connected or not node.started:
+                    continue
+                with GetDB() as db:
+                    dbnode = crud.get_node_by_id(db, node.id)
+                    if dbnode is None:
+                        continue
+                    from app.services.xray_node import node_xray_inbound_tags
+                    allowed = node_xray_inbound_tags(db, node.id)
+                    if allowed is not None and inbound_tag not in allowed:
+                        continue
                     _alter_inbound_user(node.api, inbound_tag, account)
 
 
@@ -162,6 +216,22 @@ def update_user(dbuser: "DBUser"):
     schedule_core_sync()
     sync_main_core_user(dbuser)
     _push_user_to_nodes(dbuser)
+
+
+def propagate_user_credential_revoke(dbuser: "DBUser") -> None:
+    """After revoke_user_sub: cut live sessions and push new creds to every core."""
+    try:
+        from app.xray.serving import hot_disconnect_users
+
+        hot_disconnect_users([dbuser])
+    except Exception:
+        logger.debug("Main-core hot disconnect failed during credential revoke", exc_info=True)
+    try:
+        hot_disconnect_users_on_nodes([dbuser])
+    except Exception:
+        logger.debug("Node hot disconnect failed during credential revoke", exc_info=True)
+    update_user(dbuser)
+    _sync_wireguard()
 
 
 def _apply_node_tunnels(config, node_id: int):
@@ -199,9 +269,34 @@ def add_node(dbnode: "DBNode"):
                                      api_port=dbnode.api_port,
                                      ssl_key=tls['key'],
                                      ssl_cert=tls['certificate'],
-                                     usage_coefficient=dbnode.usage_coefficient)
+                                     usage_coefficient=dbnode.usage_coefficient,
+                                     pinned_cert_sha256=getattr(dbnode, "server_cert_sha256", None))
 
     return xray.nodes[dbnode.id]
+
+
+def _wg_xray_degraded_message(exc: BaseException) -> str:
+    return f"WireGuard active; Xray core not running: {exc}"
+
+
+def _wg_node_version_label(*, xray_failed: bool, xray_version: str | None = None) -> str:
+    if xray_version:
+        return xray_version
+    return "wireguard (xray down)" if xray_failed else "wireguard"
+
+
+def _mark_wg_node_connected(
+    node_id: int,
+    node,
+    *,
+    xray_exc: BaseException | None,
+    xray_version: str | None = None,
+) -> str:
+    """Persist connected status for a WG node; surface Xray failure without dropping RPyC."""
+    version = _wg_node_version_label(xray_failed=xray_exc is not None, xray_version=xray_version)
+    message = _wg_xray_degraded_message(xray_exc) if xray_exc else None
+    _change_node_status(node_id, NodeStatus.connected, message=message, version=version)
+    return version
 
 
 def _change_node_status(node_id: int, status: NodeStatus, message: str = None, version: str = None):
@@ -232,52 +327,227 @@ def _change_node_status(node_id: int, status: NodeStatus, message: str = None, v
             db.rollback()
 
 
+def _persist_pinned_cert(node_id: int, observed_sha256):
+    """Trust-on-first-use: store the node's cert fingerprint if not pinned yet.
+
+    Once stored, ``add_node`` feeds it back as the pin so any later cert change
+    is rejected as a possible MITM. We never overwrite an existing pin here —
+    a rotation is an explicit admin action.
+    """
+    if not observed_sha256:
+        return
+    with GetDB() as db:
+        try:
+            dbnode = crud.get_node_by_id(db, node_id)
+            if not dbnode or getattr(dbnode, "server_cert_sha256", None):
+                return
+            dbnode.server_cert_sha256 = observed_sha256
+            db.commit()
+            logger.info("Pinned TLS cert for node %s (%s…)", node_id, observed_sha256[:16])
+            try:
+                xray.nodes[node_id].pinned_cert_sha256 = observed_sha256
+            except KeyError:
+                pass
+        except SQLAlchemyError:
+            db.rollback()
+
+
 global _connecting_nodes
 _connecting_nodes = {}
+_connecting_nodes_lock = threading.Lock()
+
+
+def _claim_connecting_node(node_id) -> bool:
+    """Atomically claim the per-node connect slot.
+
+    Returns False if another connect_node() call for this node is already
+    in flight. The check-and-set must happen together under one lock — doing
+    a plain ``dict.get`` followed by a later ``dict[node_id] = True`` (the
+    previous implementation) leaves a TOCTOU window where two concurrent
+    calls (e.g. the health-check job and a manual reconnect, or two overlapping
+    health-check ticks while a slow connect is still in flight) can both pass
+    the check before either sets the flag, and both proceed to call
+    ``add_node``/``node.start``/``node.connect`` on the same node concurrently.
+    """
+    with _connecting_nodes_lock:
+        if _connecting_nodes.get(node_id):
+            return False
+        _connecting_nodes[node_id] = True
+        return True
+
+
+def _release_connecting_node(node_id) -> None:
+    with _connecting_nodes_lock:
+        _connecting_nodes.pop(node_id, None)
+
+
+def push_connected_nodes_config_sync() -> int:
+    """Push fresh configs to nodes that are already connected (non-blocking connect)."""
+    from app.models.node import CoreKind
+    from app.services.xray_node import (
+        build_node_xray_config,
+        filter_xray_config_for_node,
+        node_xray_inbound_tags,
+    )
+
+    pushed = 0
+    with GetDB() as db:
+        nodes = crud.get_nodes(db)
+
+    for dbnode in nodes:
+        node_id = dbnode.id
+        node = xray.nodes.get(node_id)
+        if node is None or not node.connected:
+            continue
+        if not _claim_connecting_node(node_id):
+            continue
+        try:
+            config = build_node_xray_config(node_id)
+            with GetDB() as db:
+                allowed = node_xray_inbound_tags(db, node_id)
+            config = filter_xray_config_for_node(config, allowed)
+            config = _apply_node_tunnels(config, node_id)
+
+            is_wg_node = dbnode.core_kind == CoreKind.wireguard.value
+            if is_wg_node:
+                try:
+                    node.start(config)
+                except Exception as exc:
+                    logger.warning(
+                        'Node "%s" Xray push failed (%s); continuing WG/sing-box sync',
+                        dbnode.name,
+                        exc,
+                    )
+            else:
+                node.restart(config)
+
+            _sync_wireguard_node(node_id, node)
+            pushed += 1
+        except Exception as exc:
+            logger.warning("push_connected_nodes_config_sync node %s failed: %s", node_id, exc)
+        finally:
+            _release_connecting_node(node_id)
+
+    return pushed
+
+
+def push_all_node_configs_sync() -> int:
+    """Blocking push of DB user set to every node (Xray + WG + sing-box).
+
+    Used when quota enforcement must take effect immediately — async
+    ``connect_node``/``restart_node`` threads are too slow and leave limited
+    users on stale node configs.
+    """
+    from app.models.node import CoreKind
+    from app.services.xray_node import (
+        build_node_xray_config,
+        filter_xray_config_for_node,
+        node_xray_inbound_tags,
+    )
+
+    pushed = 0
+    with GetDB() as db:
+        nodes = crud.get_nodes(db)
+
+    for dbnode in nodes:
+        node_id = dbnode.id
+        if not _claim_connecting_node(node_id):
+            continue
+        try:
+            try:
+                node = xray.nodes[node_id]
+                if not node.connected:
+                    raise KeyError
+            except KeyError:
+                node = add_node(dbnode)
+
+            if not node.connected:
+                node.connect()
+
+            config = build_node_xray_config(node_id)
+            with GetDB() as db:
+                allowed = node_xray_inbound_tags(db, node_id)
+            config = filter_xray_config_for_node(config, allowed)
+            config = _apply_node_tunnels(config, node_id)
+
+            is_wg_node = dbnode.core_kind == CoreKind.wireguard.value
+            if is_wg_node:
+                try:
+                    node.start(config)
+                except Exception as exc:
+                    logger.warning(
+                        'Node "%s" Xray push failed (%s); continuing WG/sing-box sync',
+                        dbnode.name,
+                        exc,
+                    )
+                    if not node.connected:
+                        node.connect()
+            else:
+                node.restart(config)
+
+            _sync_wireguard_node(node_id, node)
+            pushed += 1
+        except Exception as exc:
+            logger.warning("push_all_node_configs_sync node %s failed: %s", node_id, exc)
+        finally:
+            _release_connecting_node(node_id)
+
+    return pushed
 
 
 @threaded_function
 def connect_node(node_id, config=None):
-    global _connecting_nodes
-
-    if _connecting_nodes.get(node_id):
+    if not _claim_connecting_node(node_id):
         return
 
-    with GetDB() as db:
-        dbnode = crud.get_node_by_id(db, node_id)
-
-    if not dbnode:
-        return
-
+    dbnode = None
     try:
-        node = xray.nodes[dbnode.id]
-        assert node.connected
-    except (KeyError, AssertionError):
-        node = xray.operations.add_node(dbnode)
+        with GetDB() as db:
+            dbnode = crud.get_node_by_id(db, node_id)
 
-    try:
-        _connecting_nodes[node_id] = True
+        if not dbnode:
+            return
+
+        try:
+            node = xray.nodes[dbnode.id]
+            if not node.connected:
+                raise KeyError
+        except KeyError:
+            node = xray.operations.add_node(dbnode)
 
         _change_node_status(node_id, NodeStatus.connecting)
         logger.info(f"Connecting to \"{dbnode.name}\" node")
 
+        try:
+            node.connect()
+        except Exception:
+            node = xray.operations.add_node(dbnode)
+            node.connect()
+
         if config is None:
-            config = xray.config.include_db_users()
-        config = _apply_node_tunnels(config, node_id)
+            from app.services.xray_node import build_node_xray_config
+            config = build_node_xray_config(node_id)
+        else:
+            from app.services.xray_node import filter_xray_config_for_node, node_xray_inbound_tags
+            with GetDB() as db:
+                allowed = node_xray_inbound_tags(db, node_id)
+            config = filter_xray_config_for_node(config, allowed)
+            config = _apply_node_tunnels(config, node_id)
 
         from app.models.node import CoreKind
 
         is_wg_node = dbnode.core_kind == CoreKind.wireguard.value
         version = None
+        degraded_msg = None
         if is_wg_node:
             # WireGuard nodes need the RPyC channel for wg_apply; Xray on the
             # node is best-effort (stats/API) and must not block AWG sync.
-            if not node.connected:
-                node.connect()
+            xray_exc = None
             try:
                 node.start(config)
                 version = node.get_version()
             except Exception as exc:
+                xray_exc = exc
                 logger.warning(
                     "WireGuard node \"%s\" connected but Xray start failed (%s); continuing with WG sync",
                     dbnode.name,
@@ -285,66 +555,128 @@ def connect_node(node_id, config=None):
                 )
                 if not node.connected:
                     node.connect()
+                degraded_msg = _wg_xray_degraded_message(xray_exc)
+            version = _wg_node_version_label(xray_failed=xray_exc is not None, xray_version=version)
         else:
             node.start(config)
             version = node.get_version()
 
         if not version:
-            version = "wireguard" if is_wg_node else None
-        if not version:
             raise RuntimeError("Node did not report an Xray version")
 
-        _change_node_status(node_id, NodeStatus.connected, version=version)
-        logger.info(f"Connected to \"{dbnode.name}\" node, xray run on v{version}")
+        _change_node_status(node_id, NodeStatus.connected, message=degraded_msg, version=version)
+        _persist_pinned_cert(node_id, getattr(node, "observed_cert_sha256", None))
+        if degraded_msg:
+            logger.info(
+                "Connected to \"%s\" node (degraded: WG up, Xray down) — %s",
+                dbnode.name,
+                version,
+            )
+        else:
+            logger.info(f"Connected to \"{dbnode.name}\" node, xray run on v{version}")
 
         _sync_wireguard_node(node_id, node)
 
     except Exception as e:
         _change_node_status(node_id, NodeStatus.error, message=str(e))
-        logger.info(f"Unable to connect to \"{dbnode.name}\" node")
+        logger.info(f"Unable to connect to \"{dbnode.name if dbnode else node_id}\" node")
 
     finally:
-        try:
-            del _connecting_nodes[node_id]
-        except KeyError:
-            pass
+        _release_connecting_node(node_id)
 
 
 @threaded_function
 def restart_node(node_id, config=None):
-    with GetDB() as db:
-        dbnode = crud.get_node_by_id(db, node_id)
-
-    if not dbnode:
+    # Shares the connect_node() in-flight guard: the two operations both
+    # touch xray.nodes[node_id] and talk to the same physical node, so they
+    # must never run concurrently for the same id (H6/H7 — @threaded_function
+    # fires a fresh, un-joined thread on every call; without this guard a
+    # slow restart plus another health-check tick, manual "restart" click,
+    # rule-engine action, or auto-upgrade job for the same node pile up
+    # threads that all race node.restart()/node.disconnect()).
+    if not _claim_connecting_node(node_id):
         return
 
+    released = False
+    dbnode = None
     try:
-        node = xray.nodes[dbnode.id]
-    except KeyError:
-        node = xray.operations.add_node(dbnode)
+        with GetDB() as db:
+            dbnode = crud.get_node_by_id(db, node_id)
 
-    if not node.connected:
-        return connect_node(node_id, config)
+        if not dbnode:
+            return
 
-    try:
+        try:
+            node = xray.nodes[dbnode.id]
+        except KeyError:
+            node = xray.operations.add_node(dbnode)
+
+        if not node.connected:
+            # connect_node() claims its own slot — release ours first so the
+            # delegated call isn't immediately rejected by our own claim.
+            _release_connecting_node(node_id)
+            released = True
+            return connect_node(node_id, config)
+
+        from app.models.node import CoreKind
+
+        is_wg_node = dbnode.core_kind == CoreKind.wireguard.value
+
         logger.info(f"Restarting Xray core of \"{dbnode.name}\" node")
 
         if config is None:
-            config = xray.config.include_db_users()
-        config = _apply_node_tunnels(config, node_id)
+            from app.services.xray_node import build_node_xray_config
+            config = build_node_xray_config(node_id)
+        else:
+            from app.services.xray_node import filter_xray_config_for_node, node_xray_inbound_tags
+            with GetDB() as db:
+                allowed = node_xray_inbound_tags(db, node_id)
+            config = filter_xray_config_for_node(config, allowed)
+            config = _apply_node_tunnels(config, node_id)
+
+        if is_wg_node:
+            # Xray on a WireGuard node is best-effort (stats/API). Never drop
+            # the RPyC channel when Xray restart fails — AWG/WG peers must stay up.
+            if not node.connected:
+                node.connect()
+            xray_exc = None
+            xray_version = None
+            try:
+                node.restart(config)
+                logger.info(f"Xray core of \"{dbnode.name}\" node restarted")
+                try:
+                    xray_version = node.get_version()
+                except Exception:
+                    pass
+            except Exception as exc:
+                xray_exc = exc
+                logger.warning(
+                    "WireGuard node \"%s\" Xray restart failed (%s); keeping RPyC for WG sync",
+                    dbnode.name,
+                    exc,
+                )
+            _sync_wireguard_node(node_id, node)
+            if node.connected:
+                _mark_wg_node_connected(
+                    node_id,
+                    node,
+                    xray_exc=xray_exc,
+                    xray_version=xray_version,
+                )
+            return
 
         node.restart(config)
         logger.info(f"Xray core of \"{dbnode.name}\" node restarted")
-        from app.models.node import CoreKind
-        if dbnode.core_kind == CoreKind.wireguard.value:
-            _sync_wireguard_node(node_id, node)
     except Exception as e:
         _change_node_status(node_id, NodeStatus.error, message=str(e))
         logger.info(f"Unable to restart node {node_id}")
         try:
-            node.disconnect()
+            xray.nodes[node_id].disconnect()
         except Exception:
             pass
+    finally:
+        if not released:
+            _release_connecting_node(node_id)
 
 
 __all__ = [
@@ -355,6 +687,7 @@ __all__ = [
     "sync_core_users_now",
     "remove_user",
     "remove_user_immediate",
+    "hot_disconnect_users_on_nodes",
     "add_node",
     "remove_node",
     "connect_node",

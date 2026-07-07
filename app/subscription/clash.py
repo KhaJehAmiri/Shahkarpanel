@@ -16,6 +16,87 @@ from config import (
     USER_AGENT_TEMPLATE,
 )
 
+# Mihomo XMUX (reuse-settings) field mapping — Xray camelCase → mihomo kebab-case.
+_XMUX_FIELD_MAP = (
+    ("maxConcurrency", "max-concurrency"),
+    ("maxConnections", "max-connections"),
+    ("cMaxReuseTimes", "c-max-reuse-times"),
+    ("hMaxRequestTimes", "h-max-request-times"),
+    ("hMaxReusableSecs", "h-max-reusable-secs"),
+    ("hKeepAlivePeriod", "h-keep-alive-period"),
+)
+
+# Transports with no mihomo/sing-box client equivalent — skipped on export.
+_UNSUPPORTED_CLIENT_TRANSPORTS = frozenset({"kcp"})
+
+
+def _host_first(host) -> str:
+    if isinstance(host, list):
+        return str(host[0]) if host else ""
+    return str(host or "")
+
+
+def _mihomo_range_value(val):
+    if val is None or val == "" or val == 0:
+        return None
+    return str(val) if not isinstance(val, str) else val
+
+
+def _xmux_to_reuse_settings(xmux: dict) -> dict | None:
+    if not isinstance(xmux, dict) or not xmux:
+        return None
+    reuse = {}
+    for xray_key, mihomo_key in _XMUX_FIELD_MAP:
+        val = _mihomo_range_value(xmux.get(xray_key))
+        if val is not None:
+            reuse[mihomo_key] = val
+    return reuse or None
+
+
+def build_mihomo_xhttp_opts(inbound: dict) -> dict:
+    """Map Xray xhttp/splithttp stream settings to mihomo *http-opts blocks."""
+    path = inbound.get("path") or "/"
+    opts: dict = {"path": path}
+    host = _host_first(inbound.get("host"))
+    if host:
+        opts["host"] = host
+
+    mode = inbound.get("mode") or "auto"
+    if mode:
+        opts["mode"] = mode
+
+    if inbound.get("xPaddingBytes"):
+        opts["x-padding-bytes"] = inbound["xPaddingBytes"]
+    if inbound.get("noGRPCHeader"):
+        opts["no-grpc-header"] = True
+    if inbound.get("noSSEHeader"):
+        opts["no-sse-header"] = True
+
+    sc_max = inbound.get("scMaxEachPostBytes")
+    if sc_max:
+        opts["sc-max-each-post-bytes"] = sc_max
+    sc_min = inbound.get("scMinPostsIntervalMs")
+    if sc_min is not None and sc_min != "":
+        opts["sc-min-posts-interval-ms"] = sc_min
+
+    uplink = inbound.get("uplinkHTTPMethod")
+    if uplink:
+        opts["uplink-http-method"] = uplink
+
+    reuse = _xmux_to_reuse_settings(inbound.get("xmux") or {})
+    if reuse:
+        opts["reuse-settings"] = reuse
+
+    dl = inbound.get("downloadSettings")
+    if isinstance(dl, dict) and dl:
+        dl_src = {k: v for k, v in {**inbound, **dl}.items() if k != "downloadSettings"}
+        dl_opts = build_mihomo_xhttp_opts(dl_src)
+        dl_opts.pop("download-settings", None)
+        if dl_opts:
+            opts["download-settings"] = dl_opts
+
+    return opts
+
 
 class ClashConfiguration(object):
     def __init__(self):
@@ -166,7 +247,8 @@ class ClashConfiguration(object):
                   alpn: str = '',
                   ais: bool = '',
                   mux_enable: bool = False,
-                  random_user_agent: bool = False):
+                  random_user_agent: bool = False,
+                  ip_version: str = ""):
 
         if network in ["grpc", "gun"]:
             path = get_grpc_gun(path)
@@ -250,11 +332,13 @@ class ClashConfiguration(object):
 
         if mux_enable:
             node['smux'] = mux_config
+        if ip_version:
+            node['ip-version'] = ip_version
 
         return node
 
     def add(self, remark: str, address: str, inbound: dict, settings: dict):
-        # not supported by clash
+        # Standard Clash: no kcp / splithttp / xhttp transports.
         if inbound['network'] in ("kcp", "splithttp", "xhttp"):
             return
 
@@ -276,7 +360,8 @@ class ClashConfiguration(object):
             alpn=inbound.get('alpn', ''),
             ais=inbound.get('ais', False),
             mux_enable=inbound.get('mux_enable', False),
-            random_user_agent=inbound.get("random_user_agent")
+            random_user_agent=inbound.get("random_user_agent"),
+            ip_version=inbound.get("mihomo_ip_version") or "",
         )
 
         if inbound['protocol'] == 'vmess':
@@ -326,7 +411,8 @@ class ClashMetaConfiguration(ClashConfiguration):
                   sid: str = '',
                   ais: bool = '',
                   mux_enable: bool = False,
-                  random_user_agent: bool = False):
+                  random_user_agent: bool = False,
+                  ip_version: str = ""):
         node = super().make_node(
             name=name,
             remark=remark,
@@ -343,7 +429,8 @@ class ClashMetaConfiguration(ClashConfiguration):
             alpn=alpn,
             ais=ais,
             mux_enable=mux_enable,
-            random_user_agent=random_user_agent
+            random_user_agent=random_user_agent,
+            ip_version=ip_version,
         )
         if fp:
             node['client-fingerprint'] = fp
@@ -353,8 +440,12 @@ class ClashMetaConfiguration(ClashConfiguration):
         return node
 
     def add(self, remark: str, address: str, inbound: dict, settings: dict):
-        # not supported by clash-meta
-        if inbound['network'] in ("kcp", "splithttp", "xhttp") or (inbound['network'] == "quic" and inbound["header_type"] != "none"):
+        net = inbound['network']
+        # mKCP has no clash-meta client transport — skip (core limitation).
+        if net in _UNSUPPORTED_CLIENT_TRANSPORTS or (net == "quic" and inbound["header_type"] != "none"):
+            return
+        # mihomo xhttp/splithttp outbound — VLESS only (see mihomo transport docs).
+        if net in ("xhttp", "splithttp") and inbound['protocol'] != 'vless':
             return
 
         proxy_remark = self._remark_validation(remark)
@@ -378,8 +469,12 @@ class ClashMetaConfiguration(ClashConfiguration):
             sid=inbound.get('sid', ''),
             ais=inbound.get('ais', False),
             mux_enable=inbound.get('mux_enable', False),
-            random_user_agent=inbound.get("random_user_agent")
+            random_user_agent=inbound.get("random_user_agent"),
+            ip_version=inbound.get("mihomo_ip_version") or "",
         )
+
+        if net in ("xhttp", "splithttp"):
+            node[f"{net}-opts"] = build_mihomo_xhttp_opts(inbound)
 
         if inbound['protocol'] == 'vmess':
             node['uuid'] = settings['id']

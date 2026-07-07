@@ -37,3 +37,38 @@ export const SudoOnly: FC<{ children: ReactNode }> = ({ children }) => {
   if (!admin?.is_sudo) return <Callout tone="warn">{t("common.sudoOnly")}</Callout>;
   return <>{children}</>;
 };
+
+/** Reseller/support/auditor read-only access (hosts:read without sudo). */
+export const HostsGate: FC<{ children: ReactNode; titleKey?: string; subtitleKey?: string; descKey?: string }> = ({
+  children,
+  titleKey,
+  subtitleKey,
+  descKey,
+}) => {
+  const { t } = useTranslation();
+  const { hasPermission } = useApp();
+  const canRead = hasPermission("hosts:read");
+
+  return (
+    <div>
+      {titleKey && (
+        <PageHeader
+          title={t(titleKey)}
+          subtitle={subtitleKey ? t(subtitleKey) : undefined}
+          description={descKey ? t(descKey) : undefined}
+        />
+      )}
+      {!canRead ? <Callout tone="warn">{t("common.sudoOnly")}</Callout> : children}
+    </div>
+  );
+};
+
+/** Core config read (auditor / custom roles with core:read). */
+export const CoreReadGate: FC<{ children: ReactNode }> = ({ children }) => {
+  const { t } = useTranslation();
+  const { hasPermission } = useApp();
+  if (!hasPermission("core:read")) {
+    return <Callout tone="warn">{t("common.sudoOnly")}</Callout>;
+  }
+  return <>{children}</>;
+};

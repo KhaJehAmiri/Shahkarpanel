@@ -4,6 +4,7 @@ from pydantic import field_validator, ConfigDict, BaseModel, Field
 
 from app import xray
 from app.models.proxy import ProxyTypes
+from app.models.user import UserDataLimitResetStrategy, UserStatusCreate
 
 # Sentinel inbound tags persisted for native product protocols (no Xray inbound).
 NATIVE_TEMPLATE_MARKERS: Dict[str, ProxyTypes] = {
@@ -33,6 +34,10 @@ class UserTemplate(BaseModel):
     )
     username_prefix: Optional[str] = Field(max_length=20, min_length=1, default=None)
     username_suffix: Optional[str] = Field(max_length=20, min_length=1, default=None)
+    data_limit_reset_strategy: Optional[UserDataLimitResetStrategy] = None
+    default_status: Optional[UserStatusCreate] = None
+    note: Optional[str] = Field(default=None, max_length=500)
+    next_plan: Optional[dict] = None
 
     inbounds: Dict[ProxyTypes, List[str]] = {}
 

@@ -1,3 +1,4 @@
+import hashlib
 import socket
 import re
 import ssl
@@ -19,11 +20,55 @@ from app.xray.config import XRayConfig
 from xray_api import XRay as XRayAPI
 
 
+def _inline_tls_certificates(config: XRayConfig) -> XRayConfig:
+    from app.migration.three_x_ui import _sanitize_migrated_stream_tls
+
+    for inbound in config.get("inbounds", []):
+        stream_settings = inbound.get("streamSettings") or {}
+        if isinstance(stream_settings, dict):
+            _sanitize_migrated_stream_tls(stream_settings)
+        tls_settings = stream_settings.get("tlsSettings") or {}
+        certificates = tls_settings.get("certificates") or []
+        for certificate in certificates:
+            if certificate.get("certificateFile"):
+                with open(certificate["certificateFile"]) as file:
+                    certificate["certificate"] = [line.strip() for line in file.readlines()]
+                    del certificate["certificateFile"]
+
+            if certificate.get("keyFile"):
+                with open(certificate["keyFile"]) as file:
+                    certificate["key"] = [line.strip() for line in file.readlines()]
+                    del certificate["keyFile"]
+    return config
+
+
 def string_to_temp_file(content: str):
     file = tempfile.NamedTemporaryFile(mode='w+t')
     file.write(content)
     file.flush()
     return file
+
+
+def cert_sha256(pem_cert: str) -> str:
+    """SHA-256 fingerprint (hex) of a PEM certificate's DER bytes."""
+    der = ssl.PEM_cert_to_DER_cert(pem_cert)
+    return hashlib.sha256(der).hexdigest()
+
+
+def verify_or_capture_pin(node_label, pem_cert: str, pinned):
+    """Return the observed cert fingerprint, raising on a pin mismatch.
+
+    When ``pinned`` is falsy this is trust-on-first-use (the caller persists the
+    returned fingerprint). When set, a mismatch means the node presented a
+    different cert than the pinned one — a possible MITM — so we refuse.
+    """
+    observed = cert_sha256(pem_cert)
+    if pinned and str(pinned).lower() != observed.lower():
+        raise ConnectionError(
+            f"Node {node_label}: TLS cert fingerprint mismatch (pinned "
+            f"{str(pinned)[:16]}… got {observed[:16]}…) — possible MITM; refusing to connect."
+        )
+    return observed
 
 
 class SANIgnoringAdaptor(HTTPAdapter):
@@ -47,7 +92,8 @@ class ReSTXRayNode:
                  api_port: int,
                  ssl_key: str,
                  ssl_cert: str,
-                 usage_coefficient: float = 1):
+                 usage_coefficient: float = 1,
+                 pinned_cert_sha256: str = None):
 
         self.address = address
         self.port = port
@@ -55,12 +101,24 @@ class ReSTXRayNode:
         self.ssl_key = ssl_key
         self.ssl_cert = ssl_cert
         self.usage_coefficient = usage_coefficient
+        self.pinned_cert_sha256 = pinned_cert_sha256
+        self.observed_cert_sha256 = None
 
         self._keyfile = string_to_temp_file(ssl_key)
         self._certfile = string_to_temp_file(ssl_cert)
 
         from config import NODE_SSL_VERIFY
 
+        self._node_ssl_verify = NODE_SSL_VERIFY
+
+        # NODE_SSL_VERIFY only controls *hostname/SAN* matching: node certs are
+        # self-signed with no SAN (see node/certificate.py), so strict hostname
+        # checking is opt-in for deployments that provision proper CA-issued
+        # certs. Regardless of this flag, every channel below still verifies the
+        # node's certificate *content* byte-for-byte against the TOFU-pinned
+        # fingerprint (see verify_or_capture_pin / connect()) — plain
+        # "no verification at all" is never used, so a MITM cannot silently
+        # substitute a different cert even with the default (compat) setting.
         self.session = requests.Session()
         if NODE_SSL_VERIFY:
             self.session.verify = True
@@ -73,12 +131,8 @@ class ReSTXRayNode:
         self._rest_api_url = f"https://{self.address.strip('/')}:{self.port}"
 
         self._ssl_context = ssl.create_default_context()
-        if NODE_SSL_VERIFY:
-            self._ssl_context.check_hostname = True
-            self._ssl_context.verify_mode = ssl.CERT_REQUIRED
-        else:
-            self._ssl_context.check_hostname = False
-            self._ssl_context.verify_mode = ssl.CERT_NONE
+        self._ssl_context.verify_mode = ssl.CERT_REQUIRED
+        self._ssl_context.check_hostname = bool(NODE_SSL_VERIFY)
         self._ssl_context.load_cert_chain(certfile=self.session.cert[0], keyfile=self.session.cert[1])
         self._logs_ws_url = f"wss://{self.address.strip('/')}:{self.port}/logs"
         self._logs_queues = []
@@ -88,26 +142,7 @@ class ReSTXRayNode:
         self._started = False
 
     def _prepare_config(self, config: XRayConfig):
-        for inbound in config.get("inbounds", []):
-            streamSettings = inbound.get("streamSettings") or {}
-            tlsSettings = streamSettings.get("tlsSettings") or {}
-            certificates = tlsSettings.get("certificates") or []
-            for certificate in certificates:
-                if certificate.get("certificateFile"):
-                    with open(certificate['certificateFile']) as file:
-                        certificate['certificate'] = [
-                            line.strip() for line in file.readlines()
-                        ]
-                        del certificate['certificateFile']
-
-                if certificate.get("keyFile"):
-                    with open(certificate['keyFile']) as file:
-                        certificate['key'] = [
-                            line.strip() for line in file.readlines()
-                        ]
-                        del certificate['keyFile']
-
-        return config
+        return _inline_tls_certificates(config)
 
     def make_request(self, path: str, timeout: int, **params):
         from config import NODE_CONTROL_SECRET
@@ -167,6 +202,10 @@ class ReSTXRayNode:
 
     def connect(self):
         self._node_cert = ssl.get_server_certificate((self.address, self.port))
+        # Pin the node's cert (TOFU): reject a changed cert as a possible MITM.
+        self.observed_cert_sha256 = verify_or_capture_pin(
+            self.address, self._node_cert, self.pinned_cert_sha256
+        )
         self._node_certfile = string_to_temp_file(self._node_cert)
         self.session.verify = self._node_certfile.name
 
@@ -295,6 +334,49 @@ class ReSTXRayNode:
             del buf
 
 
+class _LockedRemoteRoot:
+    """Proxy for an ``RPyCXRayNode``'s ``connection.root`` that funnels every
+    attribute lookup *and* call through the node's ``_lock``.
+
+    The node agent (see ``node/rpyc_service.py`` ``on_connect``) only accepts
+    one active RPyC session and force-closes any previous one the moment a
+    new connection arrives. With several independent background jobs (health
+    check, usage recording, WireGuard/sing-box sync) each free to call
+    ``node.connect()``/``node.remote`` on the *same* ``RPyCXRayNode`` at any
+    time, two threads could previously decide the channel was dead at once
+    and each dial a fresh connection — the node then preempted whichever
+    connection the other thread was still mid-call on, surfacing as "stream
+    has been closed" / "result expired" for a perfectly healthy node. Routing
+    every real RPyC round trip through this proxy (which re-validates the
+    connection and performs the call atomically under the same lock used by
+    ``connect``/``disconnect``) makes that interleaving impossible: only one
+    thread is ever actually talking to the node at a time, and a call is
+    never left holding a reference to a connection another thread is about
+    to tear down.
+    """
+
+    __slots__ = ("_node",)
+
+    def __init__(self, node: "RPyCXRayNode"):
+        object.__setattr__(self, "_node", node)
+
+    def __getattr__(self, name):
+        node = object.__getattribute__(self, "_node")
+        with node._lock:
+            if not node.connected:
+                node.connect()
+            if not hasattr(node.connection.root, name):
+                raise AttributeError(name)
+
+        def _locked_call(*args, **kwargs):
+            with node._lock:
+                if not node.connected:
+                    node.connect()
+                return getattr(node.connection.root, name)(*args, **kwargs)
+
+        return _locked_call
+
+
 class RPyCXRayNode:
     def __init__(self,
                  address: str,
@@ -302,7 +384,8 @@ class RPyCXRayNode:
                  api_port: int,
                  ssl_key: str,
                  ssl_cert: str,
-                 usage_coefficient: float = 1):
+                 usage_coefficient: float = 1,
+                 pinned_cert_sha256: str = None):
 
         class Service(rpyc.Service):
             def __init__(self,
@@ -337,6 +420,8 @@ class RPyCXRayNode:
         self.ssl_key = ssl_key
         self.ssl_cert = ssl_cert
         self.usage_coefficient = usage_coefficient
+        self.pinned_cert_sha256 = pinned_cert_sha256
+        self.observed_cert_sha256 = None
 
         self.started = False
 
@@ -346,51 +431,133 @@ class RPyCXRayNode:
         self._service = Service()
         self._api = None
 
+        # Serializes every state-changing or RPyC-round-trip operation on
+        # this node (connect/disconnect/ping/remote calls — see
+        # `_LockedRemoteRoot` above for why this is required, not just an
+        # optimization). An RLock so a call made from *inside* an
+        # already-locked section (e.g. `connect()` calling `disconnect()`)
+        # doesn't deadlock the owning thread.
+        self._lock = threading.RLock()
+        self._next_connect_attempt = 0.0
+        self._reconnect_backoff = self._RECONNECT_BACKOFF_MIN_SEC
+
+    _CONNECT_MAX_TRIES = 8
+    _CONNECT_RETRY_BASE_SEC = 0.5
+
+    # Circuit breaker for a node that is genuinely unreachable. Without this,
+    # every independent 5-30s job (usage recording, health check, WG/sing-box
+    # sync) that touches this node calls `connect()` again the moment it
+    # fails, each burning the full `_CONNECT_MAX_TRIES` retry loop (up to
+    # ~16s) on a doomed connection — wasting a worker thread every cycle for
+    # a node we already know is down. Once every attempt in `connect()` is
+    # exhausted, further calls fail fast until the backoff window elapses;
+    # the window doubles on each further failure (capped) and resets to the
+    # minimum as soon as a connection succeeds again.
+    _RECONNECT_BACKOFF_MIN_SEC = 5.0
+    _RECONNECT_BACKOFF_MAX_SEC = 120.0
+
     def disconnect(self):
-        try:
-            self.connection.close()
-            del self.connection
-        except AttributeError:
-            pass
+        with self._lock:
+            conn = getattr(self, "connection", None)
+            self.connection = None
+            self.started = False
+            self._api = None
+            if conn is None:
+                return
+            try:
+                if not conn.closed:
+                    conn.close()
+            except Exception:
+                pass
+
+    def _verify_channel(self, conn) -> None:
+        conn.ping()
+        if hasattr(conn.root, "channel_ping"):
+            conn.root.channel_ping()
 
     def connect(self):
-        self.disconnect()
+        with self._lock:
+            # Another thread may have already (re)established a working
+            # connection while we were waiting for the lock — reuse it
+            # instead of tearing it down and forcing the node to preempt its
+            # own, still-fresh session again.
+            conn = getattr(self, "connection", None)
+            if conn is not None and not conn.closed:
+                try:
+                    self._verify_channel(conn)
+                    return
+                except Exception:
+                    pass
 
-        tries = 0
-        while True:
-            tries += 1
-            self._node_cert = ssl.get_server_certificate((self.address, self.port))
-            self._node_certfile = string_to_temp_file(self._node_cert)
-            conn = rpyc.ssl_connect(self.address,
-                                    self.port,
-                                    service=self._service,
-                                    keyfile=self._keyfile.name,
-                                    certfile=self._certfile.name,
-                                    ca_certs=self._node_certfile.name,
-                                    keepalive=True)
-            try:
-                conn.ping()
-                self.connection = conn
-                break
-            except EOFError as exc:
-                if tries <= 3:
-                    continue
-                raise exc
+            now = time.time()
+            if now < self._next_connect_attempt:
+                raise ConnectionError(
+                    f"Node {self.address} connect backoff active for "
+                    f"{self._next_connect_attempt - now:.1f}s more "
+                    "(node has been unreachable; not retrying every cycle)"
+                )
+
+            self.disconnect()
+
+            last_exc = None
+            for attempt in range(1, self._CONNECT_MAX_TRIES + 1):
+                conn = None
+                try:
+                    self._node_cert = ssl.get_server_certificate((self.address, self.port))
+                    self.observed_cert_sha256 = verify_or_capture_pin(
+                        self.address, self._node_cert, self.pinned_cert_sha256
+                    )
+                    self._node_certfile = string_to_temp_file(self._node_cert)
+                    conn = rpyc.ssl_connect(
+                        self.address,
+                        self.port,
+                        service=self._service,
+                        keyfile=self._keyfile.name,
+                        certfile=self._certfile.name,
+                        ca_certs=self._node_certfile.name,
+                        keepalive=True,
+                    )
+                    self._verify_channel(conn)
+                    self.connection = conn
+                    self._reconnect_backoff = self._RECONNECT_BACKOFF_MIN_SEC
+                    self._next_connect_attempt = 0.0
+                    return
+                except Exception as exc:
+                    last_exc = exc
+                    if conn is not None:
+                        try:
+                            if not conn.closed:
+                                conn.close()
+                        except Exception:
+                            pass
+                    if attempt < self._CONNECT_MAX_TRIES:
+                        time.sleep(min(self._CONNECT_RETRY_BASE_SEC * attempt, 3))
+
+            self._next_connect_attempt = time.time() + self._reconnect_backoff
+            self._reconnect_backoff = min(
+                self._reconnect_backoff * 2, self._RECONNECT_BACKOFF_MAX_SEC
+            )
+            raise last_exc or ConnectionError(f"Failed to connect to node {self.address}")
 
     @property
     def connected(self):
-        try:
-            self.connection.ping()
-            return (not self.connection.closed)
-        except (AttributeError, EOFError, TimeoutError):
-            self.disconnect()
-            return False
+        with self._lock:
+            try:
+                conn = self.connection
+                if conn is None or conn.closed:
+                    raise ConnectionError("not connected")
+                self._verify_channel(conn)
+                return True
+            except Exception:
+                self.disconnect()
+                return False
 
     @property
     def remote(self):
-        if not self.connected:
-            self.connect()
-        return self.connection.root
+        with self._lock:
+            if not self.connected:
+                self.connect()
+            return _LockedRemoteRoot(self)
 
     @property
     def api(self):
@@ -411,26 +578,7 @@ class RPyCXRayNode:
         return self.remote.upgrade_xray(tag)
 
     def _prepare_config(self, config: XRayConfig):
-        for inbound in config.get("inbounds", []):
-            streamSettings = inbound.get("streamSettings") or {}
-            tlsSettings = streamSettings.get("tlsSettings") or {}
-            certificates = tlsSettings.get("certificates") or []
-            for certificate in certificates:
-                if certificate.get("certificateFile"):
-                    with open(certificate['certificateFile']) as file:
-                        certificate['certificate'] = [
-                            line.strip() for line in file.readlines()
-                        ]
-                        del certificate['certificateFile']
-
-                if certificate.get("keyFile"):
-                    with open(certificate['keyFile']) as file:
-                        certificate['key'] = [
-                            line.strip() for line in file.readlines()
-                        ]
-                        del certificate['keyFile']
-
-        return config
+        return _inline_tls_certificates(config)
 
     def start(self, config: XRayConfig):
         config = self._prepare_config(config)
@@ -532,7 +680,8 @@ class XRayNode:
                 api_port: int,
                 ssl_key: str,
                 ssl_cert: str,
-                usage_coefficient: float = 1):
+                usage_coefficient: float = 1,
+                pinned_cert_sha256: str = None):
 
         # trying to detect what's the server of node
         try:
@@ -549,7 +698,8 @@ class XRayNode:
                 api_port=api_port,
                 ssl_key=ssl_key,
                 ssl_cert=ssl_cert,
-                usage_coefficient=usage_coefficient
+                usage_coefficient=usage_coefficient,
+                pinned_cert_sha256=pinned_cert_sha256
             )
         except Exception:
             # if might be rpyc
@@ -559,5 +709,6 @@ class XRayNode:
                 api_port=api_port,
                 ssl_key=ssl_key,
                 ssl_cert=ssl_cert,
-                usage_coefficient=usage_coefficient
+                usage_coefficient=usage_coefficient,
+                pinned_cert_sha256=pinned_cert_sha256
             )

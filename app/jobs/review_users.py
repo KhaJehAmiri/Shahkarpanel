@@ -3,11 +3,16 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy.orm import Session
 
-from app import logger, scheduler
+from app import logger, scheduler, xray
 from app.db import (GetDB, get_notification_reminder, get_users,
-                    start_user_expire, reset_user_by_next)
+                    start_user_expire, reset_user_by_next, update_user_status)
 from app.models.user import ReminderType, UserResponse, UserStatus
-from app.quota import enforce_usage_cap, limit_user_quota
+from app.quota import (
+    disconnect_limited_users_if_due,
+    enforce_usage_cap,
+    limit_user_quota,
+    reactivate_if_quota_available,
+)
 from app.utils import report
 from app.utils.helpers import (calculate_expiration_days,
                                calculate_usage_percent)
@@ -82,9 +87,6 @@ def review():
                     )
                 continue
             elif expired:
-                from app import xray
-                from app.db import update_user_status
-
                 status = UserStatus.expired
                 update_user_status(db, user, status)
                 xray.operations.remove_user_immediate(user)
@@ -126,9 +128,31 @@ def review():
 
             logger.info(f"User \"{user.username}\" status changed to {status}")
 
+        to_disconnect: list["User"] = []
         for user in get_users(db, status=UserStatus.limited):
             if user.data_limit and user.used_traffic > user.data_limit:
                 enforce_usage_cap(db, user)
+            elif reactivate_if_quota_available(user):
+                db.commit()
+                db.refresh(user)
+                xray.operations.update_user(user)
+                report.status_change(
+                    username=user.username,
+                    status=UserStatus.active,
+                    user=UserResponse.model_validate(user),
+                    user_admin=user.admin,
+                )
+                logger.info('User "%s" reactivated after quota restored', user.username)
+            else:
+                # A limited user is already excluded from the generated core
+                # config, so cutting them from the live core is only a safety
+                # net — collect them and let quota gate by per-user cooldown and
+                # issue at most one batched restart for the whole tick, instead
+                # of a full core restart per user every 5s (which took the whole
+                # node down continuously whenever any user sat at their cap).
+                to_disconnect.append(user)
+
+        disconnect_limited_users_if_due(to_disconnect)
 
 
 from app.ha import run_if_leader  # noqa: E402

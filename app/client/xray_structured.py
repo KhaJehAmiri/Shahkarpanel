@@ -31,6 +31,9 @@ class StructuredXrayExport:
         if protocol == "vless":
             entry["uuid"] = str(settings.get("id", ""))
             entry["flow"] = settings.get("flow") or ""
+            enc = inbound.get("vless_encryption") or ""
+            if enc and enc not in ("none", ""):
+                entry["encryption"] = enc
             if tls == "reality":
                 entry["reality"] = {
                     "public_key": inbound.get("pbk") or "",

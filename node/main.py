@@ -7,9 +7,11 @@ from rpyc.utils.server import ThreadedServer
 import rest_service
 import rpyc_service
 from certificate import generate_certificate
-from config import (SERVICE_HOST, SERVICE_PORT, SERVICE_PROTOCOL,
-                    SSL_CERT_FILE, SSL_KEY_FILE, SSL_CLIENT_CERT_FILE)
+from config import (NODE_ALLOW_INSECURE, SERVICE_HOST, SERVICE_PORT,
+                    SERVICE_PROTOCOL, SSL_CERT_FILE, SSL_KEY_FILE,
+                    SSL_CLIENT_CERT_FILE)
 from logger import logger
+from speed_limit import tune_udp_quic_stack
 
 
 def generate_ssl_files():
@@ -23,13 +25,26 @@ def generate_ssl_files():
 
 
 if __name__ == "__main__":
+    try:
+        tune_udp_quic_stack()
+    except Exception as exc:
+        logger.warning("UDP/QUIC sysctl tuning skipped: %s", exc)
+
     if not all((os.path.isfile(SSL_CERT_FILE),
                 os.path.isfile(SSL_KEY_FILE))):
         generate_ssl_files()
 
     if not SSL_CLIENT_CERT_FILE:
+        if not NODE_ALLOW_INSECURE:
+            logger.error(
+                "Refusing to start: SSL_CLIENT_CERT_FILE is not set, so the node "
+                "would accept connections from ANYONE (no mutual TLS). Set "
+                "SSL_CLIENT_CERT_FILE to the panel client CA, or set "
+                "NODE_ALLOW_INSECURE=true to explicitly opt out (NOT recommended).")
+            exit(1)
         logger.warning(
-            "You are running node without SSL_CLIENT_CERT_FILE, be aware that everyone can connect to this node and this isn't secure!")
+            "NODE_ALLOW_INSECURE=true and no SSL_CLIENT_CERT_FILE: this node "
+            "accepts connections from anyone and is NOT secure!")
 
     if SSL_CLIENT_CERT_FILE and not os.path.isfile(SSL_CLIENT_CERT_FILE):
         logger.error("Client's certificate file specified on SSL_CLIENT_CERT_FILE is missing")

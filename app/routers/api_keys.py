@@ -62,7 +62,7 @@ def list_api_keys(
 def create_api_key(
     body: ApiKeyCreate,
     db: Session = Depends(get_db),
-    admin: Admin = Depends(Admin.get_current),
+    admin: Admin = Depends(Admin.check_sudo_admin),
 ):
     """Create a new API key. The raw key is returned once and never again."""
     record, raw = api_keys.create_api_key(

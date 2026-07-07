@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from app import client as client_engine
 from app import dedicated_ip as dedicated_ip_svc
 from app import feature_flags
+from app import logger
 from app.db import Session, crud, get_db
 from app.db.models import ClientDevice, ClientProbe, ClientTelemetry, Node, User
 from app.login_limit import enforce_login_rate_limit
@@ -82,6 +83,8 @@ def _available_protocols(db: Session) -> set:
             avail.add("hysteria2")
         if any(n.singbox and n.singbox.tuic_enabled for n in sb_nodes):
             avail.add("tuic")
+        if any(n.singbox and n.singbox.anytls_enabled for n in sb_nodes):
+            avail.add("anytls")
 
     wg_nodes = (
         db.query(Node)
@@ -95,6 +98,19 @@ def _available_protocols(db: Session) -> set:
             avail.add("wireguard")
         if any(n.wireguard and amneziawg_enabled(n.wireguard) for n in wg_nodes):
             avail.add("amneziawg")
+        if (
+            feature_flags.is_enabled("sigmaguard_wire")
+            and any(
+                n.wireguard
+                and amneziawg_enabled(n.wireguard)
+                and getattr(n.wireguard, "sg_wire_enabled", False)
+                for n in wg_nodes
+            )
+        ):
+            from app.sigmaguard_wire.bridge import is_available
+
+            if is_available():
+                avail.add("sigmaguard-wire")
 
     return avail
 
@@ -238,7 +254,15 @@ def _v2ray_links(user: UserResponse) -> List[str]:
         from app.subscription.share import generate_v2ray_links
 
         return generate_v2ray_links(user.proxies, user.inbounds, user.__dict__, reverse=False)
-    except Exception:
+    except Exception as exc:
+        # Return an empty list so the client API stays responsive, but log the
+        # failure — previously this was swallowed silently and hid real bugs.
+        logger.warning(
+            "Failed to generate v2ray links for user '%s': %s",
+            getattr(user, "username", "?"),
+            exc,
+            exc_info=True,
+        )
         return []
 
 
@@ -462,12 +486,26 @@ def register_device_token(
     db: Session = Depends(get_db),
     dbuser: User = Depends(get_current_app_user),
 ):
-    """Register/refresh an FCM/APNs token for push notifications (upsert)."""
+    """Register/refresh an FCM/APNs token for push notifications.
+
+    Upsert is scoped to the caller: a token that already belongs to a
+    *different* authenticated user is rejected instead of silently
+    reassigned. Previously any authenticated user could hijack another
+    user's device row just by knowing/guessing their token string, stealing
+    their push notification slot (AUDIT_FINDINGS.md H4). A device that
+    genuinely moves to a new account (e.g. logout/re-login on a shared
+    phone) already has an explicit release path: ``DELETE
+    /client/device-token`` unregisters the caller's own token first.
+    """
     if not body.token.strip():
         raise HTTPException(status_code=422, detail="token is required")
     device = db.query(ClientDevice).filter(ClientDevice.token == body.token).first()
+    if device and device.user_id != dbuser.id:
+        raise HTTPException(
+            status_code=403,
+            detail="This device token is registered to another account",
+        )
     if device:
-        device.user_id = dbuser.id
         device.platform = body.platform
         device.app_version = body.app_version
         device.updated_at = datetime.utcnow()

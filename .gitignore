@@ -154,6 +154,13 @@ cython_debug/
 .idea/
 
 .env
+.env.local
+.env.production
+.env.*.local
+.wg_node_ssh
+.ssh/
+secrets/
+*.pem
 v2ray-core
 xray-core
 
@@ -172,4 +179,14 @@ node_modules/
 *.tsbuildinfo
 next-env.d.ts
 warp_account.json
+xray_config.json
 .env.bak.*
+
+# Public release: dev/unit tests stay local (3x-ui style install repo)
+tests/
+scripts/*_test.py
+scripts/*_test.sh
+scripts/*smoke*.py
+scripts/*smoke*.sh
+scripts/parity_matrix_test.py
+scripts/all_protocols_connect_smoke.py

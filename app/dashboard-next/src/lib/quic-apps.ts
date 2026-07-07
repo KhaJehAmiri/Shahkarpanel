@@ -2,7 +2,7 @@
 
 import type { Platform } from "@/lib/apps";
 
-export type QuicProtocol = "hysteria2" | "tuic";
+export type QuicProtocol = "hysteria2" | "tuic" | "anytls";
 
 export interface QuicClientApp {
   id: string;
@@ -11,8 +11,10 @@ export interface QuicClientApp {
   color: string;
   platforms: Platform[];
   protocols: QuicProtocol[];
-  /** Deep-link import for a hysteria2:// or tuic:// share URL. */
-  buildScheme: (shareUrl: string) => string;
+  /** Deep-link import for a share URL or sing-box subscription URL. */
+  buildScheme: (shareUrl: string, opts?: { singboxSubUrl?: string }) => string;
+  /** Copy/import via HTTPS sing-box subscription instead of raw hysteria2:// / tuic:// links. */
+  importViaSingboxSub?: boolean;
   download?: Partial<Record<Platform, string>>;
   hint?: string;
   /** Copy to clipboard before opening the deep link (iOS / macOS clients). */
@@ -28,8 +30,12 @@ const QUIC_APPS: QuicClientApp[] = [
     short: "Hi",
     color: "#7c3aed",
     platforms: ["android", "ios", "windows", "macos", "linux"],
-    protocols: ["hysteria2", "tuic"],
-    buildScheme: (url) => `hiddify://import/${enc(url)}`,
+    protocols: ["hysteria2", "tuic", "anytls"],
+    importViaSingboxSub: true,
+    buildScheme: (_share, opts) => {
+      const url = opts?.singboxSubUrl || _share;
+      return `hiddify://import/${enc(url)}`;
+    },
     download: {
       android: "https://github.com/hiddify/hiddify-next/releases",
       ios: "https://apps.apple.com/app/hiddify-proxy-vpn/id6596777532",
@@ -47,7 +53,7 @@ const QUIC_APPS: QuicClientApp[] = [
     color: "#1f6feb",
     platforms: ["android"],
     protocols: ["hysteria2", "tuic"],
-    buildScheme: (url) => `v2rayng://install-config?url=${enc(url)}`,
+    buildScheme: (url) => `v2rayng://install-config/?url=${enc(url)}`,
     download: { android: "https://github.com/2dust/v2rayNG/releases" },
     hint: "Paste hysteria2:// link if import fails",
   },
@@ -57,7 +63,7 @@ const QUIC_APPS: QuicClientApp[] = [
     short: "NB",
     color: "#ec4899",
     platforms: ["android"],
-    protocols: ["hysteria2", "tuic"],
+    protocols: ["hysteria2", "tuic", "anytls"],
     buildScheme: (url) => `sn://import?url=${enc(url)}`,
     download: { android: "https://github.com/MatsuriDayo/NekoBoxForAndroid/releases" },
     hint: "sing-box based",
@@ -84,7 +90,7 @@ const QUIC_APPS: QuicClientApp[] = [
     short: "VN",
     color: "#2563eb",
     platforms: ["windows"],
-    protocols: ["hysteria2", "tuic"],
+    protocols: ["hysteria2", "tuic", "anytls"],
     buildScheme: (url) => url,
     download: { windows: "https://github.com/2dust/v2rayN/releases" },
     hint: "Servers → Import from clipboard",
@@ -96,7 +102,7 @@ const QUIC_APPS: QuicClientApp[] = [
     short: "NR",
     color: "#db2777",
     platforms: ["windows", "macos", "linux"],
-    protocols: ["hysteria2", "tuic"],
+    protocols: ["hysteria2", "tuic", "anytls"],
     buildScheme: (url) => url,
     download: {
       windows: "https://github.com/MatsuriDayo/nekoray/releases",
@@ -113,7 +119,11 @@ const QUIC_APPS: QuicClientApp[] = [
     color: "#0ea5e9",
     platforms: ["ios", "macos"],
     protocols: ["hysteria2", "tuic"],
-    buildScheme: (url) => `streisand://import/${enc(url)}`,
+    importViaSingboxSub: true,
+    buildScheme: (_share, opts) => {
+      const url = opts?.singboxSubUrl || _share;
+      return `streisand://import/${enc(url)}`;
+    },
     download: {
       ios: "https://apps.apple.com/app/streisand/id6450534064",
       macos: "https://apps.apple.com/app/streisand/id6450534064",
@@ -128,7 +138,13 @@ const QUIC_APPS: QuicClientApp[] = [
     color: "#6366f1",
     platforms: ["ios", "macos"],
     protocols: ["hysteria2", "tuic"],
-    buildScheme: (url) => `shadowrocket://add/${enc(url)}`,
+    importViaSingboxSub: true,
+    buildScheme: (_share, opts) => {
+      const url = opts?.singboxSubUrl || _share;
+      const b64 =
+        typeof btoa !== "undefined" ? btoa(url) : Buffer.from(url, "utf-8").toString("base64");
+      return `shadowrocket://add/sub://${b64}`;
+    },
     download: { ios: "https://apps.apple.com/app/shadowrocket/id932747118" },
     hint: "Paste hysteria2:// link",
     copyFirst: true,
@@ -139,7 +155,7 @@ const QUIC_APPS: QuicClientApp[] = [
     short: "SB",
     color: "#14b8a6",
     platforms: ["android", "windows", "macos", "linux"],
-    protocols: ["hysteria2", "tuic"],
+    protocols: ["hysteria2", "tuic", "anytls"],
     buildScheme: (url) => url,
     download: {
       android: "https://github.com/SagerNet/sing-box/releases",

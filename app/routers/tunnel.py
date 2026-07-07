@@ -33,24 +33,52 @@ class TunnelCreate(BaseModel):
     name: str
     # None on either end => the panel's own local Xray core is that end.
     relay_node_id: Optional[int] = None
+    intermediate_node_id: Optional[int] = None
+    intermediate_port: Optional[int] = None
     exit_node_id: Optional[int] = None
     transport: str = "reality"
     listen_port: int
     target_port: int
     params: Optional[dict] = None
+    template_id: Optional[str] = None
 
     @model_validator(mode="after")
     def _check_ends(self):
+        if self.template_id:
+            from app.tunnel.templates import get_template, requires_intermediate, template_hops
+
+            try:
+                spec = get_template(self.template_id)
+            except KeyError as exc:
+                raise ValueError(f"unknown tunnel template: {self.template_id!r}") from exc
+            if spec.get("transport"):
+                self.transport = spec["transport"]
+            if self.params is None and spec.get("params") is not None:
+                self.params = dict(spec["params"])
+            hops = template_hops(spec)
+            if requires_intermediate(spec) and self.intermediate_node_id is None:
+                raise ValueError("template requires intermediate_node_id (3-hop chain)")
+
+        node_ids = [
+            nid for nid in (self.relay_node_id, self.intermediate_node_id, self.exit_node_id)
+            if nid is not None
+        ]
+        if len(node_ids) != len(set(node_ids)):
+            raise ValueError("relay, transit, and exit must be different nodes")
+        if self.relay_node_id is None and self.exit_node_id is None and self.intermediate_node_id is None:
+            raise ValueError("at least one end must be a node (all cannot be the panel)")
         if self.relay_node_id is None and self.exit_node_id is None:
-            raise ValueError("at least one end must be a node (both cannot be the panel)")
-        if self.relay_node_id is not None and self.relay_node_id == self.exit_node_id:
-            raise ValueError("relay and exit must be different nodes")
+            raise ValueError("at least one of relay or exit must be a node")
+        if self.intermediate_node_id is not None and self.intermediate_port is None:
+            self.intermediate_port = max(self.target_port - 1, 1025)
         return self
 
 
 class TunnelUpdate(BaseModel):
     name: Optional[str] = None
     enabled: Optional[bool] = None
+    intermediate_node_id: Optional[int] = None
+    intermediate_port: Optional[int] = None
     transport: Optional[str] = None
     listen_port: Optional[int] = None
     target_port: Optional[int] = None
@@ -62,7 +90,10 @@ class TunnelResponse(BaseModel):
     name: str
     enabled: bool
     relay_node_id: Optional[int] = None
+    intermediate_node_id: Optional[int] = None
+    intermediate_port: Optional[int] = None
     exit_node_id: Optional[int] = None
+    hops: int = 2
     # 'panel' when the end is the local core, otherwise 'node'.
     relay_kind: Literal["panel", "node"] = "node"
     exit_kind: Literal["panel", "node"] = "node"
@@ -70,22 +101,28 @@ class TunnelResponse(BaseModel):
     listen_port: int
     target_port: int
     params: Optional[dict] = None
+    # Result of the auto-apply that ran after create/update (None if not run).
+    auto_apply: Optional[dict] = None
     model_config = ConfigDict(from_attributes=True)
 
     @staticmethod
-    def of(tunnel: Tunnel) -> "TunnelResponse":
+    def of(tunnel: Tunnel, auto_apply: Optional[dict] = None) -> "TunnelResponse":
         return TunnelResponse(
             id=tunnel.id,
             name=tunnel.name,
             enabled=tunnel.enabled,
             relay_node_id=tunnel.relay_node_id,
+            intermediate_node_id=tunnel.intermediate_node_id,
+            intermediate_port=tunnel.intermediate_port,
             exit_node_id=tunnel.exit_node_id,
+            hops=tunnel_svc.tunnel_hops(tunnel),
             relay_kind="node" if tunnel.relay_node_id is not None else "panel",
             exit_kind="node" if tunnel.exit_node_id is not None else "panel",
             transport=tunnel.transport,
             listen_port=tunnel.listen_port,
             target_port=tunnel.target_port,
             params=tunnel.params,
+            auto_apply=auto_apply,
         )
 
 
@@ -109,6 +146,50 @@ def _exit_address(db: Session, exit_node_id: Optional[int]) -> str:
     return _get_node(db, exit_node_id).address
 
 
+def _sync_tunnel_node_roles(db: Session, tunnel: Tunnel) -> None:
+    """Reflect relay/transit/exit roles on node endpoints when a tunnel is enabled."""
+    role_map = (
+        (tunnel.relay_node_id, "relay"),
+        (tunnel.intermediate_node_id, "transit"),
+        (tunnel.exit_node_id, "exit"),
+    )
+    for node_id, role in role_map:
+        if node_id is None:
+            continue
+        node = db.query(Node).filter(Node.id == node_id).first()
+        if node is not None and tunnel.enabled:
+            node.role = role
+
+
+def _revert_unused_node_roles(
+    db: Session,
+    tunnel_id: int,
+    relay_id,
+    exit_id,
+    intermediate_id=None,
+) -> None:
+    for node_id, role in (
+        (relay_id, "relay"),
+        (intermediate_id, "transit"),
+        (exit_id, "exit"),
+    ):
+        if node_id is None:
+            continue
+        still_used = db.query(Tunnel).filter(
+            Tunnel.id != tunnel_id,
+            Tunnel.enabled.is_(True),
+            (
+                (Tunnel.relay_node_id == node_id)
+                | (Tunnel.exit_node_id == node_id)
+                | (Tunnel.intermediate_node_id == node_id)
+            ),
+        ).first()
+        if not still_used:
+            node = db.query(Node).filter(Node.id == node_id).first()
+            if node is not None and node.role == role:
+                node.role = "direct"
+
+
 def _restart_endpoint(db: Session, node_id: Optional[int]):
     """Re-push config to an endpoint so its tunnel fragments take effect."""
     if node_id is None:
@@ -122,6 +203,135 @@ def _restart_endpoint(db: Session, node_id: Optional[int]):
         xray.operations.restart_node(node_id)
     else:
         xray.operations.connect_node(node_id)
+
+
+def _tcp_reachable(address: str, port: int, timeout: float = 3.0) -> bool:
+    """Best-effort TCP connect probe used for post-apply health-checks."""
+    import socket
+
+    try:
+        with socket.create_connection((address, int(port)), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _tunnel_health(db: Session, tunnel: Tunnel) -> dict:
+    """Verify both ends look alive after an apply.
+
+    - node endpoints must be connected in the live xray registry;
+    - the relay must be able to reach the exit's tunnel listen_port
+      (probed from the panel as a proxy for the relay's egress).
+    """
+    checks: dict = {}
+
+    for label, node_id in (
+        ("relay", tunnel.relay_node_id),
+        ("transit", tunnel.intermediate_node_id),
+        ("exit", tunnel.exit_node_id),
+    ):
+        if node_id is None:
+            if label == "transit":
+                continue
+            checks[label] = {"kind": "panel", "connected": True}
+        else:
+            node = xray.nodes.get(node_id)
+            checks[label] = {
+                "kind": "node",
+                "node_id": node_id,
+                "connected": bool(node is not None and getattr(node, "connected", False)),
+            }
+
+    if tunnel.intermediate_node_id:
+        try:
+            transit_addr = _get_node(db, tunnel.intermediate_node_id).address
+            transit_port = tunnel.intermediate_port or tunnel_svc.transit_port(tunnel)
+            checks["transit_listen"] = {
+                "address": transit_addr,
+                "port": transit_port,
+                "reachable": _tcp_reachable(transit_addr, transit_port),
+            }
+        except HTTPException as exc:
+            checks["transit_listen"] = {"reachable": False, "error": exc.detail}
+
+    try:
+        exit_addr = _exit_address(db, tunnel.exit_node_id)
+        reachable = _tcp_reachable(exit_addr, tunnel.listen_port)
+        checks["exit_listen"] = {
+            "address": exit_addr,
+            "port": tunnel.listen_port,
+            "reachable": reachable,
+        }
+    except HTTPException as exc:
+        checks["exit_listen"] = {"reachable": False, "error": exc.detail}
+
+    healthy = all(
+        c.get("connected", True) for c in checks.values() if "connected" in c
+    ) and checks.get("exit_listen", {}).get("reachable", False)
+    if tunnel.intermediate_node_id:
+        healthy = healthy and checks.get("transit_listen", {}).get("reachable", False)
+    return {"healthy": healthy, "checks": checks}
+
+
+def _apply_tunnel(db: Session, tunnel: Tunnel, health: bool = True) -> dict:
+    """Re-push config to both endpoints and (optionally) health-check the path."""
+    _exit_address(db, tunnel.exit_node_id)  # validate reachability first
+    for node_id in {tunnel.relay_node_id, tunnel.intermediate_node_id, tunnel.exit_node_id}:
+        _restart_endpoint(db, node_id)
+
+    result = {
+        "applied": True,
+        "hops": tunnel_svc.tunnel_hops(tunnel),
+        "relay": "panel" if tunnel.relay_node_id is None else tunnel.relay_node_id,
+        "transit": tunnel.intermediate_node_id,
+        "exit": "panel" if tunnel.exit_node_id is None else tunnel.exit_node_id,
+    }
+    if health:
+        result["health"] = _tunnel_health(db, tunnel)
+    return result
+
+
+def _auto_apply(db: Session, tunnel: Tunnel) -> Optional[dict]:
+    """Apply a tunnel right after create/update, swallowing failures.
+
+    Auto-apply is a convenience: a failure here must not fail the CRUD call, so
+    we log and return the error for the client to surface instead of raising.
+    """
+    if not tunnel.enabled:
+        return None
+    try:
+        return _apply_tunnel(db, tunnel, health=False)
+    except HTTPException as exc:
+        logger.warning("Tunnel %s auto-apply skipped: %s", tunnel.id, exc.detail)
+        return {"applied": False, "detail": exc.detail}
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Tunnel %s auto-apply failed: %s", tunnel.id, exc)
+        return {"applied": False, "detail": str(exc)}
+
+
+@router.get("/transports")
+def tunnel_transports(_: Admin = Depends(Admin.check_sudo_admin)):
+    """Supported tunnel transports with engine metadata (xray vs sing-box stub)."""
+    _require_enabled()
+    return {
+        "transports": [
+            {"id": tid, **meta}
+            for tid, meta in tunnel_svc.TUNNEL_TRANSPORT_META.items()
+        ]
+    }
+
+
+@router.get("/templates")
+def tunnel_templates(_: Admin = Depends(Admin.check_sudo_admin)):
+    """Country-pair and multi-hop tunnel presets."""
+    _require_enabled()
+    from app.tunnel.templates import iran_pair_templates, serialize_template, TUNNEL_TEMPLATES
+
+    templates = {
+        tid: serialize_template(tid, spec)
+        for tid, spec in TUNNEL_TEMPLATES.items()
+    }
+    return {"templates": templates, "iran_pairs": iran_pair_templates()}
 
 
 @router.get("", response_model=List[TunnelResponse])
@@ -144,18 +354,45 @@ def create_tunnel(
 
     if body.relay_node_id is not None:
         _get_node(db, body.relay_node_id)
+    if body.intermediate_node_id is not None:
+        _get_node(db, body.intermediate_node_id)
     if body.exit_node_id is not None:
         _get_node(db, body.exit_node_id)
 
+    if body.template_id:
+        from app.tunnel.templates import get_template, region_matches
+
+        spec = get_template(body.template_id)
+        relay_r = spec.get("relay_region")
+        exit_r = spec.get("exit_region")
+        if relay_r and body.relay_node_id is not None:
+            relay_node = _get_node(db, body.relay_node_id)
+            if not region_matches(relay_r, relay_node.region):
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"relay node region must match template preset ({relay_r})",
+                )
+        if exit_r and body.exit_node_id is not None:
+            exit_node = _get_node(db, body.exit_node_id)
+            if not region_matches(exit_r, exit_node.region):
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"exit node region must match template preset ({exit_r})",
+                )
+
     params = body.params or tunnel_svc.default_params(body.transport)
-    # Generate the Reality keypair now (xray x25519) so the tunnel is usable
-    # without a manual key step. No-op for non-reality transports / preset keys.
     if body.transport == "reality":
         tunnel_svc.ensure_reality_keys(params)
+    elif body.transport == "quic":
+        tunnel_svc.ensure_quic_key(params)
+    elif tunnel_svc.transport_engine(body.transport) == "singbox":
+        tunnel_svc.ensure_singbox_tunnel_secrets(params, body.transport)
 
     tunnel = Tunnel(
         name=body.name,
         relay_node_id=body.relay_node_id,
+        intermediate_node_id=body.intermediate_node_id,
+        intermediate_port=body.intermediate_port,
         exit_node_id=body.exit_node_id,
         transport=body.transport,
         listen_port=body.listen_port,
@@ -166,11 +403,14 @@ def create_tunnel(
     # Reflect topology roles on node endpoints (panel endpoints have no row).
     if body.relay_node_id is not None:
         _get_node(db, body.relay_node_id).role = "relay"
+    if body.intermediate_node_id is not None:
+        _get_node(db, body.intermediate_node_id).role = "transit"
     if body.exit_node_id is not None:
         _get_node(db, body.exit_node_id).role = "exit"
     db.commit()
     db.refresh(tunnel)
-    return TunnelResponse.of(tunnel)
+    applied = _auto_apply(db, tunnel)
+    return TunnelResponse.of(tunnel, auto_apply=applied)
 
 
 @router.patch("/{tunnel_id}", response_model=TunnelResponse)
@@ -184,6 +424,9 @@ def update_tunnel(
     tunnel = db.query(Tunnel).filter(Tunnel.id == tunnel_id).first()
     if tunnel is None:
         raise HTTPException(status_code=404, detail="Tunnel not found")
+    prev_relay, prev_exit = tunnel.relay_node_id, tunnel.exit_node_id
+    prev_intermediate = tunnel.intermediate_node_id
+    prev_enabled = tunnel.enabled
     if body.transport is not None:
         try:
             tunnel_svc.validate_transport(body.transport)
@@ -191,9 +434,14 @@ def update_tunnel(
             raise HTTPException(status_code=422, detail=str(exc))
     for key, value in body.model_dump(exclude_unset=True).items():
         setattr(tunnel, key, value)
+    if not tunnel.enabled and prev_enabled:
+        _revert_unused_node_roles(db, tunnel.id, prev_relay, prev_exit, prev_intermediate)
+    elif tunnel.enabled:
+        _sync_tunnel_node_roles(db, tunnel)
     db.commit()
     db.refresh(tunnel)
-    return TunnelResponse.of(tunnel)
+    applied = _auto_apply(db, tunnel)
+    return TunnelResponse.of(tunnel, auto_apply=applied)
 
 
 @router.delete("/{tunnel_id}")
@@ -207,14 +455,17 @@ def delete_tunnel(
     if tunnel is None:
         raise HTTPException(status_code=404, detail="Tunnel not found")
     relay_id, exit_id = tunnel.relay_node_id, tunnel.exit_node_id
+    intermediate_id = tunnel.intermediate_node_id
     db.delete(tunnel)
-    # Revert endpoint roles to 'direct' when no other tunnel references them.
-    for node_id, role in ((relay_id, "relay"), (exit_id, "exit")):
+    _revert_unused_node_roles(db, tunnel_id, relay_id, exit_id, intermediate_id)
+    # Legacy revert (disabled-only tunnels): kept for backwards compatibility.
+    for node_id, role in ((relay_id, "relay"), (intermediate_id, "transit"), (exit_id, "exit")):
         if node_id is None:
             continue
         still_used = db.query(Tunnel).filter(
-            Tunnel.id != tunnel_id,
-            (Tunnel.relay_node_id == node_id) | (Tunnel.exit_node_id == node_id),
+            (Tunnel.relay_node_id == node_id)
+            | (Tunnel.exit_node_id == node_id)
+            | (Tunnel.intermediate_node_id == node_id),
         ).first()
         if not still_used:
             node = db.query(Node).filter(Node.id == node_id).first()
@@ -236,9 +487,15 @@ def tunnel_config(
     if tunnel is None:
         raise HTTPException(status_code=404, detail="Tunnel not found")
     exit_addr = _exit_address(db, tunnel.exit_node_id)
+    intermediate_addr = None
+    if tunnel.intermediate_node_id is not None:
+        intermediate_addr = _get_node(db, tunnel.intermediate_node_id).address
     wg_port = (tunnel.params or {}).get("wireguard_port")
     return tunnel_svc.build_tunnel_pair(
-        tunnel, exit_addr, wireguard_port=int(wg_port) if wg_port else None
+        tunnel,
+        exit_addr,
+        intermediate_address=intermediate_addr,
+        wireguard_port=int(wg_port) if wg_port else None,
     )
 
 
@@ -256,15 +513,18 @@ def apply_tunnel(
     if not tunnel.enabled:
         raise HTTPException(status_code=422, detail="Tunnel is disabled; enable it before applying")
 
-    # Validate the exit is reachable before touching any core.
-    _exit_address(db, tunnel.exit_node_id)
+    return _apply_tunnel(db, tunnel, health=True)
 
-    endpoints = {tunnel.relay_node_id, tunnel.exit_node_id}
-    for node_id in endpoints:
-        _restart_endpoint(db, node_id)
 
-    return {
-        "applied": True,
-        "relay": "panel" if tunnel.relay_node_id is None else tunnel.relay_node_id,
-        "exit": "panel" if tunnel.exit_node_id is None else tunnel.exit_node_id,
-    }
+@router.get("/{tunnel_id}/health")
+def tunnel_health(
+    tunnel_id: int,
+    db: Session = Depends(get_db),
+    _: Admin = Depends(Admin.check_sudo_admin),
+):
+    """Re-check relay/exit connectivity for a tunnel without re-pushing config."""
+    _require_enabled()
+    tunnel = db.query(Tunnel).filter(Tunnel.id == tunnel_id).first()
+    if tunnel is None:
+        raise HTTPException(status_code=404, detail="Tunnel not found")
+    return _tunnel_health(db, tunnel)

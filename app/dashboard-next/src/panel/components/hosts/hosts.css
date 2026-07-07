@@ -1,0 +1,88 @@
+/* Subscription hosts — 3x-ui style table + modal */
+
+.nx-hosts-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.nx-hosts-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding: 16px 18px;
+  border-radius: 14px;
+  border: 1px solid var(--nx-border);
+  background: var(--nx-surface-2);
+}
+
+@media (max-width: 640px) {
+  .nx-hosts-stats {
+    grid-template-columns: 1fr;
+  }
+}
+
+.nx-hosts-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.nx-hosts-table-card {
+  overflow: hidden;
+}
+
+.nx-hosts-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: nowrap;
+}
+
+.nx-hosts-remark {
+  font-weight: 600;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nx-hosts-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+.nx-table tbody tr.is-muted {
+  opacity: 0.65;
+}
+
+/* Modal tabs (shared) */
+.nx-host-modal-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid var(--nx-border);
+  padding-bottom: 0;
+}
+
+.nx-host-modal-tab {
+  padding: 10px 16px;
+  border: none;
+  background: transparent;
+  color: var(--nx-muted);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.nx-host-modal-tab:hover {
+  color: var(--nx-text);
+}
+
+.nx-host-modal-tab.active {
+  color: var(--nx-accent, #818cf8);
+  border-bottom-color: var(--nx-accent, #818cf8);
+}

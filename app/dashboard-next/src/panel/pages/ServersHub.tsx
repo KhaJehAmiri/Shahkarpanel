@@ -5,6 +5,7 @@ import { HubLayout } from "../components/HubLayout";
 import { Nodes } from "./Nodes";
 import { WireGuard } from "./WireGuard";
 import { SingBox } from "./SingBox";
+import { ServicesManager } from "./ServicesManager";
 import { TunnelsPage } from "./TunnelsPage";
 import { DedicatedIP } from "./DedicatedIP";
 
@@ -23,6 +24,7 @@ export const ServersHub: FC = () => {
       defaultTab="nodes"
       tabs={[
         { id: "nodes", label: t("hub.tabNodes") },
+        { id: "services", label: t("hub.tabServices"), hidden: !sudo },
         { id: "wireguard", label: t("hub.tabWireGuard"), hidden: !sudo },
         { id: "h2", label: t("hub.tabH2"), hidden: !sudo },
         // Tunnels API is sudo-only; showing the tab to resellers only produces 403s.
@@ -31,6 +33,7 @@ export const ServersHub: FC = () => {
       ]}
     >
       {(tab) => {
+        if (tab === "services") return <ServicesManager embedded />;
         if (tab === "wireguard") return <WireGuard embedded />;
         if (tab === "h2") return <SingBox embedded />;
         if (tab === "tunnels") return <TunnelsPage embedded />;

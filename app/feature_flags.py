@@ -67,7 +67,19 @@ KNOWN_FLAGS: Dict[str, FlagSpec] = {
             "flags.client_push.desc",
             "Deliver push notifications (FCM/APNs) to SigmaGuard app devices.",
         ),
-        FlagSpec("smart_routing", False, "flags.smart_routing.desc", "Latency, geo, and load-based node routing."),
+        FlagSpec(
+            "sigmaguard_wire",
+            False,
+            "flags.sigmaguard_wire.desc",
+            "SigmaGuard Wire private protocol (Client API only; requires /opt/sigmaguard/wire).",
+        ),
+        FlagSpec(
+            "wg_autoscale",
+            False,
+            "flags.wg_autoscale.desc",
+            "Shard plain WireGuard peers across multiple interfaces (200 peers each, hot-add).",
+        ),
+        FlagSpec("smart_routing", True, "flags.smart_routing.desc", "Latency, geo, and load-based node routing."),
         FlagSpec("workflows", False, "flags.workflows.desc", "Multi-step workflow automation."),
         FlagSpec(
             "traffic_intelligence",
@@ -91,7 +103,7 @@ KNOWN_FLAGS: Dict[str, FlagSpec] = {
         ),
         FlagSpec(
             "tunneling",
-            False,
+            True,
             "flags.tunneling.desc",
             "Relay traffic from in-country node to foreign exit.",
         ),

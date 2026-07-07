@@ -2,6 +2,7 @@
 from typing import Dict, List, Optional
 
 from .backends import (
+    AnyTLSBackend,
     Hysteria2Backend,
     SingBoxBackend,
     TuicBackend,
@@ -37,7 +38,7 @@ def backend_for_protocol(protocol: str) -> Optional[ProtocolBackend]:
 
 
 # Register built-in backends. Xray is the live engine; the rest are descriptors.
-for _backend in (XrayBackend(), SingBoxBackend(), Hysteria2Backend(), TuicBackend()):
+for _backend in (XrayBackend(), SingBoxBackend(), Hysteria2Backend(), TuicBackend(), AnyTLSBackend()):
     register(_backend)
 
 

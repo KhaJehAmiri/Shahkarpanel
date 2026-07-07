@@ -1,13 +1,15 @@
 from typing import Dict, List, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Response
+from pydantic import BaseModel
 
-from app import panel_version, xray
+from app import logger, panel_version, xray
 from app.db import Session, crud, get_db
 from app.models.admin import Admin
 from app.models.proxy import ProxyHost
 from app.models.system import SystemStats
 from app.models.user import UserStatus
+from app.rbac import require_permission
 from app.utils import responses
 from app.utils.system import cpu_usage, memory_usage, realtime_bandwidth, realtime_bandwidth_source
 
@@ -82,11 +84,21 @@ def get_inbounds(admin: Admin = Depends(Admin.get_current)) -> Dict[str, List[di
     "/hosts", response_model=Dict[str, List[ProxyHost]], responses={403: responses._403}
 )
 def get_hosts(
-    db: Session = Depends(get_db), admin: Admin = Depends(Admin.check_sudo_admin)
+    db: Session = Depends(get_db), admin: Admin = Depends(require_permission("hosts:read"))
 ):
     """Get a list of proxy hosts grouped by inbound tag."""
     hosts = {tag: crud.get_hosts(db, tag) for tag in xray.config.inbounds_by_tag}
     return hosts
+
+
+@router.get("/hosts/region-presets", responses={403: responses._403})
+def get_host_region_presets(
+    admin: Admin = Depends(require_permission("hosts:read")),
+):
+    """Region codes for host remark flags (works without binding a node)."""
+    from app.subscription.region_display import list_region_presets
+
+    return {"regions": list_region_presets()}
 
 
 @router.put(
@@ -95,7 +107,7 @@ def get_hosts(
 def modify_hosts(
     modified_hosts: Dict[str, List[ProxyHost]],
     db: Session = Depends(get_db),
-    admin: Admin = Depends(Admin.check_sudo_admin),
+    admin: Admin = Depends(require_permission("hosts:write")),
 ):
     """Modify proxy hosts and update the configuration."""
     for inbound_tag in modified_hosts:
@@ -109,7 +121,49 @@ def modify_hosts(
 
     xray.hosts.update()
 
+    from app.services.edge_proxy import cdn_runtime_enabled, sync_edge_nginx
+
+    try:
+        edge_result = sync_edge_nginx(db)
+        if edge_result.routes or cdn_runtime_enabled():
+            startup_config = xray.config.include_db_users()
+            xray.core.restart(startup_config)
+    except Exception as exc:
+        logger.exception("edge sync failed (hosts saved): %s", exc)
+
     return {tag: crud.get_hosts(db, tag) for tag in xray.config.inbounds_by_tag}
+
+
+class HostCloneBody(BaseModel):
+    source_tag: str
+    target_tags: List[str]
+    mode: str = "append"  # append | replace
+
+
+@router.post("/hosts/clone", responses={403: responses._403})
+def clone_hosts(
+    body: HostCloneBody,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(require_permission("hosts:write")),
+):
+    """Clone host rows from one inbound to others (bulk template)."""
+    if body.source_tag not in xray.config.inbounds_by_tag:
+        raise HTTPException(status_code=404, detail="Source inbound not found")
+    source = crud.get_hosts(db, body.source_tag)
+    if not source:
+        raise HTTPException(status_code=404, detail="Source inbound has no hosts")
+    cloned = 0
+    for tag in body.target_tags:
+        if tag not in xray.config.inbounds_by_tag:
+            continue
+        if body.mode == "replace":
+            crud.update_hosts(db, tag, [])
+        existing = crud.get_hosts(db, tag)
+        merged = list(existing) + [h.model_copy(deep=True) for h in source]
+        crud.update_hosts(db, tag, merged)
+        cloned += len(source)
+    xray.hosts.update()
+    return {"cloned": cloned, "targets": body.target_tags}
 
 
 @router.post("/system/jwt/rotate")

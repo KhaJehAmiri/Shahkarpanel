@@ -1,6 +1,6 @@
 from typing import List, Union
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.db import Session, crud, get_db
@@ -31,6 +31,30 @@ class RealtimeStats(BaseModel):
     outgoing_bandwidth_speed: int
     bandwidth_source: str = "nic"
     bandwidth_scope: str = "host"
+
+
+class ProtocolUsageRow(BaseModel):
+    protocol: str
+    used_traffic: int
+
+
+@router.get("/usage-by-protocol", response_model=List[ProtocolUsageRow])
+def usage_by_protocol(
+    start: str = "",
+    end: str = "",
+    user_id: int | None = None,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(Admin.get_current),
+):
+    """Per-protocol traffic breakdown (informational analytics)."""
+    start, end = validate_dates(start, end)
+    if not admin.is_sudo and user_id is not None:
+        dbadmin = crud.get_admin(db, admin.username)
+        owner = db.query(User).filter(User.id == user_id, User.admin_id == dbadmin.id).first()
+        if not owner:
+            raise HTTPException(status_code=404, detail="User not found")
+    rows = crud.get_protocol_usage(db, start, end, user_id=user_id)
+    return [ProtocolUsageRow(protocol=r["protocol"], used_traffic=r["used_traffic"]) for r in rows]
 
 
 @router.get("/top-users", response_model=List[TopUser])

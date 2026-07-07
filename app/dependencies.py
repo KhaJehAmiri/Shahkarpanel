@@ -4,10 +4,17 @@ from app.models.admin import AdminInDB, AdminValidationResult, Admin
 from app.models.user import UserResponse, UserStatus
 from app.db import Session, crud, get_db
 from config import SUDOERS, SUDO_PASSWORD_HASH, SUDO_USERNAME
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Request
 from datetime import datetime, timezone, timedelta
+import re
+
 from app.utils.jwt import get_subscription_payload
 from app.rbac import require_permission
+from app.subscription.endpoint_resolver import (
+    build_subscription_context,
+    panel_endpoint_ids_for_subscription,
+    SubscriptionRequestContext,
+)
 
 
 def validate_admin(db: Session, username: str, password: str) -> Optional[AdminValidationResult]:
@@ -86,10 +93,47 @@ def get_user_template(template_id: int, db: Session = Depends(get_db)):
     return dbuser_template
 
 
+def get_subscription_context(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> SubscriptionRequestContext:
+    ctx = build_subscription_context(request, db)
+    request.state.subscription_context = ctx
+    return ctx
+
+
 def get_validated_sub(
         token: str,
-        db: Session = Depends(get_db)
+        request: Request,
+        db: Session = Depends(get_db),
+        sub_ctx: SubscriptionRequestContext = Depends(get_subscription_context),
 ) -> UserResponse:
+    endpoint_id = sub_ctx.endpoint.id if sub_ctx.endpoint else None
+
+    # Independent sub_token (Marzban-style): 32-char hex, no JWT parsing.
+    if re.fullmatch(r"[0-9a-fA-F]{32}", token or ""):
+        dbuser = crud.get_user_by_sub_token(db, token.lower())
+        if dbuser:
+            if dbuser.sub_revoked_at:
+                raise HTTPException(status_code=404, detail="Not Found")
+            return dbuser
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    # Legacy 3x-ui subId and other alias tokens.
+    alias = crud.get_subscription_token_alias(db, token, endpoint_id=endpoint_id)
+    if not alias and sub_ctx.endpoint:
+        for panel_id in panel_endpoint_ids_for_subscription(db, sub_ctx.endpoint):
+            alias = crud.get_subscription_token_alias(db, token, endpoint_id=panel_id)
+            if alias:
+                break
+    if alias:
+        from app.db.models import User
+        dbuser = db.query(User).filter(User.id == alias.user_id).first()
+        if dbuser:
+            if dbuser.sub_revoked_at:
+                raise HTTPException(status_code=404, detail="Not Found")
+            return dbuser
+
     sub = get_subscription_payload(token)
     if not sub:
         raise HTTPException(status_code=404, detail="Not Found")

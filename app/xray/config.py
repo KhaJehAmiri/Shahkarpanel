@@ -15,6 +15,7 @@ from app.models.proxy import ProxyTypes
 from app.models.user import UserStatus
 from app.utils.crypto import get_cert_SANs
 from app.xray.inbound_normalize import NXPANEL_INBOUND_KIND
+from app.xray.network_defaults import DEFAULT_TLS_FINGERPRINT, effective_vless_flow
 from config import DEBUG, XRAY_EXCLUDE_INBOUND_TAGS, XRAY_FALLBACKS_INBOUND_TAG
 
 
@@ -65,22 +66,6 @@ class XRayConfig(dict):
         self._apply_api()
 
     def _apply_api(self):
-        api_inbound = self.get_inbound("API_INBOUND")
-        if api_inbound:
-            api_inbound["listen"] = self.api_host
-            api_inbound["port"] = self.api_port
-            api_inbound.setdefault("settings", {})["address"] = self.api_host
-            return
-
-        self["api"] = {
-            "services": [
-                "HandlerService",
-                "StatsService",
-                "LoggerService"
-            ],
-            "tag": "API"
-        }
-        self["stats"] = {}
         forced_policies = {
             "levels": {
                 "0": {
@@ -99,20 +84,37 @@ class XRayConfig(dict):
             self["policy"] = merge_dicts(self.get("policy"), forced_policies)
         else:
             self["policy"] = forced_policies
-        inbound = {
-            "listen": self.api_host,
-            "port": self.api_port,
-            "protocol": "dokodemo-door",
-            "settings": {
-                "address": self.api_host
-            },
-            "tag": "API_INBOUND"
+
+        self["api"] = {
+            "services": [
+                "HandlerService",
+                "StatsService",
+                "LoggerService"
+            ],
+            "tag": "API"
         }
-        try:
-            self["inbounds"].insert(0, inbound)
-        except KeyError:
-            self["inbounds"] = []
-            self["inbounds"].insert(0, inbound)
+        self["stats"] = {}
+
+        api_inbound = self.get_inbound("API_INBOUND")
+        if api_inbound:
+            api_inbound["listen"] = self.api_host
+            api_inbound["port"] = self.api_port
+            api_inbound.setdefault("settings", {})["address"] = self.api_host
+        else:
+            inbound = {
+                "listen": self.api_host,
+                "port": self.api_port,
+                "protocol": "dokodemo-door",
+                "settings": {
+                    "address": self.api_host
+                },
+                "tag": "API_INBOUND"
+            }
+            try:
+                self["inbounds"].insert(0, inbound)
+            except KeyError:
+                self["inbounds"] = []
+                self["inbounds"].insert(0, inbound)
 
         rule = {
             "inboundTag": [
@@ -121,11 +123,21 @@ class XRayConfig(dict):
             "outboundTag": "API",
             "type": "field"
         }
-        try:
-            self["routing"]["rules"].insert(0, rule)
-        except KeyError:
-            self["routing"] = {"rules": []}
-            self["routing"]["rules"].insert(0, rule)
+        routing = self.get("routing")
+        if not isinstance(routing, dict):
+            routing = {"domainStrategy": "IPIfNonMatch", "rules": []}
+            self["routing"] = routing
+        rules = routing.setdefault("rules", [])
+        if not isinstance(rules, list):
+            rules = []
+            routing["rules"] = rules
+        if not any(
+            isinstance(r, dict)
+            and r.get("outboundTag") == "API"
+            and "API_INBOUND" in (r.get("inboundTag") or [])
+            for r in rules
+        ):
+            rules.insert(0, rule)
 
     def _normalize_shape(self) -> None:
         """Accept legacy/partial configs (missing keys, null lists) after users clear inbounds."""
@@ -225,6 +237,15 @@ class XRayConfig(dict):
                 settings['ss_method'] = inbound['settings'].get('method')
                 settings['ss_password'] = inbound['settings'].get('password')
 
+            # VLESS Encryption: client outbound string is stored alongside inbound
+            # settings (xray ignores it server-side; subscription uses it).
+            if inbound['protocol'] == ProxyTypes.VLESS.value:
+                raw_settings = inbound.get('settings') or {}
+                dec = str(raw_settings.get('decryption') or 'none')
+                enc = str(raw_settings.get('encryption') or '')
+                if dec not in ('', 'none') and enc and enc not in ('', 'none'):
+                    settings['vless_encryption'] = enc
+
             # port settings
             try:
                 settings['port'] = inbound['port']
@@ -253,15 +274,35 @@ class XRayConfig(dict):
                 settings['network'] = net
 
                 if security == 'tls':
-                    # settings['fp']
-                    # settings['alpn']
                     settings['tls'] = 'tls'
+                    if isinstance(tls_settings, dict):
+                        from app.subscription.tls_client import analyze_inbound_tls
+
+                        tls_meta = analyze_inbound_tls(tls_settings)
+                        settings['tls_server_name'] = tls_meta['tls_server_name']
+                        settings['cert_sans'] = tls_meta['cert_sans']
+                        settings['cert_pin_sha256'] = tls_meta['cert_pin_sha256']
+                        settings['cert_self_signed'] = tls_meta['cert_self_signed']
+                        if tls_meta['ech_config_list']:
+                            settings['ech_config_list'] = tls_meta['ech_config_list']
+
+                        fp = tls_settings.get('fingerprint')
+                        settings['fp'] = fp or DEFAULT_TLS_FINGERPRINT
+                        alpn = tls_settings.get('alpn')
+                        if alpn:
+                            if isinstance(alpn, list):
+                                settings['alpn'] = ','.join(str(x) for x in alpn if x)
+                            else:
+                                settings['alpn'] = str(alpn)
                     for certificate in tls_settings.get('certificates', []):
 
                         if certificate.get("certificateFile", None):
-                            with open(certificate['certificateFile'], 'rb') as file:
-                                cert = file.read()
-                                settings['sni'].extend(get_cert_SANs(cert))
+                            try:
+                                with open(certificate['certificateFile'], 'rb') as file:
+                                    cert = file.read()
+                                    settings['sni'].extend(get_cert_SANs(cert))
+                            except OSError:
+                                pass
 
                         if certificate.get("certificate", None):
                             cert = certificate['certificate']
@@ -271,29 +312,44 @@ class XRayConfig(dict):
                                 cert = cert.encode()
                             settings['sni'].extend(get_cert_SANs(cert))
 
+                    server_name = str(tls_settings.get('serverName') or '').strip()
+                    if server_name and server_name not in settings['sni']:
+                        settings['sni'].insert(0, server_name)
+
+                    settings['sni'] = [str(s) for s in settings['sni']]
+
                 elif security == 'reality':
-                    settings['fp'] = 'chrome'
+                    rs_settings = tls_settings.get('settings') or {}
+                    settings['fp'] = (
+                        rs_settings.get('fingerprint')
+                        or tls_settings.get('fingerprint')
+                        or 'chrome'
+                    )
                     settings['tls'] = 'reality'
                     settings['sni'] = tls_settings.get('serverNames', [])
 
                     try:
                         settings['pbk'] = tls_settings['publicKey']
                     except KeyError:
-                        pvk = tls_settings.get('privateKey')
-                        if not pvk:
-                            raise ValueError(
-                                f"You need to provide privateKey in realitySettings of {inbound['tag']}")
+                        pbk = rs_settings.get('publicKey')
+                        if pbk:
+                            settings['pbk'] = pbk
+                        else:
+                            pvk = tls_settings.get('privateKey')
+                            if not pvk:
+                                raise ValueError(
+                                    f"You need to provide privateKey in realitySettings of {inbound['tag']}")
 
-                        try:
-                            from app.xray import core
-                            x25519 = core.get_x25519(pvk)
-                            settings['pbk'] = x25519['public_key']
-                        except ImportError:
-                            pass
+                            try:
+                                from app.xray import core
+                                x25519 = core.get_x25519(pvk)
+                                settings['pbk'] = x25519['public_key']
+                            except ImportError:
+                                pass
 
-                        if not settings.get('pbk'):
-                            raise ValueError(
-                                f"You need to provide publicKey in realitySettings of {inbound['tag']}")
+                            if not settings.get('pbk'):
+                                raise ValueError(
+                                    f"You need to provide publicKey in realitySettings of {inbound['tag']}")
 
                     try:
                         settings['sids'] = tls_settings.get('shortIds')
@@ -301,10 +357,12 @@ class XRayConfig(dict):
                     except (IndexError, TypeError):
                         raise ValueError(
                             f"You need to define at least one shortID in realitySettings of {inbound['tag']}")
-                    try:
-                        settings['spx'] = tls_settings.get('SpiderX')
-                    except Exception:
-                        settings['spx'] = ""
+                    settings['spx'] = (
+                        rs_settings.get('spiderX')
+                        or tls_settings.get('spiderX')
+                        or tls_settings.get('SpiderX')
+                        or ""
+                    )
 
                 if net in ('tcp', 'raw'):
                     header = net_settings.get('header', {})
@@ -363,13 +421,25 @@ class XRayConfig(dict):
                     host = net_settings.get('host', '')
                     settings['host'] = [host]
                     settings['scMaxEachPostBytes'] = net_settings.get('scMaxEachPostBytes', 1000000)
+                    if net_settings.get('scMaxBufferedPosts') is not None:
+                        settings['scMaxBufferedPosts'] = net_settings.get('scMaxBufferedPosts')
                     settings['scMaxConcurrentPosts'] = net_settings.get('scMaxConcurrentPosts', 100)
                     settings['scMinPostsIntervalMs'] = net_settings.get('scMinPostsIntervalMs', 30)
                     settings['xPaddingBytes'] = net_settings.get('xPaddingBytes', "100-1000")
                     settings['xmux'] = net_settings.get('xmux', {})
                     settings["mode"] = net_settings.get("mode", "auto")
                     settings["noGRPCHeader"] = net_settings.get("noGRPCHeader", False)
+                    settings["noSSEHeader"] = net_settings.get("noSSEHeader", False)
                     settings["keepAlivePeriod"] = net_settings.get("keepAlivePeriod", 0)
+                    if net_settings.get("uplinkHTTPMethod"):
+                        settings["uplinkHTTPMethod"] = net_settings.get("uplinkHTTPMethod")
+                    if net_settings.get("scStreamUpServerSecs"):
+                        settings["scStreamUpServerSecs"] = net_settings.get("scStreamUpServerSecs")
+                    if net_settings.get("serverMaxHeaderBytes"):
+                        settings["serverMaxHeaderBytes"] = net_settings.get("serverMaxHeaderBytes")
+                    dl = net_settings.get("downloadSettings")
+                    if isinstance(dl, dict) and dl:
+                        settings["downloadSettings"] = dl
 
                 elif net == 'kcp':
                     header = net_settings.get('header', {})
@@ -481,6 +551,34 @@ class XRayConfig(dict):
                 peers.append({"publicKey": pub, "allowedIPs": [addr]})
             settings["peers"] = peers
 
+    def _apply_shadowsocks_speed_tiers(self, config: "XRayConfig", user_speed: dict) -> list:
+        """Keep all SS clients on the base inbound; assign policy levels only.
+
+        Per-tier listen ports + ``tc`` shaping are not used on the panel host:
+        Docker lacks the privileges for traffic control, and separate SS2022
+        inbounds on derived ports caused bind races and intermittent auth failures.
+        """
+        inbounds = config.get("inbounds") or []
+        ss_tags = {m["tag"] for m in (self.inbounds_by_protocol.get(ProxyTypes.Shadowsocks.value) or [])}
+        for tag in ss_tags:
+            inbound = config.get_inbound(tag)
+            if not inbound:
+                continue
+            settings = inbound.setdefault("settings", {})
+            clients = list(settings.get("clients") or [])
+            for client in clients:
+                email = client.get("email") or ""
+                try:
+                    uid = int(str(email).split(".", 1)[0])
+                except (TypeError, ValueError):
+                    continue
+                up, down = user_speed.get(uid, (None, None))
+                if up or down:
+                    client["level"] = (uid % 9000) + 100
+            settings["clients"] = clients
+        config["inbounds"] = inbounds
+        return []
+
     def get_inbound(self, tag) -> dict:
         for inbound in self.get("inbounds") or []:
             if inbound['tag'] == tag:
@@ -516,6 +614,8 @@ class XRayConfig(dict):
             query = db.query(
                 db_models.User.id,
                 db_models.User.username,
+                db_models.User.speed_limit_up,
+                db_models.User.speed_limit_down,
                 db_models.Proxy.type,
                 db_models.Proxy.settings,
                 db_models.excluded_inbounds_association.c.inbound_tag,
@@ -534,6 +634,7 @@ class XRayConfig(dict):
             # behave differently across SQLite / PostgreSQL / MySQL.
             grouped_data = defaultdict(list)
             _seen = {}
+            user_speed: dict[int, tuple] = {}
 
             for row in result:
                 proxy_type = row.type.value if hasattr(row.type, "value") else str(row.type)
@@ -544,8 +645,22 @@ class XRayConfig(dict):
                     entry = [row.id, row.username, row.settings, []]
                     _seen[key] = entry
                     grouped_data[proxy_type].append(entry)
+                user_speed[row.id] = (row.speed_limit_up, row.speed_limit_down)
                 if row.inbound_tag and row.inbound_tag not in entry[3]:
                     entry[3].append(row.inbound_tag)
+
+            # Per-user Xray policy levels (stats only — speed is enforced via tier ports + tc).
+            policy_levels = config.get("policy", {}).get("levels") or {}
+            for uid, (up, down) in user_speed.items():
+                if not up and not down:
+                    continue
+                level = str((uid % 9000) + 100)
+                policy_levels[level] = {
+                    "statsUserUplink": True,
+                    "statsUserDownlink": True,
+                }
+            if policy_levels:
+                config.setdefault("policy", {})["levels"] = policy_levels
 
             for proxy_type, rows in grouped_data.items():
 
@@ -566,6 +681,14 @@ class XRayConfig(dict):
                             "email": f"{user_id}.{username}",
                             **settings
                         }
+                        # Xray 26+ rejects flow on Trojan inbounds entirely.
+                        if inbound['protocol'] == ProxyTypes.Trojan.value:
+                            client.pop('flow', None)
+                        elif inbound['protocol'] == ProxyTypes.VLESS.value:
+                            client['flow'] = effective_vless_flow(client.get('flow'), inbound)
+                        up, down = user_speed.get(user_id, (None, None))
+                        if up or down:
+                            client["level"] = (user_id % 9000) + 100
 
                         if inbound['protocol'] == ProxyTypes.Shadowsocks.value:
                             from xray_api.types.account import is_ss2022
@@ -601,6 +724,9 @@ class XRayConfig(dict):
                         clients.append(client)
 
                 self._inject_xray_awg_peers(config, grouped_data)
+                traffic_limits = self._apply_shadowsocks_speed_tiers(config, user_speed)
+                if traffic_limits:
+                    config["traffic_limits"] = traffic_limits
 
         if DEBUG:
             with open('generated_config-debug.json', 'w') as f:

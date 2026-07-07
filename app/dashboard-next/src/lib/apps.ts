@@ -2,6 +2,16 @@
 // deep-link builder (custom URL scheme) so users can one-tap import their
 // subscription URL, plus per-platform store/download links.
 
+import {
+  clashVergeSubScheme,
+  hiddifySubScheme,
+  nekoSubScheme,
+  shadowrocketSubScheme,
+  streisandSubScheme,
+  v2boxSubScheme,
+  v2rayNgSubScheme,
+} from "./deepLink";
+
 export type Platform = "android" | "ios" | "windows" | "macos" | "linux";
 
 export interface PlatformInfo {
@@ -27,10 +37,6 @@ export interface ClientApp {
   download?: Partial<Record<Platform, string>>;
 }
 
-const enc = encodeURIComponent;
-const b64 = (s: string): string =>
-  typeof btoa !== "undefined" ? btoa(s) : Buffer.from(s, "utf-8").toString("base64");
-
 const APPS: ClientApp[] = [
   {
     id: "v2rayng",
@@ -38,7 +44,7 @@ const APPS: ClientApp[] = [
     short: "V2",
     color: "#1f6feb",
     platforms: ["android"],
-    buildScheme: (url) => `v2rayng://install-sub?url=${enc(url)}`,
+    buildScheme: (url, o) => v2rayNgSubScheme(url, o?.name),
     download: { android: "https://github.com/2dust/v2rayNG/releases" },
   },
   {
@@ -47,7 +53,7 @@ const APPS: ClientApp[] = [
     short: "NB",
     color: "#ec4899",
     platforms: ["android"],
-    buildScheme: (url) => `sn://subscription?url=${enc(url)}`,
+    buildScheme: (url, o) => nekoSubScheme(url, o?.name),
     download: { android: "https://github.com/MatsuriDayo/NekoBoxForAndroid/releases" },
   },
   {
@@ -56,8 +62,7 @@ const APPS: ClientApp[] = [
     short: "Hi",
     color: "#7c3aed",
     platforms: ["android", "ios", "windows", "macos", "linux"],
-    buildScheme: (url, o) =>
-      `hiddify://install-config?url=${enc(url)}${o?.name ? `&name=${enc(o.name)}` : ""}`,
+    buildScheme: (url, o) => hiddifySubScheme(url, o?.name),
     download: {
       android: "https://github.com/hiddify/hiddify-next/releases",
       ios: "https://apps.apple.com/app/hiddify-proxy-vpn/id6596777532",
@@ -72,7 +77,7 @@ const APPS: ClientApp[] = [
     short: "St",
     color: "#0ea5e9",
     platforms: ["ios", "macos"],
-    buildScheme: (url) => `streisand://import/${enc(url)}`,
+    buildScheme: (url, o) => streisandSubScheme(url, o?.name),
     download: { ios: "https://apps.apple.com/app/streisand/id6450534064" },
   },
   {
@@ -81,7 +86,7 @@ const APPS: ClientApp[] = [
     short: "SR",
     color: "#6366f1",
     platforms: ["ios", "macos"],
-    buildScheme: (url) => `shadowrocket://add/sub://${b64(url)}`,
+    buildScheme: (url) => shadowrocketSubScheme(url),
     download: { ios: "https://apps.apple.com/app/shadowrocket/id932747118" },
   },
   {
@@ -90,7 +95,7 @@ const APPS: ClientApp[] = [
     short: "VB",
     color: "#10b981",
     platforms: ["ios", "macos"],
-    buildScheme: (url, o) => `v2box://install-sub?url=${enc(url)}${o?.name ? `&name=${enc(o.name)}` : ""}`,
+    buildScheme: (url, o) => v2boxSubScheme(url, o?.name),
     download: { ios: "https://apps.apple.com/app/v2box-v2ray-client/id6446814690" },
   },
   {
@@ -108,8 +113,12 @@ const APPS: ClientApp[] = [
     short: "CV",
     color: "#0891b2",
     platforms: ["windows", "macos", "linux"],
-    buildScheme: (url) => `clash-verge://install-config?url=${enc(url)}`,
-    download: { windows: "https://github.com/clash-verge-rev/clash-verge-rev/releases", macos: "https://github.com/clash-verge-rev/clash-verge-rev/releases", linux: "https://github.com/clash-verge-rev/clash-verge-rev/releases" },
+    buildScheme: (url) => clashVergeSubScheme(url),
+    download: {
+      windows: "https://github.com/clash-verge-rev/clash-verge-rev/releases",
+      macos: "https://github.com/clash-verge-rev/clash-verge-rev/releases",
+      linux: "https://github.com/clash-verge-rev/clash-verge-rev/releases",
+    },
   },
 ];
 

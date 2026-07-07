@@ -2124,6 +2124,10 @@ def confirm_user_command(call: types.CallbackQuery):
                 parse_mode="HTML",
                 reply_markup=BotKeyboard.user_menu(user_info={'status': user.status, 'username': user.username}))
 
+        if user.status in (UserStatus.active, UserStatus.on_hold):
+            from app.xray.operations import propagate_user_credential_revoke
+            propagate_user_credential_revoke(db_user)
+
         if TELEGRAM_LOGGER_CHANNEL_ID:
             text = f"""\
 🚫 <b>#Revoke_sub #From_Bot</b>

@@ -7,7 +7,9 @@ import rpyc
 from config import XRAY_ASSETS_PATH, XRAY_EXECUTABLE_PATH
 from logger import logger
 from singbox import SingBoxManager, SingBoxSpec
+from speed_limit import SpeedLimitManager, peer_limits_from_spec
 from wireguard import WireGuardManager, WireGuardSpec
+from wg_autoscale import InterfaceSpec, WireGuardAutoScale
 from xray import XRayConfig, XRayCore
 
 
@@ -48,35 +50,50 @@ class XrayService(rpyc.Service):
         self.core = None
         self.connection = None
         self.wg = WireGuardManager()
+        self.wg_autoscale = WireGuardAutoScale()
         self.singbox = SingBoxManager()
+        self.speed_limit = SpeedLimitManager()
+
+    def _close_stale_connection(self, conn, *, new_peer: str) -> None:
+        """Drop a superseded panel session without tearing down the active one."""
+        old_peer = getattr(conn, "peer", "?")
+        if old_peer == new_peer:
+            logger.warning(
+                f"New connection from {new_peer} replaced stale panel session")
+        else:
+            logger.warning(
+                f"New connection from {new_peer} took over from {old_peer}")
+        try:
+            if not conn.closed:
+                conn.close()
+        except Exception:
+            pass
 
     def on_connect(self, conn):
-        if self.connection:
-            try:
-                self.connection.ping()
-                if self.connection.peer is not None:
-                    logger.warning(
-                        f'New connection rejected, already connected to {self.connection.peer}')
-                return conn.close()
-            except (EOFError, TimeoutError, AttributeError):
-                if hasattr(self.connection, "peer"):
-                    logger.warning(
-                        f'Previous connection from {self.connection.peer} has lost')
-
         peer, _ = socket.getpeername(conn._channel.stream.sock)
+        conn.peer = peer
+
+        old = self.connection
         self.connection = conn
-        self.connection.peer = peer
-        logger.warning(f'Connected to {self.connection.peer}')
+        if old is not None and old is not conn:
+            self._close_stale_connection(old, new_peer=peer)
+
+        logger.warning(f"Connected to {peer}")
 
     def on_disconnect(self, conn):
-        if conn is self.connection:
-            logger.warning(f'Disconnected from {self.connection.peer}')
+        if conn is not self.connection:
+            return
 
-            if self.core is not None:
+        logger.warning(f"Disconnected from {getattr(conn, 'peer', '?')}")
+
+        if self.core is not None:
+            try:
                 self.core.stop()
+            except Exception:
+                pass
 
-            self.core = None
-            self.connection = None
+        self.core = None
+        self.connection = None
 
     def _panel_peer_ip(self) -> str:
         conn = self.connection
@@ -150,20 +167,34 @@ class XrayService(rpyc.Service):
         else:
             # Legacy callers may still pass a netref dict — obtain locally first.
             plain = obtain(spec)
-        self.wg.apply(WireGuardSpec.from_dict(plain))
+        wg_spec = WireGuardSpec.from_dict(plain)
+        self.wg.apply(wg_spec)
+        limits = peer_limits_from_spec(plain)
+        if limits:
+            self.speed_limit.apply_wireguard(wg_spec.interface, limits)
 
     @rpyc.exposed
     def wg_apply_json(self, spec_json: str):
         import json
 
-        self.wg.apply(WireGuardSpec.from_dict(json.loads(spec_json)))
+        plain = json.loads(spec_json)
+        wg_spec = WireGuardSpec.from_dict(plain)
+        self.wg.apply(wg_spec)
+        limits = peer_limits_from_spec(plain)
+        if limits:
+            self.speed_limit.apply_wireguard(wg_spec.interface, limits)
 
     @rpyc.exposed
     def wg_apply_specs_json(self, specs_json: str):
         import json
 
-        specs = [WireGuardSpec.from_dict(item) for item in json.loads(specs_json)]
+        raw = json.loads(specs_json)
+        specs = [WireGuardSpec.from_dict(item) for item in raw]
         self.wg.apply_specs(specs)
+        for plain, wg_spec in zip(raw, specs):
+            limits = peer_limits_from_spec(plain)
+            if limits:
+                self.speed_limit.apply_wireguard(wg_spec.interface, limits)
 
     @rpyc.exposed
     def wg_transfer(self, interface: str) -> str:
@@ -177,6 +208,74 @@ class XrayService(rpyc.Service):
     @rpyc.exposed
     def wg_amnezia_available(self) -> bool:
         return self.wg.amnezia_available()
+
+    @rpyc.exposed
+    def wg_recover_awg_interface(self, interface: str) -> bool:
+        return self.wg.recover_awg_interface(interface)
+
+    @rpyc.exposed
+    def wg_reconcile_awg_endpoints(self, interface: str, stale_sec: int = 180) -> int:
+        return self.wg.reconcile_awg_endpoints(interface, stale_sec=int(stale_sec))
+
+    @rpyc.exposed
+    def wg_flush_bad_endpoints(self, interface: str) -> int:
+        return self.wg.flush_bad_endpoints(interface)
+
+    @rpyc.exposed
+    def wg_prepare_peer_for_connect(self, interface: str, public_key: str) -> bool:
+        return self.wg.prepare_peer_for_connect(interface, public_key)
+
+    @rpyc.exposed
+    def wg_flush_stale_peers(
+        self, interface: str, max_age_sec: int = 35, idle_sec: int = 5, traffic_only: bool = True
+    ) -> int:
+        return self.wg.flush_stale_peers(
+            interface,
+            max_age_sec=int(max_age_sec),
+            idle_sec=int(idle_sec),
+            traffic_only=bool(traffic_only),
+        )
+
+    @rpyc.exposed
+    def wg_autoscale_create_interface_json(self, spec_json: str):
+        import json
+
+        self.wg_autoscale.create_interface(InterfaceSpec.from_dict(json.loads(spec_json)))
+
+    @rpyc.exposed
+    def wg_autoscale_hot_add_peer(
+        self, interface: str, public_key: str, allowed_ips: str, preshared_key: str = ""
+    ):
+        self.wg_autoscale.hot_add_peer(
+            interface,
+            public_key,
+            allowed_ips,
+            preshared_key=preshared_key or None,
+        )
+
+    @rpyc.exposed
+    def wg_autoscale_toggle_peer(
+        self, interface: str, public_key: str, active: bool, allowed_ips: str, preshared_key: str = ""
+    ):
+        self.wg_autoscale.toggle_peer(
+            interface,
+            public_key,
+            active=bool(active),
+            allowed_ips=allowed_ips,
+            preshared_key=preshared_key or None,
+        )
+
+    @rpyc.exposed
+    def wg_autoscale_show_dump_json(self) -> str:
+        import json
+
+        return json.dumps(self.wg_autoscale.show_dump_all())
+
+    @rpyc.exposed
+    def wg_autoscale_transfer_json(self, interface: str) -> str:
+        import json
+
+        return json.dumps(self.wg_autoscale.get_transfer(interface))
 
     @rpyc.exposed
     def singbox_apply_json(self, spec_json: str):
@@ -202,6 +301,11 @@ class XrayService(rpyc.Service):
         from tls_inspect import inspect_cert_file
 
         return json.dumps(inspect_cert_file(certificate_path))
+
+    @rpyc.exposed
+    def channel_ping(self) -> bool:
+        """Cheap liveness probe for the panel control channel."""
+        return True
 
     @rpyc.exposed
     def fetch_xray_version(self):

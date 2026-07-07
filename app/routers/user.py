@@ -17,11 +17,13 @@ from app.models.user import (
     UsersResponse,
     UserStatus,
     UserStatusCreate,
+    UserDataLimitResetStrategy,
     UsersUsagesResponse,
     UserUsagesResponse,
 )
 from app.rbac import require_permission
 from app.utils import report, responses
+from app.services.user_bulk import BulkInboundRequest, BulkUserCreateBody, BulkExtendRequest, BulkResetUsageRequest
 
 router = APIRouter(tags=["User"], prefix="/api", responses={401: responses._401})
 
@@ -30,6 +32,64 @@ class UserFromTemplateCreate(BaseModel):
     username: str
     template_id: int
     status: UserStatusCreate = UserStatusCreate.active  # noqa: F821
+
+
+class BulkFromTemplateCreate(BaseModel):
+    template_id: int
+    count: int
+    status: UserStatusCreate = UserStatusCreate.active
+    username_prefix: Optional[str] = None
+    username_suffix: Optional[str] = None
+
+
+def _user_create_from_db_template(db_tpl, *, username: str, status: UserStatusCreate) -> UserCreate:
+    from app.models.user_template import UserTemplateResponse, NATIVE_TEMPLATE_MARKERS
+    from app.models.user import NextPlanModel
+
+    tpl = UserTemplateResponse.model_validate(db_tpl)
+    if db_tpl.username_prefix:
+        username = f"{db_tpl.username_prefix}{username}"
+    if db_tpl.username_suffix:
+        username = f"{db_tpl.username_suffix}{username}"
+
+    proxies = {ptype: {} for ptype in tpl.inbounds}
+    wg_kind = None
+    for inbound in db_tpl.inbounds or []:
+        if inbound.tag in NATIVE_TEMPLATE_MARKERS:
+            tag_kind = inbound.tag.replace("__native:", "")
+            if tag_kind == "amneziawg":
+                wg_kind = "amneziawg" if wg_kind != "wireguard" else "both"
+            elif tag_kind == "wireguard":
+                wg_kind = "wireguard" if wg_kind != "amneziawg" else "both"
+    if wg_kind and ProxyTypes.WireGuard in proxies:
+        from app.wireguard.kind import NXPANEL_WG_KIND
+
+        proxies[ProxyTypes.WireGuard] = {NXPANEL_WG_KIND: wg_kind}
+
+    expire = 0
+    if tpl.expire_duration:
+        expire = int(
+            (datetime.now(timezone.utc) + timedelta(seconds=tpl.expire_duration)).timestamp()
+        )
+
+    next_plan = None
+    if getattr(db_tpl, "next_plan", None):
+        next_plan = NextPlanModel.model_validate(db_tpl.next_plan)
+
+    reset_strategy = getattr(db_tpl, "data_limit_reset_strategy", None)
+    note = getattr(db_tpl, "note", None) or ""
+
+    return UserCreate(
+        username=username,
+        proxies=proxies,
+        inbounds=tpl.inbounds,
+        data_limit=tpl.data_limit if tpl.data_limit is not None else 0,
+        expire=expire,
+        status=status,
+        note=note,
+        data_limit_reset_strategy=reset_strategy or UserDataLimitResetStrategy.no_reset,
+        next_plan=next_plan,
+    )
 
 
 def _ensure_protocol_enabled(proxy_type, db: Session) -> None:
@@ -64,6 +124,14 @@ def _ensure_protocol_enabled(proxy_type, db: Session) -> None:
             raise HTTPException(
                 status_code=400,
                 detail="TUIC has no configured node on your server",
+            )
+        return
+    if proxy_type == ProxyTypes.AnyTLS:
+        nodes = crud.get_singbox_nodes(db)
+        if not any(n.singbox and n.singbox.anytls_enabled for n in nodes):
+            raise HTTPException(
+                status_code=400,
+                detail="AnyTLS has no configured node on your server",
             )
         return
     if not xray.config.inbounds_by_protocol.get(proxy_type):
@@ -139,47 +207,19 @@ def add_user_from_template(
     db_tpl = crud.get_user_template(db, body.template_id)
     if db_tpl is None:
         raise HTTPException(status_code=404, detail="Template not found")
-    tpl = UserTemplateResponse.model_validate(db_tpl)
 
-    username = body.username.strip()
-    if db_tpl.username_prefix:
-        username = f"{db_tpl.username_prefix}{username}"
-    if db_tpl.username_suffix:
-        username = f"{db_tpl.username_suffix}{username}"
+    status = body.status
+    if status is None and getattr(db_tpl, "default_status", None):
+        status = UserStatusCreate(db_tpl.default_status.value)
 
-    proxies = {ptype: {} for ptype in tpl.inbounds}
-    wg_kind = None
-    for inbound in db_tpl.inbounds or []:
-        from app.models.user_template import NATIVE_TEMPLATE_MARKERS
+    try:
+        new_user = _user_create_from_db_template(db_tpl, username=body.username.strip(), status=status)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        if inbound.tag in NATIVE_TEMPLATE_MARKERS:
-            tag_kind = inbound.tag.replace("__native:", "")
-            if tag_kind == "amneziawg":
-                wg_kind = "amneziawg" if wg_kind != "wireguard" else "both"
-            elif tag_kind == "wireguard":
-                wg_kind = "wireguard" if wg_kind != "amneziawg" else "both"
-    if wg_kind and ProxyTypes.WireGuard in proxies:
-        from app.wireguard.kind import NXPANEL_WG_KIND
-
-        proxies[ProxyTypes.WireGuard] = {NXPANEL_WG_KIND: wg_kind}
-
-    for ptype in proxies:
+    for ptype in new_user.proxies:
         _ensure_protocol_enabled(ptype, db)
 
-    expire = 0
-    if tpl.expire_duration:
-        expire = int(
-            (datetime.now(timezone.utc) + timedelta(seconds=tpl.expire_duration)).timestamp()
-        )
-
-    new_user = UserCreate(
-        username=username,
-        proxies=proxies,
-        inbounds=tpl.inbounds,
-        data_limit=tpl.data_limit if tpl.data_limit is not None else 0,
-        expire=expire,
-        status=body.status,
-    )
     try:
         dbuser = crud.create_user(db, new_user, admin=crud.get_admin(db, admin.username))
     except ValueError as exc:
@@ -195,6 +235,151 @@ def add_user_from_template(
     report.user_created(user=user, user_id=dbuser.id, by=admin, user_admin=dbuser.admin)
     logger.info(f'New user "{dbuser.username}" added from template {body.template_id}')
     return user
+
+
+@router.post(
+    "/user/from-template/bulk",
+    responses={400: responses._400, 403: responses._403, 404: responses._404},
+)
+def bulk_users_from_template(
+    body: BulkFromTemplateCreate,
+    bg: BackgroundTasks,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(require_permission("users:write")),
+):
+    """Create many users from a template with random usernames (Marzban-style bulk)."""
+    import secrets
+    import string
+
+    if body.count < 1 or body.count > 500:
+        raise HTTPException(status_code=400, detail="count must be between 1 and 500")
+
+    db_tpl = crud.get_user_template(db, body.template_id)
+    if db_tpl is None:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    status = body.status
+    if getattr(db_tpl, "default_status", None):
+        status = UserStatusCreate(db_tpl.default_status.value)
+
+    prefix = body.username_prefix or db_tpl.username_prefix or ""
+    suffix = body.username_suffix or db_tpl.username_suffix or ""
+    dbadmin = crud.get_admin(db, admin.username)
+
+    created: List[str] = []
+    errors: List[str] = []
+    alphabet = string.ascii_lowercase + string.digits
+
+    for _ in range(body.count):
+        core = "".join(secrets.choice(alphabet) for _ in range(8))
+        username = f"{prefix}{core}{suffix}"
+        try:
+            new_user = _user_create_from_db_template(db_tpl, username=username, status=status)
+            for ptype in new_user.proxies:
+                _ensure_protocol_enabled(ptype, db)
+            dbuser = crud.create_user(db, new_user, admin=dbadmin)
+            created.append(dbuser.username)
+        except IntegrityError:
+            db.rollback()
+            errors.append(f"{username}: already exists")
+        except Exception as exc:
+            errors.append(f"{username}: {exc}")
+
+    if created:
+        bg.add_task(xray.operations.sync_core_users_async)
+
+    logger.info("Bulk template %s: created %s users", body.template_id, len(created))
+    return {"created": len(created), "usernames": created, "errors": errors}
+
+
+@router.post(
+    "/users/bulk/inbounds/preview",
+    responses={400: responses._400, 403: responses._403},
+)
+def bulk_inbound_preview(
+    body: BulkInboundRequest,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(require_permission("users:read")),
+):
+    """Preview how many users would be affected by a bulk inbound add/remove."""
+    from app.services.user_bulk import preview_bulk_inbound
+
+    try:
+        return preview_bulk_inbound(db, body, admin=admin)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post(
+    "/users/bulk/inbounds",
+    responses={400: responses._400, 403: responses._403},
+)
+def bulk_inbound_apply(
+    body: BulkInboundRequest,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(require_permission("users:write")),
+):
+    """Add or remove an Xray inbound tag for many users in one fast operation."""
+    from app.services.user_bulk import apply_bulk_inbound
+
+    try:
+        return apply_bulk_inbound(db, body, admin=admin)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post(
+    "/users/bulk/create",
+    responses={400: responses._400, 403: responses._403},
+)
+def bulk_create_users(
+    body: BulkUserCreateBody,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(require_permission("users:write")),
+):
+    """Create many users with shared limits, protocols, and inbounds (template optional)."""
+    from app.services.user_bulk import bulk_create_users as run_bulk_create
+
+    try:
+        return run_bulk_create(db, body, admin=admin)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post(
+    "/users/bulk/extend",
+    responses={400: responses._400, 403: responses._403},
+)
+def bulk_extend_users(
+    body: BulkExtendRequest,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(require_permission("users:write")),
+):
+    """Add days to expiry for many users at once."""
+    from app.services.user_bulk import apply_bulk_extend
+
+    try:
+        return apply_bulk_extend(db, body, admin=admin)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post(
+    "/users/bulk/reset-usage",
+    responses={400: responses._400, 403: responses._403},
+)
+def bulk_reset_users_usage(
+    body: BulkResetUsageRequest,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(require_permission("users:write")),
+):
+    """Reset data usage for many users at once."""
+    from app.services.user_bulk import apply_bulk_reset_usage
+
+    try:
+        return apply_bulk_reset_usage(db, body, admin=admin)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/user/{username}", response_model=UserResponse, responses={403: responses._403, 404: responses._404})
@@ -233,11 +418,22 @@ def modify_user(
         _ensure_protocol_enabled(proxy_type, db)
 
     old_status = dbuser.status
+    old_speed_up = dbuser.speed_limit_up
+    old_speed_down = dbuser.speed_limit_down
     dbuser = crud.update_user(db, dbuser, modified_user)
     user = UserResponse.model_validate(dbuser)
 
+    speed_changed = (
+        dbuser.speed_limit_up != old_speed_up or dbuser.speed_limit_down != old_speed_down
+    )
+
     if user.status in [UserStatus.active, UserStatus.on_hold]:
-        bg.add_task(xray.operations.sync_core_users_async)
+        bg.add_task(xray.operations.sync_core_users_async, full=speed_changed)
+        if speed_changed:
+            from app.singbox.operations import sync_user_change
+            from app.wireguard.operations import sync_user_change as wg_sync_user_change
+            bg.add_task(sync_user_change)
+            bg.add_task(wg_sync_user_change)
     else:
         xray.operations.remove_user_immediate(dbuser)
 
@@ -305,6 +501,19 @@ def reset_user_data_usage(
     return dbuser
 
 
+@router.post("/user/{username}/rotate_sub", response_model=UserResponse, responses={403: responses._403, 404: responses._404})
+def rotate_user_subscription_link(
+    db: Session = Depends(get_db),
+    dbuser: UserResponse = Depends(get_validated_user),
+    admin: Admin = Depends(require_permission("users:write")),
+):
+    """Rotate subscription link only (sub_token); proxy UUIDs stay unchanged."""
+    dbuser = crud.rotate_user_sub_link(db=db, dbuser=dbuser)
+    user = UserResponse.model_validate(dbuser)
+    logger.info(f'User "{dbuser.username}" subscription link rotated')
+    return user
+
+
 @router.post("/user/{username}/revoke_sub", response_model=UserResponse, responses={403: responses._403, 404: responses._404})
 def revoke_user_subscription(
     bg: BackgroundTasks,
@@ -316,7 +525,7 @@ def revoke_user_subscription(
     dbuser = crud.revoke_user_sub(db=db, dbuser=dbuser)
 
     if dbuser.status in [UserStatus.active, UserStatus.on_hold]:
-        bg.add_task(xray.operations.update_user, dbuser=dbuser)
+        bg.add_task(xray.operations.propagate_user_credential_revoke, dbuser=dbuser)
     user = UserResponse.model_validate(dbuser)
     bg.add_task(
         report.user_subscription_revoked, user=user, user_admin=dbuser.admin, by=admin
@@ -335,6 +544,11 @@ def get_users(
     search: Union[str, None] = None,
     owner: Union[List[str], None] = Query(None, alias="admin"),
     status: UserStatus = None,
+    protocol: str = None,
+    inbound_tag: str = None,
+    source_slug: str = None,
+    expiring_within_days: int = None,
+    near_limit_percent: int = None,
     sort: str = None,
     db: Session = Depends(get_db),
     admin: Admin = Depends(require_permission("users:read")),
@@ -360,10 +574,28 @@ def get_users(
         status=status,
         sort=sort,
         admins=owner if admin.is_sudo else [admin.username],
+        protocol=protocol,
+        inbound_tag=inbound_tag,
+        source_slug=source_slug,
+        expiring_within_days=expiring_within_days,
+        near_limit_percent=near_limit_percent,
         return_with_count=True,
     )
 
     return {"users": users, "total": count}
+
+
+@router.get(
+    "/users/filter-options",
+    responses={403: responses._403},
+)
+def get_users_filter_options(
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(require_permission("users:read")),
+):
+    """Source servers, inbound tags, and protocols for the users list filters."""
+    dbadmin = crud.get_admin(db, admin.username)
+    return crud.get_user_list_filter_options(db, admin=dbadmin)
 
 
 @router.post("/users/reset", responses={403: responses._403, 404: responses._404})
@@ -464,7 +696,10 @@ def active_next_plan(
     """Reset user by next plan"""
     dbuser = crud.reset_user_by_next(db=db, dbuser=dbuser)
 
-    if (dbuser is None or dbuser.next_plan is None):
+    # crud.reset_user_by_next returns None only when the user had no next plan.
+    # On success it returns the user with next_plan already cleared, so we must
+    # NOT treat a null next_plan as failure here.
+    if dbuser is None:
         raise HTTPException(
             status_code=404,
             detail="User doesn't have next plan",

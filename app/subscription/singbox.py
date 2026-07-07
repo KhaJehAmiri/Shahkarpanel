@@ -70,11 +70,20 @@ class SingBoxConfiguration(str):
 
     @staticmethod
     def tls_config(sni=None, fp=None, tls=None, pbk=None,
-                   sid=None, alpn=None, ais=None):
+                   sid=None, alpn=None, ais=None, fragment=False):
 
         config = {}
         if tls in ['tls', 'reality']:
             config["enabled"] = True
+
+        # TLS ClientHello fragmentation (sing-box >= 1.12.0). When the host has a
+        # fragment_setting we split the handshake to evade SNI-based DPI. sing-box
+        # doesn't take the Xray length/interval tuple — it's a boolean plus a
+        # fallback delay — so we map "fragment enabled" to record+packet frag.
+        if fragment and tls in ['tls', 'reality']:
+            config["fragment"] = True
+            config["record_fragment"] = True
+            config["fragment_fallback_delay"] = "500ms"
 
         if sni is not None:
             config["server_name"] = sni
@@ -141,11 +150,13 @@ class SingBoxConfiguration(str):
 
         return config
 
-    def grpc_config(self, path=''):
+    def grpc_config(self, path='', host=''):
         config = copy.deepcopy(self.settings.get("grpcSettings", {}))
 
         if path:
             config["service_name"] = path
+        if host:
+            config["authority"] = host
 
         return config
 
@@ -193,7 +204,7 @@ class SingBoxConfiguration(str):
                 )
 
             elif transport_type == "grpc":
-                transport_config = self.grpc_config(path=path)
+                transport_config = self.grpc_config(path=path, host=host)
 
             elif transport_type == "httpupgrade":
                 transport_config = self.httpupgrade_config(
@@ -224,6 +235,7 @@ class SingBoxConfiguration(str):
                       ais='',
                       mux_enable: bool = False,
                       random_user_agent: bool = False,
+                      fragment: bool = False,
                       ):
 
         if isinstance(port, str):
@@ -272,7 +284,7 @@ class SingBoxConfiguration(str):
         if tls in ('tls', 'reality'):
             config['tls'] = self.tls_config(sni=sni, fp=fp, tls=tls,
                                             pbk=pbk, sid=sid, alpn=alpn,
-                                            ais=ais)
+                                            ais=ais, fragment=fragment)
 
         mux_json = json.loads(self.mux_template)
         mux_config = mux_json["sing-box"]
@@ -283,12 +295,12 @@ class SingBoxConfiguration(str):
 
         return config
 
-    def add(self, remark: str, address: str, inbound: dict, settings: dict):
+    def add(self, remark: str, address: str, inbound: dict, settings: dict, **kwargs):
 
         net = inbound["network"]
         path = inbound["path"]
 
-        # not supported by sing-box
+        # Vanilla sing-box has no kcp/splithttp/xhttp V2Ray transports (use mihomo or a fork).
         if net in ("kcp", "splithttp", "xhttp") or (net == "quic" and inbound["header_type"] != "none"):
             return
 
@@ -318,7 +330,8 @@ class SingBoxConfiguration(str):
             headers=inbound['header_type'],
             ais=inbound.get('ais', ''),
             mux_enable=inbound.get('mux_enable', False),
-            random_user_agent=inbound.get('random_user_agent', False),)
+            random_user_agent=inbound.get('random_user_agent', False),
+            fragment=bool(inbound.get('fragment_setting')),)
 
         if inbound['protocol'] == 'vmess':
             outbound['uuid'] = settings['id']

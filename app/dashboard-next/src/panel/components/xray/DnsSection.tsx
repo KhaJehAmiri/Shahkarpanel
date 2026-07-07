@@ -106,6 +106,32 @@ export const DnsSection: FC<{
           <Checkbox checked={Boolean(dns.disableCache)} onChange={() => patchDns({ disableCache: !dns.disableCache })} />
           <span>{t("xray.dnsDisableCache")}</span>
         </label>
+        <label className="nx-row" style={{ gap: 8, cursor: "pointer", marginTop: 8 }}>
+          <Checkbox
+            checked={Boolean((dns.fakeDns as Record<string, unknown> | undefined)?.enabled)}
+            onChange={() => {
+              const fake = (dns.fakeDns as Record<string, unknown> | undefined) || {};
+              patchDns({ fakeDns: { ...fake, enabled: !fake.enabled } });
+            }}
+          />
+          <span>{t("xray.dnsFakeDns", "Enable fake DNS")}</span>
+        </label>
+        <Field label={t("xray.dnsSplitServers", "Split-horizon servers (JSON)")} hint={t("xray.dnsSplitHint", "Optional per-domain DNS servers as JSON array.")}>
+          <textarea
+            className="nx-input"
+            rows={4}
+            value={typeof dns.servers === "object" ? JSON.stringify(dns.servers, null, 2) : text}
+            onChange={(e: ChangeEvent<HTMLTextAreaElement>) => {
+              try {
+                const parsed = JSON.parse(e.target.value);
+                if (Array.isArray(parsed)) patchDns({ servers: parsed });
+              } catch {
+                setServers(e.target.value);
+              }
+            }}
+            style={{ fontFamily: "var(--nx-font-mono)", fontSize: 12 }}
+          />
+        </Field>
       </Card>
       <div className="nx-row" style={{ justifyContent: "flex-end" }}>
         <Button variant="primary" disabled={saving} onClick={onSave}>{t("common.save")}</Button>

@@ -31,9 +31,9 @@ def apply_plan_to_user(db: Session, user: User, plan: Plan) -> User:
         status=UserStatusModify.active,
         proxies={},
         inbounds={},
+        device_limit=plan.device_limit,
     )
     user = crud.update_user(db, user, modify)
-    user = crud.reset_user_data_usage(db, user)
     return user
 
 

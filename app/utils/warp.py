@@ -60,9 +60,15 @@ def _headers(token: Optional[str] = None) -> dict:
 def _reserved_from_client_id(client_id: str) -> list[int]:
     try:
         raw = base64.b64decode(client_id)
-        return [b for b in raw[:3]]
     except Exception:
         return [0, 0, 0]
+    # WireGuard's "reserved" field is always exactly 3 bytes; a missing or
+    # short client_id must fall back to the zeroed default rather than
+    # silently emitting a malformed (shorter) array that would break the
+    # handshake.
+    if len(raw) < 3:
+        return [0, 0, 0]
+    return list(raw[:3])
 
 
 def _build_outbound(account: dict, tag: str = "warp") -> dict:
@@ -92,6 +98,11 @@ def _build_outbound(account: dict, tag: str = "warp") -> dict:
 
     reserved = _reserved_from_client_id(cfg.get("client_id", ""))
 
+    from app.xray.warp_routing import resolve_warp_endpoint_ip
+
+    endpoint_ip = resolve_warp_endpoint_ip()
+    peer_endpoint = f"{endpoint_ip}:{DEFAULT_ENDPOINT.rsplit(':', 1)[-1]}" if endpoint_ip else endpoint
+
     return {
         "tag": tag,
         "protocol": "wireguard",
@@ -101,19 +112,20 @@ def _build_outbound(account: dict, tag: str = "warp") -> dict:
             "peers": [
                 {
                     "publicKey": peer_public,
-                    "endpoint": endpoint,
+                    "endpoint": peer_endpoint,
                     "allowedIPs": ["0.0.0.0/0", "::/0"],
                 }
             ],
             "reserved": reserved,
             "mtu": 1280,
             "workers": 2,
+            "noKernelTun": True,
         },
     }
 
 
 def load_warp_data() -> Optional[dict]:
-    """Return the persisted WARP account, or None if not registered."""
+    """Return the persisted WARP store, or None if not registered."""
     if not os.path.exists(WARP_DATA):
         return None
     try:
@@ -123,28 +135,84 @@ def load_warp_data() -> Optional[dict]:
         return None
 
 
+def _normalize_store(raw: Optional[dict]) -> dict:
+    if not raw:
+        return {"accounts": {}, "default": None}
+    if isinstance(raw.get("accounts"), dict):
+        return raw
+    tag = str(raw.get("tag") or "warp")
+    return {"accounts": {tag: raw}, "default": tag}
+
+
+def _account_from_store(store: dict, tag: Optional[str] = None) -> Optional[dict]:
+    accounts = store.get("accounts") or {}
+    if not accounts:
+        return None
+    key = tag or store.get("default") or next(iter(accounts))
+    return accounts.get(key)
+
+
 def save_warp_data(data: dict) -> None:
     with open(WARP_DATA, "w") as f:
         json.dump(data, f, indent=2)
 
 
-def delete_warp_data() -> None:
+def save_warp_account(tag: str, account: dict) -> None:
+    store = _normalize_store(load_warp_data())
+    store.setdefault("accounts", {})[tag] = account
+    if not store.get("default"):
+        store["default"] = tag
+    save_warp_data(store)
+
+
+def delete_warp_data(tag: Optional[str] = None) -> None:
+    if tag:
+        store = _normalize_store(load_warp_data())
+        accounts = store.get("accounts") or {}
+        accounts.pop(tag, None)
+        if store.get("default") == tag:
+            store["default"] = next(iter(accounts), None)
+        store["accounts"] = accounts
+        if accounts:
+            save_warp_data(store)
+        elif os.path.exists(WARP_DATA):
+            os.remove(WARP_DATA)
+        return
     if os.path.exists(WARP_DATA):
         os.remove(WARP_DATA)
 
 
-def _sanitize(account: dict) -> dict:
+def list_warp_accounts() -> dict:
+    store = _normalize_store(load_warp_data())
+    accounts = store.get("accounts") or {}
+    return {
+        "default": store.get("default"),
+        "accounts": {
+            tag: _sanitize(acct, tag=tag)
+            for tag, acct in accounts.items()
+        },
+    }
+
+
+def _sanitize(account: dict, tag: str = "warp") -> dict:
     """Public view of the account (no secretKey leakage beyond the outbound)."""
     cfg = account.get("config", {})
     cf_account = cfg.get("account", {}) if isinstance(cfg, dict) else {}
+    is_plus = bool(cf_account.get("warp_plus"))
+    # Cloudflare's client API reports account_type "free" for every personal
+    # device regardless of Plus status; `warp_plus` is the real signal for a
+    # license/referral upgrade, so it must win over the literal "free" string.
+    account_type = "plus" if is_plus else (cf_account.get("account_type") or "free")
     return {
+        "tag": tag,
         "device_id": account.get("device_id"),
         "license_key": account.get("license_key"),
-        "account_type": cf_account.get("account_type") or cf_account.get("warp_plus") and "warp_plus" or "free",
+        "account_type": account_type,
+        "warp_plus": is_plus,
         "premium_data": cf_account.get("premium_data"),
         "quota": cf_account.get("quota"),
         "registered": True,
-        "outbound": _build_outbound(account),
+        "outbound": _build_outbound(account, tag=tag),
     }
 
 
@@ -209,20 +277,24 @@ def register_warp(tag: str = "warp") -> dict:
     if isinstance(account["config"], dict):
         account["config"].setdefault("account", cf_account)
 
-    save_warp_data(account)
-    return _sanitize(account)
+    save_warp_account(tag, account)
+    return _sanitize(account, tag=tag)
 
 
-def get_warp() -> Optional[dict]:
-    account = load_warp_data()
+def get_warp(tag: Optional[str] = None) -> Optional[dict]:
+    store = _normalize_store(load_warp_data())
+    account = _account_from_store(store, tag)
     if not account:
         return None
-    return _sanitize(account)
+    resolved = tag or store.get("default") or "warp"
+    return _sanitize(account, tag=resolved)
 
 
-def set_warp_license(license_key: str) -> dict:
+def set_warp_license(license_key: str, tag: Optional[str] = None) -> dict:
     """Apply a WARP+ license key to the registered device."""
-    account = load_warp_data()
+    store = _normalize_store(load_warp_data())
+    resolved = tag or store.get("default") or "warp"
+    account = _account_from_store(store, resolved)
     if not account:
         raise WarpError("No WARP device registered yet")
 
@@ -254,5 +326,5 @@ def set_warp_license(license_key: str) -> dict:
         account["account"] = body
         if isinstance(account.get("config"), dict):
             account["config"]["account"] = body
-    save_warp_data(account)
-    return _sanitize(account)
+    save_warp_account(resolved, account)
+    return _sanitize(account, tag=resolved)

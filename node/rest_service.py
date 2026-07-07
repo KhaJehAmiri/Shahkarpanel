@@ -2,6 +2,7 @@ import asyncio
 import hmac
 import json
 import time
+from typing import Optional
 from uuid import UUID, uuid4
 
 from fastapi import (APIRouter, Body, FastAPI, HTTPException, Request,
@@ -14,7 +15,9 @@ from starlette.websockets import WebSocketDisconnect
 from config import XRAY_ASSETS_PATH, XRAY_EXECUTABLE_PATH
 from logger import logger
 from singbox import SingBoxManager, SingBoxSpec
+from speed_limit import SpeedLimitManager, peer_limits_from_spec, port_limits_from_spec
 from wireguard import WireGuardManager, WireGuardSpec
+from wg_autoscale import InterfaceSpec, WireGuardAutoScale
 from xray import XRayConfig, XRayCore
 
 app = FastAPI()
@@ -45,7 +48,9 @@ class Service(object):
         self.core_version = self.core.get_version()
         self.config = None
         self.wg = WireGuardManager()
+        self.wg_autoscale = WireGuardAutoScale()
         self.singbox = SingBoxManager()
+        self.speed_limit = SpeedLimitManager()
 
         self.router.add_api_route("/", self.base, methods=["POST"])
         self.router.add_api_route("/ping", self.ping, methods=["POST"])
@@ -62,6 +67,22 @@ class Service(object):
         self.router.add_api_route("/wg/transfer", self.wg_transfer, methods=["POST"])
         self.router.add_api_route("/wg/down", self.wg_down, methods=["POST"])
         self.router.add_api_route("/wg/amnezia-available", self.wg_amnezia_available, methods=["POST"])
+        # RPyC-parity endpoints (Phase 11.3 fixed a "connect once, reconnect
+        # never" mobile bug by adding these on the RPyC side only —
+        # rpyc_service.py: wg_reconcile_awg_endpoints/wg_prepare_peer_for_connect/
+        # wg_flush_stale_peers/wg_recover_awg_interface/wg_flush_bad_endpoints.
+        # REST-detected nodes never got them, so the same bug silently came
+        # back on any node the panel talks to over REST (see AUDIT_FINDINGS.md H1).
+        self.router.add_api_route("/wg/reconcile-endpoints", self.wg_reconcile_endpoints, methods=["POST"])
+        self.router.add_api_route("/wg/prepare-peer", self.wg_prepare_peer, methods=["POST"])
+        self.router.add_api_route("/wg/flush-stale-peers", self.wg_flush_stale_peers, methods=["POST"])
+        self.router.add_api_route("/wg/recover-interface", self.wg_recover_interface, methods=["POST"])
+        self.router.add_api_route("/wg/flush-bad-endpoints", self.wg_flush_bad_endpoints, methods=["POST"])
+        self.router.add_api_route("/wg/autoscale/create-interface", self.wg_autoscale_create_interface, methods=["POST"])
+        self.router.add_api_route("/wg/autoscale/hot-add", self.wg_autoscale_hot_add, methods=["POST"])
+        self.router.add_api_route("/wg/autoscale/toggle", self.wg_autoscale_toggle, methods=["POST"])
+        self.router.add_api_route("/wg/autoscale/dump", self.wg_autoscale_dump, methods=["POST"])
+        self.router.add_api_route("/wg/autoscale/transfer", self.wg_autoscale_transfer, methods=["POST"])
         # sing-box product endpoints (Hysteria2/TUIC). Same declarative model:
         # the panel pushes the full inbound+user spec and reads per-user traffic.
         self.router.add_api_route("/singbox/apply", self.singbox_apply, methods=["POST"])
@@ -69,6 +90,7 @@ class Service(object):
         self.router.add_api_route("/singbox/down", self.singbox_down, methods=["POST"])
         self.router.add_api_route("/singbox/tls/status", self.singbox_tls_status, methods=["POST"])
         self.router.add_api_route("/xray/upgrade", self.xray_upgrade, methods=["POST"])
+        self.router.add_api_route("/outbound/test", self.outbound_test, methods=["POST"])
 
         self.router.add_websocket_route("/logs", self.logs)
 
@@ -253,6 +275,12 @@ class Service(object):
         self.core_version = self.core.get_version()
         return self.response(version=version)
 
+    def outbound_test(self, session_id: UUID = Body(embed=True), outbound: dict = Body(embed=True)):
+        self.match_session_id(session_id)
+        from outbound_test import test_outbound_tcp
+
+        return test_outbound_tcp(outbound)
+
     def wg_apply(self, session_id: UUID = Body(embed=True), spec: dict = Body(embed=True)):
         self.match_session_id(session_id)
         try:
@@ -261,6 +289,9 @@ class Service(object):
             raise HTTPException(status_code=422, detail={"spec": f"Invalid WireGuard spec: {exc}"})
         try:
             self.wg.apply(wg_spec)
+            limits = peer_limits_from_spec(spec)
+            if limits:
+                self.speed_limit.apply_wireguard(wg_spec.interface, limits)
         except Exception as exc:
             logger.error(f"Failed to apply WireGuard spec: {exc}")
             raise HTTPException(status_code=503, detail=str(exc))
@@ -276,6 +307,10 @@ class Service(object):
             raise HTTPException(status_code=422, detail="At least one WireGuard spec is required")
         try:
             self.wg.apply_specs(wg_specs)
+            for raw, wg_spec in zip(specs or [], wg_specs):
+                limits = peer_limits_from_spec(raw)
+                if limits:
+                    self.speed_limit.apply_wireguard(wg_spec.interface, limits)
         except Exception as exc:
             logger.error(f"Failed to apply WireGuard specs: {exc}")
             raise HTTPException(status_code=503, detail=str(exc))
@@ -301,6 +336,137 @@ class Service(object):
     def wg_amnezia_available(self, session_id: UUID = Body(embed=True)):
         self.match_session_id(session_id)
         return {"available": self.wg.amnezia_available()}
+
+    def wg_reconcile_endpoints(
+        self,
+        session_id: UUID = Body(embed=True),
+        interface: str = Body(embed=True),
+        stale_sec: int = Body(embed=True, default=180),
+    ):
+        self.match_session_id(session_id)
+        try:
+            cleared = self.wg.reconcile_awg_endpoints(interface, stale_sec=int(stale_sec))
+        except Exception as exc:
+            logger.error(f"Failed to reconcile AWG endpoints: {exc}")
+            raise HTTPException(status_code=503, detail=str(exc))
+        return {"interface": interface, "cleared": cleared}
+
+    def wg_flush_bad_endpoints(
+        self, session_id: UUID = Body(embed=True), interface: str = Body(embed=True)
+    ):
+        self.match_session_id(session_id)
+        try:
+            cleared = self.wg.flush_bad_endpoints(interface)
+        except Exception as exc:
+            logger.error(f"Failed to flush bad AWG endpoints: {exc}")
+            raise HTTPException(status_code=503, detail=str(exc))
+        return {"interface": interface, "cleared": cleared}
+
+    def wg_prepare_peer(
+        self,
+        session_id: UUID = Body(embed=True),
+        interface: str = Body(embed=True),
+        public_key: str = Body(embed=True),
+    ):
+        self.match_session_id(session_id)
+        try:
+            prepared = self.wg.prepare_peer_for_connect(interface, public_key)
+        except Exception as exc:
+            logger.error(f"Failed to prepare AWG peer for connect: {exc}")
+            raise HTTPException(status_code=503, detail=str(exc))
+        return {"interface": interface, "public_key": public_key, "prepared": bool(prepared)}
+
+    def wg_flush_stale_peers(
+        self,
+        session_id: UUID = Body(embed=True),
+        interface: str = Body(embed=True),
+        max_age_sec: int = Body(embed=True, default=35),
+        idle_sec: int = Body(embed=True, default=5),
+        traffic_only: bool = Body(embed=True, default=True),
+    ):
+        self.match_session_id(session_id)
+        try:
+            flushed = self.wg.flush_stale_peers(
+                interface,
+                max_age_sec=int(max_age_sec),
+                idle_sec=int(idle_sec),
+                traffic_only=bool(traffic_only),
+            )
+        except Exception as exc:
+            logger.error(f"Failed to flush stale WG peers: {exc}")
+            raise HTTPException(status_code=503, detail=str(exc))
+        return {"interface": interface, "flushed": flushed}
+
+    def wg_recover_interface(
+        self, session_id: UUID = Body(embed=True), interface: str = Body(embed=True)
+    ):
+        self.match_session_id(session_id)
+        try:
+            recovered = self.wg.recover_awg_interface(interface)
+        except Exception as exc:
+            logger.error(f"Failed to recover AWG interface: {exc}")
+            raise HTTPException(status_code=503, detail=str(exc))
+        return {"interface": interface, "recovered": bool(recovered)}
+
+    def wg_autoscale_create_interface(self, session_id: UUID = Body(embed=True), spec: dict = Body(embed=True)):
+        self.match_session_id(session_id)
+        try:
+            self.wg_autoscale.create_interface(InterfaceSpec.from_dict(spec))
+        except Exception as exc:
+            logger.error(f"Failed to create auto-scale WG interface: {exc}")
+            raise HTTPException(status_code=503, detail=str(exc))
+        return {"interface": spec.get("name"), "created": True}
+
+    def wg_autoscale_hot_add(
+        self,
+        session_id: UUID = Body(embed=True),
+        interface: str = Body(embed=True),
+        public_key: str = Body(embed=True),
+        allowed_ips: str = Body(embed=True),
+        preshared_key: Optional[str] = Body(embed=True, default=None),
+    ):
+        self.match_session_id(session_id)
+        try:
+            self.wg_autoscale.hot_add_peer(
+                interface, public_key, allowed_ips, preshared_key=preshared_key
+            )
+        except Exception as exc:
+            logger.error(f"Failed to hot-add WG peer: {exc}")
+            raise HTTPException(status_code=503, detail=str(exc))
+        return {"interface": interface, "public_key": public_key}
+
+    def wg_autoscale_toggle(
+        self,
+        session_id: UUID = Body(embed=True),
+        interface: str = Body(embed=True),
+        public_key: str = Body(embed=True),
+        active: bool = Body(embed=True),
+        allowed_ips: str = Body(embed=True),
+        preshared_key: Optional[str] = Body(embed=True, default=None),
+    ):
+        self.match_session_id(session_id)
+        try:
+            self.wg_autoscale.toggle_peer(
+                interface,
+                public_key,
+                active=active,
+                allowed_ips=allowed_ips,
+                preshared_key=preshared_key,
+            )
+        except Exception as exc:
+            logger.error(f"Failed to toggle WG peer: {exc}")
+            raise HTTPException(status_code=503, detail=str(exc))
+        return {"interface": interface, "public_key": public_key, "active": active}
+
+    def wg_autoscale_dump(self, session_id: UUID = Body(embed=True)):
+        self.match_session_id(session_id)
+        return {"dump": self.wg_autoscale.show_dump_all()}
+
+    def wg_autoscale_transfer(
+        self, session_id: UUID = Body(embed=True), interface: str = Body(embed=True)
+    ):
+        self.match_session_id(session_id)
+        return {"transfer": self.wg_autoscale.get_transfer(interface)}
 
     def singbox_apply(self, session_id: UUID = Body(embed=True), spec: dict = Body(embed=True)):
         self.match_session_id(session_id)
@@ -405,7 +571,14 @@ class Service(object):
 
 @app.middleware("http")
 async def node_control_secret_middleware(request: Request, call_next):
-    from node.config import NODE_CONTROL_SECRET
+    # NOTE: must be the flat top-level `config` module — this file runs
+    # in-place as /code/rest_service.py on the node (no `node` package
+    # exists there). `from node.config import ...` raised ModuleNotFoundError
+    # on every single POST request in production, turning into an
+    # uncaught 500 before the request ever reached a route handler —
+    # i.e. NODE_CONTROL_SECRET silently broke ALL REST node control
+    # (found while live-verifying H1; see AUDIT_FINDINGS.md).
+    from config import NODE_CONTROL_SECRET
 
     if NODE_CONTROL_SECRET and request.method in ("POST", "PUT", "PATCH", "DELETE"):
         provided = request.headers.get("X-Nexus-Control-Secret", "")

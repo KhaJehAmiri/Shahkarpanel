@@ -361,6 +361,7 @@
       function absUrl(u) {
         if (!u) return "";
         if (/^https?:\/\//i.test(u)) return u;
+        if (/^[a-z][a-z0-9+.-]*:\/\//i.test(u)) return u;
         if (u.indexOf("/") === 0) return location.origin + u;
         return u;
       }
@@ -459,12 +460,12 @@
       // ===== Client app catalog =====
       // Schemes adapted from each app's documented deep links.
       var enc = encodeURIComponent(SUB_URL);
-      var name = enc; // url-encoded title used by some apps
+      var subName = "NexusPanel";
       var APPS = [
-        { id: "v2rayng",    label: "v2rayNG",       platform: "ANDROID", color: "#1976d2", url: "v2rayng://install-sub/?url=" + enc + "&name=NexusPanel" },
+        { id: "v2rayng",    label: "v2rayNG",       platform: "ANDROID", color: "#1976d2", url: "v2rayng://install-sub/?url=" + enc(SUB_URL + "#" + subName) },
         { id: "v2rayn",     label: "v2rayN",        platform: "DESKTOP", color: "#7c3aed", url: "https://github.com/2dust/v2rayN/releases/latest" },
-        { id: "nekobox",    label: "NekoBox",       platform: "ANDROID", color: "#ec4899", url: "sn://subscription?url=" + enc + "&name=NexusPanel" },
-        { id: "hiddify",    label: "Hiddify",       platform: "ANY",     color: "#06b6d4", url: "hiddify://install-config?url=" + enc },
+        { id: "nekobox",    label: "NekoBox",       platform: "ANDROID", color: "#ec4899", url: "sn://subscription?url=" + enc + "&name=" + enc(subName) },
+        { id: "hiddify",    label: "Hiddify",       platform: "ANY",     color: "#06b6d4", url: "hiddify://import/" + enc + "#NexusPanel" },
         { id: "streisand",  label: "Streisand",     platform: "IOS",     color: "#f59e0b", url: "streisand://import/" + enc },
         { id: "shadowrocket",label:"Shadowrocket", platform: "IOS",     color: "#ef4444", url: "shadowrocket://add/sub://" + btoa(SUB_URL) },
         { id: "foxray",     label: "FoXray",        platform: "IOS",     color: "#dc2626", url: "foxray://yiamapp.com/import?url=" + enc },

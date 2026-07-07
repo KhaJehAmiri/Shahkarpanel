@@ -8,7 +8,13 @@ from app.models.proxy import ProxySettings, ProxyTypes
 
 def required_app_proxy_types() -> Iterable[ProxyTypes]:
     """Proxy kinds an app user must hold to receive ``protocol_materials``."""
-    types = [ProxyTypes.VLESS, ProxyTypes.WireGuard, ProxyTypes.Hysteria2]
+    types = [
+        ProxyTypes.VLESS,
+        ProxyTypes.WireGuard,
+        ProxyTypes.Hysteria2,
+        ProxyTypes.TUIC,
+        ProxyTypes.AnyTLS,
+    ]
     if feature_flags.is_enabled("client_ss2022"):
         types.append(ProxyTypes.Shadowsocks)
     return types

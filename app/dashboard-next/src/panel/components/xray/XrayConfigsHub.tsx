@@ -6,6 +6,7 @@ import { OutboundsSection } from "./OutboundsSection";
 import { RoutingSection } from "./RoutingSection";
 import { DnsSection } from "./DnsSection";
 import { JsonSection } from "./JsonSection";
+import { CoreLogSection } from "./CoreLogSection";
 import { Button, Card, EmptyState, SkeletonRows, Tabs, useToast } from "../ui";
 import { IcRefresh } from "../icons";
 
@@ -23,6 +24,7 @@ export const XrayConfigsHub: FC<{
     { id: "dns", label: t("xray.tabDns") },
     { id: "basics", label: t("xray.tabBasics") },
     { id: "json", label: t("xray.tabJson") },
+    { id: "logs", label: t("xray.tabLogs") },
   ], [t]);
   const tabs = useMemo(
     () => (visibleTabs?.length ? allTabs.filter((x) => visibleTabs.includes(x.id)) : allTabs),
@@ -74,7 +76,7 @@ export const XrayConfigsHub: FC<{
       </div>
       {tabs.length > 1 && <Tabs active={tab} onChange={setTab} tabs={tabs} />}
       {tab === "outbounds" && (
-        <OutboundsSection config={config} onChange={onChange} onSave={(next) => persist(next)} saving={saving} />
+        <OutboundsSection config={config} onChange={onChange} saving={saving} />
       )}
       {tab === "routing" && (
         <RoutingSection config={config} onChange={onChange} onSave={() => persist()} saving={saving} />
@@ -88,6 +90,7 @@ export const XrayConfigsHub: FC<{
       {tab === "json" && (
         <JsonSection config={config} onSave={(parsed) => persist(parsed)} saving={saving} />
       )}
+      {tab === "logs" && <CoreLogSection />}
     </div>
   );
 };

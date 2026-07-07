@@ -17,9 +17,11 @@ NETWORKS = ("open", "restricted", "heavily_restricted")
 
 # Full protocol catalog the client understands.
 ALL_PROTOCOLS: List[str] = [
+    "sigmaguard-wire",
     "amneziawg",
     "hysteria2",
     "tuic",
+    "anytls",
     "vless-reality",
     "shadowsocks-2022",
     "wireguard",
@@ -27,22 +29,22 @@ ALL_PROTOCOLS: List[str] = [
 ]
 
 # Protocols that require UDP to function.
-UDP_PROTOCOLS = frozenset({"amneziawg", "hysteria2", "tuic", "wireguard"})
+UDP_PROTOCOLS = frozenset({"sigmaguard-wire", "amneziawg", "hysteria2", "tuic", "wireguard"})
 
 # Protocols that survive heavy DPI (look like ordinary TLS/HTTPS).
-CAMOUFLAGED = frozenset({"vless-reality", "cdn"})
+CAMOUFLAGED = frozenset({"vless-reality", "cdn", "anytls"})
 
 # Per-profile priority (highest first), from the product brief.
 PROFILE_PRIORITY: Dict[str, List[str]] = {
-    "gamer": ["amneziawg", "hysteria2", "vless-reality"],
+    "gamer": ["sigmaguard-wire", "amneziawg", "hysteria2", "vless-reality"],
     "trader": ["vless-reality"],
     "normal": ["vless-reality", "shadowsocks-2022", "cdn"],
 }
 
 # Network-appropriate fallbacks appended after the profile's own priority.
 _NETWORK_EXTRAS: Dict[str, List[str]] = {
-    "open": ["wireguard", "amneziawg", "hysteria2", "tuic", "vless-reality", "shadowsocks-2022"],
-    "restricted": ["vless-reality", "hysteria2", "tuic", "shadowsocks-2022", "amneziawg", "cdn"],
+    "open": ["wireguard", "sigmaguard-wire", "amneziawg", "hysteria2", "tuic", "anytls", "vless-reality", "shadowsocks-2022"],
+    "restricted": ["vless-reality", "anytls", "hysteria2", "tuic", "shadowsocks-2022", "sigmaguard-wire", "amneziawg", "cdn"],
     "heavily_restricted": ["vless-reality", "cdn"],
 }
 

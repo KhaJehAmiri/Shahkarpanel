@@ -16,6 +16,11 @@ SSL_CERT_FILE = config("SSL_CERT_FILE", default=f"{_DATA}/ssl_cert.pem")
 SSL_KEY_FILE = config("SSL_KEY_FILE", default=f"{_DATA}/ssl_key.pem")
 SSL_CLIENT_CERT_FILE = config("SSL_CLIENT_CERT_FILE", default="")
 
+# Fail closed: the node refuses to start without a client CA (mutual TLS) unless
+# this is explicitly set. Prevents an unauthenticated RPyC node where anyone who
+# can reach the port can control Xray.
+NODE_ALLOW_INSECURE = config("NODE_ALLOW_INSECURE", cast=bool, default=False)
+
 DEBUG = config("DEBUG", cast=bool, default=False)
 
 SERVICE_PROTOCOL = config('SERVICE_PROTOCOL', cast=str, default='rest')

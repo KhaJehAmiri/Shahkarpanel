@@ -13,7 +13,7 @@ import { quicAppsFor, type QuicProtocol } from "@/lib/quic-apps";
 import { copyToClipboard } from "@/lib/clipboard";
 import { bytes, formatDate, relativeDays } from "@/lib/format";
 import { SUB_LANGS, SubLang, detectSubLang, t as subT } from "@/lib/subscribe-i18n";
-import { resolvePublicSubUrl, resolveWgUrl } from "@/lib/subscribe-url";
+import { resolveClientImportUrl, resolvePublicSubUrl, resolveSingboxSubUrl, resolveWgUrl } from "@/lib/subscribe-url";
 import { applySubTheme, detectSubTheme, type SubTheme } from "@/lib/sub-theme";
 
 type ProtocolTab = "proxy" | "wireguard" | "quic";
@@ -22,15 +22,28 @@ interface SubInfo {
   username: string;
   status: string;
   used_traffic: number;
+  overage_traffic?: number;
   data_limit: number | null;
   expire: number | null;
   links?: string[];
+  link_items?: Array<{
+    link: string;
+    protocol: string;
+    remark: string;
+    region_flag?: string;
+    region_name?: string;
+    address_hint?: string;
+  }>;
   proxies?: Record<string, unknown>;
   config_available?: boolean;
   block_reason?: string | null;
   public_subscription_url?: string;
+  client_subscription_url?: string;
+  subscription_profile_title?: string;
   hysteria2_link?: string | null;
   tuic_link?: string | null;
+  anytls_link?: string | null;
+  wireguard_uri?: string | null;
 }
 
 function getToken(): string {
@@ -60,11 +73,16 @@ function SubscribeBody() {
   const [toast, setToast] = useState<{ msg: string; kind: "ok" | "error" } | null>(null);
   const [copiedProxy, setCopiedProxy] = useState(false);
   const [copiedWg, setCopiedWg] = useState(false);
+  const [copiedWgUri, setCopiedWgUri] = useState(false);
   const [copiedAwg, setCopiedAwg] = useState(false);
   const [copiedHy2, setCopiedHy2] = useState(false);
   const [copiedTuic, setCopiedTuic] = useState(false);
+  const [copiedAnytls, setCopiedAnytls] = useState(false);
   const [hy2Fetched, setHy2Fetched] = useState("");
   const [tuicFetched, setTuicFetched] = useState("");
+  const [anytlsFetched, setAnytlsFetched] = useState("");
+  const [wgConfPlain, setWgConfPlain] = useState("");
+  const [wgConfAwg, setWgConfAwg] = useState("");
 
   const loadInfo = useCallback((tok: string) => {
     if (!tok) return;
@@ -84,19 +102,26 @@ function SubscribeBody() {
   }, [loadInfo]);
 
   const subUrl = useMemo(() => resolvePublicSubUrl(info, token), [info, token]);
+  const clientImportUrl = useMemo(() => resolveClientImportUrl(info, token), [info, token]);
+  const profileTitle = info?.subscription_profile_title?.trim() || "NexusPanel";
+  const singboxSubUrl = useMemo(() => resolveSingboxSubUrl(subUrl), [subUrl]);
   const wgUrl = useMemo(() => resolveWgUrl(subUrl, "plain"), [subUrl]);
   const awgUrl = useMemo(() => resolveWgUrl(subUrl, "awg"), [subUrl]);
+  const wgImportUri = info?.wireguard_uri?.trim() || "";
   const hy2ShareLink = (info?.hysteria2_link || hy2Fetched || "").trim();
   const tuicShareLink = (info?.tuic_link || tuicFetched || "").trim();
+  const anytlsShareLink = (info?.anytls_link || anytlsFetched || "").trim();
 
   useEffect(() => {
     if (!token || !info || info.config_available === false) {
       setHy2Fetched("");
       setTuicFetched("");
+      setAnytlsFetched("");
       return;
     }
     const hasHy2 = !!info.proxies && "hysteria2" in info.proxies;
     const hasT = !!info.proxies && "tuic" in info.proxies;
+    const hasAt = !!info.proxies && "anytls" in info.proxies;
     if (hasHy2 && !info.hysteria2_link) {
       fetch(`/sub/${token}/hysteria2`)
         .then(async (r) => (r.ok ? r.text() : ""))
@@ -113,14 +138,44 @@ function SubscribeBody() {
     } else {
       setTuicFetched("");
     }
+    if (hasAt && !info.anytls_link) {
+      fetch(`/sub/${token}/anytls`)
+        .then(async (r) => (r.ok ? r.text() : ""))
+        .then((t) => setAnytlsFetched(t.trim()))
+        .catch(() => setAnytlsFetched(""));
+    } else {
+      setAnytlsFetched("");
+    }
+  }, [token, info]);
+
+  useEffect(() => {
+    if (!token || !info || info.config_available === false) {
+      setWgConfPlain("");
+      setWgConfAwg("");
+      return;
+    }
+    if (!info.proxies || !("wireguard" in info.proxies)) {
+      setWgConfPlain("");
+      setWgConfAwg("");
+      return;
+    }
+    fetch(`/sub/${token}/wireguard`)
+      .then(async (r) => (r.ok ? r.text() : ""))
+      .then((t) => setWgConfPlain(t.trim()))
+      .catch(() => setWgConfPlain(""));
+    fetch(`/sub/${token}/wireguard?variant=awg`)
+      .then(async (r) => (r.ok ? r.text() : ""))
+      .then((t) => setWgConfAwg(t.trim()))
+      .catch(() => setWgConfAwg(""));
   }, [token, info]);
 
   const hasWireguard = !!info?.proxies && "wireguard" in info.proxies;
   const hasHysteria2 = !!info?.proxies && "hysteria2" in info.proxies;
   const hasTuic = !!info?.proxies && "tuic" in info.proxies;
-  const hasQuic = hasHysteria2 || hasTuic;
+  const hasAnytls = !!info?.proxies && "anytls" in info.proxies;
+  const hasQuic = hasHysteria2 || hasTuic || hasAnytls;
   const hasProxy = (info?.proxies
-    ? Object.keys(info.proxies).filter((k) => !["wireguard", "hysteria2", "tuic"].includes(k)).length > 0
+    ? Object.keys(info.proxies).filter((k) => !["wireguard", "hysteria2", "tuic", "anytls"].includes(k)).length > 0
     : false) || !!(info?.links?.length);
 
   useEffect(() => {
@@ -136,6 +191,7 @@ function SubscribeBody() {
   const configAvailable = info?.config_available !== false;
   const blockReason = info?.block_reason;
   const used = info?.used_traffic ?? 0;
+  const overage = info?.overage_traffic ?? 0;
   const total = info?.data_limit || 0;
   const pct = total ? Math.min(100, Math.round((used / total) * 100)) : 0;
   const chip = info ? statusChip(lang, info.status) : { label: "—", cls: "neutral" };
@@ -161,13 +217,19 @@ function SubscribeBody() {
   }
 
   async function copyWg() {
-    const ok = await copyToClipboard(wgUrl);
+    const ok = await copyToClipboard(wgConfPlain || wgUrl);
     if (ok) { setCopiedWg(true); showToast(subT(lang, "copied")); setTimeout(() => setCopiedWg(false), 1500); }
     else showToast(subT(lang, "copyFailed"), "error");
   }
 
+  async function copyWgUri() {
+    const ok = await copyToClipboard(wgImportUri);
+    if (ok) { setCopiedWgUri(true); showToast(subT(lang, "copied")); setTimeout(() => setCopiedWgUri(false), 1500); }
+    else showToast(subT(lang, "copyFailed"), "error");
+  }
+
   async function copyAwg() {
-    const ok = await copyToClipboard(awgUrl);
+    const ok = await copyToClipboard(wgConfAwg || awgUrl);
     if (ok) { setCopiedAwg(true); showToast(subT(lang, "copied")); setTimeout(() => setCopiedAwg(false), 1500); }
     else showToast(subT(lang, "copyFailed"), "error");
   }
@@ -184,14 +246,21 @@ function SubscribeBody() {
     else showToast(subT(lang, "copyFailed"), "error");
   }
 
+  async function copyAnytls() {
+    const ok = await copyToClipboard(anytlsShareLink);
+    if (ok) { setCopiedAnytls(true); showToast(subT(lang, "copied")); setTimeout(() => setCopiedAnytls(false), 1500); }
+    else showToast(subT(lang, "copyFailed"), "error");
+  }
+
   const proxyApps = appsFor(platform);
   const wgApps = wgAppsFor(platform);
   const quicProtocols: QuicProtocol[] = [
     ...(hasHysteria2 ? (["hysteria2"] as QuicProtocol[]) : []),
     ...(hasTuic ? (["tuic"] as QuicProtocol[]) : []),
+    ...(hasAnytls ? (["anytls"] as QuicProtocol[]) : []),
   ];
   const quicApps = quicAppsFor(platform, quicProtocols);
-  const quicImportUrl = hasHysteria2 ? hy2ShareLink : tuicShareLink;
+  const quicImportUrl = hasHysteria2 ? hy2ShareLink : hasTuic ? tuicShareLink : anytlsShareLink;
   const pasteFallback = (n: string) => subT(lang, "pasteFallback").replace("{app}", n);
 
   if (!token) {
@@ -253,6 +322,8 @@ function SubscribeBody() {
           totalLabel={subT(lang, "unlimited")}
           pct={pct}
           exhausted={!configAvailable && blockReason === "data_limit"}
+          overage={overage}
+          overageLabel={subT(lang, "overage")}
         />
 
         <span className="sub-badge-inline">◆ {subT(lang, "unifiedQuota")}</span>
@@ -321,7 +392,7 @@ function SubscribeBody() {
                     >
                       <div className="sub-apps-grid">
                         {proxyApps.map((a) => (
-                          <SubAppTile key={a.id} app={a} platform={platform} subUrl={subUrl}
+                          <SubAppTile key={a.id} app={a} platform={platform} subUrl={clientImportUrl || subUrl} profileName={profileTitle}
                             importLabel={subT(lang, "import")} downloadLabel={subT(lang, "downloadApp")}
                             pasteFallback={pasteFallback} streisandHint={subT(lang, "streisandHint")}
                             clipboardHint={subT(lang, "clipboardHint")}
@@ -364,6 +435,7 @@ function SubscribeBody() {
                             app={a}
                             platform={platform}
                             shareUrl={quicImportUrl}
+                            singboxSubUrl={singboxSubUrl}
                             importLabel={subT(lang, "import")}
                             downloadLabel={subT(lang, "downloadApp")}
                             pasteFallback={pasteFallback}
@@ -407,6 +479,19 @@ function SubscribeBody() {
                         embedded
                       />
                     )}
+                    {hasAnytls && (
+                      <ConnectCard
+                        title={subT(lang, "anytlsTitle")}
+                        hint={subT(lang, "anytlsHint")}
+                        url={anytlsShareLink}
+                        copyLabel={subT(lang, "copy")}
+                        copiedLabel={subT(lang, "copied")}
+                        copied={copiedAnytls}
+                        onCopy={copyAnytls}
+                        accent="indigo"
+                        embedded
+                      />
+                    )}
                   </div>
                 </>
               )}
@@ -430,11 +515,13 @@ function SubscribeBody() {
                       </div>
                     </AppsPanel>
                   </div>
-                  <div className="sub-panel-connect sub-stack" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  <div className="sub-panel-connect sub-connect-stack">
                     <ConnectCard
                       title={subT(lang, "wgTitle")}
                       hint={subT(lang, "wgHint")}
                       url={wgUrl}
+                      qrValue={wgConfPlain || undefined}
+                      displayValue={wgConfPlain ? subT(lang, "wgConfScan") : wgUrl}
                       copyLabel={subT(lang, "copy")}
                       copiedLabel={subT(lang, "copied")}
                       copied={copiedWg}
@@ -442,12 +529,31 @@ function SubscribeBody() {
                       accent="rose"
                       downloadHref={wgUrl}
                       downloadLabel={subT(lang, "wgDownload")}
-                      embedded
+                      qrLayout="stacked"
+                      qrEnlargeLabel={subT(lang, "qrEnlarge")}
+                      closeLabel={subT(lang, "close")}
                     />
+                    {wgImportUri && (
+                      <ConnectCard
+                        title={subT(lang, "wgUriTitle")}
+                        hint={subT(lang, "wgUriHint")}
+                        url={wgImportUri}
+                        copyLabel={subT(lang, "copy")}
+                        copiedLabel={subT(lang, "copied")}
+                        copied={copiedWgUri}
+                        onCopy={copyWgUri}
+                        accent="rose"
+                        qrLayout="stacked"
+                        qrEnlargeLabel={subT(lang, "qrEnlarge")}
+                        closeLabel={subT(lang, "close")}
+                      />
+                    )}
                     <ConnectCard
                       title={subT(lang, "wgAwgTitle")}
                       hint={subT(lang, "wgAwgHint")}
                       url={awgUrl}
+                      qrValue={wgConfAwg || undefined}
+                      displayValue={wgConfAwg ? subT(lang, "wgConfScan") : awgUrl}
                       copyLabel={subT(lang, "copy")}
                       copiedLabel={subT(lang, "copied")}
                       copied={copiedAwg}
@@ -455,7 +561,9 @@ function SubscribeBody() {
                       accent="rose"
                       downloadHref={awgUrl}
                       downloadLabel={subT(lang, "wgDownload")}
-                      embedded
+                      qrLayout="stacked"
+                      qrEnlargeLabel={subT(lang, "qrEnlarge")}
+                      closeLabel={subT(lang, "close")}
                     />
                   </div>
                 </>
@@ -480,14 +588,19 @@ function SubscribeBody() {
         <MiniStat label={subT(lang, "usage")} value={total ? `${pct}%` : "∞"} />
       </div>
 
-      {configAvailable && showProxy && info.links && info.links.length > 0 && (
+      {configAvailable && showProxy && (info.link_items?.length || (info.links && info.links.length > 0)) && (
         <section className="sub-card sub-card-accent-cyan" style={{ marginTop: 12, padding: 12 }}>
           <div className="sub-text-muted" style={{ marginBottom: 8, fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>
-            {subT(lang, "separateConfigs")} ({info.links.length})
+            {subT(lang, "separateConfigs")} ({(info.link_items?.length || info.links?.length || 0)})
           </div>
+          <div className="sub-config-account-meta">
+            <span>{subT(lang, "configQuota")}: <b>{bytes(used)}</b>{total ? ` / ${bytes(total)}` : ` · ${subT(lang, "unlimited")}`}</span>
+            <span>{subT(lang, "configExpire")}: <b>{info.expire ? formatDate(info.expire) : subT(lang, "noExpiry")}</b></span>
+          </div>
+          <p className="sub-config-account-hint">{subT(lang, "configAccountMeta")}</p>
           <div className="flex flex-col gap-1.5">
-            {info.links.map((link, i) => (
-              <ConfigRow key={i} link={link} copyLabel={subT(lang, "copy")} closeLabel={subT(lang, "close")} qrLabel={subT(lang, "qrLabel")} onToast={showToast} />
+            {(info.link_items?.length ? info.link_items : (info.links || []).map((link) => ({ link, protocol: link.split("://")[0] || "link", remark: "", region_flag: "", region_name: "", address_hint: "" }))).map((item, i) => (
+              <ConfigRow key={i} item={item} copyLabel={subT(lang, "copy")} closeLabel={subT(lang, "close")} qrLabel={subT(lang, "qrLabel")} onToast={showToast} />
             ))}
           </div>
         </section>
@@ -584,10 +697,27 @@ function EmptyState({ msg }: { msg: string }) {
   return <div className="sub-card sub-ministat"><p className="sub-text-muted" style={{ fontSize: 13 }}>{msg}</p></div>;
 }
 
-function ConfigRow({ link, copyLabel, closeLabel, qrLabel, onToast }: { link: string; copyLabel: string; closeLabel: string; qrLabel: string; onToast: (m: string, k?: "ok" | "error") => void }) {
+function ConfigRow({ item, copyLabel, closeLabel, qrLabel, onToast }: {
+  item: { link: string; protocol: string; remark: string; region_flag?: string; region_name?: string; address_hint?: string };
+  copyLabel: string; closeLabel: string; qrLabel: string; onToast: (m: string, k?: "ok" | "error") => void;
+}) {
   const [copied, setCopied] = useState(false);
   const [showQr, setShowQr] = useState(false);
-  const proto = link.includes("://") ? link.split("://")[0] : "link";
+  const link = item.link;
+  const proto = (item.protocol || link.split("://")[0] || "link").toUpperCase();
+  const title = item.remark || item.region_name || proto;
+  const flag = item.region_flag || "";
+  let addressHint = item.address_hint || "";
+  if (!addressHint && link.includes("@")) {
+    const hostPart = link.split("@")[1]?.split(/[?#]/)[0] || "";
+    const host = hostPart.split(":")[0] || "";
+    if (host.includes(".")) {
+      const p = host.split(".");
+      addressHint = p.length === 4 ? `${p[0]}.****.${p[3]}` : host;
+    } else if (host) {
+      addressHint = `${host.slice(0, 3)}****`;
+    }
+  }
 
   async function copy() {
     const ok = await copyToClipboard(link);
@@ -598,7 +728,11 @@ function ConfigRow({ link, copyLabel, closeLabel, qrLabel, onToast }: { link: st
   return (
     <div className="sub-config-row">
       <span className="sub-config-proto">{proto}</span>
-      <div dir="ltr" className="sub-config-link">{link}</div>
+      {flag ? <span className="sub-config-flag" aria-hidden>{flag}</span> : null}
+      <div className="sub-config-main">
+        <div className="sub-config-title">{title}</div>
+        {addressHint ? <div dir="ltr" className="sub-config-link">{addressHint}</div> : null}
+      </div>
       <button type="button" onClick={() => setShowQr(true)} className="sub-config-btn">{qrLabel}</button>
       <button type="button" onClick={copy} className={`sub-config-btn copy ${copied ? "copied" : ""}`}>
         {copied ? "✓" : copyLabel}

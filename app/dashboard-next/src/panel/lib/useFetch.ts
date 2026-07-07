@@ -6,7 +6,8 @@ interface State<T> {
   loading: boolean;
   error: string | null;
   status: number | null;
-  reload: () => void;
+  /** Re-fetch; stays silent (keeps current UI) when data is already loaded. */
+  reload: (options?: { background?: boolean }) => void;
 }
 
 const RETRYABLE = new Set([0, 502, 503, 504]);
@@ -37,22 +38,33 @@ export function useFetch<T>(fn: () => Promise<T>, deps: any[] = []): State<T> {
   const [status, setStatus] = useState<number | null>(null);
   const fnRef = useRef(fn);
   fnRef.current = fn;
+  const dataRef = useRef<T | null>(null);
+  dataRef.current = data;
   const genRef = useRef(0);
 
-  const run = useCallback(async () => {
+  const run = useCallback(async (options?: { background?: boolean }) => {
     const gen = ++genRef.current;
-    setLoading(true);
-    setError(null);
+    const background = options?.background ?? dataRef.current !== null;
+    if (!background) {
+      setLoading(true);
+      setError(null);
+      setData(null);
+      dataRef.current = null;
+    }
     try {
       const res = await withRetry(() => fnRef.current());
       if (gen !== genRef.current) return;
       setData(res);
+      dataRef.current = res;
       setStatus(200);
+      setError(null);
     } catch (e: any) {
       if (gen !== genRef.current) return;
       if (e?.name === "AbortError") return;
-      setError(e?.message || "Error");
-      setStatus(e instanceof ApiError ? e.status : null);
+      if (!background) {
+        setError(e?.message || "Error");
+        setStatus(e instanceof ApiError ? e.status : null);
+      }
     } finally {
       if (gen === genRef.current) setLoading(false);
     }
@@ -60,13 +72,17 @@ export function useFetch<T>(fn: () => Promise<T>, deps: any[] = []): State<T> {
   }, deps);
 
   useEffect(() => {
-    run();
+    run({ background: false });
     return () => {
       genRef.current += 1;
     };
   }, [run]);
 
-  return { data, loading, error, status, reload: run };
+  const reload = useCallback((options?: { background?: boolean }) => {
+    void run(options);
+  }, [run]);
+
+  return { data, loading, error, status, reload };
 }
 
 export function usePolling(fn: () => void, intervalMs: number, enabled = true) {

@@ -4,16 +4,29 @@ const BASE =
   (typeof process !== "undefined" && process.env.NEXT_PUBLIC_BASE_API) || "/api/";
 
 const TOKEN_KEY = "nx_token";
+const REFRESH_KEY = "nx_refresh_token";
 
 export const getToken = () => localStorage.getItem(TOKEN_KEY);
+export const getRefreshToken = () => localStorage.getItem(REFRESH_KEY);
 export const setToken = (t: string) => localStorage.setItem(TOKEN_KEY, t);
-export const clearToken = () => localStorage.removeItem(TOKEN_KEY);
+export const setRefreshToken = (t: string) => localStorage.setItem(REFRESH_KEY, t);
+export const clearToken = () => {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(REFRESH_KEY);
+};
 
 export class ApiError extends Error {
   status: number;
-  constructor(message: string, status: number) {
+  requires2fa?: boolean;
+  /** Raw parsed JSON body of the failed response, when available (e.g. a
+   * structured `detail` object) — for callers that need more than the
+   * flattened message string `errorMessage()` produces. */
+  body?: any;
+  constructor(message: string, status: number, requires2fa = false, body?: any) {
     super(message);
     this.status = status;
+    this.requires2fa = requires2fa;
+    this.body = body;
   }
 }
 
@@ -21,6 +34,34 @@ let onUnauthorized: (() => void) | null = null;
 export const setUnauthorizedHandler = (fn: () => void) => {
   onUnauthorized = fn;
 };
+
+let refreshInFlight: Promise<string | null> | null = null;
+
+async function refreshAccessToken(): Promise<string | null> {
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) return null;
+  if (!refreshInFlight) {
+    refreshInFlight = (async () => {
+      try {
+        const res = await fetch(joinUrl("/admin/refresh"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ refresh_token: refreshToken }),
+        });
+        if (!res.ok) return null;
+        const data = await res.json();
+        if (!data?.access_token) return null;
+        setToken(data.access_token);
+        return data.access_token as string;
+      } catch {
+        return null;
+      } finally {
+        refreshInFlight = null;
+      }
+    })();
+  }
+  return refreshInFlight;
+}
 
 function joinUrl(path: string): string {
   if (path.startsWith("http")) return path;
@@ -54,11 +95,21 @@ function errorMessage(status: number, data: any): string {
     const msgs = detail.map((d: any) => d?.msg).filter(Boolean);
     if (msgs.length) return msgs.join(", ");
   }
+  if (detail && typeof detail === "object" && typeof detail.message === "string") {
+    return detail.message;
+  }
   const key = STATUS_ERROR_KEY[status] || "errors.generic";
   return i18n.t(key, { status });
 }
 
-async function request<T>(method: string, path: string, body?: any, opts: { form?: boolean } = {}): Promise<T> {
+type RequestOpts = { form?: boolean; retried?: boolean };
+
+async function request<T>(
+  method: string,
+  path: string,
+  body?: any,
+  opts: RequestOpts = {},
+): Promise<T> {
   const headers: Record<string, string> = {};
   const token = getToken();
   if (token) headers["Authorization"] = `Bearer ${token}`;
@@ -81,6 +132,15 @@ async function request<T>(method: string, path: string, body?: any, opts: { form
     throw new ApiError(i18n.t("errors.network"), 0);
   }
 
+  if (res.status === 401 && !opts.retried) {
+    const refreshed = await refreshAccessToken();
+    if (refreshed) {
+      return request<T>(method, path, body, { ...opts, retried: true });
+    }
+    if (onUnauthorized) onUnauthorized();
+    throw new ApiError(i18n.t("errors.unauthorized"), 401);
+  }
+
   if (res.status === 401) {
     if (onUnauthorized) onUnauthorized();
     throw new ApiError(i18n.t("errors.unauthorized"), 401);
@@ -95,7 +155,7 @@ async function request<T>(method: string, path: string, body?: any, opts: { form
   }
 
   if (!res.ok) {
-    throw new ApiError(errorMessage(res.status, data), res.status);
+    throw new ApiError(errorMessage(res.status, data), res.status, false, data);
   }
 
   return data as T;
@@ -120,6 +180,13 @@ export const api = {
       throw new ApiError(i18n.t("errors.network"), 0);
     }
     if (res.status === 401) {
+      const refreshed = await refreshAccessToken();
+      if (refreshed) {
+        headers["Authorization"] = `Bearer ${refreshed}`;
+        res = await fetch(joinUrl(path), { method: "POST", headers, body: form });
+      }
+    }
+    if (res.status === 401) {
       if (onUnauthorized) onUnauthorized();
       throw new ApiError(i18n.t("errors.unauthorized"), 401);
     }
@@ -133,12 +200,43 @@ export const api = {
   },
 };
 
-export async function login(username: string, password: string): Promise<string> {
-  const res = await api.postForm<{ access_token: string }>("/admin/token", {
+export async function login(
+  username: string,
+  password: string,
+  otp?: string,
+): Promise<string> {
+  const body: Record<string, string> = {
     username,
     password,
     grant_type: "password",
-  });
-  setToken(res.access_token);
-  return res.access_token;
+  };
+  if (otp) body.otp = otp;
+
+  let res: Response;
+  try {
+    res = await fetch(joinUrl("/admin/token"), {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams(body).toString(),
+    });
+  } catch {
+    throw new ApiError(i18n.t("errors.network"), 0);
+  }
+
+  const text = await res.text();
+  let data: any = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = text;
+  }
+
+  if (!res.ok) {
+    const requires2fa = res.headers.get("X-2FA-Required") === "true";
+    throw new ApiError(errorMessage(res.status, data), res.status, requires2fa);
+  }
+
+  setToken(data.access_token);
+  if (data.refresh_token) setRefreshToken(data.refresh_token);
+  return data.access_token;
 }

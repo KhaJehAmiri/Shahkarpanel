@@ -13,6 +13,7 @@ class PortalProfile(BaseModel):
     username: str
     status: str
     used_traffic: int
+    overage_traffic: int = 0
     data_limit: Optional[int] = None
     expire: Optional[int] = None
     subscription_url: str = ""

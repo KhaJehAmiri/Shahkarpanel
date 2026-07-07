@@ -9,7 +9,7 @@ import { IcRefresh } from "../components/icons";
 
 export const Inbounds: FC<{ embedded?: boolean }> = ({ embedded }) => {
   const { t } = useTranslation();
-  const { admin } = useApp();
+  const { hasPermission } = useApp();
   const toast = useToast();
   const { config, setConfig, loading, error, saving, reload, save } = useXrayConfig();
 
@@ -17,17 +17,21 @@ export const Inbounds: FC<{ embedded?: boolean }> = ({ embedded }) => {
     reload();
   }, [reload]);
 
-  if (!admin?.is_sudo) {
+  if (!hasPermission("core:read")) {
     return <Callout tone="warn">{t("common.sudoOnly")}</Callout>;
   }
 
-  const persist = async () => {
-    if (!config) return;
+  const canWrite = hasPermission("core:write");
+
+  const persist = async (cfg?: Record<string, unknown>) => {
+    const target = cfg ?? config;
+    if (!target) return;
     try {
-      await save(config);
-      toast.push(t("xray.savedRestart"), "success");
+      await save(target);
+      if (!cfg) toast.push(t("xray.savedRestart"), "success");
     } catch (e: unknown) {
       toast.push(e instanceof Error ? e.message : t("common.saveFailed"), "error");
+      throw e;
     }
   };
 
@@ -60,6 +64,7 @@ export const Inbounds: FC<{ embedded?: boolean }> = ({ embedded }) => {
           onChange={setConfig}
           onSave={persist}
           saving={saving}
+          readOnly={!canWrite}
         />
       ) : null}
     </div>

@@ -333,4 +333,5 @@ echo "  ${BOLD}Dashboard${NC}  https://${SERVER_NAME}${dash_path}"
 echo "  ${BOLD}Cert${NC}       Let's Encrypt (${MODE} mode), auto-renewing"
 [ "$MODE" = "ip" ] && echo "  ${YELLOW}Note${NC}       IP certificates are valid 6 days; renewal runs twice daily."
 echo "  ${BOLD}App port${NC}   0.0.0.0:${PANEL_PORT} (block ${PANEL_PORT} in firewall; use HTTPS :443)"
+echo "  ${BOLD}Edge${NC}       Proxy inbounds can share :443 via SNI (see Hosts → CDN domain:443)"
 echo

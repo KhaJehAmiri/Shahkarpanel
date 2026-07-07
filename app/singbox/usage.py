@@ -76,6 +76,19 @@ def build_singbox_usage_params(
 _tracker = SingBoxUsageTracker()
 
 
+def _interval_bytes(transfer: Dict[str, dict]) -> Dict[str, int]:
+    """Sum rx+tx per user from a reset-on-read V2Ray stats poll."""
+    out: Dict[str, int] = {}
+    for name, counters in (transfer or {}).items():
+        try:
+            total = int(counters.get("rx", 0)) + int(counters.get("tx", 0))
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if total > 0:
+            out[name] = total
+    return out
+
+
 def collect_singbox_usage_params(db=None) -> Tuple[Dict[int, List[dict]], Dict[int, float]]:
     """Read traffic counters from every connected sing-box node and return
     ``(api_params, usage_coefficient)`` deltas in the central accounting shape.
@@ -98,7 +111,7 @@ def collect_singbox_usage_params(db=None) -> Tuple[Dict[int, List[dict]], Dict[i
             except Exception as exc:
                 logger.warning("sing-box transfer read from node %s failed: %s", dbnode.id, exc)
                 continue
-            deltas_by_node[dbnode.id] = _tracker.deltas(dbnode.id, transfer)
+            deltas_by_node[dbnode.id] = _interval_bytes(transfer)
             coefficient[dbnode.id] = dbnode.usage_coefficient
 
         return build_singbox_usage_params(deltas_by_node, name_map), coefficient

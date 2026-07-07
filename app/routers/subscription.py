@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Path, Request, Re
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app.db import Session, crud, get_db
-from app.dependencies import get_validated_sub, get_subscription_context, validate_dates
+from app.dependencies import get_validated_sub, get_subscription_context, resolve_sub_ctx, validate_dates
 from app.subscription.endpoint_resolver import SubscriptionRequestContext
 from app.models.proxy import ProxyTypes
 from app.models.user import SubscriptionUserResponse, UserResponse
@@ -291,6 +291,7 @@ def user_subscription(
     user_agent: str = Header(default="")
 ):
     """Provides a subscription link based on the user agent (Clash, V2Ray, etc.)."""
+    sub_ctx = resolve_sub_ctx(sub_ctx, request, db)
     user: UserResponse = UserResponse.model_validate(dbuser)
     inbound_filter = sub_ctx.inbound_filter
     endpoint = sub_ctx.endpoint
@@ -408,6 +409,7 @@ def user_subscription_info(
     db: Session = Depends(get_db),
 ):
     """Retrieves detailed information about the user's subscription."""
+    sub_ctx = resolve_sub_ctx(sub_ctx, request, db)
     response.headers.update(NO_STORE_HEADERS)
     user = UserResponse.model_validate(dbuser)
     payload = user.model_dump()
@@ -713,6 +715,7 @@ def user_subscription_with_client_type(
     user_agent: str = Header(default="")
 ):
     """Provides a subscription link based on the specified client type (e.g., Clash, V2Ray)."""
+    sub_ctx = resolve_sub_ctx(sub_ctx, request, db)
     user: UserResponse = UserResponse.model_validate(dbuser)
     access = subscription_access(user)
     if access["config_available"]:

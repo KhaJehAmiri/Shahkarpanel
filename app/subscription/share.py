@@ -629,7 +629,10 @@ def process_inbounds_and_tags(
                     ):
                         from app.subscription.region_display import region_vars_for_node, connect_format_vars
 
-                        local_vars = defaultdict(format_variables.default_factory, format_variables)
+                        _ff = getattr(format_variables, "default_factory", None) or (
+                            lambda: "<missing>"
+                        )
+                        local_vars = defaultdict(_ff, format_variables)
                         local_vars.update(region_vars_for_node(_node_id))
                         host_region = str(export_host.get("region") or "").strip()
                         if host_region:

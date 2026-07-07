@@ -102,12 +102,30 @@ def get_subscription_context(
     return ctx
 
 
+def resolve_sub_ctx(
+    sub_ctx: object, request: Request, db: Session
+) -> SubscriptionRequestContext:
+    """Return the injected context, or build one when the handler is called
+    directly (e.g. from unit tests / internal callers) so FastAPI's ``Depends``
+    default marker never leaks into the body."""
+    if isinstance(sub_ctx, SubscriptionRequestContext):
+        return sub_ctx
+    if isinstance(request, Request) and isinstance(db, Session):
+        return build_subscription_context(request, db)
+    # No usable request/session (direct call, or a blocked-export path that
+    # never touches the DB): fall back to the global default endpoint.
+    return SubscriptionRequestContext(
+        endpoint=None, path_prefix="", inbound_filter=None, format_default=None
+    )
+
+
 def get_validated_sub(
         token: str,
         request: Request,
         db: Session = Depends(get_db),
         sub_ctx: SubscriptionRequestContext = Depends(get_subscription_context),
 ) -> UserResponse:
+    sub_ctx = resolve_sub_ctx(sub_ctx, request, db)
     endpoint_id = sub_ctx.endpoint.id if sub_ctx.endpoint else None
 
     # Independent sub_token (Marzban-style): 32-char hex, no JWT parsing.

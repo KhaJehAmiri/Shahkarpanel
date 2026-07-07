@@ -669,7 +669,12 @@ class XRayConfig(dict):
                     continue
 
                 for inbound in inbounds:
-                    clients = config.get_inbound(inbound['tag'])['settings']['clients']
+                    inbound_cfg = config.get_inbound(inbound['tag'])
+                    if not inbound_cfg:
+                        # inbounds_by_protocol drifted from the actual config
+                        # (tag not present) — nothing to attach clients to.
+                        continue
+                    clients = inbound_cfg['settings']['clients']
 
                     for row in rows:
                         user_id, username, settings, excluded_inbound_tags = row

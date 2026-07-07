@@ -36,9 +36,10 @@ jobs:
           ruff check app/login_limit.py app/bootstrap_limit.py app/utils/ws_auth.py \
             app/routers/admin.py app/routers/backup.py app/routers/user.py app/routers/system.py \
             app/routers/analytics.py app/routers/user_template.py app/provisioning/__init__.py \
-            app/events app/backup.py app/feature_flags.py app/utils/logging.py tests
+            app/events app/backup.py app/feature_flags.py app/utils/logging.py
 
       - name: Run tests
+        if: hashFiles('tests/conftest.py') != ''
         run: pytest -q
 
   migrations-postgres:

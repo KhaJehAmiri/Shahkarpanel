@@ -182,6 +182,9 @@ warp_account.json
 xray_config.json
 .env.bak.*
 
+# Runtime state (admin sessions, etc.)
+data/
+
 # Public release: dev/unit tests stay local (3x-ui style install repo)
 tests/*
 !tests/README.md

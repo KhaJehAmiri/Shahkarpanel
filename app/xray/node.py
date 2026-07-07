@@ -497,7 +497,13 @@ class RPyCXRayNode:
                     "(node has been unreachable; not retrying every cycle)"
                 )
 
-            self.disconnect()
+            # Do not call disconnect() here: closing the panel-side RPyC session
+            # first makes the node agent stop Xray before the replacement
+            # connection arrives. Let ssl_connect preempt the stale session.
+            stale_conn = getattr(self, "connection", None)
+            self.connection = None
+            self.started = False
+            self._api = None
 
             last_exc = None
             for attempt in range(1, self._CONNECT_MAX_TRIES + 1):
@@ -519,6 +525,12 @@ class RPyCXRayNode:
                     )
                     self._verify_channel(conn)
                     self.connection = conn
+                    if stale_conn is not None and stale_conn is not conn:
+                        try:
+                            if not stale_conn.closed:
+                                stale_conn.close()
+                        except Exception:
+                            pass
                     self._reconnect_backoff = self._RECONNECT_BACKOFF_MIN_SEC
                     self._next_connect_attempt = 0.0
                     return
@@ -606,7 +618,7 @@ class RPyCXRayNode:
                         last_log = logs[-1].strip().split('\n')[-1]
                     time.sleep(0.1)
 
-            self.disconnect()
+            self._api = None
 
             if re.search(r'[Ff]ailed', last_log):
                 raise RuntimeError(last_log)

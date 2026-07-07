@@ -445,11 +445,15 @@ def _is_template_host(host: dict) -> bool:
 def _export_hosts(tag: str, hosts: list[dict], node_id: int | None = None) -> list[dict]:
     from app.utils.node_ids import host_visible_on_node
 
-    active = [
-        h
-        for h in hosts
-        if not h.get("is_disabled") and host_visible_on_node(h.get("node_ids"), node_id)
-    ]
+    active = []
+    for h in hosts:
+        if h.get("is_disabled"):
+            continue
+        # Subscription export (node_id=None) must include node-bound hosts; fan-out
+        # happens later in _multinode_variants. Per-node config builds pass node_id.
+        if node_id is not None and not host_visible_on_node(h.get("node_ids"), node_id):
+            continue
+        active.append(h)
     if len(active) <= 1:
         return active
     custom = [h for h in active if not _is_template_host(h)]

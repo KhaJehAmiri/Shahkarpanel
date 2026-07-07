@@ -86,13 +86,9 @@ class XrayService(rpyc.Service):
 
         logger.warning(f"Disconnected from {getattr(conn, 'peer', '?')}")
 
-        if self.core is not None:
-            try:
-                self.core.stop()
-            except Exception:
-                pass
-
-        self.core = None
+        # Keep Xray running across transient panel reconnects so client
+        # traffic is not dropped when the control channel drops. Explicit
+        # stop()/restart() still manage the core lifecycle.
         self.connection = None
 
     def _panel_peer_ip(self) -> str:

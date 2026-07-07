@@ -12,18 +12,18 @@ from app.models.admin import Admin
 from app.models.proxy import ProxyTypes
 from app.models.user import (
     UserCreate,
+    UserDataLimitResetStrategy,
     UserModify,
     UserResponse,
     UsersResponse,
     UserStatus,
     UserStatusCreate,
-    UserDataLimitResetStrategy,
     UsersUsagesResponse,
     UserUsagesResponse,
 )
 from app.rbac import require_permission
+from app.services.user_bulk import BulkExtendRequest, BulkInboundRequest, BulkResetUsageRequest, BulkUserCreateBody
 from app.utils import report, responses
-from app.services.user_bulk import BulkInboundRequest, BulkUserCreateBody, BulkExtendRequest, BulkResetUsageRequest
 
 router = APIRouter(tags=["User"], prefix="/api", responses={401: responses._401})
 
@@ -43,8 +43,8 @@ class BulkFromTemplateCreate(BaseModel):
 
 
 def _user_create_from_db_template(db_tpl, *, username: str, status: UserStatusCreate) -> UserCreate:
-    from app.models.user_template import UserTemplateResponse, NATIVE_TEMPLATE_MARKERS
     from app.models.user import NextPlanModel
+    from app.models.user_template import NATIVE_TEMPLATE_MARKERS, UserTemplateResponse
 
     tpl = UserTemplateResponse.model_validate(db_tpl)
     if db_tpl.username_prefix:
@@ -202,8 +202,6 @@ def add_user_from_template(
     admin: Admin = Depends(require_permission("users:write")),
 ):
     """Create a user from a saved template (prefix/suffix, limits, inbounds)."""
-    from app.models.user_template import UserTemplateResponse
-
     db_tpl = crud.get_user_template(db, body.template_id)
     if db_tpl is None:
         raise HTTPException(status_code=404, detail="Template not found")

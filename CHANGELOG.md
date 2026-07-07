@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.14.0 — 2026-07-07
+
+- Fix ruff lint in admin/user routers (unused imports, isort).
+- CI: drop `tests/` from public-repo lint path; skip pytest when tests are not shipped.
+
 ## 0.12.13 — 2026-06-10
 
 - Dashboard update: `--force-recreate` panel container after git pull so Python loads the new version.

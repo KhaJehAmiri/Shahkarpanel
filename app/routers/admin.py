@@ -10,7 +10,7 @@ from app.dependencies import get_admin_by_username, validate_admin
 from app.login_limit import enforce_admin_ip_allowlist, enforce_login_rate_limit
 from app.models.admin import Admin, AdminCreate, AdminModify, AdminRefreshBody, Token
 from app.utils import report, responses
-from app.utils.jwt import admin_token_bundle, create_admin_token, get_admin_refresh_payload
+from app.utils.jwt import admin_token_bundle, get_admin_refresh_payload
 from config import (
     LOGIN_MAX_ATTEMPTS,
     LOGIN_MAX_WINDOW_SECONDS,

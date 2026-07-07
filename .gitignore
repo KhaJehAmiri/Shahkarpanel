@@ -183,7 +183,9 @@ xray_config.json
 .env.bak.*
 
 # Public release: dev/unit tests stay local (3x-ui style install repo)
-tests/
+tests/*
+!tests/README.md
+!tests/test_ci.py
 scripts/*_test.py
 scripts/*_test.sh
 scripts/*smoke*.py

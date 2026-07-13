@@ -725,6 +725,17 @@ def _apply_panel_migration(db: Session, source: PanelSource, preview: MigrationR
     inbound_cache: dict[str, _ProxyInbound] = {
         row.tag: row for row in db.query(_ProxyInbound).all()
     }
+    # Preload the sets we'd otherwise probe once per client (a SELECT-per-user on
+    # a large, still-uncommitted transaction dominated import time). Existing
+    # usernames tell us create-vs-update without a lookup; existing alias tokens
+    # on this endpoint let a fresh import skip the per-alias existence SELECT.
+    from app.db.models import SubscriptionTokenAlias as _STAlias
+    from app.db.models import User as _DBUser
+
+    existing_usernames: set[str] = {u for (u,) in db.query(_DBUser.username).all()}
+    existing_alias_tokens: set[str] = {
+        tok for (tok,) in db.query(_STAlias.token).filter(_STAlias.endpoint_id == ep.id).all()
+    }
     processed = 0
     _COMMIT_BATCH_SIZE = 300
 
@@ -799,7 +810,7 @@ def _apply_panel_migration(db: Session, source: PanelSource, preview: MigrationR
             # incompatible inbound/settings combo) so it rolls back only that
             # user instead of aborting — and losing — the entire panel import.
             with db.begin_nested():
-                existing = crud.get_user(db, username)
+                existing = crud.get_user(db, username) if username in existing_usernames else None
                 if existing is not None:
                     crud.update_user(
                         db,
@@ -841,17 +852,33 @@ def _apply_panel_migration(db: Session, source: PanelSource, preview: MigrationR
                         created.used_traffic = pu["used"]
                     user_id = created.id
                     was_created = True
+                    existing_usernames.add(username)
 
                 alias_added = False
                 if pu["sub_id"] and user_id:
-                    crud.upsert_subscription_token_alias(
-                        db,
-                        token=pu["sub_id"],
-                        user_id=user_id,
-                        endpoint_id=ep.id,
-                        source="3x-ui-migration",
-                        commit=False,
-                    )
+                    if pu["sub_id"] in existing_alias_tokens:
+                        # Already routed on this endpoint (re-run) — repoint it.
+                        crud.upsert_subscription_token_alias(
+                            db,
+                            token=pu["sub_id"],
+                            user_id=user_id,
+                            endpoint_id=ep.id,
+                            source="3x-ui-migration",
+                            commit=False,
+                        )
+                    else:
+                        # Fresh route — insert directly, skipping the existence SELECT.
+                        crud.create_subscription_token_alias(
+                            db,
+                            {
+                                "token": pu["sub_id"],
+                                "user_id": user_id,
+                                "endpoint_id": ep.id,
+                                "source": "3x-ui-migration",
+                            },
+                            commit=False,
+                        )
+                        existing_alias_tokens.add(pu["sub_id"])
                     alias_added = True
         except Exception as exc:
             logger.warning("Migration: skipped user %s: %s", username, exc)

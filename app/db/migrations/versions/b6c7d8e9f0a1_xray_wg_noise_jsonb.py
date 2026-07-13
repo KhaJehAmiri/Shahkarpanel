@@ -1,9 +1,12 @@
-"""Fix xray_wg_noise column type: json -> jsonb.
+"""Fix xray_wg_noise column type: json -> jsonb (Postgres only).
 
 Plain ``json`` has no equality operator in Postgres, which breaks every
 ``.distinct()`` query over ``node_wireguard`` (e.g. ``crud.get_wireguard_nodes``)
 with "could not identify an equality operator for type json" as soon as any
 row has this column populated.
+
+On SQLite this is a no-op — SQLite affinity already treats JSON as TEXT and
+does not need a jsonb dialect.
 
 Revision ID: b6c7d8e9f0a1
 Revises: a5b6c7d8e9f0
@@ -20,6 +23,9 @@ depends_on = None
 
 
 def upgrade() -> None:
+    bind = op.get_bind()
+    if bind.dialect.name != "postgresql":
+        return
     op.alter_column(
         "node_wireguard",
         "xray_wg_noise",
@@ -30,6 +36,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    bind = op.get_bind()
+    if bind.dialect.name != "postgresql":
+        return
     op.alter_column(
         "node_wireguard",
         "xray_wg_noise",

@@ -35,6 +35,8 @@ $ admin [OPTIONS] COMMAND [ARGS]...
 * `delete`: Deletes the specified admin
 * `import-from-env`: Imports the sudo admin from env
 * `list`: Displays a table of admins
+* `rename`: Renames an admin's username
+* `set-password`: Changes an admin's password (non-interactive friendly)
 * `update`: Updates the specified admin
 
 ### `admin create`

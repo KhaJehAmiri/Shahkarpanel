@@ -366,7 +366,7 @@ SUB_PROFILE_TITLE_DYNAMIC = config("SUB_PROFILE_TITLE_DYNAMIC", default=True, ca
 # Installer / first-run defaults
 PANEL_DEFAULT_LANG = config("PANEL_DEFAULT_LANG", default="en")
 PANEL_TITLE = config("PANEL_TITLE", default="NexusPanel")
-PRIMARY_COLOR = config("PRIMARY_COLOR", default="#5b8cff")
+PRIMARY_COLOR = config("PRIMARY_COLOR", default="#2ee0c4")
 
 # discord webhook log
 DISCORD_WEBHOOK_URL = config("DISCORD_WEBHOOK_URL", default="")

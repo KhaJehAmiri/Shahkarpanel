@@ -202,6 +202,12 @@ export interface NodeItem {
     awg_listen_port?: number;
     awg_public_key?: string | null;
     awg_endpoint?: string | null;
+    direct_listen_port?: number | null;
+    xray_wg_enabled?: boolean;
+    xray_wg_listen_port?: number | null;
+    xray_wg_mtu?: number;
+    xray_wg_noise?: Record<string, unknown> | null;
+    sg_wire_enabled?: boolean;
   } & AmneziaWGParams) | null;
   singbox?: NodeSingBoxConfig | null;
 }

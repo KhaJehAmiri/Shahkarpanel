@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Optional, Union
 
 import typer
@@ -10,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.db import GetDB, crud
 from app.db.models import Admin, User
-from app.models.admin import AdminCreate, AdminPartialModify
+from app.models.admin import AdminCreate, AdminPartialModify, pwd_context
 from app.utils.system import readable_size
 
 from . import utils
@@ -168,6 +169,62 @@ def update_admin(username: str = typer.Option(..., *utils.FLAGS["username"], pro
 
         crud.partial_update_admin(db, admin, _get_modify_model(admin))
         utils.success(f'Admin "{username}" updated successfully.')
+
+
+@app.command(name="set-password")
+def set_password(
+    username: str = typer.Option(..., *utils.FLAGS["username"], prompt=True, show_default=False),
+    password: str = typer.Option(
+        ..., prompt="New password", confirmation_prompt=True, hide_input=True,
+        envvar=utils.PASSWORD_ENVIRON_NAME,
+    ),
+):
+    """
+    Changes an admin's password (non-interactive friendly).
+
+    Password can also be supplied via the ``NEXUSPANEL_ADMIN_PASSWORD`` env var.
+    Changing the password also invalidates the admin's existing login sessions.
+    """
+    with GetDB() as db:
+        admin: Union[Admin, None] = crud.get_admin(db, username=username)
+        if not admin:
+            utils.error(f'There\'s no admin with username "{username}"!')
+
+        # Set the hash directly (mirrors crud.partial_update_admin) instead of
+        # going through AdminPartialModify, whose annotations hack makes every
+        # field required under pydantic v2.
+        admin.hashed_password = pwd_context.hash(password)
+        admin.password_reset_at = datetime.utcnow()
+        db.commit()
+        utils.success(f'Password for "{username}" updated successfully.')
+
+
+@app.command(name="rename")
+def rename_admin(
+    current: str = typer.Option(..., "--current", "-c", prompt="Current username", show_default=False),
+    new: str = typer.Option(..., "--new", "-n", prompt="New username", show_default=False),
+):
+    """Renames an admin's username. Users linked by ``admin_id`` are unaffected."""
+    new = (new or "").strip()
+    if not new:
+        utils.error("New username must not be empty.")
+    if current == new:
+        utils.error("New username is identical to the current one.")
+
+    with GetDB() as db:
+        admin: Union[Admin, None] = crud.get_admin(db, username=current)
+        if not admin:
+            utils.error(f'There\'s no admin with username "{current}"!')
+        if crud.get_admin(db, username=new):
+            utils.error(f'An admin with username "{new}" already exists!')
+
+        admin.username = new
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            utils.error(f'An admin with username "{new}" already exists!')
+        utils.success(f'Admin "{current}" renamed to "{new}" successfully.')
 
 
 @app.command(name="import-from-env")

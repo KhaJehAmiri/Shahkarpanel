@@ -973,8 +973,18 @@
     "awgNodeOffline": "节点离线 — 请先重连再同步 AmneziaWG。",
     "awgCopyUpgrade": "复制代理升级命令",
     "stackSave": "Save stack & sync",
-    "stackRequired": "Enable at least plain WireGuard or AmneziaWG",
-    "awgSaveParams": "Save AWG params only"
+    "stackRequired": "Enable at least plain WireGuard, AmneziaWG, or Xray-native WG",
+    "awgSaveParams": "Save AWG params only",
+    "xrayEnable": "Xray-native WG (Finalmask)",
+    "xrayHint": "Userspace WireGuard inbound inside Xray with noise",
+    "xrayPort": "Xray-native listen port",
+    "xrayBody": "Opens a separate UDP port with Finalmask noise. Open that UDP port on the cloud firewall.",
+    "xrayPill": "Xray WG :{{port}}",
+    "directPort": "Direct WG port (optional)",
+    "directPortHint": "Extra plain kernel WireGuard listener. Empty = off. Use 0 to clear.",
+    "directPortPlaceholder": "e.g. 51900",
+    "directPill": "Direct :{{port}}",
+    "badPort": "Invalid port number"
   },
   "dedip": {
     "title": "专用 IP",

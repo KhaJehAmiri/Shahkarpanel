@@ -53,6 +53,13 @@ const AmneziaNodeCard: FC<{
   const [plainOn, setPlainOn] = useState(node.wireguard?.plain_enabled !== false);
   const [awgOn, setAwgOn] = useState(!!node.wireguard?.awg_enabled);
   const [sgWireOn, setSgWireOn] = useState(!!node.wireguard?.sg_wire_enabled);
+  const [xrayOn, setXrayOn] = useState(!!node.wireguard?.xray_wg_enabled);
+  const [xrayPort, setXrayPort] = useState(
+    node.wireguard?.xray_wg_listen_port != null ? String(node.wireguard.xray_wg_listen_port) : "51901",
+  );
+  const [directPort, setDirectPort] = useState(
+    node.wireguard?.direct_listen_port != null ? String(node.wireguard.direct_listen_port) : "",
+  );
   const initial = () => {
     const v: Record<string, string> = {};
     for (const f of AWG_FIELDS) {
@@ -69,6 +76,13 @@ const AmneziaNodeCard: FC<{
     setPlainOn(node.wireguard?.plain_enabled !== false);
     setAwgOn(!!node.wireguard?.awg_enabled);
     setSgWireOn(!!node.wireguard?.sg_wire_enabled);
+    setXrayOn(!!node.wireguard?.xray_wg_enabled);
+    setXrayPort(
+      node.wireguard?.xray_wg_listen_port != null ? String(node.wireguard.xray_wg_listen_port) : "51901",
+    );
+    setDirectPort(
+      node.wireguard?.direct_listen_port != null ? String(node.wireguard.direct_listen_port) : "",
+    );
     /* eslint-disable-next-line */
   }, [node.id]);
 
@@ -103,15 +117,24 @@ const AmneziaNodeCard: FC<{
   };
 
   const saveStack = async () => {
-    if (!plainOn && !awgOn) {
+    if (!plainOn && !awgOn && !xrayOn) {
       toast.push(t("wireguard.stackRequired"), "error");
       return;
     }
     setBusy(true);
     try {
+      const directRaw = directPort.trim();
+      const direct_listen_port =
+        directRaw === "" ? undefined : Number(directRaw);
+      if (directRaw !== "" && (!Number.isFinite(direct_listen_port!) || direct_listen_port! < 0 || direct_listen_port! > 65535)) {
+        toast.push(t("wireguard.badPort"), "error");
+        setBusy(false);
+        return;
+      }
       await api.put(`/node/${node.id}/wireguard/stack`, {
         plain_enabled: plainOn,
         awg_enabled: awgOn,
+        ...(direct_listen_port !== undefined ? { direct_listen_port } : {}),
       });
       if (awgOn) {
         const body = saveBody();
@@ -126,6 +149,17 @@ const AmneziaNodeCard: FC<{
       if (sgWireFlag) {
         await api.put(`/node/${node.id}/sigmaguard-wire`, { enabled: sgWireOn });
       }
+      const xrayBody: { enabled: boolean; listen_port?: number } = { enabled: xrayOn };
+      if (xrayOn) {
+        const xp = Number(xrayPort.trim() || "51901");
+        if (!Number.isFinite(xp) || xp < 1 || xp > 65535) {
+          toast.push(t("wireguard.badPort"), "error");
+          setBusy(false);
+          return;
+        }
+        xrayBody.listen_port = xp;
+      }
+      await api.put(`/node/${node.id}/wireguard/xray-native`, xrayBody);
       toast.push(t("common.saved"), "success");
       onSaved();
       await loadStatus();
@@ -172,8 +206,10 @@ const AmneziaNodeCard: FC<{
 
   const statusPill = () => {
     const parts: string[] = [];
-    if (plainOn) parts.push(t("wg.portPillPlain", { port: 51820 }));
+    if (plainOn) parts.push(t("wg.portPillPlain", { port: node.wireguard?.listen_port ?? 51820 }));
     if (awgOn) parts.push(t("wg.portPillAwg", { port: status?.runtime_ready ? 51821 : "51821?" }));
+    if (xrayOn) parts.push(t("wireguard.xrayPill", { port: xrayPort || "51901" }));
+    if (directPort.trim()) parts.push(t("wireguard.directPill", { port: directPort.trim() }));
     if (!parts.length) return <Pill tone="default">{t("wireguard.awgOff")}</Pill>;
     return <Pill tone={status?.needs_agent_upgrade ? "warn" : "ok"}>{parts.join(" + ")}</Pill>;
   };
@@ -193,6 +229,10 @@ const AmneziaNodeCard: FC<{
           <input type="checkbox" checked={awgOn} onChange={(e) => setAwgOn(e.target.checked)} />
           {t("infra.enableAwgWg")}
         </label>
+        <label className="nx-row" style={{ gap: 8, fontSize: 13 }} title={t("wireguard.xrayHint")}>
+          <input type="checkbox" checked={xrayOn} onChange={(e) => setXrayOn(e.target.checked)} />
+          {t("wireguard.xrayEnable")}
+        </label>
         {sgWireFlag && (
           <label className="nx-row" style={{ gap: 8, fontSize: 13 }} title={t("wireguard.sgWireHint")}>
             <input
@@ -207,6 +247,26 @@ const AmneziaNodeCard: FC<{
           </label>
         )}
       </div>
+      <div className="nx-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10, marginBottom: 12 }}>
+        {xrayOn && (
+          <Field label={t("wireguard.xrayPort")}>
+            <Input type="number" value={xrayPort} placeholder="51901" onChange={(e: any) => setXrayPort(e.target.value)} />
+          </Field>
+        )}
+        <Field label={t("wireguard.directPort")} hint={t("wireguard.directPortHint")}>
+          <Input
+            type="number"
+            value={directPort}
+            placeholder={t("wireguard.directPortPlaceholder")}
+            onChange={(e: any) => setDirectPort(e.target.value)}
+          />
+        </Field>
+      </div>
+      {xrayOn && (
+        <div style={{ marginBottom: 10 }}>
+          <Callout tone="info">{t("wireguard.xrayBody")}</Callout>
+        </div>
+      )}
       {sgWireOn && status?.sg_wire_preset_rev && (
         <div style={{ marginBottom: 10 }}>
           <Callout tone="info">

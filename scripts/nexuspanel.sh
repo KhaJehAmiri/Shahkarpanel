@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 #
-# NexusPanel installer & manager.
+# NexusPanel installer & manager (branded host console).
 #
 # One-line install (run as root):
 #   bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/nexuspanel/master/scripts/nexuspanel.sh) install
 #
-# Interactive shell installer (3x-ui style menus in this terminal).
-#   bash <(curl -fsSL …/scripts/nexuspanel.sh) install
+# Interactive shell installer (Nexus-branded menus in this terminal).
 # Browser wizard: WEB_WIZARD=1 install
 # Plain CLI:       SKIP_WIZARD=1 install
 #
-# After install, manage with:  nexuspanel <command>
-#   install | update | up | down | restart | status | logs
-#   backup | restore <file> | cli ... | uninstall
+# After install, manage with:
+#   nexus                 interactive host console
+#   nexuspanel <command>  install | update | up | down | restart | status | logs
+#                         backup | restore <file> | cli ... | uninstall | https
 #
 set -euo pipefail
 
@@ -33,13 +33,21 @@ SKIP_HTTPS="${SKIP_HTTPS:-0}"
 SCRIPT_URL="${SCRIPT_URL:-https://raw.githubusercontent.com/KhaJehAmiri/nexuspanel/${REPO_BRANCH}/scripts/nexuspanel.sh}"
 BIN_PATH="/usr/local/bin/${APP_NAME}"
 
-# Colours
-RED=$'\e[31m'; GREEN=$'\e[32m'; YELLOW=$'\e[33m'; BLUE=$'\e[34m'; BOLD=$'\e[1m'; NC=$'\e[0m'
+# Brand palette (matches dashboard --nx-accent + host `nexus` console)
+if [ -t 1 ]; then
+  RED=$'\e[31m'; GREEN=$'\e[32m'; YELLOW=$'\e[33m'; BLUE=$'\e[34m'
+  BOLD=$'\e[1m'; NC=$'\e[0m'; WHITE=$'\e[37m'
+  BRAND=$'\e[38;5;80m'; BRAND_DIM=$'\e[38;5;73m'
+  MUTED=$'\e[38;5;245m'; OKC=$'\e[38;5;78m'; BADC=$'\e[38;5;203m'
+else
+  RED=""; GREEN=""; YELLOW=""; BLUE=""; BOLD=""; NC=""; WHITE=""
+  BRAND=""; BRAND_DIM=""; MUTED=""; OKC=""; BADC=""
+fi
 
-log()  { echo "${BLUE}[*]${NC} $*"; }
-ok()   { echo "${GREEN}[✓]${NC} $*"; }
+log()  { echo "${BRAND}[*]${NC} $*"; }
+ok()   { echo "${OKC}[✓]${NC} $*"; }
 warn() { echo "${YELLOW}[!]${NC} $*"; }
-err()  { echo "${RED}[x]${NC} $*" >&2; }
+err()  { echo "${BADC}[x]${NC} $*" >&2; }
 die()  { err "$*"; exit 1; }
 
 need_root() {
@@ -89,7 +97,7 @@ PY
 
 print_install_progress() {
   local pct="${1:-0}" msg="${2:-}" done="${3:-false}"
-  local bar_w=32 filled empty bar="" i
+  local bar_w=28 filled empty bar="" i
   pct="${pct//[^0-9]/}"
   [ -n "$pct" ] || pct=0
   filled=$(( pct * bar_w / 100 ))
@@ -97,17 +105,23 @@ print_install_progress() {
   for ((i = 0; i < filled; i++)); do bar+="█"; done
   for ((i = 0; i < empty; i++)); do bar+="░"; done
   if [ "$done" = "true" ]; then
-    echo -e "  ${GREEN}[${pct}%]${NC} ${bar}  ${msg}"
+    echo -e "  ${OKC}◆${NC} ${BRAND}[${pct}%]${NC} ${bar}  ${msg}"
   else
-    printf "  ${BLUE}[%3s%%]${NC} ${bar}  %s\r" "$pct" "$msg"
+    printf "  ${BRAND}◆${NC} ${BRAND}[%3s%%]${NC} ${bar}  %s\r" "$pct" "$msg"
   fi
 }
 
 print_install_phase_banner() {
   echo
-  echo "${BOLD}${GREEN}╔══════════════════════════════════════════════════════════════╗${NC}"
-  echo "${BOLD}${GREEN}║           NexusPanel — Installing…                           ║${NC}"
-  echo "${BOLD}${GREEN}╚══════════════════════════════════════════════════════════════╝${NC}"
+  printf "%b" "$BRAND"
+  cat <<'EOF'
+      ╭──╮
+   ◆──┤ NX ├──◆
+      ╰──╯
+EOF
+  printf "%b" "$NC"
+  echo "  ${BOLD}${BRAND}NEXUS${NC} ${BOLD}PANEL${NC}  ${MUTED}installing…${NC}"
+  echo "  ${MUTED}──────────────────────────────────────────────${NC}"
   echo
 }
 
@@ -125,7 +139,7 @@ if cfg.get("email"): emit("EMAIL", cfg["email"])
 emit("SKIP_HTTPS", "1" if cfg.get("skip_https") else "0")
 emit("PANEL_DEFAULT_LANG", cfg.get("panel_default_lang") or "en")
 emit("PANEL_TITLE", cfg.get("panel_title") or "NexusPanel")
-emit("PRIMARY_COLOR", cfg.get("primary_color") or "#5b8cff")
+emit("PRIMARY_COLOR", cfg.get("primary_color") or "#2ee0c4")
 emit("SUPPORT_URL", cfg.get("support_url") or "")
 if cfg.get("panel_port"): emit("PANEL_PORT", cfg["panel_port"])
 emit("SKIP_NODE_BUILD", "1" if cfg.get("skip_node_build", True) else "0")
@@ -144,19 +158,23 @@ PY
 print_wizard_banner() {
   local ip="$1"
   echo
-  echo "${BOLD}${GREEN}╔══════════════════════════════════════════════════════════════╗${NC}"
-  echo "${BOLD}${GREEN}║              NexusPanel — Web Installer (Browser)            ║${NC}"
-  echo "${BOLD}${GREEN}╚══════════════════════════════════════════════════════════════╝${NC}"
+  printf "%b" "$BRAND"
+  cat <<'EOF'
+      ╭──╮
+   ◆──┤ NX ├──◆
+      ╰──╯
+EOF
+  printf "%b" "$NC"
+  echo "  ${BOLD}${BRAND}NEXUS${NC} ${BOLD}PANEL${NC}  ${MUTED}web installer${NC}"
+  echo "  ${MUTED}──────────────────────────────────────────────${NC}"
+  echo "  ${BRAND}●${NC} Open in browser:"
+  echo "       ${BOLD}http://${ip}:${INSTALLER_PORT}/${NC}"
+  echo "       ${MUTED}http://127.0.0.1:${INSTALLER_PORT}/${NC}  (SSH port-forward)"
   echo
-  echo "  ${BOLD}The installer is NOT in this terminal — open your browser:${NC}"
+  echo "  ${MUTED}فارسی:${NC} مرورگر → آدرس بالا → زبان، SSL، ادمین → Install"
+  echo "  ${MUTED}EN:${NC}    Open the URL → language, HTTPS, admin → Install"
   echo
-  echo "    ${BOLD}${BLUE}http://${ip}:${INSTALLER_PORT}/${NC}"
-  echo "    ${BOLD}${BLUE}http://127.0.0.1:${INSTALLER_PORT}/${NC}  (if you SSH with port forward)"
-  echo
-  echo "  ${YELLOW}فارسی:${NC} مرورگر را باز کنید → آدرس بالا → زبان، SSL، ادمین → Install"
-  echo "  English: Open the URL above → set language, HTTPS, admin → click Install"
-  echo
-  echo "  Waiting for you to finish in the browser… (Ctrl+C to cancel)"
+  echo "  ${YELLOW}Keep this terminal open until install finishes (Ctrl+C to cancel).${NC}"
   echo
 }
 
@@ -665,7 +683,7 @@ XRAY_JSON=/var/lib/nexuspanel/xray_config.json
 # Panel defaults (set by web installer).
 PANEL_DEFAULT_LANG=${PANEL_DEFAULT_LANG:-en}
 PANEL_TITLE=${PANEL_TITLE:-NexusPanel}
-PRIMARY_COLOR=${PRIMARY_COLOR:-#5b8cff}
+PRIMARY_COLOR=${PRIMARY_COLOR:-#2ee0c4}
 
 # Address resellers' provisioned nodes use to reach this panel.
 # Upgraded to https://<domain-or-ip> automatically by scripts/setup_https.sh.
@@ -716,7 +734,7 @@ fetch_repo() {
 }
 
 install_cli() {
-  log "Installing 'nexuspanel' command..."
+  log "Installing host commands (nexuspanel + nexus)…"
   if [ -f "${APP_DIR}/scripts/nexuspanel.sh" ]; then
     cp "${APP_DIR}/scripts/nexuspanel.sh" "${BIN_PATH}"
   elif [ -f "$0" ] && [ "$0" != "${BIN_PATH}" ]; then
@@ -725,6 +743,19 @@ install_cli() {
     curl -fsSL "${SCRIPT_URL}" -o "${BIN_PATH}" 2>/dev/null || true
   fi
   chmod +x "${BIN_PATH}" 2>/dev/null || true
+
+  # Interactive branded management console (`nexus`), like x-ui but Nexus-native.
+  if [ -f "${APP_DIR}/scripts/install-nexus.sh" ]; then
+    bash "${APP_DIR}/scripts/install-nexus.sh" >/dev/null 2>&1 || true
+  elif [ -f "${APP_DIR}/scripts/nexus.sh" ]; then
+    cat > /usr/local/bin/nexus <<EOF
+#!/usr/bin/env bash
+export NEXUS_APP_DIR="${APP_DIR}"
+exec bash "${APP_DIR}/scripts/nexus.sh" "\$@"
+EOF
+    chmod +x /usr/local/bin/nexus
+  fi
+  ok "Commands ready: nexuspanel · nexus"
 }
 
 build_node_image() {
@@ -760,13 +791,13 @@ wait_for_panel() {
 apply_install_branding() {
   [ -n "${PANEL_TITLE:-}" ] || return 0
   log "Applying panel branding from installer…"
-  PANEL_TITLE="${PANEL_TITLE}" PRIMARY_COLOR="${PRIMARY_COLOR:-#5b8cff}" SUPPORT_URL="${SUPPORT_URL:-}" \
+  PANEL_TITLE="${PANEL_TITLE}" PRIMARY_COLOR="${PRIMARY_COLOR:-#2ee0c4}" SUPPORT_URL="${SUPPORT_URL:-}" \
     compose exec -T -e PANEL_TITLE -e PRIMARY_COLOR -e SUPPORT_URL nexuspanel python3 <<'PY' 2>/dev/null || true
 import os
 from app.db import GetDB
 from app.tenant import set_branding
 title = os.environ.get("PANEL_TITLE", "NexusPanel")
-color = os.environ.get("PRIMARY_COLOR") or "#5b8cff"
+color = os.environ.get("PRIMARY_COLOR") or "#2ee0c4"
 support = (os.environ.get("SUPPORT_URL") or "").strip()
 fields = {"panel_title": title, "primary_color": color}
 if support:
@@ -781,7 +812,16 @@ PY
 # --------------------------------------------------------------------------- #
 cmd_install() {
   need_root
-  echo "${BOLD}Installing NexusPanel...${NC}"
+  printf "%b" "$BRAND"
+  cat <<'EOF'
+      ╭──╮
+   ◆──┤ NX ├──◆
+      ╰──╯
+EOF
+  printf "%b" "$NC"
+  echo "  ${BOLD}${BRAND}NEXUS${NC} ${BOLD}PANEL${NC}  ${MUTED}setup${NC}"
+  echo "  ${MUTED}──────────────────────────────────────────────${NC}"
+  echo
   prepare_low_memory
   install_deps
   fetch_repo
@@ -868,49 +908,58 @@ print_access() {
     ver="$(git -C "${APP_DIR}" rev-parse --short HEAD 2>/dev/null || echo unknown)"
   fi
   if panel_is_listening; then
-    panel_state="${GREEN}listening on :${PANEL_PORT}${NC}"
+    panel_state="${OKC}listening on :${PANEL_PORT}${NC}"
   elif compose ps --status running 2>/dev/null | grep -q nexuspanel; then
     panel_state="${YELLOW}container up but API down${NC} (run: nexuspanel logs)"
   else
-    panel_state="${RED}not running${NC} (run: nexuspanel up)"
+    panel_state="${BADC}not running${NC} (run: nexuspanel up)"
   fi
   if docker image inspect nexuspanel/node:latest >/dev/null 2>&1; then
-    node_state="${GREEN}built${NC}"
+    node_state="${OKC}built${NC}"
   else
     node_state="${YELLOW}missing${NC} (run: docker build -t nexuspanel/node:latest ${APP_DIR}/node)"
   fi
   echo
-  echo "${BOLD}${GREEN}╔══════════════════════════════════════════════════════╗${NC}"
-  echo "${BOLD}${GREEN}║              NexusPanel — install complete           ║${NC}"
-  echo "${BOLD}${GREEN}╚══════════════════════════════════════════════════════╝${NC}"
+  printf "%b" "$BRAND"
+  cat <<'EOF'
+      ╭──╮
+   ◆──┤ NX ├──◆
+      ╰──╯
+EOF
+  printf "%b" "$NC"
+  echo "  ${BOLD}${BRAND}NEXUS${NC} ${BOLD}PANEL${NC}  ${MUTED}install complete${NC}"
+  echo "  ${MUTED}──────────────────────────────────────────────${NC}"
   echo
-  echo "  ${BOLD}Panel${NC}      Multi-tenant VPN panel (Xray) + white-label + node provisioning"
-  echo "  ${BOLD}Version${NC}    git ${ver}  |  API port ${PANEL_PORT}"
-  echo "  ${BOLD}Status${NC}     panel: ${panel_state}   |   node image: ${node_state}"
-  echo "  ${BOLD}Data${NC}       ${DATA_DIR}"
+  echo "  ${BRAND}◆${NC} ${BOLD}hub${NC}"
+  echo "  ${BRAND_DIM}│${NC}  Version     ${BRAND}git ${ver}${NC}  ·  port ${PANEL_PORT}"
+  echo "  ${BRAND_DIM}│${NC}  Panel       ${panel_state}"
+  echo "  ${BRAND_DIM}│${NC}  Node image  ${node_state}"
+  echo "  ${BRAND_DIM}│${NC}  Data        ${MUTED}${DATA_DIR}${NC}"
   echo
-  echo "  ${BOLD}Dashboard${NC}  ${dash_url}"
-  echo "  ${BOLD}System${NC}     ${dash_url}#/system"
-  echo "  ${BOLD}Subscribe${NC}  ${base_url}/sub/…  ·  ${BOLD}Portal${NC}  ${base_url}/portal/"
+  echo "  ${BRAND}◆${NC} ${BOLD}access${NC}"
+  echo "  ${BRAND_DIM}│${NC}  Dashboard   ${BOLD}${dash_url}${NC}"
+  echo "  ${BRAND_DIM}│${NC}  System      ${dash_url}#/system"
+  echo "  ${BRAND_DIM}│${NC}  Subscribe   ${base_url}/sub/…  ·  Portal  ${base_url}/portal/"
   case "$base_url" in
     https://*) :;;
-    *) echo "  ${YELLOW}↳ HTTPS not enabled yet — run: nexuspanel https${NC}";;
+    *) echo "  ${BRAND_DIM}│${NC}  ${YELLOW}HTTPS not enabled yet — run: nexuspanel https${NC}";;
   esac
-  echo "  ${BOLD}Credentials file${NC}  ${DATA_DIR}/install-credentials.txt"
+  echo "  ${BRAND_DIM}│${NC}  Creds file  ${MUTED}${DATA_DIR}/install-credentials.txt${NC}"
   if [ -n "${ADMIN_USERNAME:-}" ] && [ -n "${ADMIN_PASSWORD:-}" ]; then
     echo
-    echo "  ${BOLD}Admin login${NC}"
-    echo "    Username : ${BOLD}${ADMIN_USERNAME}${NC}"
-    echo "    Password : ${BOLD}${ADMIN_PASSWORD}${NC}"
-    echo "  ${YELLOW}↳ Save now — the password is stored only as a bcrypt hash, not in plaintext.${NC}"
+    echo "  ${BRAND}◆${NC} ${BOLD}admin login${NC}"
+    echo "  ${BRAND_DIM}│${NC}  Username    ${BOLD}${ADMIN_USERNAME}${NC}"
+    echo "  ${BRAND_DIM}│${NC}  Password    ${BOLD}${ADMIN_PASSWORD}${NC}"
+    echo "  ${BRAND_DIM}│${NC}  ${YELLOW}Save now — password is stored only as a bcrypt hash.${NC}"
   else
     echo
-    echo "  ${YELLOW}Admin username: ${ADMIN_USERNAME:-?} (see ${APP_DIR}/.env or install-credentials.txt).${NC}"
-    echo "  ${YELLOW}Password is bcrypt-hashed; if lost, reset via: nexuspanel cli admin update --help${NC}"
+    echo "  ${YELLOW}Admin: ${ADMIN_USERNAME:-?} — see ${DATA_DIR}/install-credentials.txt or: nexus password${NC}"
   fi
   echo
-  echo "  ${BOLD}Commands${NC}   nexuspanel check | info | status | logs | update | backup"
-  echo "  ${YELLOW}First login → Setup wizard (tenants, branding, provisioning, tunnels).${NC}"
+  echo "  ${BRAND}◆${NC} ${BOLD}manage${NC}"
+  echo "  ${BRAND_DIM}│${NC}  ${BOLD}nexus${NC}            interactive host console (status, update, SSL, …)"
+  echo "  ${BRAND_DIM}│${NC}  ${BOLD}nexuspanel${NC}       check · info · status · logs · update · backup"
+  echo "  ${BRAND_DIM}│${NC}  ${MUTED}First login → in-panel setup wizard (tenants, branding, tunnels).${NC}"
   echo
 }
 
@@ -1042,11 +1091,11 @@ cmd_uninstall() {
 
 usage() {
   cat <<EOF
-${BOLD}NexusPanel manager${NC}
+${BOLD}${BRAND}NEXUS${NC} ${BOLD}PANEL${NC}  ${MUTED}host manager${NC}
 
 Usage: ${APP_NAME} <command>
 
-  install            Install via shell wizard (WEB_WIZARD=1 for browser)
+  install            Install via branded shell wizard (WEB_WIZARD=1 for browser)
   update             Pull latest and rebuild
   up | down | restart
   status             Show container status
@@ -1058,6 +1107,8 @@ Usage: ${APP_NAME} <command>
   restore <file>     Restore from a backup archive
   cli <args...>      Run nexuspanel-cli inside the container
   uninstall          Remove the app (keeps data dir)
+
+Also: ${BOLD}nexus${NC}  — interactive management console (status, SSL, geo, admins, …)
 EOF
 }
 

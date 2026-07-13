@@ -217,6 +217,8 @@ FA[lang_saved]="زبان بروزرسانی شد."
 
 EN[p_admin_user]="Admin username"
 FA[p_admin_user]="نام‌کاربری ادمین"
+EN[p_editing_admin]="Editing admin"
+FA[p_editing_admin]="ادمین در حال ویرایش"
 EN[p_new_user]="New username (blank = keep)"
 FA[p_new_user]="نام‌کاربری جدید (خالی = بدون تغییر)"
 EN[p_new_pass]="New password (blank = keep)"
@@ -535,8 +537,16 @@ set_password_via_env() { # $1=username $2=password
 action_reset_userpass() {
   require_root || return 1
   local u newu p p2
-  printf "%b" "$(t p_admin_user): "; read -r u
-  [ -n "$u" ] || { err "$(t user_required)"; return 1; }
+  # Auto-detect the sole sudo admin instead of asking the operator to type the
+  # existing/previous username; only fall back to asking if that's ambiguous
+  # (e.g. more than one sudo admin) or the panel isn't reachable yet.
+  u="$(panel_cli admin whoami </dev/null 2>/dev/null | tr -d '\r\n')"
+  if [ -n "$u" ]; then
+    msg "$(t p_editing_admin): ${C_CYAN}${u}${C_RESET}"
+  else
+    printf "%b" "$(t p_admin_user): "; read -r u
+    [ -n "$u" ] || { err "$(t user_required)"; return 1; }
+  fi
   printf "%b" "$(t p_new_user): "; read -r newu
   printf "%b" "$(t p_new_pass): "; read -r -s p; echo
   local changed=0

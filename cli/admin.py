@@ -199,6 +199,26 @@ def set_password(
         utils.success(f'Password for "{username}" updated successfully.')
 
 
+@app.command(name="whoami")
+def whoami():
+    """
+    Prints the username of the sole sudo admin (for scripting/tooling).
+
+    Lets management tooling (e.g. the ``nexus`` server manager) resolve which
+    admin account to act on without asking the operator to retype a username
+    they may not even remember. Fails if there isn't exactly one sudo admin.
+    """
+    with GetDB() as db:
+        sudo_admins = db.query(Admin).filter(Admin.is_sudo.is_(True)).order_by(Admin.id).all()
+        if not sudo_admins:
+            utils.error("No sudo admin found.")
+        if len(sudo_admins) > 1:
+            utils.error(
+                "Multiple sudo admins found; use `admin list` and target one explicitly."
+            )
+        typer.echo(sudo_admins[0].username)
+
+
 @app.command(name="rename")
 def rename_admin(
     current: str = typer.Option(..., "--current", "-c", prompt="Current username", show_default=False),

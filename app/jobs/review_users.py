@@ -1,4 +1,5 @@
 from datetime import datetime
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 from sqlalchemy.orm import Session
@@ -9,6 +10,7 @@ from app.db import (GetDB, get_notification_reminder, get_users,
 from app.models.user import ReminderType, UserResponse, UserStatus
 from app.quota import (
     disconnect_limited_users_if_due,
+    disconnect_users_everywhere,
     enforce_usage_cap,
     limit_user_quota,
     reactivate_if_quota_available,
@@ -51,15 +53,25 @@ def add_notification_reminders(db: Session, user: "User", now: datetime = dateti
 
 def reset_user_by_next_report(db: Session, user: "User"):
     user = reset_user_by_next(db, user)
-
-    xray.operations.update_user(user)
-
-    report.user_data_reset_by_next(user=UserResponse.model_validate(user), user_admin=user.admin)
+    # Caller must run live sync *after* the DB session closes.
+    return user
 
 
 def review():
     now = datetime.utcnow()
     now_ts = now.timestamp()
+
+    # Network / core ops collected here and run only after GetDB closes.
+    # Holding the review transaction open across disconnect/restart used to
+    # idle-in-transaction for minutes and freeze Overview online stats
+    # (record_user_usages / review both max_instances=1).
+    newly_limited: list[SimpleNamespace] = []
+    expired_users: list[SimpleNamespace] = []
+    next_plan_users: list[int] = []
+    reactivated_ids: list[int] = []
+    activated_on_hold_ids: list[int] = []
+    limited_safety_net: list[SimpleNamespace] = []
+
     with GetDB() as db:
         for user in get_users(db, status=UserStatus.active):
 
@@ -67,18 +79,14 @@ def review():
             expired = user.expire and user.expire <= now_ts
 
             if (limited or expired) and user.next_plan is not None:
-                if user.next_plan is not None:
-
-                    if user.next_plan.fire_on_either:
-                        reset_user_by_next_report(db, user)
-                        continue
-
-                    elif limited and expired:
-                        reset_user_by_next_report(db, user)
-                        continue
+                if user.next_plan.fire_on_either or (limited and expired):
+                    reset_user_by_next_report(db, user)
+                    next_plan_users.append(int(user.id))
+                    continue
 
             if limited:
-                if limit_user_quota(db, user, cap_usage=True):
+                if limit_user_quota(db, user, cap_usage=True, disconnect=False):
+                    newly_limited.append(SimpleNamespace(id=int(user.id), username=user.username))
                     report.status_change(
                         username=user.username,
                         status=UserStatus.limited,
@@ -89,7 +97,7 @@ def review():
             elif expired:
                 status = UserStatus.expired
                 update_user_status(db, user, status)
-                xray.operations.remove_user_immediate(user)
+                expired_users.append(SimpleNamespace(id=int(user.id), username=user.username))
                 report.status_change(
                     username=user.username, status=status,
                     user=UserResponse.model_validate(user), user_admin=user.admin,
@@ -108,12 +116,10 @@ def review():
             else:
                 base_time = datetime.timestamp(user.created_at)
 
-            # Check if the user is online After or at 'base_time'
             if user.online_at and base_time <= datetime.timestamp(user.online_at):
                 status = UserStatus.active
 
             elif user.on_hold_timeout and (datetime.timestamp(user.on_hold_timeout) <= (now_ts)):
-                # If the user didn't connect within the timeout period, change status to "Active"
                 status = UserStatus.active
 
             else:
@@ -121,21 +127,20 @@ def review():
 
             update_user_status(db, user, status)
             start_user_expire(db, user)
-            xray.operations.sync_core_users_async()
+            activated_on_hold_ids.append(int(user.id))
 
             report.status_change(username=user.username, status=status,
                                  user=UserResponse.model_validate(user), user_admin=user.admin)
 
             logger.info(f"User \"{user.username}\" status changed to {status}")
 
-        to_disconnect: list["User"] = []
         for user in get_users(db, status=UserStatus.limited):
             if user.data_limit and user.used_traffic > user.data_limit:
                 enforce_usage_cap(db, user)
             elif reactivate_if_quota_available(user):
                 db.commit()
                 db.refresh(user)
-                xray.operations.update_user(user)
+                reactivated_ids.append(int(user.id))
                 report.status_change(
                     username=user.username,
                     status=UserStatus.active,
@@ -144,15 +149,49 @@ def review():
                 )
                 logger.info('User "%s" reactivated after quota restored', user.username)
             else:
-                # A limited user is already excluded from the generated core
-                # config, so cutting them from the live core is only a safety
-                # net — collect them and let quota gate by per-user cooldown and
-                # issue at most one batched restart for the whole tick, instead
-                # of a full core restart per user every 5s (which took the whole
-                # node down continuously whenever any user sat at their cap).
-                to_disconnect.append(user)
+                limited_safety_net.append(SimpleNamespace(id=int(user.id), username=user.username))
 
-        disconnect_limited_users_if_due(to_disconnect)
+    # --- live paths (no open billing/review transaction) ---
+    if newly_limited:
+        try:
+            disconnect_users_everywhere(newly_limited)
+        except Exception:
+            logger.exception("review: batched limit disconnect failed")
+
+    if expired_users:
+        try:
+            disconnect_users_everywhere(expired_users)
+        except Exception:
+            logger.exception("review: batched expire disconnect failed")
+
+    if limited_safety_net:
+        try:
+            disconnect_limited_users_if_due(limited_safety_net)
+        except Exception:
+            logger.exception("review: limited safety-net disconnect failed")
+
+    if next_plan_users or reactivated_ids:
+        from app.db import crud
+
+        live_users = []
+        with GetDB() as db:
+            for uid in next_plan_users + reactivated_ids:
+                dbuser = crud.get_user_by_id(db, uid)
+                if dbuser is None:
+                    continue
+                db.expunge(dbuser)
+                live_users.append(dbuser)
+        for dbuser in live_users:
+            try:
+                xray.operations.update_user(dbuser)
+            except Exception:
+                logger.exception('review: live update failed for user id=%s', dbuser.id)
+
+    if activated_on_hold_ids:
+        try:
+            xray.operations.sync_core_users_async()
+        except Exception:
+            logger.exception("review: on-hold activation core sync failed")
 
 
 from app.ha import run_if_leader  # noqa: E402

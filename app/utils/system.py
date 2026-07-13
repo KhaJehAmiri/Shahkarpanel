@@ -86,9 +86,16 @@ class RealtimeBandwidthStat:
 rt_bw = RealtimeBandwidth(
     incoming_bytes=0, outgoing_bytes=0, incoming_packets=0, outgoing_packets=0)
 
-# Xray inbound throughput (proxy only — not whole-NIC psutil noise)
+# Xray inbound throughput (proxy only — not whole-NIC psutil noise).
+# Do NOT seed from NIC counters: mixing NIC baselines with Xray totals makes the
+# first delta nonsense and can pin rates at 0 after xr_bw_ready flips True.
 xr_bw = RealtimeBandwidth(
     incoming_bytes=0, outgoing_bytes=0, incoming_packets=0, outgoing_packets=0)
+xr_bw.bytes_recv = None
+xr_bw.bytes_sent = None
+xr_bw.packets_recv = None
+xr_bw.packets_sent = None
+xr_bw.last_perf_counter = None
 xr_bw_ready = False
 
 
@@ -106,13 +113,15 @@ def _sample_xray_inbound_rates() -> None:
                 down += stat.value
 
         last_t = xr_bw.last_perf_counter
+        prev_recv = xr_bw.bytes_recv
+        prev_sent = xr_bw.bytes_sent
         now = time.perf_counter()
-        if last_t is not None:
+        if last_t is not None and prev_recv is not None and prev_sent is not None:
             dt = now - last_t
             if dt > 0:
                 # downlink = traffic to clients (دانلود کاربر), uplink = آپلود کاربر
-                xr_bw.incoming_bytes = max(0, round((down - (xr_bw.bytes_recv or 0)) / dt))
-                xr_bw.outgoing_bytes = max(0, round((up - (xr_bw.bytes_sent or 0)) / dt))
+                xr_bw.incoming_bytes = max(0, round((down - prev_recv) / dt))
+                xr_bw.outgoing_bytes = max(0, round((up - prev_sent) / dt))
         xr_bw.bytes_recv = down
         xr_bw.bytes_sent = up
         xr_bw.last_perf_counter = now
@@ -127,18 +136,31 @@ def record_realtime_bandwidth() -> None:
     global rt_bw
     last_perf_counter = rt_bw.last_perf_counter
     io = psutil.net_io_counters()
-    rt_bw.last_perf_counter = time.perf_counter()
-    sample_time = rt_bw.last_perf_counter - last_perf_counter
-    rt_bw.incoming_bytes, rt_bw.bytes_recv = round((io.bytes_recv - rt_bw.bytes_recv) / sample_time), io.bytes_recv
-    rt_bw.outgoing_bytes, rt_bw.bytes_sent = round((io.bytes_sent - rt_bw.bytes_sent) / sample_time), io.bytes_sent
-    rt_bw.incoming_packets, rt_bw.packets_recv = round((io.packets_recv - rt_bw.packets_recv) / sample_time), io.packets_recv
-    rt_bw.outgoing_packets, rt_bw.packets_sent = round((io.packets_sent - rt_bw.packets_sent) / sample_time), io.packets_sent
+    now = time.perf_counter()
+    rt_bw.last_perf_counter = now
+    if last_perf_counter is None:
+        sample_time = 0.0
+    else:
+        sample_time = now - last_perf_counter
+    if sample_time > 0:
+        rt_bw.incoming_bytes = round((io.bytes_recv - (rt_bw.bytes_recv or 0)) / sample_time)
+        rt_bw.outgoing_bytes = round((io.bytes_sent - (rt_bw.bytes_sent or 0)) / sample_time)
+        rt_bw.incoming_packets = round((io.packets_recv - (rt_bw.packets_recv or 0)) / sample_time)
+        rt_bw.outgoing_packets = round((io.packets_sent - (rt_bw.packets_sent or 0)) / sample_time)
+    rt_bw.bytes_recv = io.bytes_recv
+    rt_bw.bytes_sent = io.bytes_sent
+    rt_bw.packets_recv = io.packets_recv
+    rt_bw.packets_sent = io.packets_sent
     _sample_xray_inbound_rates()
 
 
 def realtime_bandwidth() -> RealtimeBandwidthStat:
-    """Prefer Xray inbound rates (proxy). Fall back to whole-server NIC via psutil."""
-    if xr_bw_ready:
+    """Prefer Xray inbound rates (proxy). Fall back to whole-server NIC via psutil.
+
+    When Xray stats are reachable but idle (common while traffic flows through
+    nodes rather than panel inbounds), fall back to NIC so Home stays live.
+    """
+    if xr_bw_ready and (xr_bw.incoming_bytes > 0 or xr_bw.outgoing_bytes > 0):
         return RealtimeBandwidthStat(
             incoming_bytes=xr_bw.incoming_bytes,
             outgoing_bytes=xr_bw.outgoing_bytes,
@@ -154,7 +176,9 @@ def realtime_bandwidth() -> RealtimeBandwidthStat:
 
 
 def realtime_bandwidth_source() -> str:
-    return "xray" if xr_bw_ready else "nic"
+    if xr_bw_ready and (xr_bw.incoming_bytes > 0 or xr_bw.outgoing_bytes > 0):
+        return "xray"
+    return "nic"
 
 
 def random_password() -> str:

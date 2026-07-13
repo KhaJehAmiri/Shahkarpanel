@@ -1,6 +1,6 @@
 from typing import List, Union
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 
 from app.db import Session, crud, get_db
@@ -90,12 +90,14 @@ def nodes_usage(
 
 @router.get("/realtime", response_model=RealtimeStats)
 def realtime(
+    response: Response,
     db: Session = Depends(get_db),
     admin: Admin = Depends(Admin.get_current),
 ):
     """Live snapshot: online users, active users, connected nodes and throughput."""
     from app.models.node import NodeStatus
 
+    response.headers["Cache-Control"] = "no-store"
     dbadmin: Union[Admin, None] = None if admin.is_sudo else crud.get_admin(db, admin.username)
     bandwidth = realtime_bandwidth()
     nodes = crud.get_nodes(db, status=NodeStatus.connected)

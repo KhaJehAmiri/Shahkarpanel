@@ -5,257 +5,409 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>NexusPanel</title>
   <meta name="description" content="NexusPanel — Professional VPN Control Plane" />
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop stop-color='%235b8cff'/%3E%3Cstop offset='1' stop-color='%237c5cff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='8' fill='url(%23g)'/%3E%3Ctext x='16' y='22' text-anchor='middle' fill='white' font-size='16' font-weight='800' font-family='system-ui'%3EN%3C/text%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2306110e'/%3E%3Ccircle cx='16' cy='16' r='7' fill='none' stroke='%232ee0c4' stroke-width='2.5'/%3E%3Ccircle cx='16' cy='16' r='2.5' fill='%232ee0c4'/%3E%3C/svg%3E" />
   <style>
     :root {
-      --bg: #07090f;
-      --text: #eef2f8;
-      --dim: #8b95a8;
-      --accent: #5b8cff;
-      --accent2: #7c5cff;
-      --card: rgba(16, 21, 28, 0.85);
-      --border: rgba(255, 255, 255, 0.08);
+      --ink: #06110e;
+      --ink-2: #0b1a16;
+      --fog: #d7efe8;
+      --mute: #7a9a91;
+      --accent: #2ee0c4;
+      --accent-dim: rgba(46, 224, 196, 0.14);
+      --line: rgba(215, 239, 232, 0.1);
+      --font-display: "Syne", "Vazirmatn", system-ui, sans-serif;
+      --font-body: "Manrope", "Vazirmatn", system-ui, sans-serif;
     }
+
     *, *::before, *::after { box-sizing: border-box; margin: 0; }
     html, body { min-height: 100%; }
     body {
-      font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
-      background: var(--bg);
-      color: var(--text);
+      font-family: var(--font-body);
+      background: var(--ink);
+      color: var(--fog);
       overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
     }
-    .nx-bg {
-      position: fixed; inset: 0; z-index: 0;
-      background:
-        radial-gradient(ellipse 70% 50% at 15% -5%, rgba(91, 140, 255, 0.22), transparent),
-        radial-gradient(ellipse 55% 45% at 85% 15%, rgba(124, 92, 255, 0.16), transparent),
-        radial-gradient(ellipse 40% 30% at 50% 100%, rgba(46, 224, 196, 0.08), transparent),
-        var(--bg);
-    }
-    .nx-grid {
-      position: fixed; inset: 0; z-index: 0; opacity: 0.35;
-      background-image:
-        linear-gradient(rgba(91, 140, 255, 0.06) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(91, 140, 255, 0.06) 1px, transparent 1px);
-      background-size: 48px 48px;
-      mask-image: radial-gradient(ellipse 80% 70% at 50% 40%, black, transparent);
-    }
-    .nx-wrap {
-      position: relative; z-index: 1;
+
+    .nx-stage {
+      position: relative;
       min-height: 100vh;
-      display: flex; flex-direction: column;
-      align-items: center; justify-content: center;
-      padding: 32px 20px 48px;
-      text-align: center;
+      min-height: 100dvh;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      isolation: isolate;
     }
-    .nx-mascot {
-      width: min(280px, 72vw);
-      height: auto;
-      margin-bottom: 8px;
-      filter: drop-shadow(0 24px 48px rgba(91, 140, 255, 0.25));
-      animation: nx-float 4s ease-in-out infinite;
+
+    /* Full-bleed atmospheric plane */
+    .nx-plane {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      overflow: hidden;
+      background:
+        radial-gradient(ellipse 90% 70% at 70% 20%, rgba(46, 224, 196, 0.16), transparent 55%),
+        radial-gradient(ellipse 60% 50% at 10% 80%, rgba(46, 224, 196, 0.07), transparent 50%),
+        linear-gradient(165deg, #06110e 0%, #0a1814 45%, #07120f 100%);
     }
-    @keyframes nx-float {
-      0%, 100% { transform: translateY(0); }
-      50% { transform: translateY(-10px); }
+
+    .nx-plane::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(46, 224, 196, 0.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(46, 224, 196, 0.035) 1px, transparent 1px);
+      background-size: 64px 64px;
+      mask-image: radial-gradient(ellipse 75% 65% at 60% 35%, black, transparent);
+      animation: nx-drift 28s linear infinite;
+      opacity: 0.7;
     }
-    .nx-mascot .nx-eye { animation: nx-blink 4s step-end infinite; }
-    @keyframes nx-blink {
-      0%, 92%, 100% { opacity: 1; }
-      94%, 96% { opacity: 0.15; }
+
+    @keyframes nx-drift {
+      from { transform: translate3d(0, 0, 0); }
+      to { transform: translate3d(-64px, -64px, 0); }
     }
-    .nx-mascot .nx-glow { animation: nx-pulse 2.5s ease-in-out infinite; }
-    @keyframes nx-pulse {
-      0%, 100% { opacity: 0.6; }
-      50% { opacity: 1; }
+
+    .nx-orbits {
+      position: absolute;
+      width: min(92vw, 720px);
+      aspect-ratio: 1;
+      right: -8%;
+      top: 50%;
+      transform: translateY(-52%);
+      pointer-events: none;
     }
-    .nx-brand {
-      font-size: clamp(2rem, 6vw, 2.75rem);
-      font-weight: 800;
-      letter-spacing: -0.03em;
-      background: linear-gradient(90deg, #fff 20%, #a8c4ff 60%, #c4b5fd);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
-      margin-bottom: 8px;
+
+    html[dir="rtl"] .nx-orbits {
+      right: auto;
+      left: -8%;
     }
-    .nx-tagline {
-      font-size: 1.05rem;
-      color: var(--dim);
-      max-width: 36ch;
-      line-height: 1.55;
-      margin-bottom: 28px;
+
+    .nx-orbits svg {
+      width: 100%;
+      height: 100%;
+      animation: nx-spin 48s linear infinite;
     }
-    .nx-cards {
-      display: flex; flex-wrap: wrap; gap: 12px;
-      justify-content: center; max-width: 520px;
+
+    .nx-orbits .nx-ring-slow {
+      animation: nx-spin-rev 72s linear infinite;
+      transform-origin: 50% 50%;
     }
-    .nx-card {
-      display: flex; align-items: center; gap: 12px;
-      padding: 14px 18px;
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      text-decoration: none;
-      color: inherit;
-      min-width: 200px;
-      backdrop-filter: blur(12px);
-      transition: border-color 0.2s, transform 0.15s, box-shadow 0.2s;
+
+    @keyframes nx-spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
     }
-    .nx-card:hover {
-      border-color: rgba(91, 140, 255, 0.45);
-      transform: translateY(-2px);
-      box-shadow: 0 12px 40px rgba(91, 140, 255, 0.12);
+    @keyframes nx-spin-rev {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(-360deg); }
     }
-    .nx-card-ico {
-      width: 40px; height: 40px; border-radius: 10px;
-      display: grid; place-items: center; font-size: 1.2rem;
-      background: linear-gradient(135deg, rgba(91, 140, 255, 0.2), rgba(124, 92, 255, 0.15));
+
+    .nx-top {
+      position: relative;
+      z-index: 2;
+      display: flex;
+      justify-content: flex-end;
+      padding: 22px 28px 0;
     }
-    .nx-card b { display: block; font-size: 0.95rem; text-align: start; }
-    .nx-card small { color: var(--dim); font-size: 0.78rem; text-align: start; display: block; }
-    .nx-foot {
-      margin-top: 40px;
-      font-size: 0.78rem;
-      color: var(--dim);
-    }
+
     .nx-lang {
-      margin-top: 20px;
-      display: flex; gap: 6px; flex-wrap: wrap; justify-content: center;
+      display: inline-flex;
+      gap: 2px;
+      padding: 3px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(6, 17, 14, 0.55);
+      backdrop-filter: blur(10px);
     }
+
     .nx-lang button {
+      appearance: none;
+      border: 0;
       background: transparent;
-      border: 1px solid var(--border);
-      color: var(--dim);
-      border-radius: 999px;
-      padding: 5px 12px;
-      font: inherit; font-size: 0.75rem;
+      color: var(--mute);
+      font: 500 0.72rem/1 var(--font-body);
+      letter-spacing: 0.02em;
+      padding: 7px 11px;
+      border-radius: 7px;
       cursor: pointer;
-      transition: all 0.15s;
+      transition: color 0.2s, background 0.2s;
     }
-    .nx-lang button.active, .nx-lang button:hover {
-      color: var(--text);
-      border-color: rgba(91, 140, 255, 0.5);
-      background: rgba(91, 140, 255, 0.1);
+
+    .nx-lang button:hover { color: var(--fog); }
+    .nx-lang button.active {
+      color: var(--ink);
+      background: var(--accent);
+      font-weight: 600;
     }
-    html[dir="rtl"] .nx-card b, html[dir="rtl"] .nx-card small { text-align: end; }
+
+    .nx-hero {
+      position: relative;
+      z-index: 2;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 48px clamp(24px, 6vw, 80px) 56px;
+      max-width: 780px;
+      animation: nx-rise 0.9s cubic-bezier(0.22, 1, 0.36, 1) both;
+    }
+
+    html[dir="rtl"] .nx-hero { margin-inline-start: auto; }
+
+    @keyframes nx-rise {
+      from { opacity: 0; transform: translateY(18px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .nx-mark {
+      width: 42px;
+      height: 42px;
+      margin-bottom: 28px;
+      color: var(--accent);
+      animation: nx-pulse 3.6s ease-in-out infinite;
+    }
+
+    @keyframes nx-pulse {
+      0%, 100% { opacity: 0.75; transform: scale(1); }
+      50% { opacity: 1; transform: scale(1.04); }
+    }
+
+    .nx-brand {
+      font-family: var(--font-display);
+      font-weight: 800;
+      font-size: clamp(3rem, 9vw, 5.5rem);
+      line-height: 0.95;
+      letter-spacing: -0.045em;
+      color: var(--fog);
+      margin-bottom: 22px;
+    }
+
+    .nx-brand span {
+      color: var(--accent);
+    }
+
+    .nx-headline {
+      font-family: var(--font-display);
+      font-weight: 600;
+      font-size: clamp(1.15rem, 2.4vw, 1.45rem);
+      letter-spacing: -0.02em;
+      line-height: 1.35;
+      color: var(--fog);
+      max-width: 22ch;
+      margin-bottom: 14px;
+    }
+
+    .nx-support {
+      font-size: 1rem;
+      font-weight: 400;
+      line-height: 1.6;
+      color: var(--mute);
+      max-width: 36ch;
+      margin-bottom: 36px;
+    }
+
+    .nx-cta {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 14px 22px;
+    }
+
+    .nx-cta-primary {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 22px;
+      border-radius: 999px;
+      background: var(--accent);
+      color: var(--ink);
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 0.95rem;
+      letter-spacing: -0.01em;
+      transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+      box-shadow: 0 0 0 0 rgba(46, 224, 196, 0);
+    }
+
+    .nx-cta-primary:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 12px 40px rgba(46, 224, 196, 0.28);
+      background: #5aebd0;
+    }
+
+    .nx-cta-primary svg {
+      width: 16px;
+      height: 16px;
+      transition: transform 0.2s ease;
+    }
+
+    html[dir="rtl"] .nx-cta-primary svg { transform: scaleX(-1); }
+    .nx-cta-primary:hover svg { transform: translateX(3px); }
+    html[dir="rtl"] .nx-cta-primary:hover svg { transform: scaleX(-1) translateX(3px); }
+
+    .nx-cta-ghost {
+      color: var(--fog);
+      text-decoration: none;
+      font-weight: 500;
+      font-size: 0.95rem;
+      border-bottom: 1px solid transparent;
+      padding-bottom: 2px;
+      transition: color 0.2s, border-color 0.2s;
+    }
+
+    .nx-cta-ghost:hover {
+      color: var(--accent);
+      border-color: rgba(46, 224, 196, 0.45);
+    }
+
+    .nx-foot {
+      position: relative;
+      z-index: 2;
+      padding: 0 28px 28px;
+      font-size: 0.75rem;
+      color: var(--mute);
+      opacity: 0.75;
+      animation: nx-rise 1.1s 0.15s cubic-bezier(0.22, 1, 0.36, 1) both;
+    }
+
+    @media (max-width: 720px) {
+      .nx-orbits {
+        opacity: 0.35;
+        right: -35%;
+        width: 120vw;
+        top: 18%;
+        transform: none;
+      }
+      html[dir="rtl"] .nx-orbits { left: -35%; right: auto; }
+      .nx-top { padding: 18px 18px 0; }
+      .nx-hero { padding: 36px 22px 48px; }
+      .nx-foot { padding: 0 22px 22px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .nx-plane::after,
+      .nx-orbits svg,
+      .nx-orbits .nx-ring-slow,
+      .nx-mark,
+      .nx-hero,
+      .nx-foot { animation: none !important; }
+    }
   </style>
 </head>
 <body>
-  <div class="nx-bg" aria-hidden="true"></div>
-  <div class="nx-grid" aria-hidden="true"></div>
-
-  <main class="nx-wrap">
-    <svg class="nx-mascot" viewBox="0 0 320 360" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-      <defs>
-        <linearGradient id="bodyGrad" x1="60" y1="80" x2="260" y2="320" gradientUnits="userSpaceOnUse">
-          <stop stop-color="#1a2234"/><stop offset="1" stop-color="#0d1118"/>
-        </linearGradient>
-        <linearGradient id="accentGrad" x1="0" y1="0" x2="1" y2="1">
-          <stop stop-color="#5b8cff"/><stop offset="1" stop-color="#7c5cff"/>
-        </linearGradient>
-        <filter id="glow"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
-      </defs>
-      <!-- Antenna -->
-      <line x1="160" y1="48" x2="160" y2="78" stroke="url(#accentGrad)" stroke-width="3" stroke-linecap="round"/>
-      <circle class="nx-glow" cx="160" cy="40" r="8" fill="#5b8cff" filter="url(#glow)"/>
-      <!-- Head -->
-      <rect x="95" y="78" width="130" height="110" rx="28" fill="url(#bodyGrad)" stroke="url(#accentGrad)" stroke-width="2.5"/>
-      <!-- Visor -->
-      <rect x="110" y="108" width="100" height="44" rx="14" fill="#07090f" stroke="rgba(91,140,255,0.4)" stroke-width="1.5"/>
-      <ellipse class="nx-eye" cx="135" cy="130" rx="10" ry="12" fill="#5b8cff" filter="url(#glow)"/>
-      <ellipse class="nx-eye" cx="185" cy="130" rx="10" ry="12" fill="#7c5cff" filter="url(#glow)"/>
-      <!-- Smile -->
-      <path d="M130 158 Q160 172 190 158" stroke="#5b8cff" stroke-width="2.5" stroke-linecap="round" fill="none" opacity="0.7"/>
-      <!-- Body -->
-      <path d="M75 200 Q160 185 245 200 L260 290 Q160 310 60 290 Z" fill="url(#bodyGrad)" stroke="url(#accentGrad)" stroke-width="2.5"/>
-      <!-- N badge -->
-      <circle cx="160" cy="248" r="32" fill="url(#accentGrad)" filter="url(#glow)"/>
-      <text x="160" y="258" text-anchor="middle" fill="white" font-size="32" font-weight="800" font-family="system-ui,sans-serif">N</text>
-      <!-- Arms -->
-      <path d="M75 210 Q40 230 35 270" stroke="url(#accentGrad)" stroke-width="10" stroke-linecap="round" fill="none"/>
-      <path d="M245 210 Q280 230 285 270" stroke="url(#accentGrad)" stroke-width="10" stroke-linecap="round" fill="none"/>
-      <!-- Hands / nodes -->
-      <circle cx="35" cy="275" r="12" fill="#1a2234" stroke="#5b8cff" stroke-width="2"/>
-      <circle cx="285" cy="275" r="12" fill="#1a2234" stroke="#7c5cff" stroke-width="2"/>
-      <circle cx="35" cy="275" r="4" fill="#5b8cff" class="nx-glow"/>
-      <circle cx="285" cy="275" r="4" fill="#7c5cff" class="nx-glow"/>
-      <!-- Legs -->
-      <rect x="120" y="295" width="28" height="50" rx="10" fill="#1a2234" stroke="rgba(91,140,255,0.35)" stroke-width="1.5"/>
-      <rect x="172" y="295" width="28" height="50" rx="10" fill="#1a2234" stroke="rgba(91,140,255,0.35)" stroke-width="1.5"/>
-      <!-- Shadow -->
-      <ellipse cx="160" cy="352" rx="70" ry="8" fill="rgba(91,140,255,0.15)"/>
-    </svg>
-
-    <h1 class="nx-brand">NexusPanel</h1>
-    <p class="nx-tagline" id="tagline">Professional VPN Control Plane — multi-tenant, white-label, Xray-powered.</p>
-
-    <div class="nx-cards">
-      <a class="nx-card" href="/portal/">
-        <div class="nx-card-ico">👤</div>
-        <div><b id="lbl-portal">User Portal</b><small id="desc-portal">Manage subscription &amp; account</small></div>
-      </a>
-      <a class="nx-card" href="/subscribe/">
-        <div class="nx-card-ico">🔗</div>
-        <div><b id="lbl-sub">Subscription</b><small id="desc-sub">Personal VPN profile page</small></div>
-      </a>
+  <div class="nx-stage">
+    <div class="nx-plane" aria-hidden="true">
+      <div class="nx-orbits">
+        <svg viewBox="0 0 640 640" fill="none">
+          <circle cx="320" cy="320" r="210" stroke="rgba(46,224,196,0.18)" stroke-width="1.2" />
+          <circle class="nx-ring-slow" cx="320" cy="320" r="278" stroke="rgba(46,224,196,0.1)" stroke-width="1" stroke-dasharray="6 14" />
+          <circle cx="320" cy="320" r="146" stroke="rgba(46,224,196,0.22)" stroke-width="1.4" />
+          <circle cx="320" cy="110" r="5" fill="#2ee0c4" opacity="0.9" />
+          <circle cx="510" cy="360" r="4" fill="#2ee0c4" opacity="0.65" />
+          <circle cx="180" cy="470" r="3.5" fill="#2ee0c4" opacity="0.5" />
+          <path d="M320 110 L510 360 L180 470 Z" stroke="rgba(46,224,196,0.2)" stroke-width="1" />
+          <circle cx="320" cy="320" r="10" fill="rgba(46,224,196,0.15)" stroke="#2ee0c4" stroke-width="1.5" />
+        </svg>
+      </div>
     </div>
 
-    <div class="nx-lang" role="group" aria-label="Language">
-      <button type="button" data-lang="en" class="active">English</button>
-      <button type="button" data-lang="fa">فارسی</button>
-      <button type="button" data-lang="ru">Русский</button>
-      <button type="button" data-lang="zh">中文</button>
-    </div>
+    <header class="nx-top">
+      <div class="nx-lang" role="group" aria-label="Language">
+        <button type="button" data-lang="en" class="active">EN</button>
+        <button type="button" data-lang="fa">FA</button>
+        <button type="button" data-lang="ru">RU</button>
+        <button type="button" data-lang="zh">中文</button>
+      </div>
+    </header>
+
+    <main class="nx-hero">
+      <svg class="nx-mark" viewBox="0 0 42 42" fill="none" aria-hidden="true">
+        <circle cx="21" cy="21" r="18" stroke="currentColor" stroke-width="1.5" opacity="0.35" />
+        <circle cx="21" cy="21" r="9" stroke="currentColor" stroke-width="2" />
+        <circle cx="21" cy="21" r="3" fill="currentColor" />
+      </svg>
+
+      <h1 class="nx-brand">Nexus<span>Panel</span></h1>
+      <p class="nx-headline" id="headline">The control plane for modern VPN fleets.</p>
+      <p class="nx-support" id="tagline">Multi-tenant. White-label. Xray at the core.</p>
+
+      <div class="nx-cta">
+        <a class="nx-cta-primary" href="/portal/">
+          <span id="lbl-portal">Open portal</span>
+          <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </a>
+        <a class="nx-cta-ghost" href="/subscribe/" id="lbl-sub">Subscription</a>
+      </div>
+    </main>
 
     <p class="nx-foot" id="foot">Admin dashboard access is provided by your operator.</p>
-  </main>
+  </div>
 
   <script>
     var T = {
       en: {
-        tagline: "Professional VPN Control Plane — multi-tenant, white-label, Xray-powered.",
-        portal: "User Portal", descPortal: "Manage subscription & account",
-        sub: "Subscription", descSub: "Personal VPN profile page",
+        headline: "The control plane for modern VPN fleets.",
+        tagline: "Multi-tenant. White-label. Xray at the core.",
+        portal: "Open portal",
+        sub: "Subscription",
         foot: "Admin dashboard access is provided by your operator."
       },
       fa: {
-        tagline: "کنترل‌پنل حرفه‌ای VPN — چندمستاجری، وایت‌لیبل، مبتنی بر Xray.",
-        portal: "پورتال کاربر", descPortal: "مدیریت اشتراک و حساب",
-        sub: "صفحه اشتراک", descSub: "پروفایل VPN شخصی",
+        headline: "مرکز کنترل ناوگان مدرن VPN.",
+        tagline: "چندمستاجری. وایت‌لیبل. مبتنی بر Xray.",
+        portal: "ورود به پورتال",
+        sub: "صفحه اشتراک",
         foot: "دسترسی به داشبورد ادمین توسط اپراتور شما ارائه می‌شود."
       },
       ru: {
-        tagline: "Профессиональная VPN-панель — мультитenant, white-label, Xray.",
-        portal: "Портал пользователя", descPortal: "Подписка и аккаунт",
-        sub: "Подписка", descSub: "Личный VPN-профиль",
+        headline: "Панель управления современными VPN-флотами.",
+        tagline: "Мультитенант. White-label. На базе Xray.",
+        portal: "Открыть портал",
+        sub: "Подписка",
         foot: "Доступ к админ-панели предоставляет оператор."
       },
       zh: {
-        tagline: "专业 VPN 控制面板 — 多租户、白标、Xray 驱动。",
-        portal: "用户门户", descPortal: "管理订阅与账户",
-        sub: "订阅页面", descSub: "个人 VPN 配置",
+        headline: "现代 VPN 集群的控制平面。",
+        tagline: "多租户。白标。以 Xray 为核心。",
+        portal: "打开门户",
+        sub: "订阅页面",
         foot: "管理面板访问权限由运营商提供。"
       }
     };
+
     function setLang(code) {
       var d = T[code] || T.en;
       document.documentElement.lang = code;
       document.documentElement.dir = code === "fa" ? "rtl" : "ltr";
+      document.getElementById("headline").textContent = d.headline;
       document.getElementById("tagline").textContent = d.tagline;
       document.getElementById("lbl-portal").textContent = d.portal;
-      document.getElementById("desc-portal").textContent = d.descPortal;
       document.getElementById("lbl-sub").textContent = d.sub;
-      document.getElementById("desc-sub").textContent = d.descSub;
       document.getElementById("foot").textContent = d.foot;
-      document.querySelectorAll(".nx-lang button").forEach(function(b) {
+      document.querySelectorAll(".nx-lang button").forEach(function (b) {
         b.classList.toggle("active", b.getAttribute("data-lang") === code);
       });
     }
+
+    var stored = null;
+    try { stored = localStorage.getItem("nx_lang"); } catch (e) {}
     var nav = (navigator.language || "en").slice(0, 2);
-    setLang(["en","fa","ru","zh"].indexOf(nav) >= 0 ? nav : "en");
-    document.querySelectorAll(".nx-lang button").forEach(function(b) {
-      b.addEventListener("click", function() { setLang(b.getAttribute("data-lang")); });
+    var initial = ["en", "fa", "ru", "zh"].indexOf(stored) >= 0
+      ? stored
+      : (["en", "fa", "ru", "zh"].indexOf(nav) >= 0 ? nav : "en");
+    setLang(initial);
+
+    document.querySelectorAll(".nx-lang button").forEach(function (b) {
+      b.addEventListener("click", function () {
+        var code = b.getAttribute("data-lang");
+        setLang(code);
+        try { localStorage.setItem("nx_lang", code); } catch (e) {}
+      });
     });
   </script>
 </body>

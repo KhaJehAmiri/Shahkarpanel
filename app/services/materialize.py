@@ -114,14 +114,25 @@ def materialize_wireguard(db, dbnode, bindings) -> None:
 
 
 def reconcile_wireguard_endpoints(db, dbnode) -> bool:
-    """Keep WG peer endpoints aligned with the node's public address."""
+    """Keep WG peer endpoints aligned with the node's public dial address.
+
+    Uses ``provision_host`` when ``nodes.address`` is loopback/control-plane
+    only (SSH tunnel nodes). Tunnel-delegated relays get the dokodemo capture
+    port so subscriptions match what Xray actually listens on.
+    """
+    from app.subscription.wireguard import _is_non_routable_host, public_dial_host
+    from app.tunnel.relay import relay_wireguard_tunnel_port
+
     cfg = dbnode.wireguard
-    addr = (dbnode.address or "").strip()
-    if cfg is None or not addr:
+    addr = public_dial_host(dbnode)
+    if cfg is None or not addr or _is_non_routable_host(addr):
         return False
     changed = False
-    if cfg.listen_port:
-        endpoint = f"{addr}:{int(cfg.listen_port)}"
+    listen_port = int(cfg.listen_port or 0)
+    tun_port = relay_wireguard_tunnel_port(db, int(dbnode.id))
+    plain_port = int(tun_port) if tun_port else listen_port
+    if plain_port:
+        endpoint = f"{addr}:{plain_port}"
         if cfg.endpoint != endpoint:
             cfg.endpoint = endpoint
             changed = True

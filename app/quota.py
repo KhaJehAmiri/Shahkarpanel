@@ -17,6 +17,11 @@ logger = logging.getLogger("nexus-quota")
 _force_disconnect_after: dict[int, float] = {}
 _FORCE_DISCONNECT_COOLDOWN_SEC = 15.0
 
+# Global cooldown so a briefly-unreachable core API cannot restart-loop every
+# review/usage tick (which freezes stats collection and Overview KPIs).
+_last_disconnect_restart_at: float = 0.0
+_DISCONNECT_RESTART_COOLDOWN_SEC = 90.0
+
 # Consecutive usage ticks each non-billable user has kept leaking traffic after
 # the live handler-API remove. Only a sustained streak escalates to a restart.
 _leak_streak: dict[int, int] = {}
@@ -149,14 +154,23 @@ def flush_live_serving(*, force_restart: bool = False) -> None:
         logger.exception("Node Xray config push during live serving flush failed")
 
 
-def disconnect_users_everywhere(dbusers: Sequence[User]) -> bool:
+def disconnect_users_everywhere(
+    dbusers: Sequence[User],
+    *,
+    allow_restart: bool = True,
+) -> bool:
     """Drop a *set* of users from every live path **without disconnecting anyone else**.
 
     Removes the users through the Xray handler gRPC API (add/remove-user) on the
     main core and every connected node — the same live-mutation path 3x-ui uses
     — so unrelated users keep their sessions. A full-core restart is issued only
     as a fallback when the main core's API is unreachable (the sole way to
-    converge a dead core), and even then just **once** for the whole batch.
+    converge a dead core), and even then just **once** for the whole batch
+    (and never more often than ``_DISCONNECT_RESTART_COOLDOWN_SEC``).
+
+    Pass ``allow_restart=False`` for safety-net re-asserts on users who are
+    already absent from generated config (e.g. ``limited``) — a restart is not
+    required and would thrash the core when the API is briefly down.
 
     This blocks the users' *new* connections instantly. A stubborn, already
     established session that keeps transferring after removal (e.g. a long-lived
@@ -164,6 +178,8 @@ def disconnect_users_everywhere(dbusers: Sequence[User]) -> bool:
     by the traffic-verified ``enforce_disconnect_for_non_billable`` escalation —
     something 3x-ui never does. Returns True when at least one user was handled.
     """
+    global _last_disconnect_restart_at
+
     users = list(dbusers)
     if not users:
         return False
@@ -183,10 +199,28 @@ def disconnect_users_everywhere(dbusers: Sequence[User]) -> bool:
             hot_disconnect_users_on_nodes(users)
         except Exception:
             logger.debug("Node hot disconnect skipped", exc_info=True)
+    elif allow_restart:
+        from app import xray
+
+        now = time.monotonic()
+        if getattr(xray.core, "restarting", False):
+            logger.warning(
+                "Skipping disconnect restart fallback — core is already restarting"
+            )
+        elif now - _last_disconnect_restart_at < _DISCONNECT_RESTART_COOLDOWN_SEC:
+            logger.warning(
+                "Skipping disconnect restart fallback — cooldown %.0fs remaining",
+                _DISCONNECT_RESTART_COOLDOWN_SEC - (now - _last_disconnect_restart_at),
+            )
+        else:
+            _last_disconnect_restart_at = now
+            # Core down / API unreachable — a rebuild + restart is the only way to
+            # converge. Issued once for the whole batch (never once per user).
+            flush_live_serving(force_restart=True)
     else:
-        # Core down / API unreachable — a rebuild + restart is the only way to
-        # converge. Issued once for the whole batch (never once per user).
-        flush_live_serving(force_restart=True)
+        logger.debug(
+            "Hot disconnect unavailable; restart fallback disabled for this batch"
+        )
 
     try:
         from app.db import GetDB
@@ -232,7 +266,7 @@ def disconnect_limited_users_if_due(dbusers: Sequence[User]) -> bool:
         if now >= _limited_redisconnect_after.get(dbuser.id, 0.0):
             _limited_redisconnect_after[dbuser.id] = now + _LIMITED_REDISCONNECT_COOLDOWN_SEC
             due.append(dbuser)
-    return disconnect_users_everywhere(due)
+    return disconnect_users_everywhere(due, allow_restart=False)
 
 
 def enforce_disconnect_for_non_billable(db, uids: Iterable[int]) -> None:
@@ -248,23 +282,46 @@ def enforce_disconnect_for_non_billable(db, uids: Iterable[int]) -> None:
     naturally-closing connection never triggers a restart. This is the
     "better than 3x-ui" guarantee: 3x-ui removes the user and then lets any
     established session keep transferring indefinitely.
+
+    ``db`` may be an open session (tests) or ``None`` (scheduler). The query is
+    always finished and copied into plain objects *before* any network I/O so a
+    hung disconnect cannot leave Postgres idle-in-transaction.
     """
     if not uids:
         return
-    rows = (
-        db.query(User)
-        .filter(User.id.in_(list(uids)), User.status.notin_((
-            UserStatus.active,
-            UserStatus.on_hold,
-        )))
-        .all()
-    )
-    if not rows:
+
+    def _load(session) -> List[Tuple[int, str, UserStatus]]:
+        return [
+            (int(row[0]), str(row[1]), row[2])
+            for row in session.query(User.id, User.username, User.status)
+            .filter(
+                User.id.in_(list(uids)),
+                User.status.notin_((UserStatus.active, UserStatus.on_hold)),
+            )
+            .all()
+        ]
+
+    if db is None:
+        from app.db import GetDB
+
+        with GetDB() as session:
+            loaded = _load(session)
+    else:
+        loaded = _load(db)
+
+    if not loaded:
         # Nobody non-billable is leaking this tick — clear all streaks.
         _leak_streak.clear()
         return
 
+    from types import SimpleNamespace
+
     from config import LIMITED_LEAK_RESTART_STREAK
+
+    rows = [
+        SimpleNamespace(id=uid, username=username, status=status)
+        for uid, username, status in loaded
+    ]
 
     leaking_ids = {dbuser.id for dbuser in rows}
     # Decay streaks for users who stopped leaking since the last tick.
@@ -282,7 +339,7 @@ def enforce_disconnect_for_non_billable(db, uids: Iterable[int]) -> None:
 
     # Step 2: escalate only genuinely stubborn sessions (bounded, cooldown-gated).
     now = time.monotonic()
-    to_hard_cut: List[User] = []
+    to_hard_cut: List = []
     for dbuser in rows:
         streak = _leak_streak.get(dbuser.id, 0) + 1
         _leak_streak[dbuser.id] = streak
@@ -301,7 +358,17 @@ def enforce_disconnect_for_non_billable(db, uids: Iterable[int]) -> None:
         to_hard_cut.append(dbuser)
 
     if to_hard_cut:
-        flush_live_serving(force_restart=True)
+        global _last_disconnect_restart_at
+        from app import xray
+
+        now2 = time.monotonic()
+        if getattr(xray.core, "restarting", False):
+            logger.warning("Skipping leak-escalation restart — core already restarting")
+        elif now2 - _last_disconnect_restart_at < _DISCONNECT_RESTART_COOLDOWN_SEC:
+            logger.warning("Skipping leak-escalation restart — cooldown active")
+        else:
+            _last_disconnect_restart_at = now2
+            flush_live_serving(force_restart=True)
 
 
 def clamp_usage_entries(

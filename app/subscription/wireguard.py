@@ -15,6 +15,11 @@ DEFAULT_ALLOWED_IPS = "0.0.0.0/0"
 DEFAULT_DNS = "1.1.1.1, 8.8.8.8"
 DEFAULT_KEEPALIVE = 10
 
+# Hosts that clients on the public Internet can never dial.
+_NON_ROUTABLE_HOSTS = frozenset({
+    "", "0.0.0.0", "::", "::1", "127.0.0.1", "localhost",
+})
+
 # AmneziaWG [Interface] keys, in canonical order. I* are client-only hex strings.
 AWG_KEYS = (
     "Jc", "Jmin", "Jmax", "S1", "S2", "S3", "S4",
@@ -265,7 +270,7 @@ def user_share_link(
         return None
 
     cfg = dbnode.wireguard
-    host, port_str = node_endpoint(dbnode, variant=variant).rsplit(":", 1)
+    host, port_str = node_endpoint(dbnode, variant=variant, db=db).rsplit(":", 1)
     if variant == "awg":
         local_address = user_settings.get("awg_address") or ""
         server_public_key = _server_public_key(dbnode, variant=variant, db=db)
@@ -291,20 +296,106 @@ def user_share_link(
     )
 
 
-def node_endpoint(dbnode, *, variant: str = "plain") -> str:
-    """Resolve the peer ``Endpoint`` (``host:port``) for a WG node variant."""
+def _endpoint_host(raw: Optional[str]) -> str:
+    """Extract host from ``host``, ``host:port``, or ``[v6]:port``."""
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    if text.startswith("["):
+        end = text.find("]")
+        if end > 1:
+            return text[1:end].strip()
+    if text.count(":") == 1:
+        return text.rsplit(":", 1)[0].strip()
+    return text
+
+
+def _is_non_routable_host(host: str) -> bool:
+    h = (host or "").strip().lower().strip("[]")
+    if not h or h in _NON_ROUTABLE_HOSTS:
+        return True
+    if h.startswith("127."):
+        return True
+    return False
+
+
+def public_dial_host(dbnode) -> str:
+    """Public host clients should dial for this WG node.
+
+    Control-plane ``nodes.address`` may be loopback (SSH tunnel / RPyC). Prefer
+    an explicit routable endpoint host, then ``provision_host``, then address.
+    """
+    cfg = getattr(dbnode, "wireguard", None)
+    candidates = [
+        _endpoint_host(getattr(cfg, "endpoint", None) if cfg else None),
+        _endpoint_host(getattr(cfg, "awg_endpoint", None) if cfg else None),
+        (getattr(dbnode, "provision_host", None) or "").strip(),
+        (getattr(dbnode, "address", None) or "").strip(),
+    ]
+    for host in candidates:
+        if host and not _is_non_routable_host(host):
+            return host
+    for host in candidates:
+        if host:
+            return host
+    return ""
+
+
+def node_endpoint(dbnode, *, variant: str = "plain", db=None) -> str:
+    """Resolve the peer ``Endpoint`` (``host:port``) for a WG node variant.
+
+    Never advertise control-plane loopback to clients. When the relay delegates
+    plain WG through an Xray dokodemo tunnel, use that tunnel's capture port.
+    """
     from app.wireguard.sync import amneziawg_enabled, direct_wg_enabled
 
     cfg = dbnode.wireguard
+    host = public_dial_host(dbnode)
+
     if variant == "awg" and amneziawg_enabled(cfg):
-        if cfg.awg_endpoint:
-            return cfg.awg_endpoint
-        return f"{dbnode.address}:{cfg.awg_listen_port}"
+        port = int(cfg.awg_listen_port or 0)
+        awg_host = _endpoint_host(cfg.awg_endpoint)
+        if awg_host and not _is_non_routable_host(awg_host):
+            host = awg_host
+            if cfg.awg_endpoint and ":" in str(cfg.awg_endpoint):
+                try:
+                    port = int(str(cfg.awg_endpoint).rsplit(":", 1)[-1])
+                except ValueError:
+                    pass
+        return f"{host}:{port}"
+
     if variant == "direct" and direct_wg_enabled(cfg):
-        return f"{dbnode.address}:{cfg.direct_listen_port}"
-    if cfg.endpoint:
-        return cfg.endpoint
-    return f"{dbnode.address}:{cfg.listen_port}"
+        return f"{host}:{int(cfg.direct_listen_port)}"
+
+    port = int(cfg.listen_port or 0)
+    # Prefer an explicit routable endpoint's port when present.
+    ep_host = _endpoint_host(cfg.endpoint)
+    if cfg.endpoint and ep_host and not _is_non_routable_host(ep_host):
+        host = ep_host
+        try:
+            port = int(str(cfg.endpoint).rsplit(":", 1)[-1])
+        except ValueError:
+            pass
+
+    # Tunnel-delegated plain WG: clients must hit dokodemo capture port on relay.
+    try:
+        from app.tunnel.relay import relay_wireguard_tunnel_port
+
+        if db is not None:
+            tun_port = relay_wireguard_tunnel_port(db, int(dbnode.id))
+            if tun_port:
+                port = int(tun_port)
+        else:
+            from app.db import GetDB
+
+            with GetDB() as session:
+                tun_port = relay_wireguard_tunnel_port(session, int(dbnode.id))
+                if tun_port:
+                    port = int(tun_port)
+    except Exception:
+        pass
+
+    return f"{host}:{port}"
 
 
 def user_config(user_settings: dict, dbnode, *, variant: str = "plain", db=None) -> Optional[str]:
@@ -361,7 +452,7 @@ def user_config(user_settings: dict, dbnode, *, variant: str = "plain", db=None)
         private_key=private_key,
         address=address,
         server_public_key=server_public_key,
-        endpoint=node_endpoint(dbnode, variant=variant),
+        endpoint=node_endpoint(dbnode, variant=variant, db=db),
         dns=dns,
         preshared_key=user_settings.get("preshared_key"),
         mtu=mtu,

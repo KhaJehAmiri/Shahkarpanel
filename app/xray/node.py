@@ -20,6 +20,30 @@ from app.xray.config import XRayConfig
 from xray_api import XRay as XRayAPI
 
 
+def _pem_peer_cert(address: str, port: int, timeout: float = 5.0) -> str:
+    """Fetch the peer TLS certificate with a hard socket timeout.
+
+    ``ssl.get_server_certificate`` has no timeout and can block a node's
+    ``_lock`` forever when the far end drops SYN — freezing every scheduler
+    job that touches that node (Overview stats included).
+
+    Nodes use self-signed certs verified via TOFU pinning (``verify_or_capture_pin``
+    right after this call), not a CA trust chain — so, like the original
+    ``get_server_certificate``, this must NOT verify the certificate itself
+    (an ``ssl.create_default_context()`` would reject every self-signed node
+    with CERTIFICATE_VERIFY_FAILED before pinning ever runs).
+    """
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    with socket.create_connection((address, int(port)), timeout=timeout) as sock:
+        with context.wrap_socket(sock) as ssock:
+            der = ssock.getpeercert(binary_form=True)
+            if not der:
+                raise ConnectionError(f"No TLS certificate from {address}:{port}")
+            return ssl.DER_cert_to_PEM_cert(der)
+
+
 def _inline_tls_certificates(config: XRayConfig) -> XRayConfig:
     from app.migration.three_x_ui import _sanitize_migrated_stream_tls
 
@@ -202,7 +226,7 @@ class ReSTXRayNode:
         return self._api
 
     def connect(self):
-        self._node_cert = ssl.get_server_certificate((self.address, self.port))
+        self._node_cert = _pem_peer_cert(self.address, self.port, timeout=5.0)
         # Pin the node's cert (TOFU): reject a changed cert as a possible MITM.
         self.observed_cert_sha256 = verify_or_capture_pin(
             self.address, self._node_cert, self.pinned_cert_sha256
@@ -367,14 +391,16 @@ class _LockedRemoteRoot:
     def __getattr__(self, name):
         node = object.__getattribute__(self, "_node")
         with node._lock:
-            if not node.connected:
+            conn = getattr(node, "connection", None)
+            if conn is None or getattr(conn, "closed", True):
                 node.connect()
             if not hasattr(node.connection.root, name):
                 raise AttributeError(name)
 
         def _locked_call(*args, **kwargs):
             with node._lock:
-                if not node.connected:
+                conn = getattr(node, "connection", None)
+                if conn is None or getattr(conn, "closed", True):
                     node.connect()
                 return getattr(node.connection.root, name)(*args, **kwargs)
 
@@ -445,7 +471,7 @@ class RPyCXRayNode:
         self._next_connect_attempt = 0.0
         self._reconnect_backoff = self._RECONNECT_BACKOFF_MIN_SEC
 
-    _CONNECT_MAX_TRIES = 8
+    _CONNECT_MAX_TRIES = 3
     _CONNECT_RETRY_BASE_SEC = 0.5
 
     # Circuit breaker for a node that is genuinely unreachable. Without this,
@@ -474,10 +500,33 @@ class RPyCXRayNode:
             except Exception:
                 pass
 
-    def _verify_channel(self, conn) -> None:
-        conn.ping()
-        if hasattr(conn.root, "channel_ping"):
-            conn.root.channel_ping()
+    # Liveness probe timeout. Kept far below the connection's normal
+    # ``sync_request_timeout`` (15s, used for real operations like config
+    # apply / restart) on purpose: this method runs under ``_lock`` from both
+    # ``connected`` and ``connect``, and the health-check job calls
+    # ``node.connected`` for every node on every tick. A half-open TCP channel
+    # (peer gone, no RST/FIN) makes an unbounded ``channel_ping`` block for the
+    # full 15s while pinning ``_lock`` — serially per node, every tick — which
+    # starves the 5s usage job (WireGuard ``transfer`` waits on the same lock)
+    # so ``online_at``/traffic and the Overview freeze, and delays local-core
+    # recovery. Bounding both round-trips keeps a dead channel from ever
+    # holding the lock longer than a couple of seconds.
+    _CHANNEL_VERIFY_TIMEOUT_SEC = 4.0
+
+    def _verify_channel(self, conn, timeout: float | None = None) -> None:
+        timeout = self._CHANNEL_VERIFY_TIMEOUT_SEC if timeout is None else timeout
+        conn.ping(timeout=timeout)
+        # ``hasattr`` on a netref and the ``channel_ping()`` call are both
+        # synchronous RPyC round-trips that otherwise honour the connection's
+        # 15s ``sync_request_timeout``. Temporarily shorten it so a wedged peer
+        # can't hold the node lock for the full window.
+        prev = conn._config.get("sync_request_timeout")
+        conn._config["sync_request_timeout"] = timeout
+        try:
+            if hasattr(conn.root, "channel_ping"):
+                conn.root.channel_ping()
+        finally:
+            conn._config["sync_request_timeout"] = prev
 
     def connect(self):
         with self._lock:
@@ -513,7 +562,7 @@ class RPyCXRayNode:
             for attempt in range(1, self._CONNECT_MAX_TRIES + 1):
                 conn = None
                 try:
-                    self._node_cert = ssl.get_server_certificate((self.address, self.port))
+                    self._node_cert = _pem_peer_cert(self.address, self.port, timeout=3.0)
                     self.observed_cert_sha256 = verify_or_capture_pin(
                         self.address, self._node_cert, self.pinned_cert_sha256
                     )
@@ -526,6 +575,7 @@ class RPyCXRayNode:
                         certfile=self._certfile.name,
                         ca_certs=self._node_certfile.name,
                         keepalive=True,
+                        config={"sync_request_timeout": 15},
                     )
                     self._verify_channel(conn)
                     self.connection = conn
@@ -557,7 +607,14 @@ class RPyCXRayNode:
 
     @property
     def connected(self):
-        with self._lock:
+        # Never block scheduler jobs behind a long RPyC call held by another
+        # thread (WG sync, health check, …). If the lock is busy, trust the
+        # cached session without a ping so usage/online stats keep moving.
+        acquired = self._lock.acquire(timeout=1.0)
+        if not acquired:
+            conn = getattr(self, "connection", None)
+            return conn is not None and not getattr(conn, "closed", True)
+        try:
             try:
                 conn = self.connection
                 if conn is None or conn.closed:
@@ -567,17 +624,29 @@ class RPyCXRayNode:
             except Exception:
                 self.disconnect()
                 return False
+        finally:
+            self._lock.release()
+
+    def has_live_api(self) -> bool:
+        """Cheap, lock-free check for usage collectors (no RPyC ping)."""
+        if not self.started or self._api is None:
+            return False
+        conn = getattr(self, "connection", None)
+        return conn is not None and not getattr(conn, "closed", True)
 
     @property
     def remote(self):
         with self._lock:
-            if not self.connected:
+            conn = getattr(self, "connection", None)
+            if conn is None or getattr(conn, "closed", True):
                 self.connect()
             return _LockedRemoteRoot(self)
 
     @property
     def api(self):
-        if not self.connected:
+        # gRPC stats client is independent of the RPyC lock; do not ping the
+        # control channel here or usage recording stalls behind WG sync.
+        if self._api is None:
             raise ConnectionError("Node is not connected")
 
         if not self.started:

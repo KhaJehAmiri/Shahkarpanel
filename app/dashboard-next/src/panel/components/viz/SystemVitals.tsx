@@ -24,22 +24,22 @@ export const SystemVitals: FC<{
   const diskTone = diskPct > 90 ? "danger" : diskPct > 75 ? "warn" : "ok";
 
   return (
-    <div className="nx-vitals-grid">
-      <div className="nx-glass-card nx-vital-card">
+    <div className="nx-vitals-panel">
+      <div className="nx-vital-cell">
         <div className="nx-vital-head">
           <span className="nx-vital-title">{t("overview.cpu")}</span>
           <span className="nx-vital-badge">{t("overview.cores", { n: cpuCores })}</span>
         </div>
         <div className="nx-vital-body">
-          <GaugeRing value={cpu} label={t("overview.cpuLoad")} tone={cpuTone} size={108} />
+          <GaugeRing value={cpu} label={t("overview.cpuLoad")} tone={cpuTone} size={100} />
           <div className="nx-vital-spark">
-            <Sparkline data={cpuHist.length ? cpuHist : [cpu]} height={56} color="var(--nx-accent)" />
+            <Sparkline data={cpuHist.length ? cpuHist : [cpu]} height={48} color="var(--nx-accent)" />
             <span className="nx-vital-spark-label">{t("overview.liveHistory")}</span>
           </div>
         </div>
       </div>
 
-      <div className="nx-glass-card nx-vital-card">
+      <div className="nx-vital-cell">
         <div className="nx-vital-head">
           <span className="nx-vital-title">{t("overview.memory")}</span>
           <span className="nx-vital-badge">
@@ -52,17 +52,17 @@ export const SystemVitals: FC<{
             label={t("overview.ramUsed")}
             sub={formatBytes(memUsed)}
             tone={memTone}
-            size={108}
+            size={100}
           />
           <div className="nx-vital-spark">
-            <Sparkline data={memHist.length ? memHist : [memPct]} height={56} color="var(--nx-info)" />
+            <Sparkline data={memHist.length ? memHist : [memPct]} height={48} color="var(--nx-info)" />
             <span className="nx-vital-spark-label">{t("overview.liveHistory")}</span>
           </div>
         </div>
       </div>
 
       {diskTotal > 0 && (
-        <div className="nx-glass-card nx-vital-card">
+        <div className="nx-vital-cell">
           <div className="nx-vital-head">
             <span className="nx-vital-title">{t("overview.storage")}</span>
             <span className="nx-vital-badge">
@@ -75,7 +75,7 @@ export const SystemVitals: FC<{
               label={t("overview.diskUsed")}
               sub={formatBytes(diskUsed)}
               tone={diskTone}
-              size={108}
+              size={100}
             />
             <div className="nx-vital-spark nx-vital-meta">
               <div className="nx-vital-meta-row">

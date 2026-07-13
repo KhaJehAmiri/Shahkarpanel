@@ -47,7 +47,7 @@ def _remove_user_from_inbound(api: XRayAPI, inbound_tag: str, email: str):
     if api is None:
         return
     try:
-        api.remove_inbound_user(tag=inbound_tag, email=email, timeout=30)
+        api.remove_inbound_user(tag=inbound_tag, email=email, timeout=5)
     except (xray.exc.EmailNotFoundError, xray.exc.ConnectionError):
         pass
 
@@ -128,7 +128,8 @@ def add_user(dbuser: "DBUser"):
 
 def _remove_user_from_inbound_sync(api: XRayAPI, inbound_tag: str, email: str):
     try:
-        api.remove_inbound_user(tag=inbound_tag, email=email, timeout=30)
+        # Keep hot-path removes short so a hung node cannot stall the usage job.
+        api.remove_inbound_user(tag=inbound_tag, email=email, timeout=5)
     except (xray.exc.EmailNotFoundError, xray.exc.ConnectionError):
         pass
 
@@ -145,7 +146,11 @@ def hot_disconnect_users_on_nodes(dbusers) -> None:
     if not emails:
         return
     for node_id, node in list(xray.nodes.items()):
-        if not node.connected or not node.started:
+        live = (
+            (getattr(node, "has_live_api", None) and node.has_live_api())
+            or (getattr(node, "started", False) and getattr(node, "_api", None) is not None)
+        )
+        if not live:
             continue
         try:
             with GetDB() as db:

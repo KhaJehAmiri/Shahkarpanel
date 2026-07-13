@@ -92,34 +92,54 @@ def _interval_bytes(transfer: Dict[str, dict]) -> Dict[str, int]:
 def collect_singbox_usage_params(db=None) -> Tuple[Dict[int, List[dict]], Dict[int, float]]:
     """Read traffic counters from every connected sing-box node and return
     ``(api_params, usage_coefficient)`` deltas in the central accounting shape.
+
+    DB work finishes before node RPCs so hung transfers cannot idle-in-transaction.
     """
-    def _run(session) -> Tuple[Dict[int, List[dict]], Dict[int, float]]:
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _plan(session):
         sb_nodes = crud.get_singbox_nodes(session)
         if not sb_nodes:
-            return {}, {}
-
+            return None
         name_map = build_name_user_map(collect_singbox_users(session))
-        deltas_by_node: Dict[int, Dict[str, int]] = {}
-        coefficient: Dict[int, float] = {}
-
-        for dbnode in sb_nodes:
-            client = client_for_node(_node_object(dbnode.id))
-            if dbnode.singbox is None or client is None:
-                continue
-            try:
-                transfer = client.transfer()
-            except Exception as exc:
-                logger.warning("sing-box transfer read from node %s failed: %s", dbnode.id, exc)
-                continue
-            deltas_by_node[dbnode.id] = _interval_bytes(transfer)
-            coefficient[dbnode.id] = dbnode.usage_coefficient
-
-        return build_singbox_usage_params(deltas_by_node, name_map), coefficient
+        plans = [
+            {"id": n.id, "coefficient": n.usage_coefficient}
+            for n in sb_nodes
+            if n.singbox is not None
+        ]
+        return name_map, plans
 
     if db is not None:
-        return _run(db)
-    with GetDB() as session:
-        return _run(session)
+        planned = _plan(db)
+    else:
+        with GetDB() as session:
+            planned = _plan(session)
+
+    if not planned:
+        return {}, {}
+
+    name_map, plans = planned
+    deltas_by_node: Dict[int, Dict[str, int]] = {}
+    coefficient: Dict[int, float] = {}
+
+    for plan in plans:
+        client = client_for_node(_node_object(plan["id"], connect=False))
+        if client is None:
+            continue
+        pool = ThreadPoolExecutor(max_workers=1)
+        try:
+            transfer = pool.submit(client.transfer).result(timeout=8)
+        except Exception as exc:
+            logger.warning("sing-box transfer read from node %s failed: %s", plan["id"], exc)
+            transfer = None
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
+        if not transfer:
+            continue
+        deltas_by_node[plan["id"]] = _interval_bytes(transfer)
+        coefficient[plan["id"]] = plan["coefficient"]
+
+    return build_singbox_usage_params(deltas_by_node, name_map), coefficient
 
 
 def merge_singbox_usage(

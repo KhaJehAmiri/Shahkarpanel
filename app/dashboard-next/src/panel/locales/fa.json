@@ -101,8 +101,15 @@
     "otpInvalid": "کد دو مرحله‌ای نادرست است"
   },
   "overview": {
-    "title": "نمای کلی",
-    "subtitle": "مرکز کنترل شما",
+    "title": "خانه",
+    "subtitle": "نبض زنده کنترل‌پلین شما",
+    "systemResources": "سیستم",
+    "operations": "عملیات",
+    "fleet": "ناوگان",
+    "usage": "مصرف",
+    "usageProtocolHint": "سهم از کل ترافیک ثبت‌شده",
+    "usageNodesHint": "۳۰ روز اخیر روی نودهای متصل",
+    "usageUsersHint": "پرمصرف‌ترین کاربران این پنل",
     "description": "یک مسیر را انتخاب کنید یا آمار زنده را ببینید. هر بخش منو یک کار مشخص دارد — گم نمی‌شوید.",
     "totalUsers": "کل کاربران",
     "quotaUsed": "{{used}} از {{max}} سهمیه",

@@ -1,4 +1,4 @@
-import { FC, ReactNode, useMemo, useState } from "react";
+import { FC, ReactNode, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
@@ -11,36 +11,30 @@ import { formatBytes, formatSpeed } from "../lib/format";
 import { PageHeader } from "../components/Shell";
 import { HealthChecklist } from "../components/HealthChecklist";
 import { SystemVitals } from "../components/viz/SystemVitals";
-import { Card, CardHead, Stat, SkeletonRows, Pill, Callout, Button, EmptyState, useToast } from "../components/ui";
-import { RankBars } from "../components/charts";
-import { IcUsers, IcServer, IcBolt, IcWallet, IcCheck, IcAlert, IcRefresh, IcMonitor } from "../components/icons";
+import { LiveValue } from "../components/viz/LiveValue";
+import { Card, SkeletonRows, Callout, Button, EmptyState, useToast } from "../components/ui";
+import { RankBars, Sparkline } from "../components/charts";
+import { IcUsers, IcServer, IcBolt, IcRefresh, IcMonitor } from "../components/icons";
 
 type NodeUsageRow = { node_id: number | null; node_name: string; uplink: number; downlink: number };
 type ProtocolUsageRow = { protocol: string; used_traffic: number };
 
-type KpiTone = "accent" | "info" | "ok" | "warn" | "danger";
-
-const KpiTile: FC<{
-  label: string;
-  value: ReactNode;
-  icon: ReactNode;
-  tone?: KpiTone;
-  sub?: ReactNode;
-  to?: string;
-}> = ({ label, value, icon, tone = "accent", sub, to }) => {
-  const body = (
-    <>
-      <span className="nx-kpi-chip" aria-hidden>{icon}</span>
-      <div className="nx-kpi-main">
-        <span className="nx-kpi-label">{label}</span>
-        <span className="nx-kpi-value">{value}</span>
-        {sub ? <span className="nx-kpi-sub">{sub}</span> : null}
+const Section: FC<{ title?: string; action?: ReactNode; children: ReactNode; className?: string }> = ({
+  title,
+  action,
+  children,
+  className,
+}) => (
+  <section className={`nx-home-section${className ? ` ${className}` : ""}`}>
+    {(title || action) && (
+      <div className="nx-home-section-head">
+        {title ? <h2 className="nx-home-section-title">{title}</h2> : <span />}
+        {action}
       </div>
-    </>
-  );
-  const cls = `nx-kpi nx-kpi-${tone}${to ? " nx-kpi-link" : ""}`;
-  return to ? <Link to={to} className={cls}>{body}</Link> : <div className={cls}>{body}</div>;
-};
+    )}
+    {children}
+  </section>
+);
 
 function formatUptime(seconds?: number): string {
   if (!seconds || seconds <= 0) return "—";
@@ -53,75 +47,72 @@ function formatUptime(seconds?: number): string {
   return `${Math.floor(seconds)}s`;
 }
 
-const UptimeCard: FC<{
-  xray?: number;
-  os?: number;
-  node?: number;
-  showNode?: boolean;
-}> = ({ xray, os, node, showNode }) => {
-  const { t } = useTranslation();
-  const items: { key: string; label: string; icon: ReactNode; value?: number; live: boolean }[] = [
-    { key: "xray", label: "Xray", icon: <IcBolt />, value: xray, live: !!xray && xray > 0 },
-    { key: "os", label: t("overview.uptimeOs"), icon: <IcMonitor />, value: os, live: !!os && os > 0 },
-  ];
-  if (showNode) items.push({ key: "node", label: t("overview.nodes"), icon: <IcServer />, value: node, live: !!node && node > 0 });
+function useSeries(value: number, maxPoints = 28): number[] {
+  const [series, setSeries] = useState<number[]>(() => Array.from({ length: 8 }, () => value));
+  useEffect(() => {
+    setSeries((prev) => [...prev.slice(-(maxPoints - 1)), Math.max(0, value)]);
+  }, [value, maxPoints]);
+  return series;
+}
+
+const ActivityBars: FC<{ level: number; tone?: "up" | "down" }> = ({ level, tone = "up" }) => {
+  const bars = 18;
+  const intensity = Math.min(1, Math.log10(Math.max(level, 1) + 1) / 8);
   return (
-    <Card className="nx-glass-card">
-      <CardHead title={t("overview.uptime")} />
-      <div className="nx-uptime-row">
-        {items.map((it) => (
-          <div key={it.key} className="nx-uptime-cell">
-            <span className={`nx-uptime-ico${it.live ? " live" : ""}`} aria-hidden>{it.icon}</span>
-            <div className="nx-uptime-main">
-              <span className="nx-uptime-label">{it.label}</span>
-              <span className="nx-uptime-value">{formatUptime(it.value)}</span>
-            </div>
-          </div>
-        ))}
-      </div>
-    </Card>
+    <div className={`nx-activity ${tone}`} aria-hidden>
+      {Array.from({ length: bars }, (_, i) => {
+        const wave = 0.35 + 0.65 * Math.abs(Math.sin((i / bars) * Math.PI * 2.2 + intensity * 4));
+        const h = Math.max(12, Math.round((20 + intensity * 80) * wave));
+        return (
+          <span
+            key={i}
+            className="nx-activity-bar"
+            style={{ height: `${h}%`, animationDelay: `${i * 45}ms` }}
+          />
+        );
+      })}
+    </div>
   );
 };
 
-const OverallSpeedCard: FC<{
+const KpiTile: FC<{
+  label: string;
+  value: number | null | undefined;
+  sub?: ReactNode;
+  to?: string;
+  live?: boolean;
+}> = ({ label, value, sub, to, live }) => {
+  const body = (
+    <>
+      <span className="nx-kpi-label">
+        {live ? <span className="nx-kpi-live-dot" aria-hidden /> : null}
+        {label}
+      </span>
+      <LiveValue className="nx-kpi-value" value={value} format={(n) => Math.round(n).toLocaleString()} />
+      {sub ? <span className="nx-kpi-sub">{sub}</span> : null}
+    </>
+  );
+  const cls = `nx-kpi${to ? " nx-kpi-link" : ""}${live ? " is-live" : ""}`;
+  return to ? <Link to={to} className={cls}>{body}</Link> : <div className={cls}>{body}</div>;
+};
+
+const LiveHero: FC<{
   up: number;
   down: number;
   totalUp?: number;
   totalDown?: number;
   stale?: boolean;
-}> = ({ up, down, totalUp, totalDown, stale }) => {
-  const { t } = useTranslation();
-  return (
-    <Card className="nx-glass-card">
-      <CardHead
-        title={t("overview.overallSpeed")}
-        actions={stale ? <Pill tone="warn" dot>{t("overview.liveStale")}</Pill> : <Pill tone="ok" dot>{t("overview.live")}</Pill>}
-      />
-      <div className="nx-speed-row">
-        <div className="nx-speed-cell">
-          <span className="nx-speed-label"><span className="nx-speed-arrow up">↑</span> {t("overview.upload")}</span>
-          <span className="nx-speed-value">{formatSpeed(up)}</span>
-          {totalUp != null && <span className="nx-speed-total">{formatBytes(totalUp)}</span>}
-        </div>
-        <div className="nx-speed-divider" aria-hidden />
-        <div className="nx-speed-cell">
-          <span className="nx-speed-label"><span className="nx-speed-arrow down">↓</span> {t("overview.download")}</span>
-          <span className="nx-speed-value">{formatSpeed(down)}</span>
-          {totalDown != null && <span className="nx-speed-total">{formatBytes(totalDown)}</span>}
-        </div>
-      </div>
-    </Card>
-  );
-};
-
-const XrayCoreCard: FC = () => {
+  xray?: number;
+  os?: number;
+}> = ({ up, down, totalUp, totalDown, stale, xray, os }) => {
   const { t } = useTranslation();
   const toast = useToast();
   const core = useFetch<CoreStats>(() => api.get("/core"), []);
   const [busy, setBusy] = useState(false);
   usePolling(() => core.reload(), 15000);
-
   const running = !!core.data?.started;
+  const upSeries = useSeries(up);
+  const downSeries = useSeries(down);
 
   const act = async (action: "start" | "stop" | "restart") => {
     if (action === "stop" && !confirm(t("overview.coreStopConfirm"))) return;
@@ -138,39 +129,83 @@ const XrayCoreCard: FC = () => {
   };
 
   return (
-    <Card className="nx-glass-card">
-      <CardHead
-        title={t("overview.xrayCore")}
-        actions={
-          <Pill tone={running ? "ok" : "danger"} dot>
-            {running ? t("overview.coreRunning") : t("overview.coreStopped")}
-          </Pill>
-        }
-      />
-      <div className="nx-core-row">
-        <div className="nx-core-icon" aria-hidden><IcBolt /></div>
-        <div className="nx-core-meta">
-          <span className="nx-core-version">Xray {core.data?.version ? `v${core.data.version}` : "—"}</span>
-          <span className="nx-core-hint">
-            {running ? t("overview.coreRunningHint") : (core.data?.startup_error || t("overview.coreStoppedHint"))}
-          </span>
+    <div className={`nx-live-hero${stale ? " is-stale" : ""}${running ? " is-running" : " is-stopped"}`}>
+      <div className="nx-live-hero-glow" aria-hidden />
+      <div className="nx-live-hero-top">
+        <div className="nx-live-badge">
+          <span className={`nx-live-pulse${stale ? " warn" : ""}`} />
+          {stale ? t("overview.liveStale") : t("overview.live")}
+        </div>
+        <div className={`nx-core-chip${running ? " ok" : " danger"}`}>
+          <span className="nx-core-chip-dot" />
+          {running ? t("overview.coreRunning") : t("overview.coreStopped")}
+          <span className="nx-core-chip-ver">Xray {core.data?.version ? `v${core.data.version}` : "—"}</span>
         </div>
       </div>
-      <div className="nx-core-actions">
-        {running ? (
-          <Button variant="danger" size="sm" disabled={busy} onClick={() => act("stop")}>
-            <span aria-hidden style={{ fontSize: 12 }}>■</span> {t("overview.stop")}
-          </Button>
-        ) : (
-          <Button variant="primary" size="sm" disabled={busy} onClick={() => act("start")}>
-            <span aria-hidden style={{ fontSize: 12 }}>▶</span> {t("overview.start")}
-          </Button>
-        )}
-        <Button variant="ghost" size="sm" disabled={busy} onClick={() => act("restart")}>
-          <IcRefresh className="nx-ico" /> {t("overview.restart")}
-        </Button>
+
+      <div className="nx-live-hero-grid">
+        <div className="nx-live-stream">
+          <div className="nx-live-stream-head">
+            <span className="nx-speed-arrow up">↑</span>
+            <span>{t("overview.upload")}</span>
+          </div>
+          <div className="nx-live-stream-value">{formatSpeed(up)}</div>
+          {totalUp != null && <div className="nx-live-stream-total">{formatBytes(totalUp)} total</div>}
+          <ActivityBars level={up} tone="up" />
+          <Sparkline data={upSeries} height={42} color="var(--nx-info)" />
+        </div>
+
+        <div className="nx-live-stream">
+          <div className="nx-live-stream-head">
+            <span className="nx-speed-arrow down">↓</span>
+            <span>{t("overview.download")}</span>
+          </div>
+          <div className="nx-live-stream-value">{formatSpeed(down)}</div>
+          {totalDown != null && <div className="nx-live-stream-total">{formatBytes(totalDown)} total</div>}
+          <ActivityBars level={down} tone="down" />
+          <Sparkline data={downSeries} height={42} color="var(--nx-accent)" />
+        </div>
+
+        <div className="nx-live-side">
+          <div className="nx-live-side-block">
+            <span className="nx-live-side-label">{t("overview.xrayCore")}</span>
+            <p className="nx-live-side-hint">
+              {running ? t("overview.coreRunningHint") : (core.data?.startup_error || t("overview.coreStoppedHint"))}
+            </p>
+            <div className="nx-core-actions">
+              {running ? (
+                <Button variant="danger" size="sm" disabled={busy} onClick={() => act("stop")}>
+                  {t("overview.stop")}
+                </Button>
+              ) : (
+                <Button variant="primary" size="sm" disabled={busy} onClick={() => act("start")}>
+                  {t("overview.start")}
+                </Button>
+              )}
+              <Button variant="ghost" size="sm" disabled={busy} onClick={() => act("restart")}>
+                <IcRefresh className="nx-ico" /> {t("overview.restart")}
+              </Button>
+            </div>
+          </div>
+          <div className="nx-live-uptime">
+            <div className="nx-live-uptime-cell">
+              <IcBolt />
+              <div>
+                <span>Xray</span>
+                <strong>{formatUptime(xray)}</strong>
+              </div>
+            </div>
+            <div className="nx-live-uptime-cell">
+              <IcMonitor />
+              <div>
+                <span>{t("overview.uptimeOs")}</span>
+                <strong>{formatUptime(os)}</strong>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
-    </Card>
+    </div>
   );
 };
 
@@ -204,26 +239,43 @@ export const Overview: FC = () => {
   const ws = workspace.data;
   const [rt, setRt] = useState<RealtimeStats | null>(null);
   const [rtStale, setRtStale] = useState(false);
+  const [sysFetchedAt, setSysFetchedAt] = useState(() => Date.now());
+  const [, setTick] = useState(0);
 
   usePolling(() => {
     api.get<RealtimeStats>("/analytics/realtime")
       .then((d) => { setRt(d); setRtStale(false); })
       .catch(() => setRtStale(true));
-  }, 5000);
+  }, 3000);
 
-  usePolling(() => sys.reload(), 15000);
+  usePolling(() => {
+    sys.reload({ background: true });
+  }, 8000);
+
+  useEffect(() => {
+    if (sys.data) setSysFetchedAt(Date.now());
+  }, [sys.data]);
+
+  useEffect(() => {
+    const id = window.setInterval(() => setTick((n) => n + 1), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
   useLiveReload(() => {
-    top.reload();
-    protoUsage.reload();
-    nodes.reload();
-    inbounds.reload();
-    nodesUsage.reload();
-    workspace.reload();
-    mrr.reload();
-  }, 30000);
+    top.reload({ background: true });
+    protoUsage.reload({ background: true });
+    nodes.reload({ background: true });
+    inbounds.reload({ background: true });
+    nodesUsage.reload({ background: true });
+    workspace.reload({ background: true });
+    mrr.reload({ background: true });
+  }, 20000);
 
   const { hasUpdate, check, openUpdateModal } = usePanelUpdate();
   const s = sys.data;
+  const elapsedSec = Math.max(0, Math.floor((Date.now() - sysFetchedAt) / 1000));
+  const liveXrayUptime = s?.xray_uptime != null ? s.xray_uptime + elapsedSec : undefined;
+  const liveOsUptime = s?.os_uptime != null ? s.os_uptime + elapsedSec : undefined;
 
   const connectedNodes = (nodes.data || []).filter((n) => n.status === "connected").length;
   const hasInbounds = Object.values(inbounds.data || {}).some((arr) => arr.length > 0);
@@ -258,13 +310,18 @@ export const Overview: FC = () => {
     ];
   }, [admin?.is_sudo, connectedNodes, hasInbounds, hasUsers, s?.total_user, t]);
 
+  const up = rt?.outgoing_bandwidth_speed ?? s?.outgoing_bandwidth_speed ?? 0;
+  const down = rt?.incoming_bandwidth_speed ?? s?.incoming_bandwidth_speed ?? 0;
+
   return (
-    <div className="nx-overview">
+    <div className="nx-overview nx-home-min nx-home-alive">
+      <div className="nx-home-ambient" aria-hidden />
+
       <PageHeader
         title={t("overview.title")}
         subtitle={t("overview.subtitle")}
         actions={admin?.is_sudo ? (
-          <Button variant="ghost" onClick={() => setOpen(true)}>✦ {t("overview.openGuide")}</Button>
+          <Button variant="ghost" onClick={() => setOpen(true)}>{t("overview.openGuide")}</Button>
         ) : undefined}
       />
 
@@ -274,12 +331,7 @@ export const Overview: FC = () => {
             from: check.current_version,
             to: check.remote_version,
           })}{" "}
-          <button
-            type="button"
-            className="nx-link-btn"
-            style={{ marginInlineStart: 8, fontWeight: 600 }}
-            onClick={openUpdateModal}
-          >
+          <button type="button" className="nx-link-btn" style={{ marginInlineStart: 8, fontWeight: 600 }} onClick={openUpdateModal}>
             {t("system.applyUpdates")} →
           </button>
         </Callout>
@@ -292,30 +344,77 @@ export const Overview: FC = () => {
       )}
 
       {admin?.is_sudo && healthItems.length > 0 && !setupDone && (
-        <div className="nx-mb-20">
-          <HealthChecklist items={healthItems} />
-        </div>
+        <div className="nx-mb-20"><HealthChecklist items={healthItems} /></div>
       )}
 
       {admin?.is_sudo && !setupDone && (
         <div className="nx-quick-actions nx-mb-20">
           <Link to="/servers?tab=nodes" className="nx-quick-card accent">
-            <IcServer className="nx-ico" />
-            <span>{t("overview.quickAddServer")}</span>
+            <IcServer className="nx-ico" /><span>{t("overview.quickAddServer")}</span>
           </Link>
           <Link to="/connection?tab=inbounds" className="nx-quick-card">
-            <span className="nx-quick-ico">⚡</span>
-            <span>{t("overview.quickAddInbound")}</span>
+            <IcBolt className="nx-ico" /><span>{t("overview.quickAddInbound")}</span>
           </Link>
           <Link to="/users" className="nx-quick-card ok">
-            <IcUsers className="nx-ico" />
-            <span>{t("overview.quickAddUser")}</span>
+            <IcUsers className="nx-ico" /><span>{t("overview.quickAddUser")}</span>
           </Link>
         </div>
       )}
 
+      {admin?.is_sudo && (
+        <Section>
+          <LiveHero
+            up={up}
+            down={down}
+            totalUp={s?.outgoing_bandwidth}
+            totalDown={s?.incoming_bandwidth}
+            stale={rtStale}
+            xray={liveXrayUptime}
+            os={liveOsUptime}
+          />
+        </Section>
+      )}
+
+      <Section title={t("overview.fleet", "Fleet")}>
+        {sys.loading && !s ? (
+          <Card><SkeletonRows rows={2} cols={4} /></Card>
+        ) : (
+          <div className="nx-kpi-grid">
+            <KpiTile label={t("overview.totalUsers")} value={s?.total_user} to="/users" />
+            <KpiTile
+              live
+              label={t("overview.onlineUsers")}
+              value={rt?.online_users ?? s?.online_users}
+              sub={t("users.stats.online")}
+            />
+            <KpiTile
+              label={t("overview.activeUsers")}
+              value={rt?.users_active ?? s?.users_active}
+              sub={s && (rt?.users_active ?? s.users_active) != null && s.total_user > 0
+                ? `${Math.round(((rt?.users_active ?? s.users_active) / s.total_user) * 100)}%`
+                : undefined}
+            />
+            <KpiTile
+              label={t("overview.inactiveUsers")}
+              value={s ? Math.max(0, s.total_user - s.users_active) : null}
+              sub={`${s?.users_disabled ?? 0} ${t("users.status.disabled")}`}
+            />
+            {admin?.is_sudo ? (
+              <KpiTile label={t("overview.nodes")} value={rt?.nodes_connected ?? connectedNodes} to="/servers?tab=nodes" />
+            ) : (
+              <>
+                <KpiTile label={t("overview.myNodes")} value={ws?.nodes_count} />
+                {ws?.wallet_balance != null && (
+                  <KpiTile label={t("billing.wallet")} value={ws.wallet_balance} />
+                )}
+              </>
+            )}
+          </div>
+        )}
+      </Section>
+
       {admin?.is_sudo && s && (
-        <div className="nx-mb-20">
+        <Section title={t("overview.systemResources", "System")}>
           <SystemVitals
             cpu={s.cpu_usage}
             cpuCores={s.cpu_cores}
@@ -324,147 +423,102 @@ export const Overview: FC = () => {
             diskUsed={s.disk_used}
             diskTotal={s.disk_total}
           />
-        </div>
+        </Section>
       )}
 
-      {admin?.is_sudo && (
-        <div className="nx-overview-grid nx-mb-20">
-          <OverallSpeedCard
-            up={rt?.outgoing_bandwidth_speed ?? s?.outgoing_bandwidth_speed ?? 0}
-            down={rt?.incoming_bandwidth_speed ?? s?.incoming_bandwidth_speed ?? 0}
-            totalUp={s?.outgoing_bandwidth}
-            totalDown={s?.incoming_bandwidth}
-            stale={rtStale}
-          />
-          <XrayCoreCard />
+      <Section title={t("overview.usage", "Usage")}>
+        <div className="nx-usage-grid">
+          <article className="nx-usage-board">
+            <header className="nx-usage-board-head">
+              <div>
+                <h3>{t("analytics.protocolUsage", "Usage by protocol")}</h3>
+                <p>{t("overview.usageProtocolHint", "Share of total recorded traffic")}</p>
+              </div>
+            </header>
+            {protoUsage.loading ? (
+              <SkeletonRows rows={3} cols={2} />
+            ) : protoUsage.error ? (
+              <EmptyState title={t("common.error")} desc={protoUsage.error} action={<Button onClick={protoUsage.reload}>{t("common.retry")}</Button>} />
+            ) : protoUsage.data?.length ? (
+              <RankBars
+                data={[...protoUsage.data]
+                  .sort((a, b) => b.used_traffic - a.used_traffic)
+                  .map((r) => ({ label: r.protocol.toUpperCase(), value: r.used_traffic }))}
+                format={(n) => formatBytes(n, 0)}
+              />
+            ) : (
+              <div className="nx-muted nx-center" style={{ padding: 20 }}>{t("common.noData")}</div>
+            )}
+          </article>
+
+          {admin?.is_sudo && nodesUsage.data?.usages?.length ? (
+            <article className="nx-usage-board">
+              <header className="nx-usage-board-head">
+                <div>
+                  <h3>{t("overview.nodesUsage")}</h3>
+                  <p>{t("overview.usageNodesHint", "Last 30 days across connected nodes")}</p>
+                </div>
+              </header>
+              <RankBars
+                data={nodesUsage.data.usages.map((n) => ({
+                  label: n.node_name,
+                  value: n.uplink + n.downlink,
+                  sub: `↑ ${formatBytes(n.uplink, 0)}  ↓ ${formatBytes(n.downlink, 0)}`,
+                }))}
+                format={(v) => formatBytes(v, 0)}
+              />
+            </article>
+          ) : null}
+
+          <article className="nx-usage-board">
+            <header className="nx-usage-board-head">
+              <div>
+                <h3>{t("overview.topUsers")}</h3>
+                <p>{t("overview.usageUsersHint", "Highest consumers on this panel")}</p>
+              </div>
+              <Link to="/users" className="nx-usage-link">
+                {t("common.viewAll", "View all")}
+                <span aria-hidden>→</span>
+              </Link>
+            </header>
+            {top.loading ? (
+              <SkeletonRows rows={3} cols={2} />
+            ) : top.error ? (
+              <EmptyState title={t("common.error")} desc={top.error} action={<Button onClick={top.reload}>{t("common.retry")}</Button>} />
+            ) : top.data?.length ? (
+              <RankBars
+                compact
+                data={top.data.map((u) => ({ label: u.username, value: u.used_traffic }))}
+                format={(n) => formatBytes(n, 0)}
+              />
+            ) : (
+              <div className="nx-muted nx-center" style={{ padding: 20 }}>{t("common.noData")}</div>
+            )}
+          </article>
         </div>
-      )}
-
-      {sys.loading && !s ? (
-        <Card><SkeletonRows rows={2} cols={4} /></Card>
-      ) : (
-        <div className="nx-kpi-grid">
-          <KpiTile
-            tone="accent"
-            label={t("overview.totalUsers")}
-            value={s?.total_user ?? "—"}
-            icon={<IcUsers />}
-            to="/users"
-          />
-          <KpiTile
-            tone="info"
-            label={t("overview.onlineUsers")}
-            value={rt?.online_users ?? s?.online_users ?? "—"}
-            icon={<IcBolt />}
-            sub={<><span className="nx-kpi-live-dot" />{t("users.stats.online")}</>}
-          />
-          <KpiTile
-            tone="ok"
-            label={t("overview.activeUsers")}
-            value={s?.users_active ?? "—"}
-            icon={<IcCheck />}
-            sub={s && s.total_user > 0
-              ? `${Math.round((s.users_active / s.total_user) * 100)}%`
-              : undefined}
-          />
-          <KpiTile
-            tone="warn"
-            label={t("overview.inactiveUsers")}
-            value={s ? Math.max(0, s.total_user - s.users_active) : "—"}
-            icon={<IcAlert />}
-            sub={`${s?.users_disabled ?? 0} ${t("users.status.disabled")}`}
-          />
-          {admin?.is_sudo ? (
-            <KpiTile
-              tone="accent"
-              label={t("overview.nodes")}
-              value={rt?.nodes_connected ?? connectedNodes}
-              icon={<IcServer />}
-              to="/servers?tab=nodes"
-            />
-          ) : (
-            <>
-              <KpiTile tone="accent" label={t("overview.myNodes")} value={ws?.nodes_count ?? "—"} icon={<IcServer />} />
-              {ws?.wallet_balance != null && (
-                <KpiTile tone="info" label={t("billing.wallet")} value={ws.wallet_balance.toLocaleString()} icon={<IcWallet />} />
-              )}
-            </>
-          )}
-        </div>
-      )}
-
-      <div className="nx-overview-grid nx-mb-20">
-        <UptimeCard
-          xray={s?.xray_uptime}
-          os={s?.os_uptime}
-          node={s?.node_uptime}
-          showNode={!!admin?.is_sudo && (s?.node_uptime ?? 0) > 0}
-        />
-
-        <Card className="nx-glass-card">
-          <CardHead title={t("analytics.protocolUsage", "Usage by protocol")} />
-          {protoUsage.loading ? (
-            <SkeletonRows rows={3} cols={2} />
-          ) : protoUsage.error ? (
-            <EmptyState title={t("common.error")} desc={protoUsage.error} action={<Button onClick={protoUsage.reload}>{t("common.retry")}</Button>} />
-          ) : protoUsage.data?.length ? (
-            <RankBars
-              data={[...protoUsage.data]
-                .sort((a, b) => b.used_traffic - a.used_traffic)
-                .map((r) => ({ label: r.protocol.toUpperCase(), value: r.used_traffic }))}
-              format={(n) => formatBytes(n, 0)}
-            />
-          ) : (
-            <div className="nx-muted nx-center" style={{ padding: 20 }}>{t("common.noData")}</div>
-          )}
-        </Card>
-      </div>
+      </Section>
 
       {admin?.is_sudo && mrr.data && (
-        <Card className="nx-glass-card nx-mb-20">
-          <CardHead title={t("overview.mrrTitle")} desc={t("overview.mrrDesc", { days: mrr.data.period_days })} />
-          <div className="nx-stat-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))" }}>
-            <Stat label={t("overview.mrrRevenue")} value={mrr.data.total_revenue.toLocaleString()} icon={<IcWallet className="nx-stat-ico" />} />
-            <Stat label={t("overview.mrrFloat")} value={mrr.data.wallet_float.toLocaleString()} />
-            <Stat label={t("overview.mrrResellers")} value={String(mrr.data.active_resellers)} />
+        <Section title={t("overview.mrrTitle")}>
+          <div className="nx-home-mrr">
+            <div className="nx-home-mrr-cell">
+              <span className="nx-home-mrr-label">{t("overview.mrrRevenue")}</span>
+              <LiveValue className="nx-home-mrr-value" value={mrr.data.total_revenue} format={(n) => Math.round(n).toLocaleString()} />
+            </div>
+            <div className="nx-home-mrr-cell">
+              <span className="nx-home-mrr-label">{t("overview.mrrFloat")}</span>
+              <LiveValue className="nx-home-mrr-value" value={mrr.data.wallet_float} format={(n) => Math.round(n).toLocaleString()} />
+            </div>
+            <div className="nx-home-mrr-cell">
+              <span className="nx-home-mrr-label">{t("overview.mrrResellers")}</span>
+              <LiveValue className="nx-home-mrr-value" value={mrr.data.active_resellers} />
+            </div>
           </div>
-        </Card>
+        </Section>
       )}
 
-      <div className="nx-overview-grid">
-        {admin?.is_sudo && nodesUsage.data?.usages?.length ? (
-          <Card className="nx-glass-card">
-            <CardHead title={t("overview.nodesUsage")} />
-            <RankBars
-              data={nodesUsage.data.usages.map((n) => ({
-                label: n.node_name,
-                value: n.uplink + n.downlink,
-                sub: `↑ ${formatBytes(n.uplink, 0)} · ↓ ${formatBytes(n.downlink, 0)}`,
-              }))}
-              format={(v) => formatBytes(v, 0)}
-            />
-          </Card>
-        ) : null}
-
-        <Card className="nx-glass-card">
-          <CardHead title={t("overview.topUsers")} actions={<Link to="/users" className="nx-link-btn" style={{ fontSize: 12, fontWeight: 600 }}>{t("common.viewAll", "View all")} →</Link>} />
-          {top.loading ? (
-            <SkeletonRows rows={3} cols={2} />
-          ) : top.error ? (
-            <EmptyState title={t("common.error")} desc={top.error} action={<Button onClick={top.reload}>{t("common.retry")}</Button>} />
-          ) : top.data?.length ? (
-            <RankBars
-              data={top.data.map((u) => ({ label: u.username, value: u.used_traffic }))}
-              format={(n) => formatBytes(n, 0)}
-            />
-          ) : (
-            <div className="nx-muted nx-center" style={{ padding: 20 }}>{t("common.noData")}</div>
-          )}
-        </Card>
-      </div>
-
-      <div className="nx-row nx-faint" style={{ marginTop: 16, fontSize: 12, justifyContent: "flex-end" }}>
-        {t("overview.version")} {s?.version} · {new Intl.DateTimeFormat(i18n.language).format(new Date())}
+      <div className="nx-home-foot">
+        {t("overview.version")} {s?.version} · {new Intl.DateTimeFormat(i18n.language, { dateStyle: "medium", timeStyle: "medium" }).format(new Date())}
       </div>
     </div>
   );

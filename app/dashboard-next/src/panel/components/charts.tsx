@@ -1,20 +1,40 @@
-import { FC } from "react";
+import { FC, useId } from "react";
 
 const ACCENT = "var(--nx-accent)";
 
 /* Lightweight inline SVG charts — no external dependency. */
 
-export const Sparkline: FC<{ data: number[]; height?: number; color?: string }> = ({ data, height = 48, color = ACCENT }) => {
+export const Sparkline: FC<{ data: number[]; height?: number; color?: string; filled?: boolean }> = ({
+  data,
+  height = 48,
+  color = ACCENT,
+  filled = true,
+}) => {
+  const uid = useId().replace(/:/g, "");
   if (!data.length) return <div style={{ height }} />;
   const w = 240;
   const max = Math.max(...data, 1);
   const min = Math.min(...data, 0);
   const range = max - min || 1;
   const step = w / Math.max(1, data.length - 1);
-  const pts = data.map((d, i) => `${i * step},${height - ((d - min) / range) * (height - 6) - 3}`).join(" ");
+  const coords = data.map((d, i) => {
+    const x = i * step;
+    const y = height - ((d - min) / range) * (height - 8) - 4;
+    return [x, y] as const;
+  });
+  const line = coords.map(([x, y]) => `${x},${y}`).join(" ");
+  const area = `0,${height} ${line} ${w},${height}`;
+  const gradId = `nxSparkFill-${uid}`;
   return (
-    <svg width="100%" height={height} viewBox={`0 0 ${w} ${height}`} preserveAspectRatio="none">
-      <polyline points={pts} fill="none" stroke={color} strokeWidth={2} />
+    <svg className="nx-spark" width="100%" height={height} viewBox={`0 0 ${w} ${height}`} preserveAspectRatio="none">
+      <defs>
+        <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.35" />
+          <stop offset="100%" stopColor={color} stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      {filled && <polygon className="nx-spark-fill" points={area} fill={`url(#${gradId})`} />}
+      <polyline className="nx-spark-line" points={line} fill="none" stroke={color} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 };
@@ -44,34 +64,47 @@ export const BarChart: FC<{ data: { label: string; value: number }[]; height?: n
   );
 };
 
-/** Ranked horizontal bars (leaderboard style) — much denser than vertical bars for few items. */
+/** Ranked horizontal bars (leaderboard style) — dense leaderboard for usage boards. */
 export const RankBars: FC<{
   data: { label: string; value: number; sub?: string }[];
   format?: (n: number) => string;
-}> = ({ data, format }) => {
+  compact?: boolean;
+}> = ({ data, format, compact }) => {
   if (!data.length) return null;
   const sorted = [...data].sort((a, b) => b.value - a.value);
   const max = Math.max(...sorted.map((d) => d.value), 1);
+  const total = sorted.reduce((sum, d) => sum + d.value, 0) || 1;
   return (
-    <div className="nx-rankbars">
-      {sorted.map((d, i) => (
-        <div key={`${d.label}-${i}`} className={`nx-rankrow ${i === 0 ? "top" : ""}`}>
-          <span className={`nx-rank-badge ${i < 3 ? `r${i + 1}` : ""}`}>{i + 1}</span>
-          <div className="nx-rank-main">
-            <div className="nx-rank-head">
-              <span className="nx-rank-label" title={d.label}>{d.label}</span>
-              {d.sub && <span className="nx-rank-sub">{d.sub}</span>}
-              <span className="nx-rank-value">{format ? format(d.value) : d.value}</span>
-            </div>
-            <div className="nx-rank-track">
-              <div
-                className="nx-rank-fill"
-                style={{ width: `${Math.max((d.value / max) * 100, 1.5)}%`, animationDelay: `${i * 50}ms` }}
-              />
+    <div className={`nx-rankbars${compact ? " is-compact" : ""}`}>
+      {sorted.map((d, i) => {
+        const share = Math.round((d.value / total) * 100);
+        const width = Math.max((d.value / max) * 100, 2);
+        return (
+          <div key={`${d.label}-${i}`} className={`nx-rankrow${i === 0 ? " is-top" : ""}`}>
+            <span className={`nx-rank-idx${i < 3 ? ` r${i + 1}` : ""}`} aria-hidden>
+              {String(i + 1).padStart(2, "0")}
+            </span>
+            <div className="nx-rank-body">
+              <div className="nx-rank-meta">
+                <div className="nx-rank-identity">
+                  <span className="nx-rank-label" title={d.label}>{d.label}</span>
+                  {d.sub ? <span className="nx-rank-sub">{d.sub}</span> : null}
+                </div>
+                <div className="nx-rank-metrics">
+                  <span className="nx-rank-value">{format ? format(d.value) : d.value}</span>
+                  <span className="nx-rank-share">{share}%</span>
+                </div>
+              </div>
+              <div className="nx-rank-track" aria-hidden>
+                <div
+                  className="nx-rank-fill"
+                  style={{ width: `${width}%`, animationDelay: `${i * 60}ms` }}
+                />
+              </div>
             </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 };

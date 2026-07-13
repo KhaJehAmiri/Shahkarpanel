@@ -17,11 +17,15 @@ from app.db.models import (
     TLS,
     Admin,
     AdminUsageLogs,
+    ClientProbe,
+    ClientTelemetry,
+    DedicatedIP,
     NextPlan,
     Node,
     NodeGroup,
     NodeUsage,
     NodeUserUsage,
+    NodeUserProtocolUsage,
     NodeSingBox,
     NodeWireGuard,
     NodeServiceBinding,
@@ -35,6 +39,7 @@ from app.db.models import (
     SubscriptionEndpoint,
     SubscriptionTokenAlias,
     System,
+    Tunnel,
     User,
     UserOrder,
     UserTemplate,
@@ -1845,13 +1850,66 @@ def remove_node(db: Session, dbnode: Node) -> Node:
     """
     Removes a node from the database.
 
-    Args:
-        db (Session): The database session.
-        dbnode (Node): The Node object to be removed.
+    A handful of tables reference ``nodes.id`` without an ORM-managed cascade
+    (only ``node_usages``/``node_user_usages``/``node_wireguard``/``node_singbox``
+    cascade automatically via the ``Node`` relationships). Deleting a node that
+    still has any of these references used to bubble up as a raw
+    ``ForeignKeyViolation`` / 500 instead of a clean removal, most commonly
+    when the node is one end of a Tunnel (relay/transit/exit).
 
     Returns:
         Node: The removed Node object.
     """
+    node_id = dbnode.id
+
+    # Tunnels cannot function with a missing endpoint — delete them outright
+    # (mirrors the dedicated tunnel-delete endpoint) and revert the *other*
+    # end's role back to "direct" if no other enabled tunnel still uses it.
+    tunnels = db.query(Tunnel).filter(
+        or_(
+            Tunnel.relay_node_id == node_id,
+            Tunnel.intermediate_node_id == node_id,
+            Tunnel.exit_node_id == node_id,
+        )
+    ).all()
+    other_node_ids = set()
+    for tunnel in tunnels:
+        for role_node_id in (tunnel.relay_node_id, tunnel.intermediate_node_id, tunnel.exit_node_id):
+            if role_node_id is not None and role_node_id != node_id:
+                other_node_ids.add(role_node_id)
+        db.delete(tunnel)
+    if tunnels:
+        db.flush()
+        for other_id in other_node_ids:
+            still_used = db.query(Tunnel).filter(
+                Tunnel.enabled.is_(True),
+                or_(
+                    Tunnel.relay_node_id == other_id,
+                    Tunnel.intermediate_node_id == other_id,
+                    Tunnel.exit_node_id == other_id,
+                ),
+            ).first()
+            if not still_used:
+                other_node = db.query(Node).filter(Node.id == other_id).first()
+                if other_node is not None and other_node.role != "direct":
+                    other_node.role = "direct"
+
+    # Historical/analytics rows: safe to drop, they carry no independent value
+    # once the node they describe no longer exists.
+    db.query(NodeUserProtocolUsage).filter(NodeUserProtocolUsage.node_id == node_id).delete(
+        synchronize_session=False
+    )
+    db.query(ClientProbe).filter(ClientProbe.node_id == node_id).delete(synchronize_session=False)
+    db.query(ClientTelemetry).filter(ClientTelemetry.active_node == node_id).delete(
+        synchronize_session=False
+    )
+
+    # A dedicated IP assignment outlives the node it happened to be bound to —
+    # detach it instead of destroying the (billable) reservation.
+    db.query(DedicatedIP).filter(DedicatedIP.node_id == node_id).update(
+        {DedicatedIP.node_id: None}, synchronize_session=False
+    )
+
     db.delete(dbnode)
     db.commit()
     return dbnode

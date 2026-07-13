@@ -101,8 +101,15 @@
     "otpInvalid": "Invalid two-factor code"
   },
   "overview": {
-    "title": "Overview",
-    "subtitle": "Your control center",
+    "title": "Home",
+    "subtitle": "Live pulse of your control plane",
+    "systemResources": "System",
+    "operations": "Operations",
+    "fleet": "Fleet",
+    "usage": "Usage",
+    "usageProtocolHint": "Share of total recorded traffic",
+    "usageNodesHint": "Last 30 days across connected nodes",
+    "usageUsersHint": "Highest consumers on this panel",
     "description": "Pick a path below to get started, or check live stats. Each section in the menu does one job — you won't get lost.",
     "pickPath": "What do you want to do?",
     "pathProxy": "Proxy users (VLESS, VMess…)",

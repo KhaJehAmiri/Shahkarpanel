@@ -59,23 +59,22 @@ def collect_singbox_users(db) -> List[SBUser]:
     return users
 
 
-def _node_object(node_id: int):
+def _node_object(node_id: int, *, connect: bool = True):
+    """Return the live node object. ``connect=False`` never dials (usage path)."""
     from app import xray
 
     node = xray.nodes.get(node_id)
     if node is None:
         return None
+    conn = getattr(node, "connection", None)
+    if conn is not None and not getattr(conn, "closed", True):
+        return node
+    if not connect:
+        return None
     try:
-        conn = getattr(node, "connection", None)
-        if conn is None or conn.closed:
-            node.connect()
-        else:
-            conn.ping()
+        node.connect()
     except Exception:
-        try:
-            node.connect()
-        except Exception:
-            return None
+        return None
     return node
 
 

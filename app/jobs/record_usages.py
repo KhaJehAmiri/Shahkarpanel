@@ -356,6 +356,7 @@ def record_aggregated_user_usages(api_params: dict, usage_coefficient: dict):
             admin_usage[admin_id] += user_usage["value"]
 
     # record users usage (only active / on_hold — disabled users must not accrue traffic or online_at)
+    newly_limited: list = []
     with GetDB() as db:
         if users_usage:
             stmt = update(User). \
@@ -388,18 +389,13 @@ def record_aggregated_user_usages(api_params: dict, usage_coefficient: dict):
             ]
 
         # Move every capped user to ``limited`` first, then drop them all in a
-        # single batched pass. Doing the disconnect inline per user meant N users
-        # hitting their cap in the same 5s tick triggered N separate disconnect
-        # passes back-to-back; one batched call handles the whole set at once.
-        newly_limited = []
+        # single batched pass *after* this session closes. Holding the DB
+        # transaction open while disconnecting nodes caused idle-in-transaction
+        # stalls and blocked the 5s usage job (max_instances=1 → Overview stats freeze).
         for uid in hit_limit_uids:
             dbuser = crud.get_user_by_id(db, uid)
             if dbuser and limit_user_quota(db, dbuser, cap_usage=True, disconnect=False):
-                newly_limited.append(dbuser)
-        if newly_limited:
-            from app.quota import disconnect_users_everywhere
-
-            disconnect_users_everywhere(newly_limited)
+                newly_limited.append(int(dbuser.id))
 
         admin_data = [{"admin_id": admin_id, "value": value} for admin_id, value in admin_usage.items()]
         if admin_data:
@@ -407,6 +403,25 @@ def record_aggregated_user_usages(api_params: dict, usage_coefficient: dict):
                 where(Admin.id == bindparam('admin_id')). \
                 values(users_usage=Admin.users_usage + bindparam('value'))
             safe_execute(db, admin_update_stmt, admin_data)
+
+    if newly_limited:
+        try:
+            from types import SimpleNamespace
+
+            from app.quota import disconnect_users_everywhere
+
+            with GetDB() as db:
+                rows = (
+                    db.query(User.id, User.username)
+                    .filter(User.id.in_(newly_limited))
+                    .all()
+                )
+            # Network I/O must run after the billing session closes.
+            disconnect_users_everywhere(
+                [SimpleNamespace(id=int(uid), username=username) for uid, username in rows]
+            )
+        except Exception:
+            logger.exception("batched quota disconnect failed for %s users", len(newly_limited))
 
     # Best-effort upload/download split write. Deliberately separate from the
     # authoritative used_traffic path above and wrapped in try/except so a split
@@ -439,77 +454,155 @@ def record_aggregated_user_usages(api_params: dict, usage_coefficient: dict):
             record_user_stats(filtered, node_id, usage_coefficient.get(node_id, 1))
 
 
+def _connected_node_core_kinds(node_ids) -> dict:
+    """Map ``node_id -> core_kind`` (``"xray"``/``"wireguard"``) for the given nodes.
+
+    Used only for the informational protocol breakdown: a ``wireguard`` core node
+    runs an Xray core whose sole purpose is the native WireGuard inbound, so its
+    per-user stats must be labelled ``wireguard`` rather than the generic
+    ``xray``. Best-effort — an empty/failed lookup falls back to ``xray``.
+    """
+    ids = [nid for nid in node_ids if nid is not None]
+    if not ids:
+        return {}
+    try:
+        from app.db.models import Node
+
+        with GetDB() as db:
+            rows = db.query(Node.id, Node.core_kind).filter(Node.id.in_(ids)).all()
+        return {r[0]: (str(r[1]) if r[1] is not None else "xray") for r in rows}
+    except Exception:
+        logger.debug("core_kind lookup for protocol breakdown failed", exc_info=True)
+        return {}
+
+
 def collect_user_usage_params() -> tuple:
     """Gather raw per-user stats from the local Xray core and every connected
-    node.  Returns ``(api_params, usage_coefficient, protocol_map)`` where
-    ``protocol_map`` maps ``node_id -> protocol label`` for analytics.
+    node.  Returns ``(api_params, usage_coefficient, protocol_breakdown)``.
+
+    ``api_params`` is the *merged* per-node/user shape that feeds the single
+    authoritative ``User.used_traffic``. ``protocol_breakdown`` is a separate
+    list of per-source contributions — ``{"protocol", "node_id", "params",
+    "coefficient"}`` — captured *before* merging so a node that serves several
+    protocols (e.g. a WireGuard-core node that also runs sing-box) is attributed
+    correctly instead of collapsing to one per-node label.
     """
     api_instances = {None: xray.api}
     usage_coefficient = {None: 1}
-    protocol_map: dict[Union[int, None], str] = {None: "xray"}
 
     for node_id, node in list(xray.nodes.items()):
-        if node.connected and node.started:
+        # Use lock-free has_live_api — node.connected pings RPyC under a lock
+        # shared with WG/health jobs and was freezing Overview stats.
+        if getattr(node, "has_live_api", None) and node.has_live_api():
             api_instances[node_id] = node.api
             usage_coefficient[node_id] = node.usage_coefficient
-            protocol_map[node_id] = "xray"
+        elif getattr(node, "started", False) and getattr(node, "_api", None) is not None:
+            api_instances[node_id] = node.api
+            usage_coefficient[node_id] = node.usage_coefficient
 
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    # Do NOT use ``with ThreadPoolExecutor``: after ``future.result(timeout=…)``
+    # the context manager still ``shutdown(wait=True)``, so one hung node RPC
+    # blocks the whole 5s usage job forever (max_instances=1 → Overview freeze).
+    executor = ThreadPoolExecutor(max_workers=10)
+    api_params: dict = {}
+    try:
         futures = {node_id: executor.submit(get_users_stats, api) for node_id, api in api_instances.items()}
-    api_params = {node_id: future.result() for node_id, future in futures.items()}
+        for node_id, future in futures.items():
+            try:
+                api_params[node_id] = future.result(timeout=35)
+            except Exception as exc:
+                logger.warning("get_users_stats timed out/failed for node %s: %s", node_id, exc)
+                api_params[node_id] = []
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+
+    protocol_breakdown: list[dict] = []
+
+    def _add_breakdown(protocol, node_id, params, coefficient):
+        # Snapshot the list: the merge_* helpers below ``.extend()`` the shared
+        # ``api_params[node_id]`` list in place, which would otherwise leak
+        # another protocol's rows into this contribution.
+        if params:
+            protocol_breakdown.append(
+                {
+                    "protocol": protocol,
+                    "node_id": node_id,
+                    "params": list(params),
+                    "coefficient": coefficient,
+                }
+            )
+
+    # Xray core stats: label by the node's core kind. The local panel core
+    # (``None``) and normal nodes are ``xray``; a WireGuard-core node's Xray API
+    # only carries its native WireGuard inbound, so attribute it to ``wireguard``.
+    core_kinds = _connected_node_core_kinds(api_instances.keys())
+    for node_id, params in api_params.items():
+        proto = "wireguard" if core_kinds.get(node_id) == "wireguard" else "xray"
+        _add_breakdown(proto, node_id, params, usage_coefficient.get(node_id, 1))
 
     try:
         from app.wireguard.usage import collect_wg_usage_params, merge_wg_usage
 
         wg_params, wg_coefficient = collect_wg_usage_params()
+        for node_id, params in wg_params.items():
+            _add_breakdown("wireguard", node_id, params, wg_coefficient.get(node_id, 1))
         merge_wg_usage(api_params, usage_coefficient, wg_params, wg_coefficient)
-        for node_id in wg_params:
-            if wg_params.get(node_id):
-                protocol_map[node_id] = "wireguard"
     except Exception:
         pass
+
+    # Panel-host WireGuard exit: when the panel itself terminates tunneled WG,
+    # user traffic exits via the panel host's kernel wg0 (not any node), so its
+    # per-peer counters must be collected here or that traffic is never billed
+    # and online_at never advances (Overview / online-user freeze).
+    try:
+        from app.wireguard.usage import (
+            collect_panel_host_wg_usage_params,
+            merge_wg_usage,
+        )
+
+        host_params, host_coefficient = collect_panel_host_wg_usage_params()
+        for node_id, params in host_params.items():
+            _add_breakdown("wireguard", node_id, params, host_coefficient.get(node_id, 1))
+        merge_wg_usage(api_params, usage_coefficient, host_params, host_coefficient)
+    except Exception:
+        logger.debug("panel-host WG usage collection skipped", exc_info=True)
 
     try:
         from app.singbox.usage import collect_singbox_usage_params, merge_singbox_usage
 
         sb_params, sb_coefficient = collect_singbox_usage_params()
+        for node_id, params in sb_params.items():
+            _add_breakdown("singbox", node_id, params, sb_coefficient.get(node_id, 1))
         merge_singbox_usage(api_params, usage_coefficient, sb_params, sb_coefficient)
-        for node_id in sb_params:
-            if sb_params.get(node_id):
-                protocol_map[node_id] = "singbox"
     except Exception:
         pass
 
-    return api_params, usage_coefficient, protocol_map
+    return api_params, usage_coefficient, protocol_breakdown
 
 
 def record_protocol_breakdown(
-    api_params: dict,
-    usage_coefficient: dict,
-    protocol_map: dict,
+    protocol_breakdown: list,
     billable_ids: set,
 ):
     if DISABLE_RECORDING_NODE_USAGE:
         return
-    for node_id, params in api_params.items():
-        if not params:
-            continue
-        proto = protocol_map.get(node_id, "xray")
-        filtered = [p for p in params if int(p["uid"]) in billable_ids]
+    for entry in protocol_breakdown:
+        filtered = [p for p in entry["params"] if int(p["uid"]) in billable_ids]
         if filtered:
             record_user_protocol_stats(
-                filtered, node_id, proto, usage_coefficient.get(node_id, 1)
+                filtered, entry["node_id"], entry["protocol"], entry["coefficient"]
             )
 
 
 def record_user_usages():
-    api_params, usage_coefficient, protocol_map = collect_user_usage_params()
+    api_params, usage_coefficient, protocol_breakdown = collect_user_usage_params()
     uids = {int(p["uid"]) for params in api_params.values() for p in params}
     if uids:
-        with GetDB() as db:
-            from app.quota import enforce_disconnect_for_non_billable
+        from app.quota import enforce_disconnect_for_non_billable
 
-            enforce_disconnect_for_non_billable(db, uids)
+        # Pass db=None so the enforce helper opens a short query session and
+        # never holds a transaction across hot-disconnect / core-restart I/O.
+        enforce_disconnect_for_non_billable(None, uids)
     billable_ids: set = set()
     with GetDB() as db:
         uids = {int(p["uid"]) for params in api_params.values() for p in params}
@@ -523,7 +616,7 @@ def record_user_usages():
     record_aggregated_user_usages(api_params, usage_coefficient)
     record_overage_usages(api_params, usage_coefficient)
     if billable_ids:
-        record_protocol_breakdown(api_params, usage_coefficient, protocol_map, billable_ids)
+        record_protocol_breakdown(protocol_breakdown, billable_ids)
 
     from app.billing_guard import check_billing_integrity
 
@@ -533,12 +626,23 @@ def record_user_usages():
 def record_node_usages():
     api_instances = {None: xray.api}
     for node_id, node in list(xray.nodes.items()):
-        if node.connected and node.started:
+        if getattr(node, "has_live_api", None) and node.has_live_api():
+            api_instances[node_id] = node.api
+        elif getattr(node, "started", False) and getattr(node, "_api", None) is not None:
             api_instances[node_id] = node.api
 
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    executor = ThreadPoolExecutor(max_workers=10)
+    api_params: dict = {}
+    try:
         futures = {node_id: executor.submit(get_outbounds_stats, api) for node_id, api in api_instances.items()}
-    api_params = {node_id: future.result() for node_id, future in futures.items()}
+        for node_id, future in futures.items():
+            try:
+                api_params[node_id] = future.result(timeout=20)
+            except Exception as exc:
+                logger.warning("get_outbounds_stats timed out/failed for node %s: %s", node_id, exc)
+                api_params[node_id] = []
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
     total_up = 0
     total_down = 0

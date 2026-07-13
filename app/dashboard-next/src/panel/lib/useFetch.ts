@@ -86,11 +86,15 @@ export function useFetch<T>(fn: () => Promise<T>, deps: any[] = []): State<T> {
 }
 
 export function usePolling(fn: () => void, intervalMs: number, enabled = true) {
+  const fnRef = useRef(fn);
+  fnRef.current = fn;
   useEffect(() => {
     if (!enabled) return;
-    const id = setInterval(fn, intervalMs);
+    // Fire immediately so Overview stats are not stuck on the previous sample
+    // until the first interval elapses.
+    fnRef.current();
+    const id = setInterval(() => fnRef.current(), intervalMs);
     return () => clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [intervalMs, enabled]);
 }
 

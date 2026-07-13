@@ -169,24 +169,26 @@ def collect_wg_peers(db) -> List[WGUserPeer]:
     return peers
 
 
-def _node_object(node_id: int):
-    """Return the live connection object for a node, if connected."""
+def _node_object(node_id: int, *, connect: bool = True):
+    """Return the live connection object for a node.
+
+    ``connect=False`` never dials — used by usage collectors so a down node
+    cannot stall the 5s billing job behind SSL connect retries / the RPyC lock.
+    """
     from app import xray
 
     node = xray.nodes.get(node_id)
     if node is None:
         return None
+    conn = getattr(node, "connection", None)
+    if conn is not None and not getattr(conn, "closed", True):
+        return node
+    if not connect:
+        return None
     try:
-        conn = getattr(node, "connection", None)
-        if conn is None or conn.closed:
-            node.connect()
-        else:
-            conn.ping()
+        node.connect()
     except Exception:
-        try:
-            node.connect()
-        except Exception:
-            return None
+        return None
     return node
 
 

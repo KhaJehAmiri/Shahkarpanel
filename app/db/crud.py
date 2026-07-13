@@ -694,6 +694,45 @@ def repair_shadowsocks_methods(db: Session) -> int:
     return fixed
 
 
+def _purge_user_dependents(db: Session, user_ids: List[int]) -> None:
+    """Clear rows that reference these users but have no ORM/DB delete-cascade.
+
+    Several analytics/order tables carry a plain ``user_id`` FK (no
+    ``ON DELETE CASCADE`` and not mapped as a cascading relationship on
+    ``User``). Without clearing them first, PostgreSQL rejects the user delete
+    with a ForeignKeyViolation — which previously aborted the whole bulk delete
+    so *nothing* was removed. Nullable references (financial records, reserved
+    IPs) are detached rather than deleted so they survive as history / pool.
+    """
+    if not user_ids:
+        return
+
+    from app.db.models import ClientDevice, PaymentIntent
+
+    # Hard-delete pure per-user analytics / logs / orders.
+    for model in (
+        NodeUserProtocolUsage,
+        ClientProbe,
+        ClientTelemetry,
+        ClientDevice,
+        UserOrder,
+        UserUsageResetLogs,
+    ):
+        db.query(model).filter(model.user_id.in_(user_ids)).delete(
+            synchronize_session=False
+        )
+
+    # Detach nullable references we want to keep: payment history and the
+    # dedicated-IP pool (freed IPs return to the pool instead of vanishing).
+    db.query(PaymentIntent).filter(PaymentIntent.user_id.in_(user_ids)).update(
+        {PaymentIntent.user_id: None}, synchronize_session=False
+    )
+    db.query(DedicatedIP).filter(DedicatedIP.user_id.in_(user_ids)).update(
+        {DedicatedIP.user_id: None, DedicatedIP.assigned_at: None},
+        synchronize_session=False,
+    )
+
+
 def remove_user(db: Session, dbuser: User) -> User:
     """
     Removes a user from the database.
@@ -705,6 +744,7 @@ def remove_user(db: Session, dbuser: User) -> User:
     Returns:
         User: The removed user object.
     """
+    _purge_user_dependents(db, [dbuser.id])
     db.delete(dbuser)
     db.commit()
     return dbuser
@@ -718,6 +758,7 @@ def remove_users(db: Session, dbusers: List[User]):
         db (Session): Database session.
         dbusers (List[User]): List of user objects to be removed.
     """
+    _purge_user_dependents(db, [u.id for u in dbusers])
     for dbuser in dbusers:
         db.delete(dbuser)
     db.commit()

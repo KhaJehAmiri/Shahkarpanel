@@ -1,4 +1,5 @@
 import threading
+import time
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
@@ -33,6 +34,8 @@ def get_tls():
 
 @threaded_function
 def _add_user_to_inbound(api: XRayAPI, inbound_tag: str, account: Account):
+    if api is None:
+        return
     try:
         api.add_inbound_user(tag=inbound_tag, user=account, timeout=30)
     except (xray.exc.EmailExistsError, xray.exc.ConnectionError):
@@ -41,6 +44,8 @@ def _add_user_to_inbound(api: XRayAPI, inbound_tag: str, account: Account):
 
 @threaded_function
 def _remove_user_from_inbound(api: XRayAPI, inbound_tag: str, email: str):
+    if api is None:
+        return
     try:
         api.remove_inbound_user(tag=inbound_tag, email=email, timeout=30)
     except (xray.exc.EmailNotFoundError, xray.exc.ConnectionError):
@@ -49,6 +54,8 @@ def _remove_user_from_inbound(api: XRayAPI, inbound_tag: str, email: str):
 
 @threaded_function
 def _alter_inbound_user(api: XRayAPI, inbound_tag: str, account: Account):
+    if api is None:
+        return
     try:
         api.remove_inbound_user(tag=inbound_tag, email=account.email, timeout=30)
     except (xray.exc.EmailNotFoundError, xray.exc.ConnectionError):
@@ -137,14 +144,14 @@ def hot_disconnect_users_on_nodes(dbusers) -> None:
     emails = {f"{u.id}.{u.username}" for u in dbusers}
     if not emails:
         return
-    for node in list(xray.nodes.values()):
+    for node_id, node in list(xray.nodes.items()):
         if not node.connected or not node.started:
             continue
         try:
             with GetDB() as db:
                 from app.services.xray_node import node_xray_inbound_tags
 
-                allowed = node_xray_inbound_tags(db, node.id)
+                allowed = node_xray_inbound_tags(db, node_id)
         except Exception:
             allowed = None
         tags = allowed if allowed is not None else list(xray.config.inbounds_by_tag.keys())
@@ -198,15 +205,15 @@ def _push_user_to_nodes(dbuser: "DBUser"):
                 or inbound.get('header_type') == 'http'
             ):
                 account.flow = XTLSFlows.NONE
-            for node in list(xray.nodes.values()):
+            for node_id, node in list(xray.nodes.items()):
                 if not node.connected or not node.started:
                     continue
                 with GetDB() as db:
-                    dbnode = crud.get_node_by_id(db, node.id)
+                    dbnode = crud.get_node_by_id(db, node_id)
                     if dbnode is None:
                         continue
                     from app.services.xray_node import node_xray_inbound_tags
-                    allowed = node_xray_inbound_tags(db, node.id)
+                    allowed = node_xray_inbound_tags(db, node_id)
                     if allowed is not None and inbound_tag not in allowed:
                         continue
                     _alter_inbound_user(node.api, inbound_tag, account)
@@ -247,6 +254,44 @@ def _apply_node_tunnels(config, node_id: int):
         return config
 
 
+def _apply_native_wireguard_inbound(config, node_id: int):
+    """Fold this WG node's Xray-native WireGuard+noise inbound into its config.
+
+    Best-effort and independent of the tunnel injection above: this is a
+    self-contained inbound (terminates locally, dispatches to ``DIRECT``),
+    not a relay/transit/exit tunnel fragment.
+    """
+    try:
+        from app.db import GetDB, crud
+        from app.wireguard.operations import collect_wg_peers
+        from app.wireguard.xray_native import (
+            build_xray_wireguard_inbound,
+            xray_native_wg_enabled,
+        )
+
+        with GetDB() as db:
+            dbnode = crud.get_node_by_id(db, node_id)
+            cfg = dbnode.wireguard if dbnode else None
+            if not xray_native_wg_enabled(cfg):
+                return config
+            peers = collect_wg_peers(db)
+            inbound, rule = build_xray_wireguard_inbound(cfg, peers, node_id=node_id)
+        if inbound is None:
+            return config
+
+        result = config.copy()
+        inbounds = result.setdefault("inbounds", [])
+        existing_tags = {ib.get("tag") for ib in inbounds if isinstance(ib, dict)}
+        if inbound["tag"] not in existing_tags:
+            inbounds.append(inbound)
+            rules = result.setdefault("routing", {}).setdefault("rules", [])
+            rules.insert(0, rule)
+        return result
+    except Exception as exc:
+        logger.warning("Failed to inject native WireGuard inbound for node %s: %s", node_id, exc)
+        return config
+
+
 def remove_node(node_id: int):
     if node_id in xray.nodes:
         try:
@@ -264,13 +309,20 @@ def add_node(dbnode: "DBNode"):
     remove_node(dbnode.id)
 
     tls = get_tls()
-    xray.nodes[dbnode.id] = XRayNode(address=dbnode.address,
-                                     port=dbnode.port,
-                                     api_port=dbnode.api_port,
-                                     ssl_key=tls['key'],
-                                     ssl_cert=tls['certificate'],
-                                     usage_coefficient=dbnode.usage_coefficient,
-                                     pinned_cert_sha256=getattr(dbnode, "server_cert_sha256", None))
+    node = XRayNode(address=dbnode.address,
+                    port=dbnode.port,
+                    api_port=dbnode.api_port,
+                    ssl_key=tls['key'],
+                    ssl_cert=tls['certificate'],
+                    usage_coefficient=dbnode.usage_coefficient,
+                    pinned_cert_sha256=getattr(dbnode, "server_cert_sha256", None))
+    # Tag the live node object with its DB id so callers can recover it from the
+    # ``xray.nodes`` values alone (e.g. host-visibility filtering in share.py).
+    try:
+        node.id = dbnode.id
+    except Exception:  # pragma: no cover - defensive
+        pass
+    xray.nodes[dbnode.id] = node
 
     return xray.nodes[dbnode.id]
 
@@ -407,6 +459,7 @@ def push_connected_nodes_config_sync() -> int:
                 allowed = node_xray_inbound_tags(db, node_id)
             config = filter_xray_config_for_node(config, allowed)
             config = _apply_node_tunnels(config, node_id)
+            config = _apply_native_wireguard_inbound(config, node_id)
 
             is_wg_node = dbnode.core_kind == CoreKind.wireguard.value
             if is_wg_node:
@@ -469,6 +522,7 @@ def push_all_node_configs_sync() -> int:
                 allowed = node_xray_inbound_tags(db, node_id)
             config = filter_xray_config_for_node(config, allowed)
             config = _apply_node_tunnels(config, node_id)
+            config = _apply_native_wireguard_inbound(config, node_id)
 
             is_wg_node = dbnode.core_kind == CoreKind.wireguard.value
             if is_wg_node:
@@ -516,13 +570,23 @@ def connect_node(node_id, config=None):
             node = xray.operations.add_node(dbnode)
 
         _change_node_status(node_id, NodeStatus.connecting)
-        logger.info(f"Connecting to \"{dbnode.name}\" node")
 
-        try:
-            node.connect()
-        except Exception:
-            node = xray.operations.add_node(dbnode)
-            node.connect()
+        need_connect = True
+        if node.connected:
+            try:
+                node.get_version()
+                need_connect = False
+            except Exception:
+                pass
+        if need_connect:
+            logger.info(f"Connecting to \"{dbnode.name}\" node")
+            try:
+                node.connect()
+            except Exception:
+                node = xray.operations.add_node(dbnode)
+                node.connect()
+        else:
+            logger.debug("Reusing live RPyC session for \"%s\"", dbnode.name)
 
         if config is None:
             from app.services.xray_node import build_node_xray_config
@@ -533,6 +597,7 @@ def connect_node(node_id, config=None):
                 allowed = node_xray_inbound_tags(db, node_id)
             config = filter_xray_config_for_node(config, allowed)
             config = _apply_node_tunnels(config, node_id)
+            config = _apply_native_wireguard_inbound(config, node_id)
 
         from app.models.node import CoreKind
 
@@ -540,21 +605,93 @@ def connect_node(node_id, config=None):
         version = None
         degraded_msg = None
         if is_wg_node:
+            with GetDB() as db:
+                from app.tunnel.relay import (
+                    node_delegates_wireguard_to_tunnel,
+                    prepare_relay_wireguard_tunnel,
+                )
+
+                delegates_tunnel = node_delegates_wireguard_to_tunnel(db, node_id)
+            if delegates_tunnel:
+                try:
+                    version = node.get_version()
+                    if version:
+                        node.started = True
+                        # Confirmed alive without a start()/restart() round-trip
+                        # (which normally wires up the gRPC stats client) — attach
+                        # it now so per-user usage stats keep flowing for this node.
+                        try:
+                            node.ensure_api()
+                        except Exception:
+                            pass
+                        _change_node_status(
+                            node_id, NodeStatus.connected, message=None, version=version
+                        )
+                        _persist_pinned_cert(
+                            node_id, getattr(node, "observed_cert_sha256", None)
+                        )
+                        _sync_wireguard_node(node_id, node)
+                        return
+                except Exception:
+                    version = None
             # WireGuard nodes need the RPyC channel for wg_apply; Xray on the
             # node is best-effort (stats/API) and must not block AWG sync.
             xray_exc = None
-            try:
-                node.start(config)
-                version = node.get_version()
-            except Exception as exc:
-                xray_exc = exc
+            version = None
+            if delegates_tunnel:
+                try:
+                    if not node.connected:
+                        node.connect()
+                    version = node.get_version()
+                    if version:
+                        node.started = True
+                except Exception:
+                    version = None
+                if not version:
+                    with GetDB() as db:
+                        prepare_relay_wireguard_tunnel(db, node_id, node)
+            if not version:
+                for attempt in range(3):
+                    try:
+                        if not node.connected:
+                            node.connect()
+                        # Avoid stop()+start() on reconnect — the agent already
+                        # restarts in-place when a core exists; double-stop
+                        # widens the UDP capture outage on tunnel relays.
+                        node.start(config)
+                        version = node.get_version()
+                        xray_exc = None
+                        break
+                    except Exception as exc:
+                        xray_exc = exc
+                        logger.warning(
+                            "WireGuard node \"%s\" Xray start attempt %d failed (%s)",
+                            dbnode.name,
+                            attempt + 1,
+                            exc,
+                        )
+                        if attempt < 2:
+                            time.sleep(1)
+                            try:
+                                node.disconnect()
+                            except Exception:
+                                pass
+            if xray_exc is not None:
                 logger.warning(
-                    "WireGuard node \"%s\" connected but Xray start failed (%s); continuing with WG sync",
+                    "WireGuard node \"%s\" connected but Xray start failed (%s); "
+                    "restoring native WireGuard",
                     dbnode.name,
-                    exc,
+                    xray_exc,
                 )
                 if not node.connected:
-                    node.connect()
+                    try:
+                        node.connect()
+                    except Exception:
+                        pass
+                with GetDB() as db:
+                    from app.wireguard.operations import restore_relay_native_wireguard
+
+                    restore_relay_native_wireguard(db, dbnode, node_object=node)
                 degraded_msg = _wg_xray_degraded_message(xray_exc)
             version = _wg_node_version_label(xray_failed=xray_exc is not None, xray_version=version)
         else:
@@ -633,28 +770,60 @@ def restart_node(node_id, config=None):
                 allowed = node_xray_inbound_tags(db, node_id)
             config = filter_xray_config_for_node(config, allowed)
             config = _apply_node_tunnels(config, node_id)
+            config = _apply_native_wireguard_inbound(config, node_id)
 
         if is_wg_node:
+            with GetDB() as db:
+                from app.tunnel.relay import prepare_relay_wireguard_tunnel
+
+                prepare_relay_wireguard_tunnel(db, node_id, node)
             # Xray on a WireGuard node is best-effort (stats/API). Never drop
             # the RPyC channel when Xray restart fails — AWG/WG peers must stay up.
             if not node.connected:
                 node.connect()
             xray_exc = None
             xray_version = None
-            try:
-                node.restart(config)
-                logger.info(f"Xray core of \"{dbnode.name}\" node restarted")
+            for attempt in range(3):
                 try:
-                    xray_version = node.get_version()
-                except Exception:
-                    pass
-            except Exception as exc:
-                xray_exc = exc
+                    if not node.connected:
+                        node.connect()
+                    node.restart(config)
+                    logger.info(f"Xray core of \"{dbnode.name}\" node restarted")
+                    try:
+                        xray_version = node.get_version()
+                    except Exception:
+                        pass
+                    xray_exc = None
+                    break
+                except Exception as exc:
+                    xray_exc = exc
+                    logger.warning(
+                        "WireGuard node \"%s\" Xray restart attempt %d failed (%s)",
+                        dbnode.name,
+                        attempt + 1,
+                        exc,
+                    )
+                    if attempt < 2:
+                        time.sleep(1)
+                        try:
+                            node.disconnect()
+                        except Exception:
+                            pass
+            if xray_exc is not None:
                 logger.warning(
-                    "WireGuard node \"%s\" Xray restart failed (%s); keeping RPyC for WG sync",
+                    "WireGuard node \"%s\" Xray restart failed (%s); restoring native WireGuard",
                     dbnode.name,
-                    exc,
+                    xray_exc,
                 )
+                if not node.connected:
+                    try:
+                        node.connect()
+                    except Exception:
+                        pass
+                with GetDB() as db:
+                    from app.wireguard.operations import restore_relay_native_wireguard
+
+                    restore_relay_native_wireguard(db, dbnode, node_object=node)
             _sync_wireguard_node(node_id, node)
             if node.connected:
                 _mark_wg_node_connected(

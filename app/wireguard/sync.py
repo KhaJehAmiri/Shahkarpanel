@@ -27,6 +27,7 @@ class WGUserPeer:
     awg_address: str = ""             # AmneziaWG subnet address (dual-stack nodes)
     speed_limit_up: Optional[int] = None
     speed_limit_down: Optional[int] = None
+    username: str = ""                # for Xray stats email attribution (see xray_native.py)
 
 
 def server_interface_address(subnet: str) -> str:
@@ -67,6 +68,25 @@ def sg_wire_enabled(cfg) -> bool:
     if cfg is None:
         return False
     return bool(getattr(cfg, "sg_wire_enabled", False))
+
+
+def direct_wg_enabled(cfg) -> bool:
+    """True when a parallel, untunneled plain-WG socket should stay up.
+
+    This is the same identity (keys/peers/subnet) as the plain listener, just
+    bound to a second port so it survives tunnel delegation on relay nodes —
+    lets any stock WireGuard client connect directly, alongside the tunneled
+    path, without a port conflict.
+    """
+    if cfg is None:
+        return False
+    return bool(getattr(cfg, "direct_listen_port", None))
+
+
+def direct_interface_name(cfg) -> str:
+    """Kernel interface name for the direct listener, derived from ``interface``."""
+    base = getattr(cfg, "interface", None) or "wg0"
+    return f"{base}d"
 
 
 def awg_params_from_cfg(cfg) -> dict:
@@ -185,6 +205,21 @@ def build_node_specs(cfg, peers: List[WGUserPeer]) -> List[dict]:
             )
         )
     return specs
+
+
+def build_direct_spec(cfg, peers: List[WGUserPeer]) -> Optional[dict]:
+    """Spec for the parallel direct (untunneled) plain-WG listener, if enabled."""
+    if not direct_wg_enabled(cfg):
+        return None
+    return build_node_spec(
+        interface=direct_interface_name(cfg),
+        listen_port=cfg.direct_listen_port,
+        private_key=cfg.private_key,
+        subnet=cfg.subnet,
+        peers=peers,
+        mtu=cfg.mtu,
+        amnezia=None,
+    )
 
 
 def build_pubkey_user_map(peers: List[WGUserPeer]) -> Dict[str, int]:

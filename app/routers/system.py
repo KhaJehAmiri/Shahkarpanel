@@ -11,7 +11,7 @@ from app.models.system import SystemStats
 from app.models.user import UserStatus
 from app.rbac import require_permission
 from app.utils import responses
-from app.utils.system import cpu_usage, memory_usage, realtime_bandwidth, realtime_bandwidth_source
+from app.utils.system import cpu_usage, disk_usage, memory_usage, os_uptime, realtime_bandwidth, realtime_bandwidth_source
 
 router = APIRouter(tags=["System"], prefix="/api", responses={401: responses._401})
 
@@ -23,9 +23,23 @@ def get_system_stats(
 ):
     """Fetch system stats including memory, CPU, and user metrics."""
     response.headers["Cache-Control"] = "no-store"
+    import time
+
     mem = memory_usage()
     cpu = cpu_usage()
+    disk = disk_usage()
     system = crud.get_system_usage(db)
+
+    xray_started_at = getattr(xray.core, "started_at", None)
+    xray_uptime = int(time.time() - xray_started_at) if xray_started_at else 0
+    node_uptime = 0
+    try:
+        for node in xray.nodes.values():
+            started_at = getattr(node, "_started_at", None)
+            if started_at:
+                node_uptime = max(node_uptime, int(time.time() - started_at))
+    except Exception:
+        node_uptime = 0
     dbadmin: Union[Admin, None] = crud.get_admin(db, admin.username)
 
     total_user = crud.get_users_count(db, admin=dbadmin if not admin.is_sudo else None)
@@ -45,7 +59,7 @@ def get_system_stats(
         db, status=UserStatus.limited, admin=dbadmin if not admin.is_sudo else None
     )
     online_users = crud.count_online_users(
-        db, 24, admin=dbadmin if not admin.is_sudo else None
+        db, admin=dbadmin if not admin.is_sudo else None
     )
     realtime_bandwidth_stats = realtime_bandwidth()
 
@@ -53,6 +67,8 @@ def get_system_stats(
         version=panel_version(),
         mem_total=mem.total,
         mem_used=mem.used,
+        disk_total=disk.total,
+        disk_used=disk.used,
         cpu_cores=cpu.cores,
         cpu_usage=cpu.percent,
         total_user=total_user,
@@ -67,6 +83,9 @@ def get_system_stats(
         incoming_bandwidth_speed=realtime_bandwidth_stats.incoming_bytes,
         outgoing_bandwidth_speed=realtime_bandwidth_stats.outgoing_bytes,
         bandwidth_source=realtime_bandwidth_source(),
+        os_uptime=os_uptime(),
+        xray_uptime=xray_uptime,
+        node_uptime=node_uptime,
     )
 
 

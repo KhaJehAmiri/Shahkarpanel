@@ -95,6 +95,7 @@ def list_region_presets() -> list[dict[str, str]]:
     return out
 
 
+@lru_cache(maxsize=1)
 def panel_region_vars() -> dict[str, str]:
     from app.utils.panel_region import resolve_panel_region
 

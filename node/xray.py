@@ -1,13 +1,104 @@
 import atexit
 import json
+import os
 import re
+import signal
 import subprocess
 import threading
+import time
 from collections import deque
 from contextlib import contextmanager
 
 from config import DEBUG, SSL_CERT_FILE, SSL_KEY_FILE, XRAY_API_HOST, XRAY_API_PORT, INBOUNDS
 from logger import logger
+
+_XRAY_STOP_TIMEOUT = 5.0
+
+
+def _stdin_xray_cmd_prefix(executable_path: str) -> list[str]:
+    return [executable_path, "run", "-config", "stdin:"]
+
+
+def _find_stdin_xray_pids_via_proc(executable_path: str) -> list[int]:
+    prefix = _stdin_xray_cmd_prefix(executable_path)
+    pids: list[int] = []
+    try:
+        proc_entries = os.listdir("/proc")
+    except OSError:
+        return pids
+    for entry in proc_entries:
+        if not entry.isdigit():
+            continue
+        try:
+            with open(f"/proc/{entry}/cmdline", "rb") as fh:
+                raw = fh.read()
+        except OSError:
+            continue
+        if not raw:
+            continue
+        argv = raw.split(b"\0")
+        if argv and argv[-1] == b"":
+            argv.pop()
+        decoded = [part.decode(errors="replace") for part in argv[: len(prefix)]]
+        if decoded == prefix:
+            pids.append(int(entry))
+    return pids
+
+
+def find_stdin_xray_pids(executable_path: str) -> list[int]:
+    """Return PIDs of ``<executable_path> run -config stdin:`` processes."""
+    try:
+        out = subprocess.check_output(
+            ["pgrep", "-f", f"^{re.escape(executable_path)} run -config stdin:"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+    except subprocess.CalledProcessError:
+        return []
+    except FileNotFoundError:
+        return _find_stdin_xray_pids_via_proc(executable_path)
+    pids: list[int] = []
+    for line in out.strip().splitlines():
+        if line.strip().isdigit():
+            pids.append(int(line.strip()))
+    return pids
+
+
+def _terminate_pids(pids: list[int], *, wait_sec: float = 5.0) -> None:
+    if not pids:
+        return
+    alive = list(dict.fromkeys(pids))
+    for pid in alive:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+    deadline = time.monotonic() + wait_sec
+    while time.monotonic() < deadline:
+        still = []
+        for pid in alive:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                continue
+            still.append(pid)
+        if not still:
+            return
+        time.sleep(0.1)
+        alive = still
+    for pid in alive:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    time.sleep(0.2)
+
+
+def _kill_stale_stdin_xray(executable_path: str, keep_pid: int | None = None) -> None:
+    """Ensure no orphan ``xray run -config stdin`` survives a restart."""
+    pids = find_stdin_xray_pids(executable_path)
+    targets = [pid for pid in pids if not (keep_pid and pid == keep_pid)]
+    _terminate_pids(targets)
 
 
 class XRayConfig(dict):
@@ -184,6 +275,9 @@ class XRayCore:
         if self.started is True:
             raise RuntimeError("Xray is started already")
 
+        keep_pid = self.process.pid if self.process and self.process.poll() is None else None
+        _kill_stale_stdin_xray(self.executable_path, keep_pid=keep_pid)
+
         if config.get('log', {}).get('logLevel') in ('none', 'error'):
             config['log']['logLevel'] = 'warning'
 
@@ -212,10 +306,24 @@ class XRayCore:
             threading.Thread(target=func).start()
 
     def stop(self):
-        if not self.started:
+        proc = self.process
+        if not proc:
             return
 
-        self.process.terminate()
+        try:
+            proc.terminate()
+            proc.wait(timeout=_XRAY_STOP_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                pass
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
         self.process = None
         logger.warning("Xray core stopped")
 
@@ -231,6 +339,7 @@ class XRayCore:
         try:
             logger.warning("Restarting Xray core...")
             self.stop()
+            _kill_stale_stdin_xray(self.executable_path)
             self.start(config)
         finally:
             self.restarting = False

@@ -1,7 +1,9 @@
 ARG PYTHON_VERSION=3.12
+ARG INCLUDE_AWG=0
 
 FROM python:$PYTHON_VERSION-slim AS build
 
+ARG INCLUDE_AWG=0
 ENV PYTHONUNBUFFERED=1
 WORKDIR /code
 
@@ -19,23 +21,34 @@ RUN apt-get update \
     && mkdir -p /usr/local/share/xray \
     && mv /tmp/xray/*.dat /usr/local/share/xray/ \
     && rm -rf /tmp/xray /tmp/xray.zip \
-    && apt-get install -y --no-install-recommends golang-go git \
-    # sing-box: QUIC engine with V2Ray API for per-user traffic accounting.
-    && SB_VER="$(curl -sL https://api.github.com/repos/SagerNet/sing-box/releases/latest | grep -oE '\"tag_name\": \"v[^\"]+' | head -n1 | cut -d'v' -f2)" \
+    && case "$(uname -m)" in \
+         x86_64|amd64) SB_ARCH=amd64 ;; \
+         aarch64|arm64) SB_ARCH=arm64 ;; \
+         *) SB_ARCH=amd64 ;; \
+       esac \
+    && SB_VER="$(curl -fsSL https://api.github.com/repos/SagerNet/sing-box/releases/latest | grep -oE '\"tag_name\": \"v[^\"]+' | head -n1 | cut -d'v' -f2)" \
     && SB_VER="${SB_VER:-1.10.7}" \
-    && git clone --depth 1 --branch "v${SB_VER}" https://github.com/SagerNet/sing-box.git /tmp/sing-box \
-    && cd /tmp/sing-box \
-    && CGO_ENABLED=0 go build -tags "with_quic,with_v2ray_api,with_clash_api" -trimpath -ldflags "-s -w" -o /usr/local/bin/sing-box ./cmd/sing-box \
-    && cd /tmp && rm -rf /tmp/sing-box \
-    # AmneziaWG: build userspace engine from source (no published release tarballs).
-    && git clone --depth 1 https://github.com/amnezia-vpn/amneziawg-go.git /tmp/amneziawg-go \
-    && cd /tmp/amneziawg-go && CGO_ENABLED=0 go build -o /usr/local/bin/amneziawg-go \
-    && cd /tmp \
-    && curl -fsSL -o /tmp/awgtools.zip "https://github.com/amnezia-vpn/amneziawg-tools/releases/download/v1.0.20260618-2/ubuntu-22.04-amneziawg-tools.zip" \
-    && unzip -o /tmp/awgtools.zip -d /tmp/awgtools \
-    && install -m 0755 /tmp/awgtools/ubuntu-22.04-amneziawg-tools/awg /usr/local/bin/awg \
-    && rm -rf /tmp/amneziawg-go /tmp/awgtools /tmp/awgtools.zip \
+    && curl -fsSL -o /tmp/sing-box.tgz "https://github.com/SagerNet/sing-box/releases/download/v${SB_VER}/sing-box-${SB_VER}-linux-${SB_ARCH}.tar.gz" \
+    && tar -xzf /tmp/sing-box.tgz -C /tmp \
+    && install -m 0755 "/tmp/sing-box-${SB_VER}-linux-${SB_ARCH}/sing-box" /usr/local/bin/sing-box \
+    && rm -rf /tmp/sing-box.tgz "/tmp/sing-box-${SB_VER}-linux-${SB_ARCH}" \
     && rm -rf /var/lib/apt/lists/*
+
+# Panel-bundled AmneziaWG binaries (no git clone on the remote node).
+COPY prebuilt/ /tmp/prebuilt/
+RUN set -eux; \
+    ARCH=$(case "$(uname -m)" in x86_64|amd64) echo amd64 ;; aarch64|arm64) echo arm64 ;; *) echo amd64 ;; esac); \
+    PB="/tmp/prebuilt/linux-${ARCH}"; \
+    if [ -f "${PB}/sing-box" ]; then \
+      install -m 0755 "${PB}/sing-box" /usr/local/bin/sing-box; \
+    fi; \
+    if [ "$INCLUDE_AWG" = "1" ]; then \
+      ARCH=$(case "$(uname -m)" in x86_64|amd64) echo amd64 ;; aarch64|arm64) echo arm64 ;; *) echo amd64 ;; esac); \
+      PB="/tmp/prebuilt/linux-${ARCH}"; \
+      test -f "${PB}/amneziawg-go" && test -f "${PB}/awg"; \
+      install -m 0755 "${PB}/amneziawg-go" /usr/local/bin/amneziawg-go; \
+      install -m 0755 "${PB}/awg" /usr/local/bin/awg; \
+    fi
 
 COPY requirements.txt /code/
 RUN python3 -m pip install --upgrade pip setuptools \

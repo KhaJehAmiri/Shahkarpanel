@@ -113,6 +113,46 @@ def materialize_wireguard(db, dbnode, bindings) -> None:
     db.refresh(dbnode)
 
 
+def reconcile_wireguard_endpoints(db, dbnode) -> bool:
+    """Keep WG peer endpoints aligned with the node's public address."""
+    cfg = dbnode.wireguard
+    addr = (dbnode.address or "").strip()
+    if cfg is None or not addr:
+        return False
+    changed = False
+    if cfg.listen_port:
+        endpoint = f"{addr}:{int(cfg.listen_port)}"
+        if cfg.endpoint != endpoint:
+            cfg.endpoint = endpoint
+            changed = True
+    if cfg.awg_listen_port:
+        awg_endpoint = f"{addr}:{int(cfg.awg_listen_port)}"
+        if cfg.awg_endpoint != awg_endpoint:
+            cfg.awg_endpoint = awg_endpoint
+            changed = True
+    if changed:
+        db.commit()
+        db.refresh(cfg)
+    return changed
+
+
+def reconcile_singbox_sni(db, dbnode, *, old_address: str | None = None) -> bool:
+    """Keep sing-box TLS SNI aligned when the node's public address changes."""
+    cfg = dbnode.singbox
+    addr = (dbnode.address or "").strip()
+    if cfg is None or not addr:
+        return False
+    sni = (cfg.sni or "").strip()
+    old = (old_address or "").strip()
+    if not sni or (old and sni == old):
+        if cfg.sni != addr:
+            cfg.sni = addr
+            db.commit()
+            db.refresh(cfg)
+            return True
+    return False
+
+
 def materialize_node_services(db, dbnode) -> None:
     """Sync ``node_singbox`` / ``node_wireguard`` from enabled bindings."""
     from app.db import crud

@@ -49,6 +49,9 @@ __all__ = [
     "build_intermediate_routing_rule",
     "build_exit_inbound",
     "build_wireguard_relay_inbound",
+    "singbox_socks_port",
+    "build_singbox_bridge_socks_inbound",
+    "build_singbox_bridge_routing_rule",
     "build_tunnel_pair",
     "build_singbox_tunnel_fragments",
     "tunnel_hops",
@@ -80,6 +83,29 @@ TUNNEL_TRANSPORT_META: dict[str, dict] = {
 }
 
 SUPPORTED_TRANSPORTS = tuple(TUNNEL_TRANSPORT_META.keys())
+
+
+def clean_public_host(raw: str) -> str:
+    """Extract a bare host/IP from a ``PANEL_PUBLIC_ADDRESS``-style value.
+
+    Accepts full URLs (``https://host[:port]/path``), ``host:port`` and bare
+    hosts, returning just the host. A naive ``split(":")[0]`` breaks on a URL
+    scheme (``https://ip`` -> ``"https"``), which would make a relay dial the
+    literal address ``"https"`` and silently kill the tunnel.
+    """
+    host = (raw or "").strip()
+    if not host:
+        return ""
+    if "://" in host:
+        host = host.split("://", 1)[1]
+    host = host.split("/", 1)[0]          # drop any path
+    if "@" in host:
+        host = host.rsplit("@", 1)[1]     # drop userinfo
+    if host.startswith("[") and "]" in host:
+        return host[1:host.index("]")]    # IPv6 literal [::1]:port
+    if host.count(":") == 1:
+        host = host.split(":", 1)[0]      # drop host:port
+    return host.strip()
 
 
 def transport_engine(transport: str) -> TunnelEngine:
@@ -269,10 +295,29 @@ def _stream_settings(transport: str, params: Dict, *, server_side: bool) -> Dict
                 alpn = ["h3"]
             if "h3" not in alpn:
                 alpn = ["h3"] + [a for a in alpn if a != "h3"]
-            stream["tlsSettings"] = {
+            tls: Dict = {
                 "serverName": params.get("sni", "www.cloudflare.com"),
                 "alpn": alpn,
             }
+            if server_side:
+                # A TLS *inbound* must carry a certificate or Xray refuses to
+                # start it ("empty certificate"), taking the exit core down.
+                # Reuse the node's provisioned TLS cert (self-signed by default);
+                # callers may override the paths via params.
+                from app.tls.acme import DEFAULT_CERT, DEFAULT_KEY
+
+                tls["certificates"] = [
+                    {
+                        "certificateFile": params.get("cert_file") or DEFAULT_CERT,
+                        "keyFile": params.get("key_file") or DEFAULT_KEY,
+                        "ocspStapling": 3600,
+                    }
+                ]
+            else:
+                # The exit cert is typically self-signed / SNI-mismatched, so the
+                # relay client must not abort the handshake over trust.
+                tls["allowInsecure"] = True
+            stream["tlsSettings"] = tls
 
     return stream
 
@@ -422,11 +467,41 @@ def build_intermediate_routing_rule(tunnel) -> Dict:
     }
 
 
+def singbox_socks_port(tunnel) -> int:
+    """Loopback port where Xray exposes a SOCKS inbound for sing-box relay egress."""
+    return 18000 + int(tunnel.id)
+
+
+def build_singbox_bridge_socks_inbound(tunnel) -> Dict:
+    """Local SOCKS inbound on the relay Xray core for sing-box tunnel egress."""
+    return {
+        "tag": f"tunnel-{tunnel.id}-sb-socks",
+        "listen": "127.0.0.1",
+        "port": singbox_socks_port(tunnel),
+        "protocol": "socks",
+        "settings": {"auth": "noauth", "udp": True},
+        "sniffing": {
+            "enabled": True,
+            "destOverride": ["http", "tls", "quic"],
+        },
+    }
+
+
+def build_singbox_bridge_routing_rule(tunnel) -> Dict:
+    """Route sing-box's SOCKS bridge through the tunnel outbound."""
+    return {
+        "type": "field",
+        "inboundTag": [f"tunnel-{tunnel.id}-sb-socks"],
+        "outboundTag": outbound_tag(tunnel),
+    }
+
+
 def build_wireguard_relay_inbound(
     tunnel,
     wg_listen_port: int,
     *,
     wg_target_address: str = "127.0.0.1",
+    wg_target_port: Optional[int] = None,
 ) -> Tuple[Dict, Dict]:
     """Capture the panel's WireGuard UDP on the relay and tunnel it to the exit.
 
@@ -434,11 +509,16 @@ def build_wireguard_relay_inbound(
     end. To carry it inside Reality (rather than exposing WireGuard directly to
     Iran), the relay opens a ``dokodemo-door`` UDP inbound on the WireGuard port
     and forwards every packet, via the tunnel outbound, to the exit's WireGuard
-    server (``wg_target_address``:``wg_listen_port`` — typically the exit's
+    server (``wg_target_address``:``wg_target_port`` — typically the exit's
     loopback, dialed by the exit's ``freedom`` outbound after decryption).
+
+    ``wg_listen_port`` is the UDP port clients dial on the relay; ``wg_target_port``
+    is where the exit-side native WireGuard listens (often 51820 on the panel even
+    when the relay must expose a different public port).
 
     Returns ``(inbound, routing_rule)``.
     """
+    target_port = int(wg_target_port if wg_target_port is not None else wg_listen_port)
     tag = f"tunnel-{tunnel.id}-wg-in"
     inbound = {
         "tag": tag,
@@ -447,11 +527,13 @@ def build_wireguard_relay_inbound(
         "protocol": "dokodemo-door",
         "settings": {
             "address": wg_target_address,
-            "port": int(wg_listen_port),
+            "port": target_port,
             "network": "udp",
             "followRedirect": False,
         },
-        "streamSettings": {"network": "udp"},
+        # dokodemo-door is not a stream transport; keep TCP here so older Xray
+        # builds on relay nodes do not reject ``streamSettings.network: udp``.
+        "streamSettings": {"network": "tcp"},
     }
     routing_rule = build_relay_routing_rule(tunnel, [tag])
     return inbound, routing_rule
@@ -573,7 +655,11 @@ def build_tunnel_pair(
     }
 
     if wireguard_port is not None:
-        wg_inbound, wg_rule = build_wireguard_relay_inbound(tunnel, wireguard_port)
+        wg_inbound, wg_rule = build_wireguard_relay_inbound(
+            tunnel,
+            wireguard_port,
+            wg_target_port=(tunnel.params or {}).get("wireguard_target_port"),
+        )
         relay["wireguard_inbound"] = wg_inbound
         routing_rules.append(wg_rule)
 

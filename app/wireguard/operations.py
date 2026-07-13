@@ -10,6 +10,7 @@ building are kept injectable/pure so this is unit testable with fakes.
 """
 import logging
 import threading
+import time
 from typing import Dict, List, Optional
 
 from app.db import GetDB, crud
@@ -19,7 +20,8 @@ from app.models.user import UserStatus
 from app.utils.concurrency import threaded_function
 from app.wireguard.pool import WireGuardPeerIPAllocator
 from app.wireguard.sync import (WGUserPeer, amneziawg_enabled,
-                                build_node_specs, plain_wg_enabled)
+                                build_direct_spec, build_node_specs,
+                                direct_wg_enabled, plain_wg_enabled)
 from app.wireguard.transport import WireGuardTransportError, client_for_node
 
 logger = logging.getLogger("nexus-wg")
@@ -161,6 +163,7 @@ def collect_wg_peers(db) -> List[WGUserPeer]:
                 awg_address=settings.get("awg_address") or "",
                 speed_limit_up=getattr(user, "speed_limit_up", None) if user else None,
                 speed_limit_down=getattr(user, "speed_limit_down", None) if user else None,
+                username=getattr(user, "username", "") or "",
             )
         )
     return peers
@@ -185,6 +188,68 @@ def _node_object(node_id: int):
         except Exception:
             return None
     return node
+
+
+def restore_relay_native_wireguard(
+    db,
+    dbnode,
+    *,
+    peers: Optional[List[WGUserPeer]] = None,
+    node_object=None,
+) -> bool:
+    """Re-enable native WG on a relay when the Xray tunnel capture is down."""
+    from app.wireguard.wg_manager import autoscale_enabled
+
+    cfg = dbnode.wireguard
+    if cfg is None:
+        return False
+    node_object = node_object if node_object is not None else _node_object(dbnode.id)
+    client = client_for_node(node_object)
+    if client is None:
+        return False
+    if peers is None:
+        if plain_wg_enabled(cfg) and not autoscale_enabled():
+            ensure_addresses_for_subnet(db, cfg.subnet, cfg=cfg)
+        if amneziawg_enabled(cfg):
+            ensure_addresses_for_subnet(db, cfg.awg_subnet, cfg=cfg)
+            crud.ensure_awg_server_keys(db, dbnode)
+            db.refresh(cfg)
+        peers = collect_wg_peers(db)
+    try:
+        specs = build_node_specs(cfg, peers)
+        if not specs:
+            return False
+        last_exc: Exception | None = None
+        for attempt in range(3):
+            try:
+                if node_object is not None and not getattr(node_object, "connected", False):
+                    node_object.connect()
+                client.apply_specs(specs)
+                logger.info(
+                    "Restored native WireGuard on relay node %s (tunnel relay unavailable)",
+                    dbnode.id,
+                )
+                return True
+            except Exception as exc:
+                last_exc = exc
+                if attempt < 2:
+                    time.sleep(1)
+                    try:
+                        if node_object is not None:
+                            node_object.disconnect()
+                            node_object.connect()
+                    except Exception:
+                        pass
+        if last_exc is not None:
+            raise last_exc
+        return False
+    except Exception as exc:
+        logger.warning(
+            "Failed to restore native WireGuard on relay node %s: %s",
+            dbnode.id,
+            exc,
+        )
+        return False
 
 
 def sync_node(db, dbnode, *, peers: Optional[List[WGUserPeer]] = None, node_object=None) -> bool:
@@ -215,6 +280,61 @@ def sync_node(db, dbnode, *, peers: Optional[List[WGUserPeer]] = None, node_obje
             crud.ensure_awg_server_keys(db, dbnode)
             db.refresh(cfg)
         peers = collect_wg_peers(db)
+
+    if direct_wg_enabled(cfg):
+        try:
+            direct_spec = build_direct_spec(cfg, peers)
+            if direct_spec:
+                client.apply_specs([direct_spec])
+        except Exception as exc:
+            logger.warning(
+                "Direct (untunneled) WireGuard sync to node %s failed: %s",
+                dbnode.id,
+                exc,
+            )
+    else:
+        try:
+            from app.wireguard.sync import direct_interface_name
+
+            client.down(direct_interface_name(cfg))
+        except Exception:
+            pass
+
+    try:
+        from app.tunnel.relay import (
+            node_delegates_wireguard_to_tunnel,
+            relay_tunnel_xray_ready,
+        )
+
+        if node_delegates_wireguard_to_tunnel(db, dbnode.id):
+            if relay_tunnel_xray_ready(node_object):
+                if plain_wg_enabled(cfg):
+                    client.down(cfg.interface)
+                if amneziawg_enabled(cfg):
+                    client.down(cfg.awg_interface)
+                logger.info(
+                    "WireGuard on relay node %s delegated to tunnel; native interface stopped",
+                    dbnode.id,
+                )
+                from app.wireguard.host_sync import sync_panel_exit_wireguard
+
+                sync_panel_exit_wireguard(db, peers=peers)
+                return True
+            from app.wireguard.host_sync import sync_panel_exit_wireguard
+
+            sync_panel_exit_wireguard(db, peers=peers)
+            logger.warning(
+                "Relay node %s: Xray tunnel relay not running; panel exit synced "
+                "(native WG left down until Xray starts or explicit restore)",
+                dbnode.id,
+            )
+            return True
+    except Exception as exc:
+        logger.warning(
+            "WireGuard tunnel delegation on node %s failed: %s",
+            dbnode.id,
+            exc,
+        )
 
     try:
         if autoscale_enabled() and plain_wg_enabled(cfg) and amneziawg_enabled(cfg):
@@ -279,7 +399,12 @@ def sync_all_nodes(db=None) -> int:
                 crud.ensure_awg_server_keys(session, n)
             break
         peers = collect_wg_peers(session)
-        return sum(1 for n in wg_nodes if sync_node(session, n, peers=peers))
+        count = sum(1 for n in wg_nodes if sync_node(session, n, peers=peers))
+        from app.wireguard.host_sync import sync_panel_exit_wireguard
+
+        if sync_panel_exit_wireguard(session, peers=peers):
+            count += 1
+        return count
 
     if db is not None:
         return _run(db)

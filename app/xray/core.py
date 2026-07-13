@@ -234,7 +234,8 @@ class XRayCore:
                 self.restart(config, force=True)
                 return
 
-            self._prepare_listen_ports(config)
+            if not self._prepare_listen_ports_unlocked(config):
+                return
             self._start_process(config)
 
     def _start_process(self, config: XRayConfig):
@@ -330,6 +331,51 @@ class XRayCore:
             threading.Thread(target=func).start()
 
     @staticmethod
+    def _pid_real_uid(pid: int) -> int | None:
+        try:
+            with open(f"/proc/{pid}/status", encoding="utf-8") as fh:
+                for line in fh:
+                    if line.startswith("Uid:"):
+                        parts = line.split()
+                        if len(parts) > 1 and parts[1].isdigit():
+                            return int(parts[1])
+                        break
+        except OSError:
+            return None
+        return None
+
+    @staticmethod
+    def _signal_pids(pids: list[int], sig: int) -> None:
+        """Send ``sig`` to ``pids``, escalating immediately for cross-user targets.
+
+        The panel runs as ``nexuspanel`` while stray ``docker exec`` sessions can
+        leave root-owned stdin Xray children. Waiting out the normal SIGTERM grace
+        loop on EPERM lets the health job time out and start another core on ports
+        that are still held — the recurring bind storm users see.
+        """
+        own_uid = os.getuid()
+        privileged: list[int] = []
+        for pid in pids:
+            owner_uid = XRayCore._pid_real_uid(pid)
+            if owner_uid is not None and owner_uid != own_uid and own_uid != 0:
+                privileged.append(pid)
+                continue
+            try:
+                os.kill(pid, sig)
+            except ProcessLookupError:
+                pass
+            except (PermissionError, OSError):
+                privileged.append(pid)
+        if privileged:
+            if own_uid != 0:
+                logger.warning(
+                    "Escalating signal %s for pid(s) %s (owned by another uid)",
+                    sig,
+                    privileged,
+                )
+            XRayCore._privileged_kill_pids(privileged, sig=sig)
+
+    @staticmethod
     def _self_container_id() -> str | None:
         """Resolve this container's own ID via the mounted docker.sock.
 
@@ -359,45 +405,44 @@ class XRayCore:
         """Last resort: escalate via ``docker exec --user root`` + docker.sock."""
         cid = XRayCore._self_container_id()
         if not cid:
+            logger.warning(
+                "Cannot escalate kill for pid(s) %s — panel container id unavailable",
+                pids,
+            )
             return
         sig_num = int(sig)
         for pid in pids:
             try:
-                subprocess.run(
+                result = subprocess.run(
                     ["docker", "exec", "--user", "root", cid, "kill", f"-{sig_num}", str(pid)],
                     check=False,
                     capture_output=True,
+                    text=True,
                     timeout=8,
                 )
             except Exception as exc:
                 logger.warning("privileged kill (sig=%s) for pid=%s failed: %s", sig_num, pid, exc)
+                continue
+            if result.returncode != 0:
+                detail = (result.stderr or result.stdout or "").strip()
+                logger.warning(
+                    "privileged kill (sig=%s) for pid=%s returned %s: %s",
+                    sig_num,
+                    pid,
+                    result.returncode,
+                    detail or "(no output)",
+                )
 
     @staticmethod
-    def _shell_kill_pids(pids: list[int], *, sig: int = signal.SIGTERM) -> None:
-        """Fallback when ``os.kill`` fails (e.g. permission quirks in container)."""
-        sig_name = "TERM" if sig == signal.SIGTERM else "KILL"
-        still_denied: list[int] = []
-        for pid in pids:
-            try:
-                result = subprocess.run(
-                    ["kill", f"-{sig_name}", str(pid)],
-                    check=False,
-                    capture_output=True,
-                    timeout=5,
-                    text=True,
-                )
-                if result.returncode != 0 and "not permitted" in (result.stderr or "").lower():
-                    still_denied.append(pid)
-            except Exception as exc:
-                logger.warning("shell kill %s for pid=%s failed: %s", sig_name, pid, exc)
-                still_denied.append(pid)
-        if still_denied:
-            logger.warning(
-                "Permission denied killing pid(s) %s (likely root-owned orphan from an "
-                "out-of-band docker exec) — escalating via docker exec --user root",
-                still_denied,
-            )
-            XRayCore._privileged_kill_pids(still_denied, sig=sig)
+    def _pid_alive(pid: int) -> bool:
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except (PermissionError, OSError):
+            # Cannot probe — assume still alive so we keep trying to drop it.
+            return True
 
     @staticmethod
     def _terminate_pids(pids: list[int], *, wait_sec: float = 5.0) -> None:
@@ -405,41 +450,17 @@ class XRayCore:
         if not pids:
             return
         alive = list(dict.fromkeys(pids))
-        denied: list[int] = []
-        for pid in alive:
-            try:
-                os.kill(pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            except (PermissionError, OSError):
-                denied.append(pid)
-        if denied:
-            XRayCore._shell_kill_pids(denied, sig=signal.SIGTERM)
+        XRayCore._signal_pids(alive, signal.SIGTERM)
         deadline = time.monotonic() + wait_sec
         while time.monotonic() < deadline:
-            still: list[int] = []
-            for pid in alive:
-                try:
-                    os.kill(pid, 0)
-                    still.append(pid)
-                except ProcessLookupError:
-                    pass
-                except (PermissionError, OSError):
-                    still.append(pid)
+            still = [pid for pid in alive if XRayCore._pid_alive(pid)]
             if not still:
                 return
             time.sleep(0.1)
             alive = still
-        kill_denied: list[int] = []
-        for pid in alive:
-            try:
-                os.kill(pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            except (PermissionError, OSError):
-                kill_denied.append(pid)
-        if kill_denied:
-            XRayCore._shell_kill_pids(kill_denied, sig=signal.SIGKILL)
+        survivors = [pid for pid in alive if XRayCore._pid_alive(pid)]
+        if survivors:
+            XRayCore._signal_pids(survivors, signal.SIGKILL)
         time.sleep(0.2)
 
     @staticmethod
@@ -469,13 +490,42 @@ class XRayCore:
                     blockers.append(pid)
         self._terminate_pids(blockers)
 
-    def _prepare_listen_ports(self, config: XRayConfig) -> None:
+    def _mark_listen_ports_busy(self, config: XRayConfig, busy_ports: list[int]) -> None:
+        from app.xray.inbound_ports import find_inbound_tag_for_port, listener_pids_by_port
+
+        port = busy_ports[0]
+        tag = find_inbound_tag_for_port(config.get("inbounds"), port)
+        owners = listener_pids_by_port().get(port, [])
+        owner_bits = [
+            f"{name}(pid={pid})" if pid is not None else str(name)
+            for name, pid in owners[:3]
+        ]
+        owner_detail = ", ".join(owner_bits) if owner_bits else "unknown"
+        msg = (
+            f"Inbound ports still busy after reclaim (port {port} held by {owner_detail}). "
+            "Another Xray process may still be shutting down."
+        )
+        if tag:
+            msg = f'{msg} Check inbound "{tag}".'
+        self.startup_error = msg
+        self.failed_port = port
+        self.failed_inbound_tag = tag
+
+    def _listen_ports_ready(self, ports: list[int]) -> bool:
+        if not ports:
+            return True
+        from app.xray.inbound_ports import listener_pids_by_port
+
+        by_port = listener_pids_by_port()
+        return not any(by_port.get(port) for port in ports)
+
+    def _prepare_listen_ports(self, config: XRayConfig) -> bool:
         with _lifecycle_lock:
             if getattr(self, "restarting", False):
-                return
-            self._prepare_listen_ports_unlocked(config)
+                return False
+            return self._prepare_listen_ports_unlocked(config)
 
-    def _prepare_listen_ports_unlocked(self, config: XRayConfig) -> None:
+    def _prepare_listen_ports_unlocked(self, config: XRayConfig) -> bool:
         from app.xray.inbound_ports import product_inbound_ports
 
         keep_pid = self.process.pid if self.process and self.process.poll() is None else None
@@ -483,16 +533,22 @@ class XRayCore:
         self._kill_stale_stdin_xray(keep_pid=keep_pid)
         self._free_listen_ports(ports)
         if not ports:
-            return
-        from app.xray.inbound_ports import listener_pids_by_port
+            return True
 
         deadline = time.monotonic() + XRAY_RESTART_PORT_RECLAIM_TIMEOUT
         while time.monotonic() < deadline:
-            busy = [p for p in ports if listener_pids_by_port().get(p)]
-            if not busy:
-                return
+            if self._listen_ports_ready(ports):
+                return True
+            busy = [p for p in ports if not self._listen_ports_ready([p])]
             self._free_listen_ports(busy)
             time.sleep(0.15)
+
+        busy = [p for p in ports if not self._listen_ports_ready([p])]
+        if busy:
+            logger.warning("Listen ports still busy after reclaim timeout: %s", busy)
+            self._mark_listen_ports_busy(config, busy)
+            return False
+        return True
 
     def restart(self, config: XRayConfig, *, force: bool = False):
         with _lifecycle_lock:
@@ -512,7 +568,12 @@ class XRayCore:
                 self.restarting = True
                 logger.warning("Restarting Xray core...")
                 self._stop_process()
-                self._prepare_listen_ports_unlocked(config)
+                if not self._prepare_listen_ports_unlocked(config):
+                    logger.warning(
+                        "Skipping Xray start — inbound ports not free (%s)",
+                        self.startup_error,
+                    )
+                    return
                 self._start_process(config)
                 self._last_restart_at = time.time()
             finally:

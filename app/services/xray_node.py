@@ -68,7 +68,7 @@ def build_node_xray_config(node_id: int, base_config=None):
     """Master config + users, filtered for this node's Xray services."""
     from app import xray
     from app.db import GetDB
-    from app.xray.operations import _apply_node_tunnels
+    from app.xray.operations import _apply_native_wireguard_inbound, _apply_node_tunnels
 
     if base_config is None:
         base_config = xray.config.include_db_users()
@@ -78,6 +78,7 @@ def build_node_xray_config(node_id: int, base_config=None):
 
     cfg = filter_xray_config_for_node(base_config, allowed)
     cfg = _apply_node_tunnels(cfg, node_id)
+    cfg = _apply_native_wireguard_inbound(cfg, node_id)
 
     with GetDB() as db:
         from app.db import crud

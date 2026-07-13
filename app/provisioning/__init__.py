@@ -14,6 +14,7 @@ API falls back to returning the one-line install command so the user can paste
 it into their server manually. The command builder is a pure, tested function.
 """
 import json
+import os
 import shlex
 from dataclasses import dataclass
 from typing import Optional
@@ -100,6 +101,7 @@ def build_install_command(
     control_secret: Optional[str] = None,
     force_image_rebuild: bool = False,
     client_cert_pem: Optional[str] = None,
+    include_awg: bool = False,
 ) -> str:
     """Build the self-contained bash command that provisions a fresh server.
 
@@ -188,11 +190,12 @@ def build_install_command(
     # If the image tag is not on the remote host, try pull then build from the
     # panel's bundled node-agent source (nexuspanel/node is not on Docker Hub).
     # Always rebuild from the panel bundle so agent code updates reach the node.
+    awg_flag = "1" if include_awg else "0"
     ensure_image = (
         f"NP_IMG={q(image)}; "
         "NP_BD=$(mktemp -d); "
         f"curl -fsSL {q(bundle_url)} | tar -xzf - -C \"$NP_BD\"; "
-        "docker build -t \"$NP_IMG\" \"$NP_BD/node\"; "
+        f"docker build --build-arg INCLUDE_AWG={awg_flag} -t \"$NP_IMG\" \"$NP_BD/node\"; "
         "rm -rf \"$NP_BD\"; "
     )
 
@@ -235,6 +238,21 @@ def ssh_available() -> bool:
         return False
 
 
+def _summarize_remote_error(stderr: str, stdout: str, exit_code: int, limit: int = 1500) -> str:
+    """Return a short, actionable remote failure message (not the full docker log)."""
+    blob = (stderr or "").strip() or (stdout or "").strip()
+    if not blob:
+        return f"remote command failed (exit {exit_code})"
+    lines = blob.splitlines()
+    markers = ("fatal:", "error:", "ERROR:", "failed to", "FAILED", "exit code")
+    hits = [ln for ln in lines if any(m in ln for m in markers)]
+    tail = "\n".join((hits or lines)[-10:])
+    msg = f"remote command failed (exit {exit_code}): {tail}"
+    if len(msg) > limit:
+        return msg[: limit - 3] + "..."
+    return msg
+
+
 def run_remote_command(
     creds: SSHCredentials,
     command: str,
@@ -258,8 +276,20 @@ def run_remote_command(
 
     client = paramiko.SSHClient()
     if PROVISIONING_SSH_STRICT_HOST_KEY:
+        # Strict mode only makes sense if we actually have host keys to verify
+        # against, otherwise every (brand-new) node is rejected and the whole
+        # SSH-provision feature is dead on arrival. Load system + user
+        # known_hosts so pre-seeded hosts verify.
+        for loader in (client.load_system_host_keys, client.load_host_keys):
+            try:
+                loader() if loader is client.load_system_host_keys \
+                    else loader(os.path.expanduser("~/.ssh/known_hosts"))
+            except Exception:
+                pass
         client.set_missing_host_key_policy(paramiko.RejectPolicy())
     else:
+        # Trust-on-first-use: expected default when bootstrapping a fresh node
+        # you own (it has never been seen before).
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
         connect_kwargs = dict(
@@ -298,13 +328,19 @@ def run_remote_command(
         out = stdout.read().decode("utf-8", "replace")
         err = stderr.read().decode("utf-8", "replace")
         if exit_code != 0:
-            raise ProvisioningError(
-                f"remote command failed (exit {exit_code}): {err.strip() or out.strip()}"
-            )
+            raise ProvisioningError(_summarize_remote_error(err, out, exit_code))
         return out
     except ProvisioningError:
         raise
     except Exception as exc:
+        msg = str(exc)
+        if "not found in known_hosts" in msg or "not in known_hosts" in msg:
+            raise ProvisioningError(
+                f"SSH host key for '{creds.host}' is not trusted "
+                "(PROVISIONING_SSH_STRICT_HOST_KEY is on). For a brand-new node, "
+                "set PROVISIONING_SSH_STRICT_HOST_KEY=False in the panel .env to "
+                "trust it on first connect, or add its key to known_hosts first."
+            ) from exc
         raise ProvisioningError(f"SSH provisioning failed: {exc}") from exc
     finally:
         try:

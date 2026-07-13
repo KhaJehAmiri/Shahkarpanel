@@ -2,7 +2,7 @@ import { FC, Fragment, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
-import { ImportPreviewResponse, ImportPreviewRow, InboundsByProtocol, NodeItem, Plan, UserItem, UsersResponse } from "../api/types";
+import { ImportPreviewResponse, ImportPreviewRow, InboundsByProtocol, NodeItem, Plan, SystemStats, UserItem, UsersResponse } from "../api/types";
 import { useFetch, useLiveReload } from "../lib/useFetch";
 import { formatBytes, formatDate, relativeExpiry, relativeExpiryLabel, statusTone, usagePct } from "../lib/format";
 import {
@@ -17,7 +17,7 @@ import { QR } from "../components/QR";
 import { absoluteUrl } from "../lib/url";
 import { resolveSubscribeBrowserUrl, resolveWgUrl } from "../../lib/subscribe-url";
 import { copyToClipboard } from "../lib/clipboard";
-import { IcEdit, IcExternal, IcEye, IcPlus, IcRefresh, IcShare, IcTrash } from "../components/icons";
+import { IcCopy, IcEdit, IcExternal, IcEye, IcPlus, IcRefresh, IcShare, IcTrash } from "../components/icons";
 import { UserTemplatesPanel, UserTemplateRow } from "../components/UserTemplates";
 import { BulkInboundModal } from "../components/BulkInboundModal";
 import { BulkExtendModal, BulkResetUsageModal } from "../components/BulkUserActionModals";
@@ -73,6 +73,115 @@ const PROTO_VISUAL: Record<string, { icon: string; hue: string }> = {
   hysteria2: { icon: "🚀", hue: "#f472b6" },
   tuic: { icon: "◉", hue: "#34d399" },
   anytls: { icon: "🛡", hue: "#a78bfa" },
+};
+
+// Above this count a hover list is just noise, so the tile only shows the number.
+const STAT_POPOVER_MAX = 200;
+
+type UserStatItem = { key: string; label: string; value?: number; color: string; hover?: boolean; aggregate?: boolean };
+
+const UserStatTile: FC<{ item: UserStatItem; onPick: (username: string) => void }> = ({ item, onPick }) => {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const [data, setData] = useState<{ usernames: string[]; total: number } | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const load = async () => {
+    if (data || loading) return;
+    setLoading(true);
+    try {
+      setData(await api.get<{ usernames: string[]; total: number }>(`/users/stat-usernames?category=${item.key}&limit=${STAT_POPOVER_MAX}`));
+    } catch {
+      /* hover preview is best-effort */
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const remaining = data ? Math.max(0, data.total - data.usernames.length) : 0;
+
+  // Popover is only useful for smaller, actionable buckets — skip it for the
+  // huge aggregate tiles (total clients / active) where a list is just noise.
+  if (item.hover === false) {
+    return (
+      <div className="nx-userstat">
+        <div className="nx-userstat-label">{item.label}</div>
+        <div className="nx-userstat-value" style={{ color: item.color }}>
+          <span className="nx-userstat-dot" />
+          <span className="nx-userstat-num">{item.value != null ? item.value.toLocaleString() : "—"}</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="nx-userstat nx-userstat--hover"
+      onMouseEnter={() => { setOpen(true); void load(); }}
+      onMouseLeave={() => setOpen(false)}
+    >
+      <div className="nx-userstat-label">{item.label}</div>
+      <div className="nx-userstat-value" style={{ color: item.color }}>
+        <span className="nx-userstat-dot" />
+        <span className="nx-userstat-num">{item.value != null ? item.value.toLocaleString() : "—"}</span>
+      </div>
+      {open && (
+        <div className="nx-userstat-pop" role="tooltip">
+          <div className="nx-userstat-pop-head" style={{ color: item.color }}>
+            <span className="nx-userstat-dot" />
+            <span className="nx-userstat-pop-title">{item.label}</span>
+            <span className="nx-userstat-pop-count">{data ? data.total.toLocaleString() : "…"}</span>
+          </div>
+          <div className="nx-userstat-pop-list">
+            {loading && !data && <div className="nx-userstat-pop-empty">…</div>}
+            {data && data.usernames.length === 0 && (
+              <div className="nx-userstat-pop-empty">{t("users.stats.emptyList")}</div>
+            )}
+            {data?.usernames.map((u) => (
+              <button key={u} type="button" className="nx-userstat-pop-row" onClick={() => onPick(u)} title={u}>
+                {u}
+              </button>
+            ))}
+          </div>
+          {remaining > 0 && (
+            <div className="nx-userstat-pop-more">{t("users.stats.andMore", { n: remaining })}</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+type HeaderMenuItem = { key: string; label: string; danger?: boolean; onClick: () => void };
+
+const HeaderMenu: FC<{ label: string; items: HeaderMenuItem[] }> = ({ label, items }) => {
+  const [open, setOpen] = useState(false);
+  if (!items.length) return null;
+  return (
+    <div className="nx-hmenu">
+      <Button variant="ghost" onClick={() => setOpen((o) => !o)}>
+        {label}<span aria-hidden style={{ fontSize: 9, marginInlineStart: 6, opacity: 0.7 }}>▼</span>
+      </Button>
+      {open && (
+        <>
+          <div className="nx-hmenu-backdrop" onClick={() => setOpen(false)} />
+          <div className="nx-hmenu-pop" role="menu">
+            {items.map((it) => (
+              <button
+                key={it.key}
+                type="button"
+                role="menuitem"
+                className={`nx-hmenu-item${it.danger ? " danger" : ""}`}
+                onClick={() => { setOpen(false); it.onClick(); }}
+              >
+                {it.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
 };
 
 export const Users: FC = () => {
@@ -182,6 +291,9 @@ export const Users: FC = () => {
 
   const { data, loading, error, reload } = useFetch<UsersResponse>(() => api.get(`/users?${query}`), [query]);
   useLiveReload(reload, 30000);
+  const sys = useFetch<SystemStats>(() => api.get("/system"), []);
+  useLiveReload(sys.reload, 30000);
+  const st = sys.data;
   const total = data?.total ?? 0;
   const pages = Math.max(1, Math.ceil(total / pageSize));
 
@@ -196,6 +308,31 @@ export const Users: FC = () => {
     catch (e: any) { toast.push(e.message, "error"); }
   };
 
+  const bulkStatus = async (action: "enable" | "disable") => {
+    if (!confirm(t(`users.bulk.${action}Confirm`, { n: selected.size }))) return;
+    try {
+      const r = await api.post<{ applied: number; skipped: number; failed: number }>("/users/bulk/status", {
+        scope: "selected", usernames: Array.from(selected), action,
+      });
+      toast.push(t("users.bulk.statusDone", { applied: r.applied, skipped: r.skipped }), r.failed ? "error" : "success");
+      clearSelection(); reload();
+    } catch (e: any) { toast.push(e.message, "error"); }
+  };
+
+  const bulkDelete = async (opts: { scope: "selected" | "all" | "filtered"; statuses?: string[]; confirmKey: string; count: number }) => {
+    if (!confirm(t(opts.confirmKey, { n: opts.count }))) return;
+    if (opts.scope === "all" && !confirm(t("users.bulk.deleteAllConfirm2"))) return;
+    try {
+      const r = await api.post<{ deleted: number }>("/users/bulk/delete", {
+        scope: opts.scope,
+        usernames: opts.scope === "selected" ? Array.from(selected) : [],
+        statuses: opts.statuses || [],
+      });
+      toast.push(t("users.bulk.deleteDone", { n: r.deleted }), "success");
+      clearSelection(); reload();
+    } catch (e: any) { toast.push(e.message, "error"); }
+  };
+
   return (
     <div className="nx-page">
       <PageHeader
@@ -204,23 +341,39 @@ export const Users: FC = () => {
         description={t("users.description")}
         actions={<>
           <Button variant="ghost" title={t("common.refresh")} onClick={reload}><IcRefresh className="nx-ico" /></Button>
-          {admin?.is_sudo && (
-            <Button
-              variant="ghost"
-              onClick={async () => {
-                if (!confirm(t("users.resetAllUsageConfirm"))) return;
-                try {
-                  await api.post("/users/reset");
-                  toast.push(t("users.resetAllUsageDone"), "success");
-                  reload();
-                } catch (e: any) {
-                  toast.push(e.message, "error");
-                }
-              }}
-            >
-              {t("users.resetAllUsage")}
-            </Button>
-          )}
+          <HeaderMenu
+            label={t("users.cleanup")}
+            items={[
+              ...(admin?.is_sudo ? [{
+                key: "reset",
+                label: t("users.resetAllUsage"),
+                onClick: async () => {
+                  if (!confirm(t("users.resetAllUsageConfirm"))) return;
+                  try {
+                    await api.post("/users/reset");
+                    toast.push(t("users.resetAllUsageDone"), "success");
+                    reload();
+                  } catch (e: any) {
+                    toast.push(e.message, "error");
+                  }
+                },
+              }] : []),
+              ...(canWrite ? [
+                {
+                  key: "delInactive",
+                  label: t("users.bulk.deleteInactive"),
+                  danger: true,
+                  onClick: () => bulkDelete({ scope: "filtered", statuses: ["disabled", "expired"], confirmKey: "users.bulk.deleteInactiveConfirm", count: (st?.users_disabled ?? 0) + (st?.users_expired ?? 0) }),
+                },
+                {
+                  key: "delAll",
+                  label: t("users.bulk.deleteAll"),
+                  danger: true,
+                  onClick: () => bulkDelete({ scope: "all", confirmKey: "users.bulk.deleteAllConfirm", count: total }),
+                },
+              ] : []),
+            ]}
+          />
           {canWrite && <Button variant="ghost" onClick={() => setShowImport(true)}>{t("users.import")}</Button>}
           {canWrite && (
             <Button variant="ghost" onClick={() => setShowBulkCreate(true)}>
@@ -235,6 +388,26 @@ export const Users: FC = () => {
           {canWrite && <Button variant="primary" onClick={() => setShowCreate(true)}><IcPlus className="nx-ico" /> {t("common.create")}</Button>}
         </>}
       />
+
+      <Card className="nx-glass-card nx-userstats nx-mb-20">
+        {([
+          { key: "total", label: t("users.stats.total"), value: st?.total_user, color: "var(--nx-accent)", aggregate: true },
+          { key: "online", label: t("users.stats.online"), value: st?.online_users, color: "var(--nx-info)" },
+          { key: "expired", label: t("users.status.expired"), value: st?.users_expired, color: "#a78bfa" },
+          { key: "limited", label: t("users.status.limited"), value: st?.users_limited, color: "var(--nx-warn)" },
+          { key: "on_hold", label: t("users.status.on_hold"), value: st?.users_on_hold, color: "#22d3ee" },
+          { key: "disabled", label: t("users.status.disabled"), value: st?.users_disabled, color: "var(--nx-text-dim)" },
+          { key: "active", label: t("users.status.active"), value: st?.users_active, color: "var(--nx-ok)", aggregate: true },
+        ] as UserStatItem[]).map((it) => (
+          <UserStatTile
+            key={it.key}
+            // Preview list only for small, actionable buckets — aggregates
+            // (total/active) and large sets just show the number to stay clean.
+            item={{ ...it, hover: !it.aggregate && it.value != null && it.value > 0 && it.value <= STAT_POPOVER_MAX }}
+            onPick={(u) => { setSearch(u); setPage(0); }}
+          />
+        ))}
+      </Card>
 
       {admin?.is_sudo && <UserTemplatesPanel />}
 
@@ -311,6 +484,9 @@ export const Users: FC = () => {
             <Button size="sm" variant="primary" onClick={() => setShowBulkExtend(true)}>{t("bulkExtend.short")}</Button>
             <Button size="sm" variant="ghost" onClick={() => setShowBulkInbound(true)}>{t("bulkInbound.assign")}</Button>
             <Button size="sm" variant="ghost" onClick={() => setShowBulkReset(true)}>{t("bulkReset.short")}</Button>
+            <Button size="sm" variant="ghost" onClick={() => bulkStatus("enable")}>{t("users.bulk.enable")}</Button>
+            <Button size="sm" variant="ghost" onClick={() => bulkStatus("disable")}>{t("users.bulk.disable")}</Button>
+            <Button size="sm" variant="danger" onClick={() => bulkDelete({ scope: "selected", confirmKey: "users.bulk.deleteSelectedConfirm", count: selected.size })}>{t("users.bulk.delete")}</Button>
             <Button size="sm" variant="ghost" onClick={clearSelection}>{t("bulkInbound.clearSelection")}</Button>
           </div>
         </Card>
@@ -336,9 +512,9 @@ export const Users: FC = () => {
                     </th>
                   )}
                   <th>{t("common.username")}</th><th>{t("common.status")}</th>
-                  <th>{t("users.filters.serverInbound")}</th>
-                  <th style={{ width: 156 }}>{t("common.protocols")}</th>
-                  <th>{t("users.used")}</th><th>{t("users.expire")}</th><th style={{ textAlign: "end" }}>{t("common.actions")}</th>
+                  <th className="nx-col-inbound">{t("users.filters.serverInbound")}</th>
+                  <th className="nx-col-proto" style={{ width: 156 }}>{t("common.protocols")}</th>
+                  <th>{t("users.used")}</th><th className="nx-col-expire">{t("users.expire")}</th><th style={{ textAlign: "end" }}>{t("common.actions")}</th>
                 </tr></thead>
                 <tbody>
                   {data.users.map((u) => {
@@ -357,8 +533,17 @@ export const Users: FC = () => {
                           </td>
                         )}
                         <td style={{ fontWeight: 600 }}>{u.username}{u.note ? <div className="nx-faint" style={{ fontWeight: 400, fontSize: 11 }}>{u.note}</div> : null}</td>
-                        <td><Pill tone={statusTone(u.status)} dot>{t(`users.status.${u.status}`, u.status)}</Pill></td>
-                        <td style={{ maxWidth: 200 }}>
+                        <td>
+                          {u.online ? (
+                            <span className="nx-online-badge" title={t(`users.status.${u.status}`, u.status)}>
+                              <span className="nx-online-dot" />
+                              {t("users.stats.online")}
+                            </span>
+                          ) : (
+                            <Pill tone={statusTone(u.status)} dot>{t(`users.status.${u.status}`, u.status)}</Pill>
+                          )}
+                        </td>
+                        <td className="nx-col-inbound" style={{ maxWidth: 200 }}>
                           {sourceSlug ? (
                             <Pill tone="default">{sourceSlug}</Pill>
                           ) : (
@@ -371,8 +556,8 @@ export const Users: FC = () => {
                             </div>
                           ) : null}
                         </td>
-                        <td><UserProtocolChips protos={protos} /></td>
-                        <td style={{ minWidth: 170 }}>
+                        <td className="nx-col-proto"><UserProtocolChips protos={protos} /></td>
+                        <td className="nx-col-used" style={{ minWidth: 170 }}>
                           <div style={{ fontSize: 12 }}>{formatBytes(u.used_traffic)} / {u.data_limit ? formatBytes(u.data_limit) : t("users.unlimited")}</div>
                           {(u.overage_traffic ?? 0) > 0 ? (
                             <div className="nx-faint" style={{ fontSize: 11, marginTop: 2, color: "var(--nx-danger, #ef4444)" }}>
@@ -381,10 +566,10 @@ export const Users: FC = () => {
                           ) : null}
                           {u.data_limit ? <div style={{ marginTop: 5 }}><UsageBar pct={pct} /></div> : null}
                         </td>
-                        <td>{u.expire ? formatDate(u.expire, i18n.language) : <span className="nx-faint">{t("users.never")}</span>}</td>
+                        <td className="nx-col-expire">{u.expire ? formatDate(u.expire, i18n.language) : <span className="nx-faint">{t("users.never")}</span>}</td>
                         <td onClick={(e) => e.stopPropagation()}>
                           <div className="nx-row" style={{ justifyContent: "flex-end", gap: 6, flexWrap: "nowrap" }}>
-                            <Button size="sm" variant="ghost" title={t("common.view")} onClick={() => setViewUser(u)}><IcEye className="nx-ico" /></Button>
+                            <Button className="nx-col-view-btn" size="sm" variant="ghost" title={t("common.view")} onClick={() => setViewUser(u)}><IcEye className="nx-ico" /></Button>
                             {canWrite && <Button size="sm" variant="ghost" title={t("common.edit")} onClick={() => setEditUser(u)}><IcEdit className="nx-ico" /></Button>}
                             {canWrite && <Toggle on={u.status !== "disabled"} onChange={() => toggleUser(u)} label={t("users.toggleStatus")} />}
                             {canWrite && <Button variant="danger" size="sm" title={t("common.delete")} onClick={() => removeUser(u)}><IcTrash className="nx-ico" /></Button>}
@@ -1616,12 +1801,16 @@ const UserDetail: FC<{ username: string; onClose: () => void; onEdit: () => void
           {/* Hero */}
           <div className="nx-user-hero">
             <div className="nx-avatar">{initials}</div>
-            <div style={{ minWidth: 0, flex: 1 }}>
-              <div className="nx-user-hero-name nx-truncate">{data.username}</div>
-              <div className="nx-user-hero-meta">
-                <Pill tone={statusTone(data.status)} dot>{t(`users.status.${data.status}`, data.status)}</Pill>
-                {data.admin ? <span style={{ marginInlineStart: 8 }}>{t("users.byAdmin", { admin: data.admin.username })}</span> : null}
+            <div style={{ minWidth: 140, flex: 1 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                <span className="nx-user-hero-name nx-truncate">{data.username}</span>
+                <span style={{ flexShrink: 0 }}>
+                  <Pill tone={statusTone(data.status)} dot>{t(`users.status.${data.status}`, data.status)}</Pill>
+                </span>
               </div>
+              {data.admin ? (
+                <div className="nx-user-hero-meta">{t("users.byAdmin", { admin: data.admin.username })}</div>
+              ) : null}
             </div>
             <div className="nx-row" style={{ gap: 8, flexShrink: 0 }}>
               <Button size="sm" variant="ghost" onClick={async () => {
@@ -1774,20 +1963,35 @@ const UserDetail: FC<{ username: string; onClose: () => void; onEdit: () => void
                   <p className="nx-faint" style={{ fontSize: 12, margin: 0 }}>{t("users.configAccountMeta")}</p>
                   <div className="nx-config-list">
                     {(data.link_items?.length ? data.link_items : links.map((link) => ({ link, protocol: proxyKind(link), remark: "", region_flag: "", region_name: "" }))).map((item, i) => (
-                      <button
+                      <div
                         key={i}
-                        type="button"
                         className={`nx-config-list-item ${activeLink === i ? "active" : ""}`}
-                        onClick={() => setActiveLink(i)}
                       >
-                        <span className="nx-config-list-proto">{String(item.protocol || proxyKind(item.link)).toUpperCase()}</span>
-                        {item.region_flag ? <span className="nx-config-list-flag">{item.region_flag}</span> : null}
-                        <span className="nx-config-list-title">{item.remark || item.region_name || `${proxyKind(item.link)} #${i + 1}`}</span>
-                      </button>
+                        <button
+                          type="button"
+                          className="nx-config-list-main"
+                          onClick={() => setActiveLink(i)}
+                        >
+                          <span className="nx-config-list-proto">{String(item.protocol || proxyKind(item.link)).toUpperCase()}</span>
+                          {item.region_flag ? <span className="nx-config-list-flag">{item.region_flag}</span> : null}
+                          <span className="nx-config-list-title">{item.remark || item.region_name || `${proxyKind(item.link)} #${i + 1}`}</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="nx-config-copy"
+                          title={t("common.copy")}
+                          aria-label={t("common.copy")}
+                          onClick={async () => {
+                            const ok = await copyToClipboard(item.link);
+                            toast.push(ok ? t("common.copiedToClipboard") : t("common.copyFailed"), ok ? "success" : "error");
+                          }}
+                        >
+                          <IcCopy size={15} />
+                        </button>
+                      </div>
                     ))}
                   </div>
                   <div className="nx-center"><div className="nx-qr-frame"><QR value={links[activeLink]} size={170} /></div></div>
-                  <CopyField label={proxyKind(links[activeLink])} value={links[activeLink]} multiline />
                 </div>
               )}
             </>

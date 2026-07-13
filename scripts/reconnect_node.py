@@ -66,8 +66,7 @@ def main() -> int:
             node.started = False
             node._api = None
             t0 = time.time()
-            node.remote.start(cfg.to_json())
-            node.started = True
+            node.start(cfg)
             ver = node.get_version()
             print(f"xray ok version={ver} elapsed={time.time() - t0:.1f}s")
             exc = None

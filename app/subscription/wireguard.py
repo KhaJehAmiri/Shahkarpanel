@@ -196,32 +196,85 @@ def _awg_requires_conf_download(cfg) -> bool:
     return bool(amnezia_params_from_node(cfg))
 
 
+def _server_public_key(dbnode, *, variant: str = "plain", db=None) -> Optional[str]:
+    """Resolve the server pubkey clients must trust for this node variant."""
+    from app.db import GetDB
+    from app.tunnel.relay import node_delegates_wireguard_to_tunnel, relay_wireguard_server_public_key
+    from app.wireguard.sync import amneziawg_enabled, plain_wg_enabled
+
+    cfg = dbnode.wireguard
+    if cfg is None:
+        return None
+    if variant == "awg":
+        if not amneziawg_enabled(cfg):
+            return None
+        return str(getattr(cfg, "awg_public_key", "") or "") or None
+
+    if variant == "direct":
+        # Direct listener is the node's own identity, never the tunnel's
+        # delegated/panel-exit key — traffic terminates locally here.
+        from app.wireguard.sync import direct_wg_enabled
+
+        if not direct_wg_enabled(cfg):
+            return None
+        return str(getattr(cfg, "public_key", "") or "") or None
+
+    if not plain_wg_enabled(cfg):
+        return None
+
+    session = db
+    live_node = None
+    try:
+        from app import xray
+
+        live_node = xray.nodes.get(int(dbnode.id))
+    except Exception:
+        live_node = None
+    if session is None:
+        with GetDB() as session:
+            if node_delegates_wireguard_to_tunnel(session, dbnode.id):
+                delegated = relay_wireguard_server_public_key(
+                    session, dbnode.id, node_object=live_node
+                )
+                if delegated:
+                    return delegated
+    elif node_delegates_wireguard_to_tunnel(session, dbnode.id):
+        delegated = relay_wireguard_server_public_key(
+            session, dbnode.id, node_object=live_node
+        )
+        if delegated:
+            return delegated
+
+    return str(getattr(cfg, "public_key", "") or "") or None
+
+
 def user_share_link(
     user_settings: dict,
     dbnode,
     *,
     variant: str = "plain",
     remark: str = "",
+    db=None,
 ) -> Optional[str]:
     """Build a subscription share link for one user on one WG node."""
     cfg = dbnode.wireguard
     if variant == "awg" and _awg_requires_conf_download(cfg):
         # Amnezia / AWG clients must import ``/sub/{token}/wireguard?variant=awg``.
         return None
-    if user_config(user_settings, dbnode, variant=variant) is None:
+    if user_config(user_settings, dbnode, variant=variant, db=db) is None:
         return None
 
     cfg = dbnode.wireguard
     host, port_str = node_endpoint(dbnode, variant=variant).rsplit(":", 1)
     if variant == "awg":
         local_address = user_settings.get("awg_address") or ""
-        server_public_key = cfg.awg_public_key
+        server_public_key = _server_public_key(dbnode, variant=variant, db=db)
         from app.wireguard.awg import AWG_RECOMMENDED_MTU
 
         mtu = AWG_RECOMMENDED_MTU
     else:
         local_address = user_settings.get("address") or ""
-        server_public_key = cfg.public_key
+        server_public_key = _server_public_key(dbnode, variant=variant, db=db)
         mtu = cfg.mtu
 
     return wireguard_share_link(
@@ -240,22 +293,25 @@ def user_share_link(
 
 def node_endpoint(dbnode, *, variant: str = "plain") -> str:
     """Resolve the peer ``Endpoint`` (``host:port``) for a WG node variant."""
-    from app.wireguard.sync import amneziawg_enabled
+    from app.wireguard.sync import amneziawg_enabled, direct_wg_enabled
 
     cfg = dbnode.wireguard
     if variant == "awg" and amneziawg_enabled(cfg):
         if cfg.awg_endpoint:
             return cfg.awg_endpoint
         return f"{dbnode.address}:{cfg.awg_listen_port}"
+    if variant == "direct" and direct_wg_enabled(cfg):
+        return f"{dbnode.address}:{cfg.direct_listen_port}"
     if cfg.endpoint:
         return cfg.endpoint
     return f"{dbnode.address}:{cfg.listen_port}"
 
 
-def user_config(user_settings: dict, dbnode, *, variant: str = "plain") -> Optional[str]:
+def user_config(user_settings: dict, dbnode, *, variant: str = "plain", db=None) -> Optional[str]:
     """Build the ``.conf`` for one user on one WG node, or ``None`` when the
     user has no usable WireGuard credentials / address for that node."""
-    from app.wireguard.sync import amneziawg_enabled, plain_wg_enabled, sg_wire_enabled
+    from app.wireguard.sync import (amneziawg_enabled, direct_wg_enabled,
+                                     plain_wg_enabled, sg_wire_enabled)
 
     cfg = dbnode.wireguard
     if cfg is None:
@@ -263,7 +319,13 @@ def user_config(user_settings: dict, dbnode, *, variant: str = "plain") -> Optio
     private_key = user_settings.get("private_key")
     if not private_key:
         return None
-    if variant == "awg":
+    if variant == "direct":
+        if not direct_wg_enabled(cfg):
+            return None
+        address = user_settings.get("address")
+        server_public_key = _server_public_key(dbnode, variant=variant, db=db)
+        amnezia = None
+    elif variant == "awg":
         if not amneziawg_enabled(cfg):
             return None
         if sg_wire_enabled(cfg):
@@ -275,13 +337,13 @@ def user_config(user_settings: dict, dbnode, *, variant: str = "plain") -> Optio
                 dns=cfg.dns or DEFAULT_DNS,
             )
         address = user_settings.get("awg_address")
-        server_public_key = cfg.awg_public_key
+        server_public_key = _server_public_key(dbnode, variant=variant, db=db)
         amnezia = amnezia_params_from_node(cfg)
     else:
         if not plain_wg_enabled(cfg):
             return None
         address = user_settings.get("address")
-        server_public_key = cfg.public_key
+        server_public_key = _server_public_key(dbnode, variant=variant, db=db)
         amnezia = None
     if not address or not server_public_key:
         return None

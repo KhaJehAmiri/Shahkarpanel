@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
+import time
 from typing import Literal, Optional, Tuple
 from urllib.error import URLError
 from urllib.request import urlopen
@@ -15,6 +16,9 @@ logger = logging.getLogger("uvicorn.error")
 PanelRegion = Literal["iran", "foreign"]
 DetectedBy = Literal["env", "geoip", "manual", "default"]
 
+_GEOIP_CACHE_TTL_SEC = 3600.0
+_geoip_cache: tuple[PanelRegion, DetectedBy, float] | None = None
+
 
 def _normalize_region(raw: str) -> Optional[PanelRegion]:
     v = (raw or "").strip().lower()
@@ -25,7 +29,7 @@ def _normalize_region(raw: str) -> Optional[PanelRegion]:
     return None
 
 
-def _public_ip(timeout: float = 5.0) -> Optional[str]:
+def _public_ip(timeout: float = 2.0) -> Optional[str]:
     for url in ("https://api.ipify.org", "https://ifconfig.me/ip"):
         try:
             with urlopen(url, timeout=timeout) as resp:
@@ -37,7 +41,7 @@ def _public_ip(timeout: float = 5.0) -> Optional[str]:
     return None
 
 
-def _country_code(ip: str, timeout: float = 5.0) -> Optional[str]:
+def _country_code(ip: str, timeout: float = 2.0) -> Optional[str]:
     try:
         with urlopen(
             f"http://ip-api.com/json/{ip}?fields=status,countryCode",
@@ -84,19 +88,42 @@ def _git_sha() -> Optional[str]:
 
 
 def resolve_panel_region() -> Tuple[PanelRegion, DetectedBy]:
+    global _geoip_cache
+
     manual = _normalize_region(PANEL_REGION)
     if manual:
         return manual, "env"
+
+    now = time.monotonic()
+    if _geoip_cache is not None and now - _geoip_cache[2] < _GEOIP_CACHE_TTL_SEC:
+        return _geoip_cache[0], _geoip_cache[1]
 
     ip = _public_ip()
     if ip:
         cc = _country_code(ip)
         if cc == "IR":
-            return "iran", "geoip"
-        if cc:
-            return "foreign", "geoip"
+            result: Tuple[PanelRegion, DetectedBy] = ("iran", "geoip")
+        elif cc:
+            result = ("foreign", "geoip")
+        else:
+            result = ("foreign", "default")
+    else:
+        result = ("foreign", "default")
 
-    return "foreign", "default"
+    _geoip_cache = (result[0], result[1], now)
+    return result
+
+
+def clear_panel_region_cache() -> None:
+    """Drop cached GeoIP result (tests / manual region override)."""
+    global _geoip_cache
+    _geoip_cache = None
+    try:
+        from app.subscription.region_display import panel_region_vars
+
+        panel_region_vars.cache_clear()
+    except Exception:
+        pass
 
 
 def deployment_snapshot() -> dict:

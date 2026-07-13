@@ -19,6 +19,8 @@ interface SelectedScopeProps {
   selectedUsernames: string[];
 }
 
+const GB = 1024 * 1024 * 1024;
+
 export const BulkExtendModal: FC<SelectedScopeProps> = ({
   open,
   onClose,
@@ -28,12 +30,14 @@ export const BulkExtendModal: FC<SelectedScopeProps> = ({
   const { t } = useTranslation();
   const toast = useToast();
   const [days, setDays] = useState("30");
+  const [dataGb, setDataGb] = useState("0");
   const [busy, setBusy] = useState(false);
 
   const submit = async () => {
-    const n = parseInt(days, 10);
-    if (!n || n < 1) {
-      toast.push(t("bulkExtend.daysRequired"), "error");
+    const n = parseInt(days, 10) || 0;
+    const gb = parseFloat(dataGb) || 0;
+    if (n < 1 && gb <= 0) {
+      toast.push(t("bulkExtend.nothingToApply"), "error");
       return;
     }
     setBusy(true);
@@ -42,6 +46,7 @@ export const BulkExtendModal: FC<SelectedScopeProps> = ({
         scope: "selected" as BulkInboundScope,
         usernames: selectedUsernames,
         days: n,
+        add_data_bytes: Math.round(gb * GB),
       });
       toast.push(
         t("bulkExtend.done", { applied: r.applied, skipped: r.skipped, ms: r.duration_ms }),
@@ -74,13 +79,13 @@ export const BulkExtendModal: FC<SelectedScopeProps> = ({
       }
     >
       <p className="nx-faint" style={{ fontSize: 13, marginBottom: 14 }}>
-        {t("bulkExtend.desc", { n: selectedUsernames.length })}
+        {t("bulkExtend.descData", { n: selectedUsernames.length })}
       </p>
       <Field label={t("bulkExtend.days")}>
         <div className="nx-row" style={{ gap: 8, flexWrap: "wrap" }}>
           <Input
             type="number"
-            min={1}
+            min={0}
             max={3650}
             value={days}
             onChange={(e: React.ChangeEvent<HTMLInputElement>) => setDays(e.target.value)}
@@ -92,6 +97,24 @@ export const BulkExtendModal: FC<SelectedScopeProps> = ({
           ))}
         </div>
       </Field>
+      <Field label={t("bulkExtend.addData")}>
+        <div className="nx-row" style={{ gap: 8, flexWrap: "wrap" }}>
+          <Input
+            type="number"
+            min={0}
+            step="0.5"
+            value={dataGb}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setDataGb(e.target.value)}
+            style={{ maxWidth: 120 }}
+            dir="ltr"
+          />
+          <span className="nx-faint" style={{ alignSelf: "center", fontSize: 13 }}>GB</span>
+          {[10, 30, 50, 100].map((g) => (
+            <Button key={g} size="sm" variant="ghost" onClick={() => setDataGb(String(g))}>{g}</Button>
+          ))}
+        </div>
+      </Field>
+      <p className="nx-faint" style={{ fontSize: 12, marginTop: 4 }}>{t("bulkExtend.addDataHint")}</p>
     </Modal>
   );
 };

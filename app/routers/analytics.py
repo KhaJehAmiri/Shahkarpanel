@@ -103,7 +103,7 @@ def realtime(
         nodes = [n for n in nodes if n.tenant_id == dbadmin.tenant_id]
 
     return RealtimeStats(
-        online_users=crud.count_online_users(db, 24, admin=dbadmin),
+        online_users=crud.count_online_users(db, admin=dbadmin),
         users_active=crud.get_users_count(db, status=UserStatus.active, admin=dbadmin),
         nodes_connected=len(nodes),
         incoming_bandwidth_speed=bandwidth.incoming_bytes,

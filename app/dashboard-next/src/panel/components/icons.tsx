@@ -67,6 +67,8 @@ export const IcSearch: FC<P> = (p) => (<S {...p}><circle cx="11" cy="11" r="7" /
 export const IcEdit: FC<P> = (p) => (<S {...p}><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.4 2.6a2 2 0 0 1 2.8 2.8L12 14.6 8 16l1.4-4z" /></S>);
 export const IcEye: FC<P> = (p) => (<S {...p}><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></S>);
 export const IcExternal: FC<P> = (p) => (<S {...p}><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><path d="M15 3h6v6" /><path d="M10 14L21 3" /></S>);
+export const IcCopy: FC<P> = (p) => (<S {...p}><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></S>);
+export const IcMonitor: FC<P> = (p) => (<S {...p}><rect x="2" y="3" width="20" height="14" rx="2" /><path d="M8 21h8M12 17v4" /></S>);
 
 export const navIcon = (key: string, cls = "nx-ico"): any => {
   const m: Record<string, FC<P>> = {

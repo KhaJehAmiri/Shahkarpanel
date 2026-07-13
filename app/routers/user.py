@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app import logger, xray
 from app.db import Session, crud, get_db
+from app.db.models import User
 from app.dependencies import get_expired_users_list, get_validated_user, validate_dates
 from app.models.admin import Admin
 from app.models.proxy import ProxyTypes
@@ -22,8 +23,39 @@ from app.models.user import (
     UserUsagesResponse,
 )
 from app.rbac import require_permission
-from app.services.user_bulk import BulkExtendRequest, BulkInboundRequest, BulkResetUsageRequest, BulkUserCreateBody
+from app.services.user_bulk import (
+    BulkDeleteRequest,
+    BulkExtendRequest,
+    BulkInboundRequest,
+    BulkResetUsageRequest,
+    BulkStatusRequest,
+    BulkUserCreateBody,
+)
 from app.utils import report, responses
+
+_SKIP_LINKS = {"skip_default_links": True}
+
+
+def _user_response(dbuser: User, *, share_links: bool = False) -> UserResponse:
+    """Build a panel user payload without accidentally generating share links twice."""
+    user = UserResponse.model_validate(dbuser, context=_SKIP_LINKS)
+    if not share_links:
+        return user
+    from app.models.user import SubscriptionLinkItem
+    from app.subscription.share import (
+        collect_v2ray_share_link_items,
+        collect_v2ray_share_links,
+    )
+
+    try:
+        user.links = collect_v2ray_share_links(user, reverse=False)
+        user.link_items = [
+            SubscriptionLinkItem(**item)
+            for item in collect_v2ray_share_link_items(user, reverse=False)
+        ]
+    except Exception:
+        logger.exception("Failed to enrich share links for user %s", user.username)
+    return user
 
 router = APIRouter(tags=["User"], prefix="/api", responses={401: responses._401})
 
@@ -184,7 +216,7 @@ def add_user(
         raise HTTPException(status_code=409, detail="User already exists")
 
     bg.add_task(xray.operations.add_user, dbuser=dbuser)
-    user = UserResponse.model_validate(dbuser)
+    user = _user_response(dbuser)
     report.user_created(user=user, user_id=dbuser.id, by=admin, user_admin=dbuser.admin)
     logger.info(f'New user "{dbuser.username}" added')
     return user
@@ -229,7 +261,7 @@ def add_user_from_template(
         raise HTTPException(status_code=409, detail="User already exists")
 
     bg.add_task(xray.operations.add_user, dbuser=dbuser)
-    user = UserResponse.model_validate(dbuser)
+    user = _user_response(dbuser)
     report.user_created(user=user, user_id=dbuser.id, by=admin, user_admin=dbuser.admin)
     logger.info(f'New user "{dbuser.username}" added from template {body.template_id}')
     return user
@@ -380,10 +412,52 @@ def bulk_reset_users_usage(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@router.post(
+    "/users/bulk/status",
+    responses={400: responses._400, 403: responses._403},
+)
+def bulk_status_users(
+    body: BulkStatusRequest,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(require_permission("users:write")),
+):
+    """Enable or disable many users at once."""
+    from app.services.user_bulk import apply_bulk_status
+
+    try:
+        return apply_bulk_status(db, body, admin=admin)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post(
+    "/users/bulk/delete",
+    responses={400: responses._400, 403: responses._403},
+)
+def bulk_delete_users(
+    body: BulkDeleteRequest,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(require_permission("users:write")),
+):
+    """Delete many users at once (selected / filtered by status / all)."""
+    from app.services.user_bulk import apply_bulk_delete
+
+    try:
+        return apply_bulk_delete(db, body, admin=admin)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.get("/user/{username}", response_model=UserResponse, responses={403: responses._403, 404: responses._404})
-def get_user(dbuser: UserResponse = Depends(get_validated_user)):
-    """Get user information"""
-    return dbuser
+def get_user(dbuser: User = Depends(get_validated_user)):
+    """Get user information.
+
+    The admin drawer renders every share config from ``links``/``link_items``.
+    The default ``UserResponse`` validator only fills Xray URIs (vless/vmess/
+    trojan/ss); sing-box (hysteria2/tuic/anytls) and WireGuard live on separate
+    node-bound builders, so enrich the payload here to expose all protocols.
+    """
+    return _user_response(dbuser, share_links=True)
 
 
 @router.put("/user/{username}", response_model=UserResponse, responses={400: responses._400, 403: responses._403, 404: responses._404})
@@ -391,7 +465,7 @@ def modify_user(
     modified_user: UserModify,
     bg: BackgroundTasks,
     db: Session = Depends(get_db),
-    dbuser: UsersResponse = Depends(get_validated_user),
+    dbuser: User = Depends(get_validated_user),
     admin: Admin = Depends(require_permission("users:write")),
 ):
     """
@@ -419,7 +493,7 @@ def modify_user(
     old_speed_up = dbuser.speed_limit_up
     old_speed_down = dbuser.speed_limit_down
     dbuser = crud.update_user(db, dbuser, modified_user)
-    user = UserResponse.model_validate(dbuser)
+    user = _user_response(dbuser)
 
     speed_changed = (
         dbuser.speed_limit_up != old_speed_up or dbuser.speed_limit_down != old_speed_down
@@ -459,7 +533,7 @@ def modify_user(
 def remove_user(
     bg: BackgroundTasks,
     db: Session = Depends(get_db),
-    dbuser: UserResponse = Depends(get_validated_user),
+    dbuser: User = Depends(get_validated_user),
     admin: Admin = Depends(require_permission("users:write")),
 ):
     """Remove a user"""
@@ -480,7 +554,7 @@ def remove_user(
 def reset_user_data_usage(
     bg: BackgroundTasks,
     db: Session = Depends(get_db),
-    dbuser: UserResponse = Depends(get_validated_user),
+    dbuser: User = Depends(get_validated_user),
     admin: Admin = Depends(require_permission("users:write")),
 ):
     """Reset user data usage"""
@@ -490,24 +564,24 @@ def reset_user_data_usage(
     elif dbuser.status == UserStatus.on_hold:
         bg.add_task(xray.operations.sync_core_users_async)
 
-    user = UserResponse.model_validate(dbuser)
+    user = _user_response(dbuser)
     bg.add_task(
         report.user_data_usage_reset, user=user, user_admin=dbuser.admin, by=admin
     )
 
     logger.info(f'User "{dbuser.username}"\'s usage was reset')
-    return dbuser
+    return user
 
 
 @router.post("/user/{username}/rotate_sub", response_model=UserResponse, responses={403: responses._403, 404: responses._404})
 def rotate_user_subscription_link(
     db: Session = Depends(get_db),
-    dbuser: UserResponse = Depends(get_validated_user),
+    dbuser: User = Depends(get_validated_user),
     admin: Admin = Depends(require_permission("users:write")),
 ):
     """Rotate subscription link only (sub_token); proxy UUIDs stay unchanged."""
     dbuser = crud.rotate_user_sub_link(db=db, dbuser=dbuser)
-    user = UserResponse.model_validate(dbuser)
+    user = _user_response(dbuser)
     logger.info(f'User "{dbuser.username}" subscription link rotated')
     return user
 
@@ -516,7 +590,7 @@ def rotate_user_subscription_link(
 def revoke_user_subscription(
     bg: BackgroundTasks,
     db: Session = Depends(get_db),
-    dbuser: UserResponse = Depends(get_validated_user),
+    dbuser: User = Depends(get_validated_user),
     admin: Admin = Depends(require_permission("users:write")),
 ):
     """Revoke users subscription (Subscription link and proxies)"""
@@ -524,7 +598,7 @@ def revoke_user_subscription(
 
     if dbuser.status in [UserStatus.active, UserStatus.on_hold]:
         bg.add_task(xray.operations.propagate_user_credential_revoke, dbuser=dbuser)
-    user = UserResponse.model_validate(dbuser)
+    user = _user_response(dbuser)
     bg.add_task(
         report.user_subscription_revoked, user=user, user_admin=dbuser.admin, by=admin
     )
@@ -583,6 +657,26 @@ def get_users(
     return {"users": users, "total": count}
 
 
+@router.get("/users/stat-usernames", responses={403: responses._403})
+def get_stat_usernames(
+    category: str,
+    limit: int = 15,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(require_permission("users:read")),
+):
+    """Usernames behind a dashboard stat tile (for the hover preview).
+
+    ``category`` ∈ {total, online, active, disabled, expired, limited, on_hold}.
+    Scoped to the caller's own users unless they are a sudo admin.
+    """
+    dbadmin = crud.get_admin(db, admin.username)
+    scope = dbadmin if not admin.is_sudo else None
+    usernames, total = crud.list_usernames_by_stat(
+        db, category, admin=scope, limit=max(1, min(limit, 200))
+    )
+    return {"category": category, "usernames": usernames, "total": total}
+
+
 @router.get(
     "/users/filter-options",
     responses={403: responses._403},
@@ -613,7 +707,7 @@ def reset_users_data_usage(
 
 @router.get("/user/{username}/usage", response_model=UserUsagesResponse, responses={403: responses._403, 404: responses._404})
 def get_user_usage(
-    dbuser: UserResponse = Depends(get_validated_user),
+    dbuser: User = Depends(get_validated_user),
     start: str = "",
     end: str = "",
     db: Session = Depends(get_db),
@@ -634,7 +728,7 @@ class ApplyPlanBody(BaseModel):
 def apply_plan_to_user_endpoint(
     body: ApplyPlanBody,
     db: Session = Depends(get_db),
-    dbuser: UserResponse = Depends(get_validated_user),
+    dbuser: User = Depends(get_validated_user),
     admin: Admin = Depends(require_permission("users:write")),
 ):
     """Sell a commercial plan to a user (debits reseller wallet, renews immediately)."""
@@ -681,14 +775,14 @@ def apply_plan_to_user_endpoint(
         xray.operations.sync_core_users()
 
     logger.info(f'User "{dbrow.username}" renewed via plan "{plan.name}" by {admin.username}')
-    return UserResponse.model_validate(dbrow)
+    return _user_response(dbrow)
 
 
 @router.post("/user/{username}/active-next", response_model=UserResponse, responses={403: responses._403, 404: responses._404})
 def active_next_plan(
     bg: BackgroundTasks,
     db: Session = Depends(get_db),
-    dbuser: UserResponse = Depends(get_validated_user),
+    dbuser: User = Depends(get_validated_user),
     admin: Admin = Depends(require_permission("users:write")),
 ):
     """Reset user by next plan"""
@@ -706,13 +800,13 @@ def active_next_plan(
     if dbuser.status in [UserStatus.active, UserStatus.on_hold]:
         bg.add_task(xray.operations.add_user, dbuser=dbuser)
 
-    user = UserResponse.model_validate(dbuser)
+    user = _user_response(dbuser)
     bg.add_task(
         report.user_data_reset_by_next, user=user, user_admin=dbuser.admin,
     )
 
     logger.info(f'User "{dbuser.username}"\'s usage was reset by next plan')
-    return dbuser
+    return user
 
 
 @router.get("/users/usage", response_model=UsersUsagesResponse)
@@ -736,7 +830,7 @@ def get_users_usage(
 @router.put("/user/{username}/set-owner", response_model=UserResponse)
 def set_owner(
     admin_username: str,
-    dbuser: UserResponse = Depends(get_validated_user),
+    dbuser: User = Depends(get_validated_user),
     db: Session = Depends(get_db),
     admin: Admin = Depends(Admin.check_sudo_admin),
 ):
@@ -746,7 +840,7 @@ def set_owner(
         raise HTTPException(status_code=404, detail="Admin not found")
 
     dbuser = crud.set_owner(db, dbuser, new_admin)
-    user = UserResponse.model_validate(dbuser)
+    user = _user_response(dbuser)
 
     logger.info(f'{user.username}"owner successfully set to{admin.username}')
 

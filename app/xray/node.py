@@ -140,6 +140,7 @@ class ReSTXRayNode:
 
         self._api = None
         self._started = False
+        self._started_at = None
 
     def _prepare_config(self, config: XRayConfig):
         return _inline_tls_certificates(config)
@@ -242,6 +243,7 @@ class ReSTXRayNode:
                 raise exc
 
         self._started = True
+        self._started_at = time.time()
 
         self._api = XRayAPI(
             address=self.address,
@@ -264,6 +266,7 @@ class ReSTXRayNode:
         self.make_request('/stop', timeout=5)
         self._api = None
         self._started = False
+        self._started_at = None
 
     def restart(self, config: XRayConfig):
         if not self.connected:
@@ -275,6 +278,7 @@ class ReSTXRayNode:
         res = self.make_request("/restart", timeout=10, config=json_config)
 
         self._started = True
+        self._started_at = time.time()
 
         self._api = XRayAPI(
             address=self.address,
@@ -584,6 +588,34 @@ class RPyCXRayNode:
     def get_version(self):
         return self.remote.fetch_xray_version()
 
+    def ensure_api(self, timeout: float = 5) -> bool:
+        """Attach the gRPC stats/API client to an already-running remote core.
+
+        For nodes marked ``started`` out-of-band (e.g. a WireGuard relay whose
+        Xray core was confirmed alive via ``get_version()`` without going
+        through ``start()``/``restart()``), ``self._api`` would otherwise stay
+        ``None`` forever — silently breaking per-user stats collection
+        (``record_usages.py`` treats a connected+started node's ``None`` api
+        as "no stats", but downstream code that blindly calls methods on it
+        crashes). Best-effort: returns whether the API is usable afterwards.
+        """
+        if self._api is not None:
+            return True
+        if not self.connected or not self.started:
+            return False
+        try:
+            self._api = XRayAPI(
+                address=self.address,
+                port=self.api_port,
+                ssl_cert=self._node_cert.encode(),
+                ssl_target_name="NexusPanel",
+            )
+            grpc.channel_ready_future(self._api._channel).result(timeout=timeout)
+            return True
+        except Exception:
+            self._api = None
+            return False
+
     def upgrade_xray(self, tag: str) -> str:
         if not self.connected:
             self.connect()
@@ -701,8 +733,14 @@ class XRayNode:
             s.settimeout(1)
             s.connect((address, port))
             s.send(b'HEAD / HTTP/1.0\r\n\r\n')
-            s.recv(1024)
+            data = s.recv(1024)
             s.close()
+            # An RPyC agent behind TLS answers plaintext with a TLS alert (or
+            # nothing) — only a real HTTP banner means the REST (uvicorn) agent.
+            # Matters when the node is reached through a local SSH forward,
+            # where connect()/recv() succeed even though the far end is RPyC.
+            if not data.startswith(b'HTTP'):
+                raise ValueError("not an HTTP node agent")
             # it might be uvicorn
             return ReSTXRayNode(
                 address=address,

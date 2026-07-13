@@ -67,7 +67,9 @@ def refresh_for_subscription() -> None:
     if mtime > _config_loaded_mtime:
         config = _load_xray_config(config.api_port)
         _config_loaded_mtime = mtime
-    hosts.update()
+        hosts.clear()
+    if not hosts:
+        hosts.update()
 
 api = XRayAPI(config.api_host, config.api_port)
 

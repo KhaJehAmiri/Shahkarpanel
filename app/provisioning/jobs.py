@@ -17,6 +17,7 @@ logger = logging.getLogger("nexus-provision")
 
 JobStatus = Literal["pending", "running", "success", "failed"]
 STEP_LABELS = ("queued", "ssh", "docker", "image", "agent", "register", "done")
+_PROVISION_MSG_MAX = 1000
 
 _lock = threading.Lock()
 _jobs: Dict[str, "ProvisionJob"] = {}
@@ -38,18 +39,28 @@ class ProvisionJob:
     finished_at: Optional[float] = None
 
 
+def _clip_provision_message(message: Optional[str]) -> Optional[str]:
+    if message is None:
+        return None
+    msg = message.strip()
+    if len(msg) <= _PROVISION_MSG_MAX:
+        return msg
+    return msg[: _PROVISION_MSG_MAX - 3] + "..."
+
+
 def _set_node_provision(node_id: int, *, status: str, message: Optional[str] = None,
                         node_status: Optional[NodeStatus] = None) -> None:
+    clipped = _clip_provision_message(message)
     with GetDB() as db:
         dbnode = crud.get_node_by_id(db, node_id)
         if not dbnode:
             return
         dbnode.provision_status = status
-        dbnode.provision_message = message
+        dbnode.provision_message = clipped
         if node_status is not None:
             dbnode.status = node_status
-            if node_status == NodeStatus.error and message:
-                dbnode.message = message[:1024]
+            if node_status == NodeStatus.error and clipped:
+                dbnode.message = clipped
         db.commit()
 
 
@@ -179,7 +190,7 @@ def _run_job(job_id: str, creds: provisioning.SSHCredentials, command: str,
         _set_node_provision(job.node_id, status="registered", message=None)
     except Exception as exc:
         stop.set()
-        err = str(exc)
+        err = _clip_provision_message(str(exc)) or str(exc)
         logger.warning("Provision job %s failed for node %s: %s", job_id, job.node_id, err)
         with _lock:
             job.status = "failed"
@@ -188,12 +199,17 @@ def _run_job(job_id: str, creds: provisioning.SSHCredentials, command: str,
             job.step = "failed"
             job.finished_at = time.time()
             _extras.pop(job_id, None)
-        _set_node_provision(
-            job.node_id,
-            status="failed",
-            message=err,
-            node_status=NodeStatus.error,
-        )
+        try:
+            _set_node_provision(
+                job.node_id,
+                status="failed",
+                message=err,
+                node_status=NodeStatus.error,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to persist provision failure for node %s", job.node_id,
+            )
     finally:
         with _lock:
             _by_node.pop(job.node_id, None)

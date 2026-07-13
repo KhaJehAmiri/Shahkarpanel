@@ -58,7 +58,7 @@ COPY --from=build /usr/local/share/xray /usr/local/share/xray
 # host's /usr/bin/docker + cli-plugins, as before) removes a host-binary
 # trust dependency from docker-compose.yml (see AUDIT_FINDINGS.md C5).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git docker-cli docker-compose docker-buildx util-linux procps iproute2 postgresql-client \
+    && apt-get install -y --no-install-recommends git docker-cli docker-compose docker-buildx util-linux procps iproute2 wireguard-tools postgresql-client \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 1000 nexuspanel 2>/dev/null || true \
     && useradd --uid 1000 --gid 1000 --create-home --home-dir /home/nexuspanel nexuspanel 2>/dev/null || true

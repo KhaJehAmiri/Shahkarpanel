@@ -24,6 +24,13 @@ class CPUStat():
     percent: float
 
 
+@dataclass
+class DiskStat():
+    total: int
+    used: int
+    free: int
+
+
 def cpu_usage() -> CPUStat:
     return CPUStat(cores=psutil.cpu_count(), percent=psutil.cpu_percent())
 
@@ -31,6 +38,16 @@ def cpu_usage() -> CPUStat:
 def memory_usage() -> MemoryStat:
     mem = psutil.virtual_memory()
     return MemoryStat(total=mem.total, used=mem.used, free=mem.available)
+
+
+def disk_usage(path: str = "/") -> DiskStat:
+    disk = psutil.disk_usage(path)
+    return DiskStat(total=disk.total, used=disk.used, free=disk.free)
+
+
+def os_uptime() -> int:
+    """Seconds since the host booted."""
+    return max(0, int(time.time() - psutil.boot_time()))
 
 
 @dataclass

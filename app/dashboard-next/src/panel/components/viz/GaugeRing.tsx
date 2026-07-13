@@ -57,12 +57,14 @@ export const GaugeRing: FC<{
             className="nx-gauge-arc"
           />
         </g>
-        <text x="50%" y="46%" textAnchor="middle" className="nx-gauge-value">
+        <text x="50%" y={sub ? "43%" : "50%"} textAnchor="middle" className="nx-gauge-value">
           {Math.round(pct)}%
         </text>
-        <text x="50%" y="58%" textAnchor="middle" className="nx-gauge-sub">
-          {sub || ""}
-        </text>
+        {sub ? (
+          <text x="50%" y="62%" textAnchor="middle" className="nx-gauge-sub">
+            {sub}
+          </text>
+        ) : null}
       </svg>
       <div className="nx-gauge-label">{label}</div>
     </div>

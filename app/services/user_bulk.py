@@ -557,7 +557,14 @@ class BulkExtendRequest(BaseModel):
     usernames: List[str] = Field(default_factory=list)
     status: Optional[UserStatus] = None
     filters: Optional[UserListFilters] = None
-    days: int = Field(..., ge=1, le=3650)
+    days: int = Field(0, ge=0, le=3650)
+    add_data_bytes: int = Field(0, ge=0)
+
+    @model_validator(mode="after")
+    def _require_change(self):
+        if not self.days and not self.add_data_bytes:
+            raise ValueError("Provide days and/or data to add")
+        return self
 
 
 class BulkResetUsageRequest(BaseModel):
@@ -594,6 +601,7 @@ def apply_bulk_extend(
     )
     now_ts = int(time.time())
     delta = body.days * 86400
+    add_data = body.add_data_bytes
     applied = skipped = failed = 0
     errors: List[str] = []
     touched_active = False
@@ -601,14 +609,30 @@ def apply_bulk_extend(
 
     for user in users:
         try:
-            base = user.expire if user.expire and user.expire > now_ts else now_ts
-            new_expire = base + delta
-            if user.expire == new_expire:
+            changed = False
+            if delta:
+                base = user.expire if user.expire and user.expire > now_ts else now_ts
+                new_expire = base + delta
+                if user.expire != new_expire:
+                    user.expire = new_expire
+                    changed = True
+            # Only top up a real quota — unlimited (0/None) stays unlimited.
+            if add_data and user.data_limit and user.data_limit > 0:
+                user.data_limit = user.data_limit + add_data
+                changed = True
+
+            if not changed:
                 skipped += 1
                 continue
-            user.expire = new_expire
-            if user.status == UserStatus.expired:
+
+            # Intelligent reactivation after granting more time/quota.
+            if user.status == UserStatus.expired and user.expire and user.expire > now_ts:
                 user.status = UserStatus.active
+            if user.status == UserStatus.limited and (
+                not user.data_limit or (user.used_traffic or 0) < user.data_limit
+            ):
+                user.status = UserStatus.active
+
             user.edit_at = edit_at
             db.add(user)
             if user.status in (UserStatus.active, UserStatus.on_hold):
@@ -628,8 +652,9 @@ def apply_bulk_extend(
 
     duration_ms = int((time.perf_counter() - started) * 1000)
     logger.info(
-        "bulk extend days=%s scope=%s applied=%s skipped=%s failed=%s %sms",
+        "bulk extend days=%s data=%s scope=%s applied=%s skipped=%s failed=%s %sms",
         body.days,
+        add_data,
         body.scope.value,
         applied,
         skipped,
@@ -706,6 +731,224 @@ def apply_bulk_reset_usage(
     duration_ms = int((time.perf_counter() - started) * 1000)
     logger.info(
         "bulk reset usage scope=%s applied=%s skipped=%s failed=%s %sms",
+        body.scope.value,
+        applied,
+        skipped,
+        failed,
+        duration_ms,
+    )
+    return BulkUserActionResult(
+        applied=applied,
+        skipped=skipped,
+        failed=failed,
+        errors=errors,
+        duration_ms=duration_ms,
+    )
+
+
+def _sync_after_membership_change() -> None:
+    """Rebuild the running data-plane after users are removed/toggled.
+
+    One resync (instead of N per-user calls) keeps ``delete all`` fast even
+    with thousands of users while ensuring the live cores match the DB.
+    """
+    from app import xray as xray_mod
+
+    try:
+        xray_mod.operations.schedule_core_sync()
+    except Exception:
+        logger.exception("bulk: core resync failed")
+    try:
+        xray_mod.operations._sync_wireguard()
+    except Exception:
+        pass
+    try:
+        from app.singbox.operations import sync_user_change as singbox_sync
+
+        singbox_sync()
+    except Exception:
+        pass
+
+
+# ─────────────────────────── bulk delete ───────────────────────────
+
+class BulkDeleteRequest(BaseModel):
+    scope: BulkInboundScope = BulkInboundScope.selected
+    usernames: List[str] = Field(default_factory=list)
+    statuses: List[UserStatus] = Field(default_factory=list)
+    filters: Optional[UserListFilters] = None
+
+
+class BulkDeleteResult(BaseModel):
+    deleted: int
+    duration_ms: int
+
+
+def _iter_delete_targets(
+    db: Session,
+    *,
+    admin: Optional[Admin],
+    scope: BulkInboundScope,
+    usernames: Iterable[str],
+    statuses: List[UserStatus],
+    filters: Optional[UserListFilters],
+) -> List[User]:
+    admins = None
+    if admin and not admin.is_sudo:
+        admins = [admin.username]
+
+    if scope == BulkInboundScope.selected:
+        names = [u.strip() for u in usernames if u and u.strip()]
+        if not names:
+            raise ValueError("usernames required when scope is 'selected'")
+        users, _ = crud.get_users(
+            db, usernames=names, admins=admins, return_with_count=True
+        )
+        return users
+
+    if scope == BulkInboundScope.filtered:
+        lf = filters or UserListFilters()
+        status_arg = list(statuses) if statuses else lf.status
+        users, _ = crud.get_users(
+            db,
+            admins=admins,
+            status=status_arg,
+            search=lf.search,
+            protocol=lf.protocol,
+            inbound_tag=lf.inbound_tag,
+            source_slug=lf.source_slug,
+            expiring_within_days=lf.expiring_within_days,
+            near_limit_percent=lf.near_limit_percent,
+            return_with_count=True,
+        )
+        return users
+
+    users, _ = crud.get_users(db, admins=admins, return_with_count=True)
+    return users
+
+
+def apply_bulk_delete(
+    db: Session,
+    body: BulkDeleteRequest,
+    *,
+    admin: Optional[Admin] = None,
+) -> BulkDeleteResult:
+    started = time.perf_counter()
+    users = _iter_delete_targets(
+        db,
+        admin=admin,
+        scope=body.scope,
+        usernames=body.usernames,
+        statuses=body.statuses,
+        filters=body.filters,
+    )
+    touched_active = any(
+        u.status in (UserStatus.active, UserStatus.on_hold) for u in users
+    )
+    count = len(users)
+
+    if count:
+        crud.remove_users(db, users)
+        if touched_active:
+            _sync_after_membership_change()
+
+    duration_ms = int((time.perf_counter() - started) * 1000)
+    logger.info(
+        "bulk delete scope=%s statuses=%s deleted=%s %sms",
+        body.scope.value,
+        [s.value for s in body.statuses],
+        count,
+        duration_ms,
+    )
+    return BulkDeleteResult(deleted=count, duration_ms=duration_ms)
+
+
+# ─────────────────────────── bulk enable / disable ───────────────────────────
+
+class BulkStatusAction(str, Enum):
+    enable = "enable"
+    disable = "disable"
+
+
+class BulkStatusRequest(BaseModel):
+    scope: BulkInboundScope = BulkInboundScope.selected
+    usernames: List[str] = Field(default_factory=list)
+    status: Optional[UserStatus] = None
+    filters: Optional[UserListFilters] = None
+    action: BulkStatusAction
+
+
+def _reactivated_status(user: User, now_ts: int) -> UserStatus:
+    """Pick the correct live status when re-enabling a disabled user."""
+    if user.expire and user.expire > 0 and user.expire <= now_ts:
+        return UserStatus.expired
+    if user.data_limit and user.data_limit > 0 and (user.used_traffic or 0) >= user.data_limit:
+        return UserStatus.limited
+    return UserStatus.active
+
+
+def apply_bulk_status(
+    db: Session,
+    body: BulkStatusRequest,
+    *,
+    admin: Optional[Admin] = None,
+) -> BulkUserActionResult:
+    started = time.perf_counter()
+    users = _iter_target_users(
+        db,
+        admin=admin,
+        scope=body.scope,
+        usernames=body.usernames,
+        status=body.status,
+        filters=body.filters,
+    )
+    now_ts = int(time.time())
+    now = datetime.utcnow()
+    applied = skipped = failed = 0
+    errors: List[str] = []
+    touched_core = False
+
+    for user in users:
+        try:
+            if body.action == BulkStatusAction.disable:
+                if user.status == UserStatus.disabled:
+                    skipped += 1
+                    continue
+                was_live = user.status in (UserStatus.active, UserStatus.on_hold)
+                user.status = UserStatus.disabled
+                user.online_at = None
+                if was_live:
+                    touched_core = True
+            else:  # enable
+                if user.status != UserStatus.disabled:
+                    skipped += 1
+                    continue
+                new_status = _reactivated_status(user, now_ts)
+                user.status = new_status
+                if new_status in (UserStatus.active, UserStatus.on_hold):
+                    touched_core = True
+
+            user.last_status_change = now
+            user.edit_at = now
+            db.add(user)
+            applied += 1
+        except Exception as exc:
+            failed += 1
+            errors.append(f"{user.username}: {exc}")
+            if len(errors) >= 20:
+                errors.append("…")
+                break
+
+    if applied and touched_core:
+        db.commit()
+        _sync_after_membership_change()
+    elif applied:
+        db.commit()
+
+    duration_ms = int((time.perf_counter() - started) * 1000)
+    logger.info(
+        "bulk status action=%s scope=%s applied=%s skipped=%s failed=%s %sms",
+        body.action.value,
         body.scope.value,
         applied,
         skipped,

@@ -240,6 +240,31 @@ const CloseButton: FC<{ onClose: () => void }> = ({ onClose }) => {
   );
 };
 
+/** Ignore overlay dismiss briefly after open — blocks the opening click/tap from
+ *  instantly closing portaled drawers/modals (common on touch devices). */
+function useOverlayDismissGuard(open: boolean) {
+  const armedRef = useRef(false);
+  useEffect(() => {
+    if (!open) {
+      armedRef.current = false;
+      return;
+    }
+    armedRef.current = false;
+    const id = window.setTimeout(() => {
+      armedRef.current = true;
+    }, 120);
+    return () => window.clearTimeout(id);
+  }, [open]);
+
+  return useCallback(
+    (onClose: () => void) => () => {
+      if (!armedRef.current) return;
+      onClose();
+    },
+    [],
+  );
+}
+
 /* -------------------------------- Modal -------------------------------- */
 export const Modal: FC<{
   open: boolean; title: ReactNode; onClose: () => void; children: ReactNode; footer?: ReactNode;
@@ -248,6 +273,7 @@ export const Modal: FC<{
 }> = ({ open, title, onClose, children, footer, wide, formWide, hideHead, className,
   dismissOnOverlay = true, overlayClassName = "",
 }) => {
+  const guardedDismiss = useOverlayDismissGuard(open);
   useEffect(() => {
     if (!open) return;
     const prev = document.body.style.overflow;
@@ -266,7 +292,7 @@ export const Modal: FC<{
   const modalCls = ["nx-modal", wide && "wide", formWide && "form-wide", className].filter(Boolean).join(" ");
   const overlayCls = ["nx-overlay", overlayClassName].filter(Boolean).join(" ");
   return createPortal(
-    <div className={overlayCls} onClick={dismissOnOverlay ? onClose : undefined}>
+    <div className={overlayCls} onClick={dismissOnOverlay ? guardedDismiss(onClose) : undefined}>
       <div className={modalCls} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
         {!hideHead && (
         <div className="nx-modal-head">
@@ -292,20 +318,26 @@ export const Drawer: FC<{
   overlayClassName?: string;
   drawerClassName?: string;
 }> = ({ open, title, onClose, children, wide, overlayClassName = "", drawerClassName = "" }) => {
+  const guardedDismiss = useOverlayDismissGuard(open);
   useEffect(() => {
     if (!open) return;
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
     return () => {
       document.body.style.overflow = prev;
+      window.removeEventListener("keydown", onKey);
     };
-  }, [open]);
+  }, [open, onClose]);
 
   if (!open || typeof document === "undefined") return null;
   const overlayCls = ["nx-drawer-overlay", overlayClassName].filter(Boolean).join(" ");
   const drawerCls = ["nx-drawer", wide && "wide", drawerClassName].filter(Boolean).join(" ");
   return createPortal(
-    <div className={overlayCls} onClick={onClose}>
+    <div className={overlayCls} onClick={guardedDismiss(onClose)}>
       <div className={drawerCls} role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
         <div className="nx-drawer-head">
           <div className="nx-card-title">{title}</div>

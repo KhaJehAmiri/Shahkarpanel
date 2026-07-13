@@ -113,20 +113,28 @@ def _wireguard_probe_interface(node_id: int) -> str | None:
 def _probe_wireguard_node(
     node_id: int, node, *, meta: tuple[str | None, str | None] | None = None
 ) -> float:
-    """Health probe for native WireGuard nodes: RPyC + ``/wg/transfer``.
+    """Health probe for WireGuard nodes: RPyC channel + WG or tunnel relay.
 
-    AWG/Xray stats are irrelevant here — only the agent channel and WG
-    interfaces must stay live.
+    Relay nodes that delegate the public UDP port to Xray keep native ``wg0``
+    down on purpose; probing ``wg_transfer`` there would always fail and
+    trigger needless ``connect_node`` restarts that drop live clients.
 
     ``meta`` lets the caller (``core_health_check``) pass an already-fetched
     ``(core_kind, iface)`` pair for this tick instead of re-querying the DB.
     """
     from app.models.node import CoreKind
+    from app.tunnel.relay import node_delegates_wireguard_to_tunnel, relay_tunnel_xray_ready
 
     core_kind, iface = meta if meta is not None else _node_probe_meta(node_id)
     if core_kind != CoreKind.wireguard.value:
         raise AssertionError("not a wireguard node")
     probe_start = time.time()
+    with GetDB() as db:
+        delegates_tunnel = node_delegates_wireguard_to_tunnel(db, node_id)
+    if delegates_tunnel:
+        if not relay_tunnel_xray_ready(node):
+            raise ConnectionError("tunnel relay Xray is not ready")
+        return (time.time() - probe_start) * 1000
     if not node.connected:
         raise ConnectionError("node RPyC channel is down")
     if iface:
@@ -355,6 +363,19 @@ def core_health_check():
             except (ConnectionError, xray_exc.XrayError, AssertionError, TimeoutError, EOFError):
                 if now < _node_restart_after.get(node_id, 0):
                     continue
+                if is_wg_node:
+                    from app.tunnel.relay import (
+                        node_delegates_wireguard_to_tunnel,
+                        relay_tunnel_xray_ready,
+                    )
+
+                    with GetDB() as db:
+                        delegates_tunnel = node_delegates_wireguard_to_tunnel(
+                            db, node_id
+                        )
+                    if delegates_tunnel and relay_tunnel_xray_ready(node):
+                        _record_node_health(node_id, 0.0)
+                        continue
                 _node_restart_after[node_id] = now + _NODE_RESTART_COOLDOWN_SEC
                 if not config:
                     config = _health_check_config()
@@ -366,6 +387,16 @@ def core_health_check():
         if not node.connected:
             if now < _node_restart_after.get(node_id, 0):
                 continue
+            # Tunnel-delegated relays can keep serving WG while the panel-side
+            # RPyC session is briefly unhealthy — do not restart Xray for that.
+            if is_wg_node:
+                from app.tunnel.relay import node_delegates_wireguard_to_tunnel, relay_tunnel_xray_ready
+
+                with GetDB() as db:
+                    delegates_tunnel = node_delegates_wireguard_to_tunnel(db, node_id)
+                if delegates_tunnel and relay_tunnel_xray_ready(node):
+                    _record_node_health(node_id, 0.0)
+                    continue
             if not config:
                 config = _health_check_config()
             xray.operations.connect_node(node_id, config)

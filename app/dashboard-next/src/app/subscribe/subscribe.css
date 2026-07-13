@@ -346,6 +346,32 @@ html[data-sub-theme="light"] .sub-platform-pill.active { background: #eef2ff; co
   max-width: min(340px, 92vw);
   text-align: center;
 }
+.sub-wg-node-select { display: flex; flex-direction: column; }
+.sub-input {
+  appearance: none;
+  -webkit-appearance: none;
+  display: block;
+  border: 1px solid var(--sub-border-strong);
+  border-radius: 10px;
+  background: var(--sub-input-bg)
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='none' stroke='%23a1a1aa' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round' d='M1 1l4 4 4-4'/%3E%3C/svg%3E")
+    no-repeat right 12px center;
+  color: var(--sub-text);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 10px 34px 10px 12px;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.18s var(--sub-ease), box-shadow 0.18s var(--sub-ease);
+}
+html[dir="rtl"] .sub-input,
+[dir="rtl"] .sub-input {
+  background-position: left 12px center;
+  padding: 10px 12px 10px 34px;
+}
+.sub-input:hover { border-color: var(--sub-accent); }
+.sub-input:focus { border-color: var(--sub-accent); box-shadow: 0 0 0 3px var(--sub-accent-soft); }
+.sub-input option { background: var(--sub-surface); color: var(--sub-text); }
 .sub-link-row { display: flex; overflow: hidden; border-radius: 10px; border: 1px solid var(--sub-border); background: var(--sub-input-bg); }
 .sub-link-input {
   flex: 1; min-width: 0; border: none; background: transparent; padding: 9px 11px;

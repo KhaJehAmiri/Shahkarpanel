@@ -4,7 +4,7 @@ import time
 from typing import List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, WebSocket
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from starlette.websockets import WebSocketDisconnect
 
@@ -670,6 +670,9 @@ def refresh_singbox_tls(
 class WGStackConfig(BaseModel):
     plain_enabled: Optional[bool] = None
     awg_enabled: Optional[bool] = None
+    # Parallel, untunneled plain-WG port that stays up even when this node
+    # delegates its main WG port to the Xray tunnel. 0 disables/clears it.
+    direct_listen_port: Optional[int] = Field(default=None, ge=0, lt=65536)
 
 
 class AmneziaWGStatus(BaseModel):
@@ -727,6 +730,7 @@ def set_node_wireguard_stack(
             db, dbnode,
             plain_enabled=body.plain_enabled,
             awg_enabled=body.awg_enabled,
+            direct_listen_port=body.direct_listen_port,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -758,6 +762,51 @@ def set_node_amneziawg(
         raise HTTPException(status_code=400, detail=str(exc))
     db.refresh(dbnode)
     bg.add_task(_sync_wireguard_node, dbnode.id)
+    return dbnode
+
+
+class XrayNativeWireGuardConfig(BaseModel):
+    """Xray-core's native userspace WireGuard inbound, Finalmask-noise obfuscated.
+
+    Reuses this node's existing WireGuard keypair; only Xray-core-based
+    clients (not the stock WireGuard app) can dial it once noise is applied.
+    """
+    enabled: Optional[bool] = None
+    listen_port: Optional[int] = Field(default=None, gt=0, lt=65536)
+    mtu: Optional[int] = Field(default=None, gt=0)
+    noise: Optional[dict] = None
+
+
+@router.put("/node/{node_id}/wireguard/xray-native", response_model=NodeResponse)
+def set_node_xray_native_wireguard(
+    body: XrayNativeWireGuardConfig,
+    bg: BackgroundTasks,
+    dbnode=Depends(get_dbnode),
+    db: Session = Depends(get_db),
+    _: Admin = Depends(Admin.check_sudo_admin),
+):
+    """Configure the Xray-native WireGuard+Finalmask-noise inbound (sudo only).
+
+    Unlike ``/wireguard/stack``, this changes the node's Xray config (a new
+    inbound), so it triggers a full Xray restart on the node rather than a
+    plain WG peer sync.
+    """
+    from app.models.node import CoreKind
+
+    if dbnode.core_kind != CoreKind.wireguard.value:
+        raise HTTPException(status_code=400, detail="Node is not a WireGuard node")
+    try:
+        crud.set_node_xray_wireguard(
+            db, dbnode,
+            enabled=body.enabled,
+            listen_port=body.listen_port,
+            mtu=body.mtu,
+            noise=body.noise,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    db.refresh(dbnode)
+    bg.add_task(xray.operations.restart_node, dbnode.id)
     return dbnode
 
 

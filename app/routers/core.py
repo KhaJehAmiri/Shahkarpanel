@@ -148,6 +148,24 @@ def restart_core(admin: Admin = _core_write):
     return {}
 
 
+@router.post("/core/start", responses={403: responses._403})
+def start_core(admin: Admin = _core_write):
+    """Start the panel Xray core if it is stopped."""
+    if xray.core.started:
+        return {"started": True}
+    startup_config = xray.config.include_db_users()
+    xray.core.start(startup_config)
+    return {"started": xray.core.started}
+
+
+@router.post("/core/stop", responses={403: responses._403})
+def stop_core(admin: Admin = _core_write):
+    """Stop the panel Xray core."""
+    if xray.core.started:
+        xray.core.stop()
+    return {"started": xray.core.started}
+
+
 @router.get("/core/config", responses={403: responses._403})
 def get_core_config(admin: Admin = Depends(require_permission("core:read"))) -> dict:
     """Get the current core configuration."""

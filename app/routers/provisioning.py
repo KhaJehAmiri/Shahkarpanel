@@ -57,6 +57,126 @@ def _client_cert_pem(db: Session) -> Optional[str]:
     return tls.certificate if tls else None
 
 
+class ProvisionRetryRequest(BaseModel):
+    ssh_port: int = 22
+    username: str = "root"
+    password: Optional[str] = None
+    private_key: Optional[str] = None
+    refresh_agent: bool = True
+
+
+def _resolve_ssh_credentials(
+    host: str,
+    *,
+    ssh_port: int,
+    username: str,
+    password: Optional[str],
+    private_key: Optional[str],
+) -> provisioning.SSHCredentials:
+    if password or private_key:
+        return provisioning.SSHCredentials(
+            host=host,
+            port=ssh_port,
+            username=username,
+            password=password,
+            private_key=private_key,
+        )
+    from app.provisioning.node_ssh import resolve_node_ssh
+
+    try:
+        return resolve_node_ssh(host, port=ssh_port, username=username)
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="password or private_key is required",
+        ) from exc
+
+
+def _default_provision_extras(dbnode) -> "ProvisionExtras":
+    from app.provisioning.post_install import ProvisionExtras
+
+    is_wg = (dbnode.core_kind or "xray") == CoreKind.wireguard.value
+    return ProvisionExtras(
+        enable_hysteria2=not is_wg,
+        enable_tuic=False,
+        enable_anytls=False,
+        tls_mode="self_signed",
+        le_target=None,
+        le_email=None,
+        le_kind="auto",
+        create_tunnel=False,
+        tunnel_port=443,
+        region=dbnode.region,
+        enable_plain_wg_on_xray=False,
+        enable_awg_on_xray=False,
+        enable_awg_wg=False,
+    )
+
+
+def _queue_ssh_provision(
+    db: Session,
+    dbnode,
+    creds: provisioning.SSHCredentials,
+    *,
+    refresh_agent: bool = False,
+    include_awg: bool = False,
+) -> str:
+    """Reset node state and start a background SSH install job. Returns job_id."""
+    if not NODE_BOOTSTRAP_TOKEN:
+        raise HTTPException(status_code=400, detail="NODE_BOOTSTRAP_TOKEN is not set.")
+    if not provisioning.ssh_available():
+        raise HTTPException(
+            status_code=503,
+            detail="SSH provisioning is unavailable (paramiko not installed).",
+        )
+    active = provision_jobs.progress_for_node(dbnode.id)
+    if active and active.status in ("pending", "running"):
+        raise HTTPException(status_code=409, detail="Provision already in progress")
+
+    tenant_id = dbnode.tenant_id
+    panel_url = _panel_url()
+    try:
+        cmd = provisioning.build_install_command(
+            panel_url,
+            NODE_BOOTSTRAP_TOKEN,
+            dbnode.name,
+            tenant_id=tenant_id,
+            role=dbnode.role or "direct",
+            core_kind=dbnode.core_kind or "xray",
+            region=dbnode.region,
+            image=NODE_AGENT_IMAGE,
+            node_port=dbnode.port or NODE_DEFAULT_PORT,
+            node_api_port=dbnode.api_port or NODE_DEFAULT_API_PORT,
+            control_secret=NODE_CONTROL_SECRET or None,
+            force_image_rebuild=refresh_agent,
+            client_cert_pem=_client_cert_pem(db),
+            include_awg=include_awg,
+        )
+    except provisioning.ProvisioningError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    host = (dbnode.provision_host or dbnode.address or creds.host).strip()
+    dbnode.address = host
+    dbnode.provision_host = host
+    dbnode.provision_status = "provisioning"
+    dbnode.provision_message = "queued"
+    dbnode.message = None
+    dbnode.status = NodeStatus.connecting
+    db.commit()
+    db.refresh(dbnode)
+
+    extras = _default_provision_extras(dbnode)
+    return provision_jobs.start_job(
+        node_id=dbnode.id,
+        node_name=dbnode.name,
+        creds=creds,
+        command=cmd,
+        ssh_timeout=NODE_PROVISION_SSH_TIMEOUT,
+        exec_timeout=NODE_PROVISION_EXEC_TIMEOUT,
+        extras=extras,
+    )
+
+
 class ProvisionRequest(BaseModel):
     name: str
     host: str
@@ -135,6 +255,16 @@ def get_provision_job(
     return ProvisionJobResponse(**provision_jobs.job_to_api(job))
 
 
+@router.get("/region-presets")
+def node_region_presets(
+    _: Admin = Depends(require_permission("nodes:provision")),
+):
+    """Region codes (+ flag emoji) for the Add Node location picker."""
+    from app.subscription.region_display import list_region_presets
+
+    return {"regions": list_region_presets()}
+
+
 @router.get("/install-command", response_model=ProvisionResponse)
 def install_command(
     name: str,
@@ -187,6 +317,8 @@ def provision_node(
     if not body.password and not body.private_key:
         raise HTTPException(status_code=422, detail="password or private_key is required")
 
+    include_awg = bool(body.enable_awg_on_xray or body.enable_awg_wg)
+
     from app.tenant.reseller_ops import assert_can_add_node, db_admin
 
     if body.run:
@@ -202,6 +334,7 @@ def provision_node(
             node_port=NODE_DEFAULT_PORT, node_api_port=NODE_DEFAULT_API_PORT,
             control_secret=NODE_CONTROL_SECRET or None,
             client_cert_pem=_client_cert_pem(db),
+            include_awg=include_awg,
         )
         return ProvisionResponse(
             status="manual", node_role=body.role, install_command=cmd,
@@ -225,6 +358,7 @@ def provision_node(
             control_secret=NODE_CONTROL_SECRET or None,
             force_image_rebuild=body.refresh_agent,
             client_cert_pem=_client_cert_pem(db),
+            include_awg=include_awg,
         )
     except provisioning.ProvisioningError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
@@ -351,4 +485,50 @@ def provision_node(
         node_id=dbnode.id,
         node_role=body.role,
         detail="Install started — track progress in the nodes list.",
+    )
+
+
+@router.post("/{node_id}/retry", response_model=ProvisionResponse)
+def retry_provision(
+    node_id: int,
+    body: ProvisionRetryRequest,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(require_permission("nodes:provision")),
+):
+    """Re-run SSH install for an existing node (e.g. after a failed provision)."""
+    _require_enabled()
+    from app.tenant.reseller_ops import assert_owns_node
+
+    dbnode = crud.get_node_by_id(db, node_id)
+    if not dbnode:
+        raise HTTPException(status_code=404, detail="Node not found")
+    assert_owns_node(db, admin, dbnode)
+
+    if dbnode.provision_status not in ("failed", "provisioning", None):
+        if dbnode.provision_status == "registered" and dbnode.status != NodeStatus.error:
+            raise HTTPException(
+                status_code=422,
+                detail="Node is already provisioned; use reconnect instead of reinstall",
+            )
+
+    host = (dbnode.provision_host or dbnode.address or "").strip()
+    if not host:
+        raise HTTPException(status_code=422, detail="Node has no provision host address")
+
+    creds = _resolve_ssh_credentials(
+        host,
+        ssh_port=body.ssh_port,
+        username=body.username,
+        password=body.password,
+        private_key=body.private_key,
+    )
+    job_id = _queue_ssh_provision(
+        db, dbnode, creds, refresh_agent=body.refresh_agent,
+    )
+    return ProvisionResponse(
+        status="started",
+        job_id=job_id,
+        node_id=dbnode.id,
+        node_role=dbnode.role or "direct",
+        detail="Reinstall started — track progress in the nodes list.",
     )

@@ -99,11 +99,21 @@ class XrayService(rpyc.Service):
 
     @rpyc.exposed
     def start(self, config: str):
+        from xray import _kill_stale_stdin_xray, find_stdin_xray_pids
+
+        config_obj = XRayConfig(config, self._panel_peer_ip())
         if self.core is not None:
+            proc = getattr(self.core, "process", None)
+            if proc is not None and proc.poll() is None:
+                self.core.restart(config_obj)
+                return
             self.stop()
+        elif find_stdin_xray_pids(XRAY_EXECUTABLE_PATH):
+            # Out-of-band starts (manual recovery, crashed panel session) must
+            # not stack a second stdin Xray on the same UDP/TCP ports.
+            _kill_stale_stdin_xray(XRAY_EXECUTABLE_PATH)
 
         try:
-            config = XRayConfig(config, self._panel_peer_ip())
             self.core = XRayCore(executable_path=XRAY_EXECUTABLE_PATH,
                                  assets_path=XRAY_ASSETS_PATH)
 
@@ -131,7 +141,7 @@ class XrayService(rpyc.Service):
                 logger.debug(
                     "Peer doesn't have on_stop function on it's service, skipped")
 
-            self.core.start(config)
+            self.core.start(config_obj)
         except Exception as exc:
             logger.error(exc)
             raise exc
@@ -305,7 +315,7 @@ class XrayService(rpyc.Service):
 
     @rpyc.exposed
     def fetch_xray_version(self):
-        if self.core is None:
+        if self.core is None or not self.core.started:
             raise ProcessLookupError("Xray has not been started")
 
         return self.core.version

@@ -116,6 +116,16 @@ def sync_node(db, dbnode, *, users: Optional[List[SBUser]] = None, node_object=N
 
     spec = build_node_spec(_cfg_to_dict(cfg), users)
     try:
+        from app.tunnel.singbox_inject import apply_singbox_endpoint_tunnels
+
+        spec = apply_singbox_endpoint_tunnels(spec, dbnode.id)
+    except Exception as exc:
+        logger.warning(
+            "sing-box tunnel inject for node %s failed: %s",
+            dbnode.id,
+            exc,
+        )
+    try:
         client.apply(spec)
         return True
     except Exception as exc:

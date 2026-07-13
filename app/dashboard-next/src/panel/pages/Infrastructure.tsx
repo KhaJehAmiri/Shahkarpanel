@@ -12,6 +12,7 @@ import {
 } from "../components/ui";
 import { IcPlus, IcRefresh, IcTrash, IcLink, IcEdit, IcEye, IcBolt } from "../components/icons";
 import { AddNodeModal, AddNodePreset } from "../components/AddNodeModal";
+import { RetryProvisionModal } from "../components/RetryProvisionModal";
 import { NodeXrayOverrideModal } from "../components/NodeXrayOverrideModal";
 import { isIranNode, pickNodeByRegion } from "../lib/region";
 /** @deprecated Use /nodes — kept for old bookmarks. */
@@ -25,6 +26,7 @@ export const NodesTab: FC<{ resellerMode?: boolean }> = ({ resellerMode }) => {
   const [editNode, setEditNode] = useState<NodeItem | null>(null);
   const [xrayNode, setXrayNode] = useState<NodeItem | null>(null);
   const [overrideNode, setOverrideNode] = useState<NodeItem | null>(null);
+  const [retryNode, setRetryNode] = useState<NodeItem | null>(null);
   const [preset, setPreset] = useState<AddNodePreset>({});
   const { data, loading, error, reload } = useFetch<NodeItem[]>(() => api.get("/nodes"), []);
   const provisioning = (data || []).some((n) => n.provision_status === "provisioning");
@@ -141,6 +143,11 @@ export const NodesTab: FC<{ resellerMode?: boolean }> = ({ resellerMode }) => {
                               <IcEdit className="nx-ico" />
                             </Button>
                           )}
+                          {n.provision_status === "failed" && (
+                            <Button size="sm" variant="primary" onClick={() => setRetryNode(n)} title={t("infra.provisionRetry")}>
+                              <IcRefresh className="nx-ico" /> {t("infra.provisionRetry")}
+                            </Button>
+                          )}
                           {n.provision_status !== "provisioning" && (
                             <Button size="sm" onClick={() => reconnect(n)} title={t("infra.reconnect")}><IcRefresh className="nx-ico" /> {t("infra.reconnect")}</Button>
                           )}
@@ -171,6 +178,13 @@ export const NodesTab: FC<{ resellerMode?: boolean }> = ({ resellerMode }) => {
       )}
       {overrideNode && (
         <NodeXrayOverrideModal node={overrideNode} onClose={() => setOverrideNode(null)} onDone={() => { setOverrideNode(null); reload(); }} />
+      )}
+      {retryNode && (
+        <RetryProvisionModal
+          node={retryNode}
+          onClose={() => setRetryNode(null)}
+          onDone={() => { setRetryNode(null); reload(); }}
+        />
       )}
     </>
   );

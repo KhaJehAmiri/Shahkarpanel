@@ -81,6 +81,11 @@ class NodeWireGuardConfig(BaseModel):
     awg_s4: Optional[int] = None
     sg_wire_enabled: bool = False
     sg_wire_preset_rev: Optional[str] = None
+    direct_listen_port: Optional[int] = None
+    xray_wg_enabled: bool = False
+    xray_wg_listen_port: Optional[int] = None
+    xray_wg_mtu: int = 1420
+    xray_wg_noise: Optional[dict] = None
     model_config = ConfigDict(from_attributes=True)
 
 

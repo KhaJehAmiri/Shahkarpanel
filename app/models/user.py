@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 from app import xray
 from app.models.admin import Admin
@@ -338,6 +338,35 @@ class SubscriptionLinkItem(BaseModel):
     address_hint: str = ""
 
 
+class WireGuardNodeItem(BaseModel):
+    id: int
+    name: str
+    address: str
+    region: str | None = None
+    region_flag: str | None = None
+    region_name: str | None = None
+    latency_ms: float | None = None
+    wireguard_uri: str | None = None
+    wireguard_direct_uri: str | None = None
+    awg_available: bool = False
+
+
+class SingBoxNodeItem(BaseModel):
+    id: int
+    name: str
+    address: str
+    region: str | None = None
+    region_flag: str | None = None
+    region_name: str | None = None
+    latency_ms: float | None = None
+    hysteria2_link: str | None = None
+    tuic_link: str | None = None
+    anytls_link: str | None = None
+    hysteria2_available: bool = False
+    tuic_available: bool = False
+    anytls_available: bool = False
+
+
 class UserResponse(User):
     id: Optional[int] = None
     username: str
@@ -368,7 +397,9 @@ class UserResponse(User):
     model_config = ConfigDict(from_attributes=True)
 
     @model_validator(mode="after")
-    def validate_links(self):
+    def validate_links(self, info: ValidationInfo):
+        if info.context and info.context.get("skip_default_links"):
+            return self
         if not self.links:
             self.links = generate_v2ray_links(
                 self.proxies, self.inbounds, extra_data=self.model_dump(), reverse=False,
@@ -439,6 +470,9 @@ class SubscriptionUserResponse(UserResponse):
     tuic_link: str | None = None
     anytls_link: str | None = None
     wireguard_uri: str | None = None
+    wireguard_awg_available: bool = False
+    wireguard_nodes: List[WireGuardNodeItem] = []
+    singbox_nodes: List[SingBoxNodeItem] = []
     link_items: List[SubscriptionLinkItem] = []
     model_config = ConfigDict(from_attributes=True)
 
@@ -459,6 +493,7 @@ class UserListItem(BaseModel):
     data_limit_reset_strategy: UserDataLimitResetStrategy = UserDataLimitResetStrategy.no_reset
     note: Optional[str] = None
     online_at: Optional[datetime] = None
+    online: bool = False
     portal_enabled: bool = False
     proxies: Dict[str, Any] = {}
     inbounds: Dict[str, List[str]] = {}
@@ -477,6 +512,22 @@ class UserListItem(BaseModel):
                 out[key] = settings if isinstance(settings, dict) else dict(settings or {})
             return out
         return v or {}
+
+    @model_validator(mode="after")
+    def _compute_online(self):
+        """Derive live "online now" from ``online_at`` using the same window as
+        the dashboard counter, so the source of truth stays server-side."""
+        if self.online_at is not None:
+            from datetime import datetime, timedelta
+
+            from config import ONLINE_WINDOW_MINUTES
+
+            seen = self.online_at
+            if seen.tzinfo is not None:
+                seen = seen.replace(tzinfo=None)
+            if datetime.utcnow() - seen <= timedelta(minutes=ONLINE_WINDOW_MINUTES):
+                object.__setattr__(self, "online", True)
+        return self
 
     @field_validator(
         "used_traffic",

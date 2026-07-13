@@ -17,7 +17,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import CITEXT
+from sqlalchemy.dialects.postgresql import CITEXT, JSONB
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql.expression import select, text
@@ -519,6 +519,32 @@ class NodeWireGuard(Base):
     # SigmaGuard Wire: proprietary preset synced to awg listener (not public AWG).
     sg_wire_enabled = Column(Boolean, nullable=False, server_default=text("0"), default=False)
     sg_wire_preset_rev = Column(String(32), nullable=True)
+
+    # Optional third listener: a plain, unobfuscated WireGuard socket that stays
+    # up on relay nodes even when ``interface``/``listen_port`` is delegated to
+    # the Xray tunnel. Same identity (private_key/public_key/subnet/peers) as
+    # the plain listener — just a second UDP port any stock WireGuard client
+    # can dial directly, so tunnel and direct paths can be offered side by
+    # side without a port conflict. Null/unset disables the feature.
+    direct_listen_port = Column(Integer, nullable=True)
+
+    # Xray-core's *native* userspace WireGuard inbound (wireguard-go + gVisor),
+    # not a kernel interface at all — Xray itself terminates the WG protocol
+    # and dispatches decrypted traffic through its own routing. Layered with
+    # Finalmask "noise" streamSettings, this hides the WireGuard handshake
+    # signature from DPI (the same technique 3x-ui exposes). Trade-off: only
+    # Xray-core-based clients understand Finalmask, not stock WireGuard apps.
+    # Reuses this row's private_key/public_key as the server identity so the
+    # same client keypair works across every WG transport this node offers.
+    xray_wg_enabled = Column(Boolean, nullable=False, server_default=text("0"), default=False)
+    xray_wg_listen_port = Column(Integer, nullable=True)
+    xray_wg_mtu = Column(Integer, nullable=False, server_default=text("1420"), default=1420)
+    # JSONB on Postgres (not JSON): callers like crud.get_wireguard_nodes() run
+    # .distinct() on this row's whole column set, and Postgres' plain `json`
+    # type has no equality operator (breaks with "could not identify an
+    # equality operator for type json"). jsonb has one. Falls back to plain
+    # JSON on other dialects (e.g. sqlite in tests), which has no such issue.
+    xray_wg_noise = Column(JSON().with_variant(JSONB(), "postgresql"), nullable=True)
 
 
 class NodeSingBox(Base):

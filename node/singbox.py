@@ -90,6 +90,9 @@ class SingBoxInbound:
 class SingBoxSpec:
     inbounds: List[SingBoxInbound] = field(default_factory=list)
     traffic_limits: List[dict] = field(default_factory=list)
+    tunnel_outbounds: List[dict] = field(default_factory=list)
+    tunnel_route_rules: List[dict] = field(default_factory=list)
+    tunnel_route_final: Optional[str] = None
     clash_api_port: int = 9095
     clash_api_secret: str = ""
     v2ray_api_port: int = 0
@@ -103,6 +106,9 @@ class SingBoxSpec:
             inbounds=[SingBoxInbound.from_dict(i) for i in (data.get("inbounds") or [])
                       if i.get("type") in SUPPORTED_TYPES],
             traffic_limits=list(data.get("traffic_limits") or []),
+            tunnel_outbounds=list(data.get("tunnel_outbounds") or []),
+            tunnel_route_rules=list(data.get("tunnel_route_rules") or []),
+            tunnel_route_final=data.get("tunnel_route_final"),
             clash_api_port=clash_port,
             clash_api_secret=data.get("clash_api_secret", ""),
             v2ray_api_port=v2ray_port,
@@ -162,7 +168,20 @@ def _render_inbound(inbound: SingBoxInbound) -> dict:
     return base
 
 
-def render_config(spec: SingBoxSpec) -> dict:
+def _supports_v2ray_api(binary: str = "sing-box", run: Optional[Callable] = None) -> bool:
+    """Return whether the sing-box binary was built with ``with_v2ray_api``."""
+    runner = run or SingBoxManager._default_run
+    if not shutil.which(binary):
+        return False
+    try:
+        result = runner([binary, "version"], check=False)
+        output = f"{getattr(result, 'stdout', '') or ''}{getattr(result, 'stderr', '') or ''}"
+        return "with_v2ray_api" in output
+    except Exception:
+        return False
+
+
+def render_config(spec: SingBoxSpec, *, include_v2ray_api: bool = True) -> dict:
     """Render the full sing-box server config (dict, ready to ``json.dump``)."""
     inbound_tags = [i.tag for i in spec.inbounds]
     user_names = sorted({u.name for i in spec.inbounds for u in i.users})
@@ -174,7 +193,7 @@ def render_config(spec: SingBoxSpec) -> dict:
         },
         "cache_file": {"enabled": True, "path": "/var/lib/nexusnode/singbox-cache.db"},
     }
-    if inbound_tags and user_names:
+    if inbound_tags and user_names and include_v2ray_api:
         experimental["v2ray_api"] = {
             "listen": f"127.0.0.1:{v2ray_port}",
             "stats": {
@@ -185,8 +204,24 @@ def render_config(spec: SingBoxSpec) -> dict:
         }
     return {
         "log": {"level": spec.log_level, "timestamp": True},
+        "dns": {
+            "servers": [{"type": "local", "tag": "local"}],
+            "final": "local",
+            "strategy": "prefer_ipv4",
+        },
         "inbounds": [_render_inbound(i) for i in spec.inbounds],
-        "outbounds": [{"type": "direct", "tag": "direct"}],
+        "outbounds": list(spec.tunnel_outbounds) + [
+            {
+                "type": "direct",
+                "tag": "direct",
+                "domain_strategy": "prefer_ipv4",
+            },
+        ],
+        "route": {
+            "rules": list(spec.tunnel_route_rules),
+            "final": spec.tunnel_route_final or "direct",
+            "auto_detect_interface": False,
+        },
         "experimental": experimental,
     }
 
@@ -218,6 +253,55 @@ def _kill_stale_singbox(
         except Exception:
             pass
     time.sleep(0.3)
+
+
+def ensure_self_signed_cert(
+    cert_path: Optional[str],
+    key_path: Optional[str],
+    *,
+    common_name: str = "nexus-node",
+    days: int = 3650,
+) -> bool:
+    """Create a self-signed cert/key pair if either file is missing.
+
+    The panel provisioner normally installs sing-box TLS material during node
+    setup (see app/tls/self_signed.py), but a node that was registered outside
+    that flow — e.g. imported, or brought up through the SSH-tunnel control
+    path — can be missing it. sing-box then refuses to start with a cryptic
+    "read certificate: no such file or directory", breaking every QUIC
+    protocol on the node. Since the QUIC share links are always issued with
+    insecure=1 (clients skip TLS verification, see app/subscription/quic.py),
+    a locally generated self-signed cert is sufficient to self-heal here.
+    Returns True when a certificate was generated.
+    """
+    if not cert_path or not key_path:
+        return False
+    if os.path.isfile(cert_path) and os.path.isfile(key_path):
+        return False
+    if not shutil.which("openssl"):
+        logger.error("cannot self-heal sing-box TLS: openssl not available on node")
+        return False
+    try:
+        for path in (cert_path, key_path):
+            parent = os.path.dirname(path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+        subprocess.run(
+            [
+                "openssl", "req", "-x509", "-nodes", "-newkey", "rsa:2048",
+                "-keyout", key_path, "-out", cert_path,
+                "-days", str(int(days)),
+                "-subj", f"/CN={common_name or 'nexus-node'}",
+            ],
+            check=True, capture_output=True, text=True,
+        )
+        os.chmod(cert_path, 0o644)
+        os.chmod(key_path, 0o600)
+        logger.warning("self-healed missing sing-box TLS cert at %s", cert_path)
+        return True
+    except Exception as exc:
+        logger.error("failed to self-heal sing-box TLS cert %s: %s", cert_path, exc)
+        return False
 
 
 def parse_clash_connections(payload: dict) -> Dict[str, dict]:
@@ -256,6 +340,13 @@ class SingBoxManager:
         self._clash_port = 9095
         self._clash_secret = ""
         self._v2ray_port = 9195
+        self._v2ray_api_supported: Optional[bool] = None
+        self._last_check_error = ""
+
+    def _v2ray_api_enabled(self) -> bool:
+        if self._v2ray_api_supported is None:
+            self._v2ray_api_supported = _supports_v2ray_api(self._binary, run=self._run)
+        return bool(self._v2ray_api_supported)
 
     @staticmethod
     def _default_run(cmd, check=True):
@@ -270,7 +361,7 @@ class SingBoxManager:
         return shutil.which(self._binary) is not None
 
     def write_config(self, spec: SingBoxSpec) -> dict:
-        cfg = render_config(spec)
+        cfg = render_config(spec, include_v2ray_api=self._v2ray_api_enabled())
         os.makedirs(os.path.dirname(self._config_path), exist_ok=True)
         with open(self._config_path, "w") as f:
             json.dump(cfg, f, indent=2)
@@ -278,7 +369,14 @@ class SingBoxManager:
 
     def check_config(self) -> bool:
         result = self._run([self._binary, "check", "-c", self._config_path], check=False)
-        return getattr(result, "returncode", 1) == 0
+        ok = getattr(result, "returncode", 1) == 0
+        self._last_check_error = ""
+        if not ok:
+            err = (getattr(result, "stderr", "") or getattr(result, "stdout", "") or "").strip()
+            self._last_check_error = err
+            if err:
+                logger.error("sing-box config check failed: %s", err)
+        return ok
 
     def apply(self, spec: SingBoxSpec) -> None:
         """Bring sing-box to the desired state (idempotent restart)."""
@@ -290,9 +388,20 @@ class SingBoxManager:
         if not spec.inbounds:
             self.stop()
             return
+        # Self-heal missing TLS material before the config check so a node that
+        # never got provisioned certs still comes up (QUIC links use insecure=1).
+        for ib in spec.inbounds:
+            ensure_self_signed_cert(
+                getattr(ib, "certificate_path", None),
+                getattr(ib, "key_path", None),
+            )
         if not self.check_config():
             logger.error("sing-box config invalid; refusing restart")
-            raise RuntimeError("sing-box config check failed")
+            detail = getattr(self, "_last_check_error", "") or ""
+            raise RuntimeError(
+                f"sing-box config check failed: {detail}" if detail
+                else "sing-box config check failed"
+            )
         self.restart()
         try:
             from speed_limit import SpeedLimitManager, port_limits_from_spec, tune_udp_quic_stack

@@ -54,7 +54,7 @@ def render_metrics() -> bytes:
                 crud.get_users_count(db, status=status)
             )
 
-        online_gauge.set(crud.count_online_users(db, 24))
+        online_gauge.set(crud.count_online_users(db))
 
         system = crud.get_system_usage(db)
         bandwidth_gauge.labels(direction="uplink").set(getattr(system, "uplink", 0) or 0)

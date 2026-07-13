@@ -60,20 +60,32 @@ export function resolveSingboxSubUrl(subUrl: string): string {
   return stripSubUrlFragment(subUrl).replace(/\/?$/, "/sing-box");
 }
 
-export function resolveWgUrl(subUrl: string, variant: "plain" | "awg" = "plain"): string {
+export function resolveWgUrl(subUrl: string, variant: "plain" | "awg" = "plain", nodeId?: number): string {
   if (!subUrl) return "";
   const base = stripSubUrlFragment(subUrl).replace(/\/?$/, "/wireguard");
-  return variant === "awg" ? `${base}?variant=awg` : base;
+  const path = nodeId != null ? `${base}/${nodeId}` : base;
+  return variant === "awg" ? `${path}?variant=awg` : path;
 }
 
-export function resolveHysteria2Url(subUrl: string): string {
+export function resolveHysteria2Url(subUrl: string, nodeId?: number): string {
   if (!subUrl) return "";
-  return stripSubUrlFragment(subUrl).replace(/\/?$/, "/hysteria2");
+  const base = stripSubUrlFragment(subUrl).replace(/\/?$/, "/hysteria2");
+  const path = nodeId != null ? `${base}/${nodeId}` : base;
+  return path;
 }
 
-export function resolveTuicUrl(subUrl: string): string {
+export function resolveTuicUrl(subUrl: string, nodeId?: number): string {
   if (!subUrl) return "";
-  return stripSubUrlFragment(subUrl).replace(/\/?$/, "/tuic");
+  const base = stripSubUrlFragment(subUrl).replace(/\/?$/, "/tuic");
+  const path = nodeId != null ? `${base}/${nodeId}` : base;
+  return path;
+}
+
+export function resolveAnytlsUrl(subUrl: string, nodeId?: number): string {
+  if (!subUrl) return "";
+  const base = stripSubUrlFragment(subUrl).replace(/\/?$/, "/anytls");
+  const path = nodeId != null ? `${base}/${nodeId}` : base;
+  return path;
 }
 
 /** Browser-friendly setup page (/subscribe/?token=…) from a /sub/{token}/ URL. */

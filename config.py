@@ -403,13 +403,17 @@ CORE_HEALTH_API_FAILURE_THRESHOLD = config("CORE_HEALTH_API_FAILURE_THRESHOLD", 
 #   XRAY_RESTART_STOP_TIMEOUT         — graceful SIGTERM wait before SIGKILL (s)
 #   XRAY_RESTART_PORT_RECLAIM_TIMEOUT — how long to wait for inbound ports to free (s)
 XRAY_RESTART_STOP_TIMEOUT = config("XRAY_RESTART_STOP_TIMEOUT", cast=float, default=3.0)
-XRAY_RESTART_PORT_RECLAIM_TIMEOUT = config("XRAY_RESTART_PORT_RECLAIM_TIMEOUT", cast=float, default=3.0)
+XRAY_RESTART_PORT_RECLAIM_TIMEOUT = config("XRAY_RESTART_PORT_RECLAIM_TIMEOUT", cast=float, default=12.0)
 JOB_CORE_USER_RECONCILE_INTERVAL = config("JOB_CORE_USER_RECONCILE_INTERVAL", cast=int, default=45)
 # Opt-in: periodically flush idle AWG peer endpoints during the health-check tick.
 # Off by default — endpoint reconcile (`reconcile_awg_endpoints`) already runs every tick.
 JOB_AWG_FLUSH_STALE_PEERS = config("JOB_AWG_FLUSH_STALE_PEERS", cast=bool, default=False)
 JOB_RECORD_NODE_USAGES_INTERVAL = config("JOB_RECORD_NODE_USAGES_INTERVAL", cast=int, default=30)
 JOB_RECORD_USER_USAGES_INTERVAL = config("JOB_RECORD_USER_USAGES_INTERVAL", cast=int, default=5)
+# "Online now" window: a user counts as online if their ``online_at`` (bumped by
+# the 5s usage job on real traffic, and by subscription refresh) is within this
+# many minutes. Kept short so the count reflects who is actually connected.
+ONLINE_WINDOW_MINUTES = config("ONLINE_WINDOW_MINUTES", cast=int, default=3)
 # Fail-closed: after this many blind usage cycles, disconnect all active users on local inbounds.
 # 0 disables mass disconnect (logging only). Default 6 cycles ≈ 30s at 5s interval.
 BILLING_BLIND_DISCONNECT_CYCLES = config("BILLING_BLIND_DISCONNECT_CYCLES", cast=int, default=6)

@@ -133,10 +133,35 @@ def _get_node(db: Session, node_id: int) -> Node:
     return node
 
 
+def _reserved_panel_ports() -> set[int]:
+    try:
+        from app.xray.inbound_ports import PANEL_SERVICE_HINTS
+
+        return set(PANEL_SERVICE_HINTS)
+    except Exception:  # pragma: no cover - defensive
+        return {80, 443, 8000}
+
+
+def _guard_panel_ports(exit_node_id, target_port) -> None:
+    """Reject a tunnel whose panel-local exit inbound would collide with the
+    panel's own web/API port — otherwise Xray refuses the whole config and the
+    panel core (all proxy inbounds) goes down."""
+    if exit_node_id is None and target_port in _reserved_panel_ports():
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"target_port {target_port} is reserved by the panel web/API server. "
+                "Choose a different port (e.g. 8443) for a panel-hosted exit, or use "
+                "a dedicated node as the exit."
+            ),
+        )
+
+
 def _exit_address(db: Session, exit_node_id: Optional[int]) -> str:
     if exit_node_id is None:
         from config import PANEL_PUBLIC_ADDRESS, UVICORN_HOST
-        addr = (PANEL_PUBLIC_ADDRESS or UVICORN_HOST or "").split(":")[0]
+        from app.tunnel import clean_public_host
+        addr = clean_public_host(PANEL_PUBLIC_ADDRESS or UVICORN_HOST or "")
         if not addr or addr in ("0.0.0.0", "127.0.0.1"):
             raise HTTPException(
                 status_code=422,
@@ -198,6 +223,29 @@ def _restart_endpoint(db: Session, node_id: Optional[int]):
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("Tunnel apply: failed to restart local core: %s", exc)
         return
+
+    from app.db import crud
+    from app.singbox.operations import sync_node as singbox_sync_node
+    from app.tunnel.relay import ensure_tunnel_wireguard_port
+    from app.wireguard.operations import sync_node as wg_sync_node
+
+    dbnode = crud.get_node_by_id(db, node_id)
+    if dbnode is not None:
+        for t in db.query(Tunnel).filter(
+            Tunnel.enabled.is_(True),
+            Tunnel.relay_node_id == node_id,
+        ).all():
+            if ensure_tunnel_wireguard_port(db, t):
+                db.commit()
+        try:
+            wg_sync_node(db, dbnode)
+        except Exception as exc:
+            logger.warning("Tunnel apply: WireGuard sync on node %s failed: %s", node_id, exc)
+        try:
+            singbox_sync_node(db, dbnode)
+        except Exception as exc:
+            logger.warning("Tunnel apply: sing-box sync on node %s failed: %s", node_id, exc)
+
     node = xray.nodes.get(node_id)
     if node is not None and getattr(node, "connected", False):
         xray.operations.restart_node(node_id)
@@ -275,9 +323,23 @@ def _tunnel_health(db: Session, tunnel: Tunnel) -> dict:
 
 def _apply_tunnel(db: Session, tunnel: Tunnel, health: bool = True) -> dict:
     """Re-push config to both endpoints and (optionally) health-check the path."""
+    from app.tunnel.relay import ensure_tunnel_wireguard_port
+
+    if ensure_tunnel_wireguard_port(db, tunnel):
+        db.commit()
+        db.refresh(tunnel)
     _exit_address(db, tunnel.exit_node_id)  # validate reachability first
     for node_id in {tunnel.relay_node_id, tunnel.intermediate_node_id, tunnel.exit_node_id}:
         _restart_endpoint(db, node_id)
+
+    if tunnel.exit_node_id is None and (tunnel.params or {}).get("wireguard_port"):
+        from app.wireguard.host_sync import sync_panel_exit_wireguard
+
+        sync_panel_exit_wireguard(db)
+
+    from app.tunnel.relay import clear_tunnel_relay_cache
+
+    clear_tunnel_relay_cache()
 
     result = {
         "applied": True,
@@ -351,6 +413,8 @@ def create_tunnel(
         tunnel_svc.validate_transport(body.transport)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
+
+    _guard_panel_ports(body.exit_node_id, body.target_port)
 
     if body.relay_node_id is not None:
         _get_node(db, body.relay_node_id)
@@ -434,6 +498,7 @@ def update_tunnel(
             raise HTTPException(status_code=422, detail=str(exc))
     for key, value in body.model_dump(exclude_unset=True).items():
         setattr(tunnel, key, value)
+    _guard_panel_ports(tunnel.exit_node_id, tunnel.target_port)
     if not tunnel.enabled and prev_enabled:
         _revert_unused_node_roles(db, tunnel.id, prev_relay, prev_exit, prev_intermediate)
     elif tunnel.enabled:

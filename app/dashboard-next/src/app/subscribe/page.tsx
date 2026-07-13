@@ -13,7 +13,7 @@ import { quicAppsFor, type QuicProtocol } from "@/lib/quic-apps";
 import { copyToClipboard } from "@/lib/clipboard";
 import { bytes, formatDate, relativeDays } from "@/lib/format";
 import { SUB_LANGS, SubLang, detectSubLang, t as subT } from "@/lib/subscribe-i18n";
-import { resolveClientImportUrl, resolvePublicSubUrl, resolveSingboxSubUrl, resolveWgUrl } from "@/lib/subscribe-url";
+import { resolveAnytlsUrl, resolveClientImportUrl, resolveHysteria2Url, resolvePublicSubUrl, resolveSingboxSubUrl, resolveTuicUrl, resolveWgUrl } from "@/lib/subscribe-url";
 import { applySubTheme, detectSubTheme, type SubTheme } from "@/lib/sub-theme";
 
 type ProtocolTab = "proxy" | "wireguard" | "quic";
@@ -44,6 +44,33 @@ interface SubInfo {
   tuic_link?: string | null;
   anytls_link?: string | null;
   wireguard_uri?: string | null;
+  wireguard_awg_available?: boolean;
+  wireguard_nodes?: Array<{
+    id: number;
+    name: string;
+    address: string;
+    region?: string | null;
+    region_flag?: string | null;
+    region_name?: string | null;
+    latency_ms?: number | null;
+    wireguard_uri?: string | null;
+    awg_available?: boolean;
+  }>;
+  singbox_nodes?: Array<{
+    id: number;
+    name: string;
+    address: string;
+    region?: string | null;
+    region_flag?: string | null;
+    region_name?: string | null;
+    latency_ms?: number | null;
+    hysteria2_link?: string | null;
+    tuic_link?: string | null;
+    anytls_link?: string | null;
+    hysteria2_available?: boolean;
+    tuic_available?: boolean;
+    anytls_available?: boolean;
+  }>;
 }
 
 function getToken(): string {
@@ -61,6 +88,26 @@ function statusChip(lang: SubLang, s: string): { label: string; cls: string } {
     s === "expired" ? "warn" :
     s === "limited" ? "danger" : "neutral";
   return { label, cls };
+}
+
+type LocationNode = {
+  name: string;
+  address: string;
+  region_flag?: string | null;
+  region_name?: string | null;
+  latency_ms?: number | null;
+};
+
+// Flag + location name first (what the user actually cares about), node
+// name/address as a secondary hint — so the picker reads as a location list,
+// not a raw server inventory.
+function nodeLocationLabel(n: LocationNode): string {
+  const flag = n.region_flag?.trim();
+  const regionName = n.region_name?.trim();
+  const head = flag && regionName ? `${flag} ${regionName}` : flag || regionName || n.name;
+  const parts = [head, n.name];
+  if (n.latency_ms != null) parts.push(`${Math.round(n.latency_ms)}ms`);
+  return parts.join(" · ");
 }
 
 function SubscribeBody() {
@@ -83,6 +130,8 @@ function SubscribeBody() {
   const [anytlsFetched, setAnytlsFetched] = useState("");
   const [wgConfPlain, setWgConfPlain] = useState("");
   const [wgConfAwg, setWgConfAwg] = useState("");
+  const [selectedWgNodeId, setSelectedWgNodeId] = useState<number | null>(null);
+  const [selectedQuicNodeId, setSelectedQuicNodeId] = useState<number | null>(null);
 
   const loadInfo = useCallback((tok: string) => {
     if (!tok) return;
@@ -105,12 +154,49 @@ function SubscribeBody() {
   const clientImportUrl = useMemo(() => resolveClientImportUrl(info, token), [info, token]);
   const profileTitle = info?.subscription_profile_title?.trim() || "NexusPanel";
   const singboxSubUrl = useMemo(() => resolveSingboxSubUrl(subUrl), [subUrl]);
-  const wgUrl = useMemo(() => resolveWgUrl(subUrl, "plain"), [subUrl]);
-  const awgUrl = useMemo(() => resolveWgUrl(subUrl, "awg"), [subUrl]);
-  const wgImportUri = info?.wireguard_uri?.trim() || "";
-  const hy2ShareLink = (info?.hysteria2_link || hy2Fetched || "").trim();
-  const tuicShareLink = (info?.tuic_link || tuicFetched || "").trim();
-  const anytlsShareLink = (info?.anytls_link || anytlsFetched || "").trim();
+  const wgNodes = info?.wireguard_nodes ?? [];
+  const wgUrl = useMemo(
+    () => resolveWgUrl(subUrl, "plain", selectedWgNodeId ?? undefined),
+    [subUrl, selectedWgNodeId],
+  );
+  const awgUrl = useMemo(
+    () => resolveWgUrl(subUrl, "awg", selectedWgNodeId ?? undefined),
+    [subUrl, selectedWgNodeId],
+  );
+  const selectedWgNode = wgNodes.find((n) => n.id === selectedWgNodeId) ?? null;
+  const wgImportUri = (selectedWgNode?.wireguard_uri || info?.wireguard_uri || "").trim();
+  const hasWireguard = !!info?.proxies && "wireguard" in info.proxies;
+  const hasHysteria2 = !!info?.proxies && "hysteria2" in info.proxies;
+  const hasTuic = !!info?.proxies && "tuic" in info.proxies;
+  const hasAnytls = !!info?.proxies && "anytls" in info.proxies;
+  const quicNodes = useMemo(() => {
+    const nodes = info?.singbox_nodes ?? [];
+    return nodes.filter((n) => {
+      if (hasHysteria2 && n.hysteria2_available) return true;
+      if (hasTuic && n.tuic_available) return true;
+      if (hasAnytls && n.anytls_available) return true;
+      return false;
+    });
+  }, [info?.singbox_nodes, hasHysteria2, hasTuic, hasAnytls]);
+  const selectedQuicNode = quicNodes.find((n) => n.id === selectedQuicNodeId) ?? null;
+  const hy2ShareLink = (
+    selectedQuicNode?.hysteria2_link
+    || info?.hysteria2_link
+    || hy2Fetched
+    || ""
+  ).trim();
+  const tuicShareLink = (
+    selectedQuicNode?.tuic_link
+    || info?.tuic_link
+    || tuicFetched
+    || ""
+  ).trim();
+  const anytlsShareLink = (
+    selectedQuicNode?.anytls_link
+    || info?.anytls_link
+    || anytlsFetched
+    || ""
+  ).trim();
 
   useEffect(() => {
     if (!token || !info || info.config_available === false) {
@@ -119,34 +205,58 @@ function SubscribeBody() {
       setAnytlsFetched("");
       return;
     }
-    const hasHy2 = !!info.proxies && "hysteria2" in info.proxies;
-    const hasT = !!info.proxies && "tuic" in info.proxies;
-    const hasAt = !!info.proxies && "anytls" in info.proxies;
-    if (hasHy2 && !info.hysteria2_link) {
-      fetch(`/sub/${token}/hysteria2`)
+    const nodePath = selectedQuicNodeId != null ? `/${selectedQuicNodeId}` : "";
+    if (hasHysteria2 && !selectedQuicNode?.hysteria2_link) {
+      fetch(`/sub/${token}/hysteria2${nodePath}`)
         .then(async (r) => (r.ok ? r.text() : ""))
         .then((t) => setHy2Fetched(t.trim()))
         .catch(() => setHy2Fetched(""));
     } else {
       setHy2Fetched("");
     }
-    if (hasT && !info.tuic_link) {
-      fetch(`/sub/${token}/tuic`)
+    if (hasTuic && !selectedQuicNode?.tuic_link) {
+      fetch(`/sub/${token}/tuic${nodePath}`)
         .then(async (r) => (r.ok ? r.text() : ""))
         .then((t) => setTuicFetched(t.trim()))
         .catch(() => setTuicFetched(""));
     } else {
       setTuicFetched("");
     }
-    if (hasAt && !info.anytls_link) {
-      fetch(`/sub/${token}/anytls`)
+    if (hasAnytls && !selectedQuicNode?.anytls_link) {
+      fetch(`/sub/${token}/anytls${nodePath}`)
         .then(async (r) => (r.ok ? r.text() : ""))
         .then((t) => setAnytlsFetched(t.trim()))
         .catch(() => setAnytlsFetched(""));
     } else {
       setAnytlsFetched("");
     }
-  }, [token, info]);
+  }, [token, info, selectedQuicNodeId, selectedQuicNode, hasHysteria2, hasTuic, hasAnytls]);
+
+  useEffect(() => {
+    if (!quicNodes.length) {
+      setSelectedQuicNodeId(null);
+      return;
+    }
+    const ranked = [...quicNodes].sort((a, b) => {
+      const al = a.latency_ms ?? 99999;
+      const bl = b.latency_ms ?? 99999;
+      return al - bl || a.id - b.id;
+    });
+    setSelectedQuicNodeId(ranked[0]?.id ?? null);
+  }, [quicNodes]);
+
+  useEffect(() => {
+    if (!info?.wireguard_nodes?.length) {
+      setSelectedWgNodeId(null);
+      return;
+    }
+    const ranked = [...info.wireguard_nodes].sort((a, b) => {
+      const al = a.latency_ms ?? 99999;
+      const bl = b.latency_ms ?? 99999;
+      return al - bl || a.id - b.id;
+    });
+    setSelectedWgNodeId(ranked[0]?.id ?? null);
+  }, [info?.wireguard_nodes]);
 
   useEffect(() => {
     if (!token || !info || info.config_available === false) {
@@ -159,20 +269,17 @@ function SubscribeBody() {
       setWgConfAwg("");
       return;
     }
-    fetch(`/sub/${token}/wireguard`)
+    const nodePath = selectedWgNodeId != null ? `/${selectedWgNodeId}` : "";
+    fetch(`/sub/${token}/wireguard${nodePath}`)
       .then(async (r) => (r.ok ? r.text() : ""))
       .then((t) => setWgConfPlain(t.trim()))
       .catch(() => setWgConfPlain(""));
-    fetch(`/sub/${token}/wireguard?variant=awg`)
+    fetch(`/sub/${token}/wireguard${nodePath}?variant=awg`)
       .then(async (r) => (r.ok ? r.text() : ""))
       .then((t) => setWgConfAwg(t.trim()))
       .catch(() => setWgConfAwg(""));
-  }, [token, info]);
+  }, [token, info, selectedWgNodeId]);
 
-  const hasWireguard = !!info?.proxies && "wireguard" in info.proxies;
-  const hasHysteria2 = !!info?.proxies && "hysteria2" in info.proxies;
-  const hasTuic = !!info?.proxies && "tuic" in info.proxies;
-  const hasAnytls = !!info?.proxies && "anytls" in info.proxies;
   const hasQuic = hasHysteria2 || hasTuic || hasAnytls;
   const hasProxy = (info?.proxies
     ? Object.keys(info.proxies).filter((k) => !["wireguard", "hysteria2", "tuic", "anytls"].includes(k)).length > 0
@@ -448,6 +555,24 @@ function SubscribeBody() {
                     </AppsPanel>
                   </div>
                   <div className="sub-panel-connect sub-stack" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    {quicNodes.length > 1 && (
+                      <label className="sub-wg-node-select">
+                        <span className="sub-text-dim" style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                          {subT(lang, "wgNodeSelect")}
+                        </span>
+                        <select
+                          className="sub-input mt-1 w-full"
+                          value={selectedQuicNodeId ?? ""}
+                          onChange={(e) => setSelectedQuicNodeId(Number(e.target.value))}
+                        >
+                          {quicNodes.map((n) => (
+                            <option key={n.id} value={n.id}>
+                              {nodeLocationLabel(n)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
                     {hasHysteria2 && (
                       <ConnectCard
                         title={subT(lang, "hy2Title")}
@@ -516,6 +641,24 @@ function SubscribeBody() {
                     </AppsPanel>
                   </div>
                   <div className="sub-panel-connect sub-connect-stack">
+                    {wgNodes.length > 1 && (
+                      <label className="sub-wg-node-select">
+                        <span className="sub-text-dim" style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                          {subT(lang, "wgNodeSelect")}
+                        </span>
+                        <select
+                          className="sub-input mt-1 w-full"
+                          value={selectedWgNodeId ?? ""}
+                          onChange={(e) => setSelectedWgNodeId(Number(e.target.value))}
+                        >
+                          {wgNodes.map((n) => (
+                            <option key={n.id} value={n.id}>
+                              {nodeLocationLabel(n)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
                     <ConnectCard
                       title={subT(lang, "wgTitle")}
                       hint={subT(lang, "wgHint")}
@@ -548,6 +691,7 @@ function SubscribeBody() {
                         closeLabel={subT(lang, "close")}
                       />
                     )}
+                    {(selectedWgNode?.awg_available ?? info?.wireguard_awg_available) && (
                     <ConnectCard
                       title={subT(lang, "wgAwgTitle")}
                       hint={subT(lang, "wgAwgHint")}
@@ -565,6 +709,7 @@ function SubscribeBody() {
                       qrEnlargeLabel={subT(lang, "qrEnlarge")}
                       closeLabel={subT(lang, "close")}
                     />
+                    )}
                   </div>
                 </>
               )}

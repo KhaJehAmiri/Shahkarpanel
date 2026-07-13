@@ -408,11 +408,23 @@ input[type="number"] {
 .nx-config-account-meta b { color: var(--nx-text); font-weight: 600; }
 .nx-config-list { display: flex; flex-direction: column; gap: 6px; }
 .nx-config-list-item {
-  display: flex; align-items: center; gap: 8px; width: 100%; text-align: start;
-  padding: 10px 12px; border-radius: var(--nx-radius-sm, 8px); border: 1px solid var(--nx-border);
-  background: var(--nx-surface-2); cursor: pointer; color: var(--nx-text);
+  display: flex; align-items: stretch; gap: 0; width: 100%;
+  border-radius: var(--nx-radius-sm, 8px); border: 1px solid var(--nx-border);
+  background: var(--nx-surface-2); color: var(--nx-text); overflow: hidden;
 }
 .nx-config-list-item.active { border-color: color-mix(in srgb, var(--nx-accent) 45%, var(--nx-border)); background: var(--nx-accent-soft); }
+.nx-config-list-main {
+  display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0;
+  text-align: start; padding: 10px 12px; background: transparent; border: none;
+  cursor: pointer; color: inherit; font: inherit;
+}
+.nx-config-copy {
+  flex: none; display: inline-grid; place-items: center; width: 40px;
+  background: transparent; border: none; border-inline-start: 1px solid var(--nx-border);
+  color: var(--nx-text-dim); cursor: pointer; transition: color .12s, background .12s;
+}
+.nx-config-copy:hover { color: var(--nx-accent); background: color-mix(in srgb, var(--nx-accent) 12%, transparent); }
+.nx-config-copy:active { transform: scale(0.92); }
 .nx-config-list-proto { font-size: 10px; font-weight: 800; text-transform: uppercase; color: var(--nx-accent-strong); }
 .nx-config-list-flag { font-size: 16px; line-height: 1; }
 .nx-config-list-title { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

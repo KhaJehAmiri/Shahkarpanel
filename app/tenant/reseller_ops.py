@@ -53,6 +53,10 @@ def resolve_max_users(db: Session, dbadmin: Admin, tenant_id: Optional[int]) -> 
 
 
 def assert_can_add_node(db: Session, admin) -> None:
+    # Sudo admins (incl. the env-based SUDO_USERNAME, which has no `admins` row)
+    # are unlimited and must never be blocked by the reseller node quota.
+    if getattr(admin, "is_sudo", False):
+        return
     dbadmin = db_admin(db, admin)
     if dbadmin is None:
         raise HTTPException(status_code=400, detail="Admin not found in database")

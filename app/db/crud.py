@@ -1873,7 +1873,12 @@ def update_node(db: Session, dbnode: Node, modify: NodeModify) -> Node:
         dbnode.name = modify.name
 
     if modify.address is not None:
+        old_address = dbnode.address
         dbnode.address = modify.address
+        from app.services.materialize import reconcile_singbox_sni, reconcile_wireguard_endpoints
+
+        reconcile_wireguard_endpoints(db, dbnode)
+        reconcile_singbox_sni(db, dbnode, old_address=old_address)
 
     if modify.port is not None:
         dbnode.port = modify.port
@@ -1966,12 +1971,23 @@ def set_node_wg_stack(
     *,
     plain_enabled: Optional[bool] = None,
     awg_enabled: Optional[bool] = None,
+    direct_listen_port: Optional[int] = None,
 ) -> "NodeWireGuard":
     cfg = dbnode.wireguard
     if cfg is None:
         raise ValueError("Node has no WireGuard configuration")
     if plain_enabled is not None:
         cfg.plain_enabled = plain_enabled
+    if direct_listen_port is not None:
+        # 0 clears/disables the parallel direct (untunneled) listener.
+        if direct_listen_port == 0:
+            cfg.direct_listen_port = None
+        else:
+            if direct_listen_port == cfg.listen_port or (
+                cfg.awg_enabled and direct_listen_port == cfg.awg_listen_port
+            ):
+                raise ValueError("direct_listen_port must differ from listen_port/awg_listen_port")
+            cfg.direct_listen_port = int(direct_listen_port)
     if awg_enabled is not None:
         cfg.awg_enabled = awg_enabled
         if awg_enabled:
@@ -1983,6 +1999,46 @@ def set_node_wg_stack(
                     setattr(cfg, field, value)
     if not cfg.plain_enabled and not cfg.awg_enabled:
         raise ValueError("At least one of plain WireGuard or AmneziaWG must stay enabled")
+    db.commit()
+    db.refresh(cfg)
+    return cfg
+
+
+def set_node_xray_wireguard(
+    db: Session,
+    dbnode: Node,
+    *,
+    enabled: Optional[bool] = None,
+    listen_port: Optional[int] = None,
+    mtu: Optional[int] = None,
+    noise: Optional[dict] = None,
+) -> "NodeWireGuard":
+    """Configure the Xray-native WireGuard+Finalmask-noise inbound on a node.
+
+    ``listen_port`` must differ from every other WG-family port already in
+    use on this node (kernel plain/AWG/direct) — they're independent sockets
+    that must not collide.
+    """
+    cfg = dbnode.wireguard
+    if cfg is None:
+        raise ValueError("Node has no WireGuard configuration")
+    if listen_port is not None:
+        taken = {cfg.listen_port}
+        if cfg.awg_enabled:
+            taken.add(cfg.awg_listen_port)
+        if cfg.direct_listen_port:
+            taken.add(cfg.direct_listen_port)
+        if listen_port in taken:
+            raise ValueError("xray_wg_listen_port must differ from every other WireGuard port on this node")
+        cfg.xray_wg_listen_port = int(listen_port)
+    if mtu is not None:
+        cfg.xray_wg_mtu = int(mtu)
+    if noise is not None:
+        cfg.xray_wg_noise = noise or None
+    if enabled is not None:
+        if enabled and not cfg.xray_wg_listen_port:
+            raise ValueError("Set xray_wg_listen_port before enabling the Xray-native WireGuard inbound")
+        cfg.xray_wg_enabled = enabled
     db.commit()
     db.refresh(cfg)
     return cfg
@@ -2450,12 +2506,52 @@ def list_user_orders(db: Session, user_id: int, limit: int = 20) -> List[UserOrd
     )
 
 
-def count_online_users(db: Session, hours: int = 24, admin: Admin = None):
-    """Users seen on VPN recently; only billable statuses (active / on_hold)."""
-    twenty_four_hours_ago = datetime.utcnow() - timedelta(hours=hours)
+def list_usernames_by_stat(
+    db: Session, category: str, admin: Admin = None, limit: int = 15
+):
+    """Return ``(usernames, total)`` for a dashboard stat category so the UI can
+    show a hover preview. ``category`` is one of: ``total``, ``online``, or any
+    :class:`UserStatus` value (active/disabled/expired/limited/on_hold).
+    ``usernames`` is capped at ``limit``; ``total`` is the full count."""
+    from config import ONLINE_WINDOW_MINUTES
+
+    query = db.query(User.username, User.online_at)
+    if admin:
+        query = query.filter(User.admin == admin)
+
+    if category == "online":
+        cutoff = datetime.utcnow() - timedelta(minutes=ONLINE_WINDOW_MINUTES)
+        query = query.filter(
+            User.online_at.isnot(None),
+            User.online_at >= cutoff,
+            User.status.in_((UserStatus.active, UserStatus.on_hold)),
+        ).order_by(User.online_at.desc())
+    elif category == "total":
+        query = query.order_by(User.username.asc())
+    else:
+        try:
+            status = UserStatus(category)
+        except ValueError:
+            return [], 0
+        query = query.filter(User.status == status).order_by(User.username.asc())
+
+    total = query.count()
+    usernames = [row[0] for row in query.limit(max(1, limit)).all()]
+    return usernames, total
+
+
+def count_online_users(db: Session, minutes: int = None, admin: Admin = None):
+    """Count users online *now*: those whose ``online_at`` falls within the last
+    ``minutes`` (defaults to ``ONLINE_WINDOW_MINUTES``). ``online_at`` is bumped
+    both by real traffic (5s usage job) and by subscription refresh. Only
+    billable statuses (active / on_hold) are counted."""
+    from config import ONLINE_WINDOW_MINUTES
+
+    window = ONLINE_WINDOW_MINUTES if minutes is None else minutes
+    cutoff = datetime.utcnow() - timedelta(minutes=window)
     query = db.query(func.count(User.id)).filter(
         User.online_at.isnot(None),
-        User.online_at >= twenty_four_hours_ago,
+        User.online_at >= cutoff,
         User.status.in_((UserStatus.active, UserStatus.on_hold)),
     )
     if admin:

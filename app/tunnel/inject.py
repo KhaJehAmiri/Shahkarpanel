@@ -19,6 +19,15 @@ from app import tunnel as tunnel_svc
 # Bind/loopback addresses a relay can never dial as an exit endpoint.
 _NON_ROUTABLE = {"", "0.0.0.0", "::", "127.0.0.1", "::1", "localhost"}
 
+# Ports the panel host reserves for its own web/API services; a panel-local
+# tunnel inbound must never try to bind these (it would crash the whole core).
+try:
+    from app.xray.inbound_ports import PANEL_SERVICE_HINTS
+
+    _RESERVED_PANEL_PORTS = set(PANEL_SERVICE_HINTS)
+except Exception:  # pragma: no cover - defensive
+    _RESERVED_PANEL_PORTS = {80, 443, 8000}
+
 
 def _endpoint_address(db, node_id: Optional[int]) -> Optional[str]:
     """Reachable address the relay dials for an endpoint.
@@ -32,7 +41,8 @@ def _endpoint_address(db, node_id: Optional[int]) -> Optional[str]:
     """
     if node_id is None:
         from config import PANEL_PUBLIC_ADDRESS, UVICORN_HOST
-        addr = (PANEL_PUBLIC_ADDRESS or UVICORN_HOST or "").split(":")[0].strip()
+        from app.tunnel import clean_public_host
+        addr = clean_public_host(PANEL_PUBLIC_ADDRESS or UVICORN_HOST or "")
         if addr.lower() in _NON_ROUTABLE:
             return None
         return addr or None
@@ -75,7 +85,14 @@ def apply_endpoint_tunnels(config, node_id: Optional[int]):
                 return result
 
             relay_tunnels = [t for t in tunnels if t.relay_node_id == node_id]
-            transit_tunnels = [t for t in tunnels if t.intermediate_node_id == node_id]
+            # A NULL ``intermediate_node_id`` means "no transit hop" — it must
+            # NOT be read as "the panel (node_id is None) is the transit", or
+            # every 2-hop tunnel would wrongly inject transit fragments into the
+            # local core (duplicate tags -> Xray refuses to start).
+            transit_tunnels = [
+                t for t in tunnels
+                if t.intermediate_node_id is not None and t.intermediate_node_id == node_id
+            ]
             exit_tunnels = [t for t in tunnels if t.exit_node_id == node_id]
             if not relay_tunnels and not transit_tunnels and not exit_tunnels:
                 return result
@@ -84,6 +101,66 @@ def apply_endpoint_tunnels(config, node_id: Optional[int]):
             inbounds = result.setdefault("inbounds", [])
             rules = result.setdefault("routing", {}).setdefault("rules", [])
             user_tags = _relay_inbound_tags(result)
+
+            # Injection must be idempotent: re-pushing a config that already
+            # carries a tunnel fragment (double apply, stale base, reconcile)
+            # must never emit a duplicate inbound/outbound tag, which crashes
+            # Xray with "existing tag found".
+            in_tags = {ib.get("tag") for ib in inbounds if isinstance(ib, dict)}
+            out_tags = {ob.get("tag") for ob in outbounds if isinstance(ob, dict)}
+            inbound_port_tags: dict[int, str] = {}
+            for ib in inbounds:
+                if not isinstance(ib, dict):
+                    continue
+                port = ib.get("port")
+                tag = ib.get("tag")
+                if port is not None and tag:
+                    inbound_port_tags[int(port)] = str(tag)
+
+            def _add_inbound(ib) -> bool:
+                tag = ib.get("tag")
+                port = ib.get("port")
+                # On the panel-local core, a tunnel inbound that grabs a port the
+                # panel web server owns (80/443/8000) makes Xray refuse the WHOLE
+                # config and take every proxy inbound down. Skip it instead so a
+                # single misconfigured tunnel never crashes the core.
+                if node_id is None and port in _RESERVED_PANEL_PORTS:
+                    logger.warning(
+                        "Tunnel inject: skipping inbound %s on reserved panel port %s "
+                        "(used by the panel web server). Pick a different tunnel port "
+                        "or use a dedicated node as this endpoint.",
+                        tag,
+                        port,
+                    )
+                    return False
+                if node_id is None and port is not None:
+                    owner = inbound_port_tags.get(int(port))
+                    if owner and owner != tag and not owner.startswith("tunnel-"):
+                        logger.warning(
+                            "Tunnel inject: skipping inbound %s on panel port %s "
+                            "(already used by inbound %s). Pick a different tunnel port.",
+                            tag,
+                            port,
+                            owner,
+                        )
+                        return False
+                if tag in in_tags:
+                    logger.debug("Tunnel inject: inbound tag %s already present; skipping", tag)
+                    return False
+                in_tags.add(tag)
+                if port is not None:
+                    inbound_port_tags[int(port)] = str(tag)
+                inbounds.append(ib)
+                return True
+
+            def _add_outbound(ob) -> bool:
+                tag = ob.get("tag")
+                if tag in out_tags:
+                    logger.debug("Tunnel inject: outbound tag %s already present; skipping", tag)
+                    return False
+                out_tags.add(tag)
+                outbounds.append(ob)
+                return True
 
             for t in relay_tunnels:
                 if tunnel_svc.transport_engine(t.transport) == "singbox":
@@ -118,14 +195,26 @@ def apply_endpoint_tunnels(config, node_id: Optional[int]):
                             label,
                         )
                     continue
-                outbounds.append(tunnel_svc.build_relay_outbound(t, next_addr, next_port=next_port))
+                # Already injected on this config -> its routing rule is present too.
+                if not _add_outbound(tunnel_svc.build_relay_outbound(t, next_addr, next_port=next_port)):
+                    continue
+
+                sb_socks = tunnel_svc.build_singbox_bridge_socks_inbound(t)
+                if _add_inbound(sb_socks):
+                    rules.insert(1, tunnel_svc.build_singbox_bridge_routing_rule(t))
 
                 relay_tags = list(user_tags)
                 wg_port = (t.params or {}).get("wireguard_port")
                 if wg_port:
-                    wg_inbound, _ = tunnel_svc.build_wireguard_relay_inbound(t, int(wg_port))
-                    inbounds.append(wg_inbound)
-                    relay_tags.append(wg_inbound["tag"])
+                    from app.tunnel.relay import wireguard_target_port
+
+                    wg_inbound, _ = tunnel_svc.build_wireguard_relay_inbound(
+                        t,
+                        int(wg_port),
+                        wg_target_port=wireguard_target_port(db, t),
+                    )
+                    if _add_inbound(wg_inbound):
+                        relay_tags.append(wg_inbound["tag"])
 
                 rules.insert(1, tunnel_svc.build_relay_routing_rule(t, relay_tags or None))
 
@@ -139,9 +228,10 @@ def apply_endpoint_tunnels(config, node_id: Optional[int]):
                         t.id,
                     )
                     continue
-                inbounds.append(tunnel_svc.build_intermediate_inbound(t))
-                outbounds.append(tunnel_svc.build_intermediate_outbound(t, exit_addr))
-                rules.insert(1, tunnel_svc.build_intermediate_routing_rule(t))
+                added_in = _add_inbound(tunnel_svc.build_intermediate_inbound(t))
+                added_out = _add_outbound(tunnel_svc.build_intermediate_outbound(t, exit_addr))
+                if added_in or added_out:
+                    rules.insert(1, tunnel_svc.build_intermediate_routing_rule(t))
 
             for t in exit_tunnels:
                 if tunnel_svc.transport_engine(t.transport) == "singbox":
@@ -152,7 +242,7 @@ def apply_endpoint_tunnels(config, node_id: Optional[int]):
                         t.id,
                     )
                     continue
-                inbounds.append(tunnel_svc.build_exit_inbound(t))
+                _add_inbound(tunnel_svc.build_exit_inbound(t))
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("Failed to inject tunnels for endpoint node_id=%s: %s", node_id, exc)
         return config

@@ -2,6 +2,7 @@ import React, { FC, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import { useApp } from "../context/AppContext";
+import { useFetch } from "../lib/useFetch";
 import { Button, Callout, Field, Input, Modal, Select, useToast } from "./ui";
 import {
   NodeServicesForm,
@@ -33,6 +34,10 @@ export const AddNodeModal: FC<{
   const { isEnabled } = useApp();
   const toast = useToast();
   const canProvision = isEnabled("node_provisioning");
+  const regions = useFetch<{ regions: { code: string; flag: string; name: string }[] }>(
+    () => api.get("/nodes/region-presets"),
+    [],
+  );
   const [f, setF] = useState({
     name: "",
     address: "",
@@ -193,8 +198,12 @@ export const AddNodeModal: FC<{
               <Field label={t("infra.regionPreset")}>
                 <Select value={f.region} onChange={upd("region")}>
                   <option value="">—</option>
-                  {["ir", "eu", "us", "ae", "tr"].map((r) => <option key={r} value={r}>{r}</option>)}
-                  <option value="custom">custom</option>
+                  {(regions.data?.regions || []).map((r) => (
+                    <option key={r.code} value={r.code}>
+                      {r.flag} {r.name} ({r.code})
+                    </option>
+                  ))}
+                  <option value="custom">🌐 custom</option>
                 </Select>
               </Field>
             </div>

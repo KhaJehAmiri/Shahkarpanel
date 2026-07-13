@@ -39,6 +39,31 @@ def is_product_inbound(ib: dict[str, Any]) -> bool:
     return bool(proto)
 
 
+def is_user_assignable_inbound(ib: dict[str, Any]) -> bool:
+    """True for panel inbounds that billable users can be assigned to.
+
+  Excludes tunnel capture/exit fragments, dokodemo relays, and the API inbound
+  so infrastructure listeners do not trip user-facing billing guards.
+    """
+    if not is_product_inbound(ib):
+        return False
+    tag = str(ib.get("tag") or "").strip()
+    if tag.startswith("tunnel-"):
+        return False
+    proto = str(ib.get("protocol") or "").lower()
+    if proto in ("dokodemo-door",):
+        return False
+    from app.models.proxy import ProxyTypes
+
+    if proto == "wireguard":
+        return True
+    try:
+        ProxyTypes(proto)
+        return True
+    except ValueError:
+        return False
+
+
 def inbound_port(ib: dict[str, Any]) -> int | None:
     raw = ib.get("port")
     if raw is None:

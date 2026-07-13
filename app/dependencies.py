@@ -1,7 +1,8 @@
 import hmac
 from typing import Optional, Union
 from app.models.admin import AdminInDB, AdminValidationResult, Admin
-from app.models.user import UserResponse, UserStatus
+from app.db.models import User
+from app.models.user import UserStatus
 from app.db import Session, crud, get_db
 from config import SUDOERS, SUDO_PASSWORD_HASH, SUDO_USERNAME
 from fastapi import Depends, HTTPException, Request
@@ -124,7 +125,7 @@ def get_validated_sub(
         request: Request,
         db: Session = Depends(get_db),
         sub_ctx: SubscriptionRequestContext = Depends(get_subscription_context),
-) -> UserResponse:
+) -> User:
     sub_ctx = resolve_sub_ctx(sub_ctx, request, db)
     endpoint_id = sub_ctx.endpoint.id if sub_ctx.endpoint else None
 
@@ -181,7 +182,7 @@ def get_validated_user(
         username: str,
         admin: Admin = Depends(require_permission("users:read")),
         db: Session = Depends(get_db)
-) -> UserResponse:
+) -> User:
     dbuser = crud.get_user(db, username)
     if not dbuser:
         raise HTTPException(status_code=404, detail="User not found")

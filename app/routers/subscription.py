@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Path, Request, Re
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app.db import Session, crud, get_db
+from app.db.models import User
 from app.dependencies import get_validated_sub, get_subscription_context, resolve_sub_ctx, validate_dates
 from app.subscription.endpoint_resolver import SubscriptionRequestContext
 from app.models.proxy import ProxyTypes
@@ -202,41 +203,79 @@ def _attach_subscription_share_links(db: Session, dbuser, payload: dict) -> None
     device/session export guards (those still apply to ``/{token}`` exports).
     """
     hy2_settings = _proxy_settings(dbuser, ProxyTypes.Hysteria2)
-    if hy2_settings:
-        hy2_nodes = [
-            n for n in crud.get_singbox_nodes(db)
-            if n.singbox and n.singbox.hysteria2_enabled
-        ]
-        if hy2_nodes:
-            n = pick_node(hy2_nodes)
-            payload["hysteria2_link"] = user_hysteria2_link(
-                hy2_settings, n, remark=f"{dbuser.username}-{n.name}",
-                speed_limit_up=dbuser.speed_limit_up,
-                speed_limit_down=dbuser.speed_limit_down,
-            )
     tuic_settings = _proxy_settings(dbuser, ProxyTypes.TUIC)
-    if tuic_settings:
-        tuic_nodes = [
-            n for n in crud.get_singbox_nodes(db)
-            if n.singbox and n.singbox.tuic_enabled
-        ]
-        if tuic_nodes:
-            n = pick_node(tuic_nodes)
-            payload["tuic_link"] = user_tuic_link(
-                tuic_settings, n, remark=f"{dbuser.username}-{n.name}",
+    anytls_settings = _proxy_settings(dbuser, ProxyTypes.AnyTLS)
+    sb_nodes = [n for n in crud.get_singbox_nodes(db) if n.singbox is not None]
+    if sb_nodes and (hy2_settings or tuic_settings or anytls_settings):
+        preferred_hy2 = None
+        preferred_tuic = None
+        preferred_anytls = None
+        if hy2_settings:
+            hy2_nodes = [n for n in sb_nodes if n.singbox.hysteria2_enabled]
+            preferred_hy2 = pick_node(hy2_nodes) if hy2_nodes else None
+        if tuic_settings:
+            tuic_nodes = [n for n in sb_nodes if n.singbox.tuic_enabled]
+            preferred_tuic = pick_node(tuic_nodes) if tuic_nodes else None
+        if anytls_settings:
+            anytls_nodes = [n for n in sb_nodes if n.singbox.anytls_enabled]
+            preferred_anytls = pick_node(anytls_nodes) if anytls_nodes else None
+
+        from app.subscription.region_display import resolve_region_display
+
+        node_items = []
+        for n in sb_nodes:
+            region_flag, region_name = resolve_region_display(n.region, node_name=n.name)
+            item = {
+                "id": n.id,
+                "name": n.name,
+                "address": n.address,
+                "region": n.region,
+                "region_flag": region_flag,
+                "region_name": region_name,
+                "latency_ms": n.latency_ms,
+                "hysteria2_link": None,
+                "tuic_link": None,
+                "anytls_link": None,
+                "hysteria2_available": bool(n.singbox.hysteria2_enabled),
+                "tuic_available": bool(n.singbox.tuic_enabled),
+                "anytls_available": bool(n.singbox.anytls_enabled),
+            }
+            if hy2_settings and n.singbox.hysteria2_enabled:
+                item["hysteria2_link"] = user_hysteria2_link(
+                    hy2_settings, n, remark=f"{dbuser.username}-{n.name}",
+                    speed_limit_up=dbuser.speed_limit_up,
+                    speed_limit_down=dbuser.speed_limit_down,
+                )
+            if tuic_settings and n.singbox.tuic_enabled:
+                item["tuic_link"] = user_tuic_link(
+                    tuic_settings, n, remark=f"{dbuser.username}-{n.name}",
+                    speed_limit_up=dbuser.speed_limit_up,
+                    speed_limit_down=dbuser.speed_limit_down,
+                )
+            if anytls_settings and n.singbox.anytls_enabled:
+                item["anytls_link"] = user_anytls_link(
+                    anytls_settings, n, remark=f"{dbuser.username}-{n.name}",
+                    speed_limit_up=dbuser.speed_limit_up,
+                    speed_limit_down=dbuser.speed_limit_down,
+                )
+            node_items.append(item)
+        payload["singbox_nodes"] = node_items
+
+        if preferred_hy2 and preferred_hy2.singbox:
+            payload["hysteria2_link"] = user_hysteria2_link(
+                hy2_settings, preferred_hy2, remark=f"{dbuser.username}-{preferred_hy2.name}",
                 speed_limit_up=dbuser.speed_limit_up,
                 speed_limit_down=dbuser.speed_limit_down,
             )
-    anytls_settings = _proxy_settings(dbuser, ProxyTypes.AnyTLS)
-    if anytls_settings:
-        anytls_nodes = [
-            n for n in crud.get_singbox_nodes(db)
-            if n.singbox and n.singbox.anytls_enabled
-        ]
-        if anytls_nodes:
-            n = pick_node(anytls_nodes)
+        if preferred_tuic and preferred_tuic.singbox:
+            payload["tuic_link"] = user_tuic_link(
+                tuic_settings, preferred_tuic, remark=f"{dbuser.username}-{preferred_tuic.name}",
+                speed_limit_up=dbuser.speed_limit_up,
+                speed_limit_down=dbuser.speed_limit_down,
+            )
+        if preferred_anytls and preferred_anytls.singbox:
             payload["anytls_link"] = user_anytls_link(
-                anytls_settings, n, remark=f"{dbuser.username}-{n.name}",
+                anytls_settings, preferred_anytls, remark=f"{dbuser.username}-{preferred_anytls.name}",
                 speed_limit_up=dbuser.speed_limit_up,
                 speed_limit_down=dbuser.speed_limit_down,
             )
@@ -244,20 +283,67 @@ def _attach_subscription_share_links(db: Session, dbuser, payload: dict) -> None
     if wg_settings:
         wg_nodes = [n for n in crud.get_wireguard_nodes(db) if n.wireguard is not None]
         if wg_nodes:
+            from app.subscription.region_display import resolve_region_display
             from app.subscription.wireguard import user_share_link
 
-            n = pick_node(wg_nodes)
-            link = user_share_link(
-                wg_settings, n, variant="plain", remark=f"{dbuser.username}-{n.name}"
-            )
-            if link:
-                payload["wireguard_uri"] = link
             from app.subscription.wireguard import user_config as wg_user_config
-            from app.wireguard.sync import amneziawg_enabled
+            from app.wireguard.sync import amneziawg_enabled, direct_wg_enabled
 
-            if n.wireguard and amneziawg_enabled(n.wireguard):
-                if wg_user_config(wg_settings, n, variant="awg"):
+            preferred = pick_node(wg_nodes)
+            node_items = []
+            awg_any = False
+            direct_any = False
+            for n in wg_nodes:
+                link = user_share_link(
+                    wg_settings, n, variant="plain", remark=f"{dbuser.username}-{n.name}", db=db
+                )
+                awg_ok = bool(
+                    n.wireguard
+                    and amneziawg_enabled(n.wireguard)
+                    and wg_user_config(wg_settings, n, variant="awg", db=db)
+                )
+                direct_link = None
+                if n.wireguard and direct_wg_enabled(n.wireguard):
+                    direct_link = user_share_link(
+                        wg_settings, n, variant="direct", remark=f"{dbuser.username}-{n.name}-direct", db=db
+                    )
+                awg_any = awg_any or awg_ok
+                direct_any = direct_any or bool(direct_link)
+                region_flag, region_name = resolve_region_display(n.region, node_name=n.name)
+                node_items.append({
+                    "id": n.id,
+                    "name": n.name,
+                    "address": n.address,
+                    "region": n.region,
+                    "region_flag": region_flag,
+                    "region_name": region_name,
+                    "latency_ms": n.latency_ms,
+                    "wireguard_uri": link,
+                    "awg_available": awg_ok,
+                    "wireguard_direct_uri": direct_link,
+                })
+            payload["wireguard_nodes"] = node_items
+            if preferred:
+                link = user_share_link(
+                    wg_settings, preferred, variant="plain", remark=f"{dbuser.username}-{preferred.name}", db=db
+                )
+                if link:
+                    payload["wireguard_uri"] = link
+                if preferred.wireguard and amneziawg_enabled(preferred.wireguard):
+                    if wg_user_config(wg_settings, preferred, variant="awg", db=db):
+                        payload["wireguard_awg_available"] = True
+                if preferred.wireguard and direct_wg_enabled(preferred.wireguard):
+                    direct_link = user_share_link(
+                        wg_settings, preferred, variant="direct",
+                        remark=f"{dbuser.username}-{preferred.name}-direct", db=db,
+                    )
+                    if direct_link:
+                        payload["wireguard_direct_uri"] = direct_link
+            elif awg_any or direct_any:
+                if awg_any:
                     payload["wireguard_awg_available"] = True
+                if direct_any:
+                    payload["wireguard_direct_available"] = True
 
 
 def _browser_subscribe_redirect_url(
@@ -281,23 +367,39 @@ def _browser_subscribe_redirect_url(
     return f"/subscribe/?token={token}"
 
 
+# Many VPN client apps (V2Box, Happ, some HiddifyNext/v2rayNG builds) send a
+# generic `Accept: text/html, */*` header on their subscription fetch instead
+# of `Accept: application/json` or `text/plain`. If we redirect on Accept
+# alone, these clients get an HTML page (or a 302 to it) instead of their
+# config and "fail to import" with no useful error. Recognize known client
+# UAs up front so they always get their config, regardless of Accept header.
+_KNOWN_CLIENT_UA_RE = re.compile(
+    r'^(Surge|Loon|Quantumult|Quantumult%20X|[Cc]lash-verge|[Cc]lash[-\.]?[Mm]eta|'
+    r'[Ff][Ll][Cc]lash|[Mm]ihomo|[Cc]lash|[Ss]tash|HiddifyNextX|[Vv]2[Bb]ox|'
+    r'v2rayN/|v2rayNG/|Happ/)'
+)
+
+
 @router.get("/{token}/")
 @router.get("/{token}", include_in_schema=False)
 def user_subscription(
     request: Request,
     db: Session = Depends(get_db),
-    dbuser: UserResponse = Depends(get_validated_sub),
+    dbuser: User = Depends(get_validated_sub),
     sub_ctx: SubscriptionRequestContext = Depends(get_subscription_context),
     user_agent: str = Header(default="")
 ):
     """Provides a subscription link based on the user agent (Clash, V2Ray, etc.)."""
     sub_ctx = resolve_sub_ctx(sub_ctx, request, db)
-    user: UserResponse = UserResponse.model_validate(dbuser)
+    user: UserResponse = UserResponse.model_validate(dbuser, context={"skip_default_links": True})
     inbound_filter = sub_ctx.inbound_filter
     endpoint = sub_ctx.endpoint
 
     accept_header = request.headers.get("Accept", "")
-    if "text/html" in accept_header:
+    is_known_client = bool(_KNOWN_CLIENT_UA_RE.match(user_agent)) or bool(
+        sub_ctx.format_default and sub_ctx.format_default in client_config
+    )
+    if "text/html" in accept_header and not is_known_client:
         # Phase 9: prefer the new Next.js subscription page (graphical, with
         # platform tabs) when its static build is present. The page reads the
         # token from the URL and fetches /sub/<token>/info itself.
@@ -370,6 +472,15 @@ def user_subscription(
     elif re.match(r'^HiddifyNextX', user_agent):
         return _v2ray_json_response(user, response_headers, inbound_filter=inbound_filter)
 
+    elif re.match(r'^[Vv]2[Bb]ox', user_agent):
+        # V2Box imports the base64 link list (vless://, vmess://, ss://,
+        # wireguard://) reliably; feeding it the v2ray-json config list — which
+        # is required to carry the Xray-native WireGuard+noise (Finalmask)
+        # outbound — broke normal import in the app, so keep the base64 form.
+        # Users who specifically want the noise-obfuscated WireGuard can fetch
+        # /sub/<token>/v2ray-json explicitly.
+        return _v2ray_base64_response(user, response_headers, inbound_filter=inbound_filter)
+
     elif re.match(r'^v2rayN/(\d+\.\d+)', user_agent):
         version_str = re.match(r'^v2rayN/(\d+\.\d+)', user_agent).group(1)
         if LooseVersion(version_str) >= LooseVersion("6.40"):
@@ -404,14 +515,14 @@ def user_subscription(
 def user_subscription_info(
     request: Request,
     response: Response,
-    dbuser: UserResponse = Depends(get_validated_sub),
+    dbuser: User = Depends(get_validated_sub),
     sub_ctx: SubscriptionRequestContext = Depends(get_subscription_context),
     db: Session = Depends(get_db),
 ):
     """Retrieves detailed information about the user's subscription."""
     sub_ctx = resolve_sub_ctx(sub_ctx, request, db)
     response.headers.update(NO_STORE_HEADERS)
-    user = UserResponse.model_validate(dbuser)
+    user = UserResponse.model_validate(dbuser, context={"skip_default_links": True})
     payload = user.model_dump()
     access = subscription_access(user)
     req_token = request.path_params.get("token", "")
@@ -452,7 +563,7 @@ def user_subscription_info(
 
 @router.get("/{token}/usage")
 def user_get_usage(
-    dbuser: UserResponse = Depends(get_validated_sub),
+    dbuser: User = Depends(get_validated_sub),
     start: str = "",
     end: str = "",
     db: Session = Depends(get_db)
@@ -541,8 +652,8 @@ def user_subscription_wireguard(
         raise HTTPException(status_code=404, detail="No WireGuard node available")
     cfg = dbnode.wireguard
     variant = (variant or "plain").strip().lower()
-    if variant not in ("plain", "awg"):
-        raise HTTPException(status_code=422, detail="variant must be plain or awg")
+    if variant not in ("plain", "awg", "direct", "xray_native"):
+        raise HTTPException(status_code=422, detail="variant must be plain, awg, direct, or xray_native")
 
     from app.wireguard.operations import ensure_preshared_key, ensure_user_address
     from app.wireguard.sync import amneziawg_enabled, plain_wg_enabled
@@ -575,11 +686,44 @@ def user_subscription_wireguard(
             settings = proxy.settings or {}
             break
 
+    if variant == "xray_native":
+        import json
+
+        from app.wireguard.xray_native import (
+            build_xray_native_client_config,
+            xray_native_wg_enabled,
+        )
+
+        if not xray_native_wg_enabled(cfg):
+            raise HTTPException(status_code=404, detail="Xray-native WireGuard is not enabled on this node")
+        local_address = settings.get("address")
+        if not local_address or not settings.get("private_key") or not cfg.public_key:
+            raise HTTPException(status_code=404, detail="No WireGuard configuration available")
+        client_cfg = build_xray_native_client_config(
+            private_key=settings["private_key"],
+            local_address=local_address.split("/")[0] + "/32",
+            server_public_key=cfg.public_key,
+            server_host=dbnode.address,
+            server_port=cfg.xray_wg_listen_port,
+            preshared_key=settings.get("preshared_key"),
+            mtu=cfg.xray_wg_mtu,
+            noise=cfg.xray_wg_noise,
+        )
+        filename = f"{dbuser.username}-{dbnode.name}-xray-wg.json"
+        return Response(
+            content=json.dumps(client_cfg, indent=2),
+            media_type="application/json",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                **NO_STORE_HEADERS,
+            },
+        )
+
     conf = build_wireguard_user_config(settings, dbnode, variant=variant)
     if conf is None:
         raise HTTPException(status_code=404, detail="No WireGuard configuration available")
 
-    suffix = "-awg" if variant == "awg" else ""
+    suffix = {"awg": "-awg", "direct": "-direct"}.get(variant, "")
     filename = f"{dbuser.username}-{dbnode.name}{suffix}.conf"
     return Response(
         content=conf,
@@ -708,7 +852,7 @@ def user_subscription_anytls(
 @router.get("/{token}/{client_type}")
 def user_subscription_with_client_type(
     request: Request,
-    dbuser: UserResponse = Depends(get_validated_sub),
+    dbuser: User = Depends(get_validated_sub),
     sub_ctx: SubscriptionRequestContext = Depends(get_subscription_context),
     client_type: str = Path(..., regex="sing-box|clash-meta|clash|outline|v2ray|v2ray-json|surge|loon|quantumult"),
     db: Session = Depends(get_db),
@@ -716,7 +860,7 @@ def user_subscription_with_client_type(
 ):
     """Provides a subscription link based on the specified client type (e.g., Clash, V2Ray)."""
     sub_ctx = resolve_sub_ctx(sub_ctx, request, db)
-    user: UserResponse = UserResponse.model_validate(dbuser)
+    user: UserResponse = UserResponse.model_validate(dbuser, context={"skip_default_links": True})
     access = subscription_access(user)
     if access["config_available"]:
         ensure_subscription_config_allowed(user)

@@ -8,7 +8,6 @@ from urllib import parse
 import yaml
 
 from app.models.proxy import ProxyTypes
-from app.services.node_pick import pick_node
 from app.singbox.quality import hysteria2_outbound_quality, tuic_outbound_quality
 from app.singbox.speed import speed_tier
 from app.subscription.quic import (
@@ -37,6 +36,8 @@ def _client_settings(user: "UserResponse", ptype: ProxyTypes) -> dict:
 def _wireguard_server_public_key(wg_node, *, variant: str) -> str:
     if variant == "awg":
         return wg_node.wireguard.awg_public_key
+    # "plain" and "xray_native" share the node's regular identity keypair —
+    # the noise-obfuscated inbound reuses it (see app/wireguard/xray_native.py).
     return wg_node.wireguard.public_key
 
 
@@ -49,6 +50,7 @@ def _xray_wireguard_outbound(
     port: int,
     local_addr: str,
     variant: str,
+    noise: Optional[dict] = None,
 ) -> dict:
     from app.subscription.wireguard import DEFAULT_KEEPALIVE
 
@@ -60,7 +62,7 @@ def _xray_wireguard_outbound(
     }
     if settings.get("preshared_key"):
         peer["preSharedKey"] = settings["preshared_key"]
-    return {
+    outbound = {
         "tag": tag,
         "protocol": "wireguard",
         "settings": {
@@ -70,6 +72,17 @@ def _xray_wireguard_outbound(
             "peers": [peer],
         },
     }
+    if noise is not None:
+        # Xray-core-only wire transform (Finalmask): disguises the WG handshake
+        # bytes so DPI can't fingerprint the protocol. Only meaningful when this
+        # outbound targets the node's native WG+noise inbound (see
+        # app/wireguard/xray_native.py) — stock WireGuard clients never see this
+        # path since they can only import the plain .conf/wireguard:// forms.
+        outbound["settings"]["noKernelTun"] = True
+        outbound["streamSettings"] = {
+            "finalmask": {"udp": [{"type": "noise", "settings": noise}]}
+        }
+    return outbound
 
 
 def _clash_wireguard_proxy(
@@ -102,20 +115,48 @@ def _clash_wireguard_proxy(
     return proxy
 
 
-def _collect_wireguard_exports(user: "UserResponse", wg_nodes: list) -> list[tuple[str, str, object, dict, str, int, str]]:
-    """Return (variant, tag, wg_node, settings, host, port, local_addr) tuples."""
+def _collect_wireguard_exports(user: "UserResponse", wg_nodes: list) -> list[tuple[str, str, object, dict, str, int, str, Optional[dict]]]:
+    """Return (variant, tag, wg_node, settings, host, port, local_addr, noise) tuples.
+
+    ``variant`` is one of ``"plain"``, ``"awg"``, or ``"xray_native"``. The
+    latter targets a node's Xray-native WG+noise inbound
+    (app/wireguard/xray_native.py) and carries a non-``None`` ``noise`` dict —
+    only Xray-core outbound consumers (the v2ray-json export) should honour
+    it; sing-box/clash-meta have no Finalmask support and must skip it, since
+    dialing that port without the matching noise wrapper simply fails.
+    """
+    from app.wireguard.xray_native import DEFAULT_NOISE_SETTINGS, xray_native_wg_enabled
+
     settings = _client_settings(user, ProxyTypes.WireGuard)
-    wg = pick_node(wg_nodes)
-    if not (wg and settings and wg.wireguard):
+    if not (settings and wg_nodes):
         return []
-    exports: list[tuple[str, str, object, dict, str, int, str]] = []
-    for variant in ("plain", "awg"):
-        if not user_config(settings, wg, variant=variant):
+    exports: list[tuple[str, str, object, dict, str, int, str, Optional[dict]]] = []
+    for wg in wg_nodes:
+        if not wg.wireguard:
             continue
-        host, port_str = node_endpoint(wg, variant=variant).rsplit(":", 1)
-        tag = f"wg-{wg.name}" + ("-awg" if variant == "awg" else "")
-        addr = settings.get("awg_address" if variant == "awg" else "address") or ""
-        exports.append((variant, tag, wg, settings, host, int(port_str), addr))
+        for variant in ("plain", "awg"):
+            if not user_config(settings, wg, variant=variant):
+                continue
+            host, port_str = node_endpoint(wg, variant=variant).rsplit(":", 1)
+            tag = f"wg-{wg.name}" + ("-awg" if variant == "awg" else "")
+            addr = settings.get("awg_address" if variant == "awg" else "address") or ""
+            exports.append((variant, tag, wg, settings, host, int(port_str), addr, None))
+        if xray_native_wg_enabled(wg.wireguard):
+            # Reuse the plain listener's public host (cfg.endpoint takes
+            # priority over dbnode.address — e.g. relay nodes reachable via a
+            # tunnelled/loopback RPyC address still advertise a real public
+            # endpoint here), just swapping in the noise inbound's own port.
+            host = node_endpoint(wg, variant="plain").rsplit(":", 1)[0]
+            exports.append((
+                "xray_native",
+                f"wg-{wg.name}-xray",
+                wg,
+                settings,
+                host,
+                int(wg.wireguard.xray_wg_listen_port),
+                settings.get("address") or "",
+                wg.wireguard.xray_wg_noise or DEFAULT_NOISE_SETTINGS,
+            ))
     return exports
 
 
@@ -168,120 +209,122 @@ def _append_singbox(user: "UserResponse", config_text: str) -> str:
         wg_nodes = [n for n in nodes if n.core_kind == "wireguard" or getattr(n, "wireguard", None)]
         sb_nodes = [n for n in nodes if getattr(n, "singbox", None)]
 
-        # WireGuard → sing-box wireguard outbound
+        # WireGuard → sing-box wireguard outbound (one outbound per connected node)
         if ProxyTypes.WireGuard in (user.proxies or {}):
-            wg = pick_node(wg_nodes)
             settings = _client_settings(user, ProxyTypes.WireGuard)
-            if wg and settings and wg.wireguard:
-                for variant in ("plain", "awg"):
-                    conf = user_config(settings, wg, variant=variant)
-                    if not conf:
-                        continue
-                    host, port_str = node_endpoint(wg, variant=variant).rsplit(":", 1)
-                    tag = f"wg-{wg.name}" + ("-awg" if variant == "awg" else "")
-                    if tag in tags:
-                        continue
-                    addr = settings.get("awg_address" if variant == "awg" else "address") or ""
-                    outbounds.append({
-                        "type": "wireguard",
-                        "tag": tag,
-                        "server": host,
-                        "server_port": int(port_str),
-                        "local_address": [addr] if addr else [],
-                        "private_key": settings.get("private_key"),
-                        "peer_public_key": (
-                            wg.wireguard.awg_public_key if variant == "awg"
-                            else wg.wireguard.public_key
-                        ),
-                        "mtu": wg.wireguard.mtu or 1280,
-                    })
-                    if settings.get("preshared_key"):
-                        outbounds[-1]["pre_shared_key"] = settings["preshared_key"]
-                    tags.add(tag)
-                    break
+            for variant, tag, wg, wg_settings, host, port, addr, _noise in _collect_wireguard_exports(
+                user, wg_nodes
+            ):
+                if tag in tags or variant == "xray_native":
+                    # Finalmask noise is an Xray-core-only wire transform;
+                    # sing-box has no client for it, so it must never dial
+                    # this port with a plain WireGuard handshake.
+                    continue
+                outbounds.append({
+                    "type": "wireguard",
+                    "tag": tag,
+                    "server": host,
+                    "server_port": port,
+                    "local_address": [addr] if addr else [],
+                    "private_key": wg_settings.get("private_key"),
+                    "peer_public_key": (
+                        wg.wireguard.awg_public_key if variant == "awg"
+                        else wg.wireguard.public_key
+                    ),
+                    "mtu": wg.wireguard.mtu or 1280,
+                })
+                if wg_settings.get("preshared_key"):
+                    outbounds[-1]["pre_shared_key"] = wg_settings["preshared_key"]
+                tags.add(tag)
 
         settings = _client_settings(user, ProxyTypes.Hysteria2)
         if settings:
-            node = pick_node(sb_nodes)
-            if node and node.singbox and node.singbox.hysteria2_enabled:
+            for node in sb_nodes:
+                if not (node.singbox and node.singbox.hysteria2_enabled):
+                    continue
                 host = node.singbox.sni or node.address
                 tag = f"hy2-{node.name}"
-                if tag not in tags:
-                    from app.singbox.sync import hysteria2_port_for_user
+                if tag in tags:
+                    continue
+                from app.singbox.sync import hysteria2_port_for_user
 
-                    hy2_port = hysteria2_port_for_user(
-                        int(node.singbox.hysteria2_port),
-                        user.speed_limit_up,
-                        user.speed_limit_down,
-                    )
-                    tier_limited = speed_tier(user.speed_limit_up, user.speed_limit_down) is not None
-                    outbounds.append({
-                        "type": "hysteria2",
-                        "tag": tag,
-                        "server": host,
-                        "server_port": hy2_port,
-                        "password": settings.get("password"),
-                        "tls": _singbox_tls(node, host),
-                        **hysteria2_outbound_quality(tier_limited=tier_limited),
-                    })
-                    if node.singbox.hysteria2_obfs_password:
-                        outbounds[-1]["obfs"] = {
-                            "type": "salamander",
-                            "password": node.singbox.hysteria2_obfs_password,
-                        }
-                    tags.add(tag)
+                hy2_port = hysteria2_port_for_user(
+                    int(node.singbox.hysteria2_port),
+                    user.speed_limit_up,
+                    user.speed_limit_down,
+                )
+                tier_limited = speed_tier(user.speed_limit_up, user.speed_limit_down) is not None
+                outbounds.append({
+                    "type": "hysteria2",
+                    "tag": tag,
+                    "server": host,
+                    "server_port": hy2_port,
+                    "password": settings.get("password"),
+                    "tls": _singbox_tls(node, host),
+                    **hysteria2_outbound_quality(tier_limited=tier_limited),
+                })
+                if node.singbox.hysteria2_obfs_password:
+                    outbounds[-1]["obfs"] = {
+                        "type": "salamander",
+                        "password": node.singbox.hysteria2_obfs_password,
+                    }
+                tags.add(tag)
 
         settings = _client_settings(user, ProxyTypes.TUIC)
         if settings:
-            node = pick_node(sb_nodes)
-            if node and node.singbox and node.singbox.tuic_enabled:
+            for node in sb_nodes:
+                if not (node.singbox and node.singbox.tuic_enabled):
+                    continue
                 host = node.singbox.sni or node.address
                 tag = f"tuic-{node.name}"
-                if tag not in tags:
-                    from app.singbox.sync import tuic_port_for_user
+                if tag in tags:
+                    continue
+                from app.singbox.sync import tuic_port_for_user
 
-                    tuic_port = tuic_port_for_user(
-                        int(node.singbox.tuic_port),
-                        user.speed_limit_up,
-                        user.speed_limit_down,
-                    )
-                    outbounds.append({
-                        "type": "tuic",
-                        "tag": tag,
-                        "server": host,
-                        "server_port": tuic_port,
-                        "uuid": str(settings.get("uuid") or ""),
-                        "password": settings.get("password"),
-                        "tls": _singbox_tls(node, host),
-                        **tuic_outbound_quality(
-                            congestion_control=node.singbox.tuic_congestion_control or "bbr"
-                        ),
-                    })
-                    tags.add(tag)
+                tuic_port = tuic_port_for_user(
+                    int(node.singbox.tuic_port),
+                    user.speed_limit_up,
+                    user.speed_limit_down,
+                )
+                outbounds.append({
+                    "type": "tuic",
+                    "tag": tag,
+                    "server": host,
+                    "server_port": tuic_port,
+                    "uuid": str(settings.get("uuid") or ""),
+                    "password": settings.get("password"),
+                    "tls": _singbox_tls(node, host),
+                    **tuic_outbound_quality(
+                        congestion_control=node.singbox.tuic_congestion_control or "bbr"
+                    ),
+                })
+                tags.add(tag)
 
         settings = _client_settings(user, ProxyTypes.AnyTLS)
         if settings:
-            node = pick_node(sb_nodes)
-            if node and node.singbox and node.singbox.anytls_enabled:
+            for node in sb_nodes:
+                if not (node.singbox and node.singbox.anytls_enabled):
+                    continue
                 host = node.singbox.sni or node.address
                 tag = f"anytls-{node.name}"
-                if tag not in tags:
-                    from app.singbox.sync import anytls_port_for_user
+                if tag in tags:
+                    continue
+                from app.singbox.sync import anytls_port_for_user
 
-                    anytls_port = anytls_port_for_user(
-                        int(node.singbox.anytls_port),
-                        user.speed_limit_up,
-                        user.speed_limit_down,
-                    )
-                    outbounds.append({
-                        "type": "anytls",
-                        "tag": tag,
-                        "server": host,
-                        "server_port": anytls_port,
-                        "password": settings.get("password"),
-                        "tls": _singbox_tls(node, host),
-                    })
-                    tags.add(tag)
+                anytls_port = anytls_port_for_user(
+                    int(node.singbox.anytls_port),
+                    user.speed_limit_up,
+                    user.speed_limit_down,
+                )
+                outbounds.append({
+                    "type": "anytls",
+                    "tag": tag,
+                    "server": host,
+                    "server_port": anytls_port,
+                    "password": settings.get("password"),
+                    "tls": _singbox_tls(node, host),
+                })
+                tags.add(tag)
 
     if len(outbounds) == before:
         return config_text
@@ -318,60 +361,71 @@ def _append_clash_meta(user: "UserResponse", config_text: str) -> str:
 
         settings = _client_settings(user, ProxyTypes.Hysteria2)
         if settings:
-            node = pick_node(sb_nodes)
-            tag = f"hy2-{node.name}" if node else None
-            link = user_hysteria2_link(
-                settings, node, remark=tag,
-                speed_limit_up=user.speed_limit_up,
-                speed_limit_down=user.speed_limit_down,
-            ) if node else None
-            if link and tag and tag not in names:
-                proxies.append(_clash_from_uri(link, tag, "hysteria2"))
+            for node in sb_nodes:
+                if not (node.singbox and node.singbox.hysteria2_enabled):
+                    continue
+                tag = f"hy2-{node.name}"
+                link = user_hysteria2_link(
+                    settings, node, remark=tag,
+                    speed_limit_up=user.speed_limit_up,
+                    speed_limit_down=user.speed_limit_down,
+                )
+                if link and tag not in names:
+                    proxies.append(_clash_from_uri(link, tag, "hysteria2"))
+                    names.add(tag)
 
         settings = _client_settings(user, ProxyTypes.TUIC)
         if settings:
-            node = pick_node(sb_nodes)
-            tag = f"tuic-{node.name}" if node else None
-            link = user_tuic_link(
-                settings, node, remark=tag,
-                speed_limit_up=user.speed_limit_up,
-                speed_limit_down=user.speed_limit_down,
-            ) if node else None
-            if link and tag and tag not in names:
-                proxies.append(_clash_from_uri(link, tag, "tuic"))
+            for node in sb_nodes:
+                if not (node.singbox and node.singbox.tuic_enabled):
+                    continue
+                tag = f"tuic-{node.name}"
+                link = user_tuic_link(
+                    settings, node, remark=tag,
+                    speed_limit_up=user.speed_limit_up,
+                    speed_limit_down=user.speed_limit_down,
+                )
+                if link and tag not in names:
+                    proxies.append(_clash_from_uri(link, tag, "tuic"))
+                    names.add(tag)
 
         settings = _client_settings(user, ProxyTypes.AnyTLS)
         if settings:
-            node = pick_node(sb_nodes)
-            tag = f"anytls-{node.name}" if node else None
-            link = user_anytls_link(
-                settings, node, remark=tag,
-                speed_limit_up=user.speed_limit_up,
-                speed_limit_down=user.speed_limit_down,
-            ) if node else None
-            if link and tag and tag not in names:
-                proxies.append(_clash_from_uri(link, tag, "anytls"))
+            for node in sb_nodes:
+                if not (node.singbox and node.singbox.anytls_enabled):
+                    continue
+                tag = f"anytls-{node.name}"
+                link = user_anytls_link(
+                    settings, node, remark=tag,
+                    speed_limit_up=user.speed_limit_up,
+                    speed_limit_down=user.speed_limit_down,
+                )
+                if link and tag not in names:
+                    proxies.append(_clash_from_uri(link, tag, "anytls"))
+                    names.add(tag)
 
         settings = _client_settings(user, ProxyTypes.WireGuard)
         if settings:
-            wg = pick_node(wg_nodes)
-            if wg and wg.wireguard:
-                for variant, tag, wg_node, wg_settings, host, port, addr in _collect_wireguard_exports(
-                    user, wg_nodes
-                ):
-                    if tag not in names:
-                        proxies.append(
-                            _clash_wireguard_proxy(
-                                tag=tag,
-                                settings=wg_settings,
-                                wg_node=wg_node,
-                                host=host,
-                                port=port,
-                                local_addr=addr,
-                                variant=variant,
-                            )
+            for variant, tag, wg_node, wg_settings, host, port, addr, _noise in _collect_wireguard_exports(
+                user, wg_nodes
+            ):
+                if variant == "xray_native":
+                    # Finalmask is Xray-core-only; clash-meta's wireguard proxy
+                    # type cannot speak it.
+                    continue
+                if tag not in names:
+                    proxies.append(
+                        _clash_wireguard_proxy(
+                            tag=tag,
+                            settings=wg_settings,
+                            wg_node=wg_node,
+                            host=host,
+                            port=port,
+                            local_addr=addr,
+                            variant=variant,
                         )
-                        names.add(tag)
+                    )
+                    names.add(tag)
 
     if len(proxies) == before:
         return config_text
@@ -448,8 +502,9 @@ def _append_v2ray_json(user: "UserResponse", config_text: str) -> str:
                 port=port,
                 local_addr=addr,
                 variant=variant,
+                noise=noise,
             )
-            for variant, tag, wg_node, wg_settings, host, port, addr in exports
+            for variant, tag, wg_node, wg_settings, host, port, addr, noise in exports
         ]
 
         for cfg in data:
@@ -459,7 +514,12 @@ def _append_v2ray_json(user: "UserResponse", config_text: str) -> str:
             tags = {o.get("tag") for o in outbounds if o.get("tag")}
             for ob in wg_outbounds:
                 if ob["tag"] not in tags:
-                    outbounds.insert(0, ob)
+                    # Append, never insert at 0: with no "routing" block Xray
+                    # falls back to the *first* outbound as the default route
+                    # for all traffic. Inserting WG here would silently divert
+                    # every client's traffic through WireGuard instead of the
+                    # actual selected proxy (tag "proxy" stays outbound[0]).
+                    outbounds.append(ob)
                     tags.add(ob["tag"])
             cfg["outbounds"] = outbounds
 
@@ -505,8 +565,9 @@ def collect_unified_share_links(user: "UserResponse") -> list[str]:
 
         settings = _client_settings(user, ProxyTypes.Hysteria2)
         if settings:
-            node = pick_node(sb_nodes)
-            if node and node.singbox and node.singbox.hysteria2_enabled:
+            for node in sb_nodes:
+                if not (node.singbox and node.singbox.hysteria2_enabled):
+                    continue
                 link = user_hysteria2_link(
                     settings, node, remark=f"{user.username}-{node.name}-hy2",
                     speed_limit_up=user.speed_limit_up,
@@ -517,8 +578,9 @@ def collect_unified_share_links(user: "UserResponse") -> list[str]:
 
         settings = _client_settings(user, ProxyTypes.TUIC)
         if settings:
-            node = pick_node(sb_nodes)
-            if node and node.singbox and node.singbox.tuic_enabled:
+            for node in sb_nodes:
+                if not (node.singbox and node.singbox.tuic_enabled):
+                    continue
                 link = user_tuic_link(
                     settings, node, remark=f"{user.username}-{node.name}-tuic",
                     speed_limit_up=user.speed_limit_up,
@@ -529,8 +591,9 @@ def collect_unified_share_links(user: "UserResponse") -> list[str]:
 
         settings = _client_settings(user, ProxyTypes.AnyTLS)
         if settings:
-            node = pick_node(sb_nodes)
-            if node and node.singbox and node.singbox.anytls_enabled:
+            for node in sb_nodes:
+                if not (node.singbox and node.singbox.anytls_enabled):
+                    continue
                 link = user_anytls_link(
                     settings, node, remark=f"{user.username}-{node.name}-anytls",
                     speed_limit_up=user.speed_limit_up,
@@ -541,11 +604,12 @@ def collect_unified_share_links(user: "UserResponse") -> list[str]:
 
         settings = _client_settings(user, ProxyTypes.WireGuard)
         if settings:
-            wg = pick_node(wg_nodes)
-            if wg and wg.wireguard:
+            for wg in wg_nodes:
+                if not wg.wireguard:
+                    continue
                 for variant in ("plain", "awg"):
                     remark = f"{user.username}-{wg.name}" + ("-awg" if variant == "awg" else "")
-                    uri = user_share_link(settings, wg, variant=variant, remark=remark)
+                    uri = user_share_link(settings, wg, variant=variant, remark=remark, db=db)
                     if uri:
                         links.append(uri)
 

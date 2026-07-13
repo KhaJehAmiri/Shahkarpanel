@@ -14,6 +14,8 @@ export interface SystemStats {
   version: string;
   mem_total: number;
   mem_used: number;
+  disk_total?: number;
+  disk_used?: number;
   cpu_cores: number;
   cpu_usage: number;
   total_user: number;
@@ -28,6 +30,18 @@ export interface SystemStats {
   incoming_bandwidth_speed: number;
   outgoing_bandwidth_speed: number;
   bandwidth_source?: string;
+  os_uptime?: number;
+  xray_uptime?: number;
+  node_uptime?: number;
+}
+
+export interface CoreStats {
+  version: string;
+  started: boolean;
+  logs_websocket: string;
+  startup_error?: string | null;
+  failed_inbound_tag?: string | null;
+  failed_port?: number | null;
 }
 
 export interface UserItem {
@@ -38,6 +52,7 @@ export interface UserItem {
   data_limit: number | null;
   expire: number | null;
   online_at: string | null;
+  online?: boolean;
   data_limit_reset_strategy?: string;
   note?: string;
   admin?: { username: string } | null;

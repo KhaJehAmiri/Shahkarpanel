@@ -67,6 +67,7 @@ export const MigrationWizard: FC = () => {
   const [results, setResults] = useState<MigrationResult[] | null>(null);
   const [uuidCollisions, setUuidCollisions] = useState<UuidCollisions | null>(null);
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<{ processed: number; total: number } | null>(null);
   const [uploadingIdx, setUploadingIdx] = useState<number | null>(null);
 
   const switchMode = (next: SourceMode) => {
@@ -124,6 +125,30 @@ export const MigrationWizard: FC = () => {
     return true;
   };
 
+  const pollJob = async (
+    jobId: string,
+  ): Promise<{ results: MigrationResult[]; uuid_collisions?: UuidCollisions }> => {
+    // Poll the background import until it finishes, streaming progress.
+    for (;;) {
+      const s = await api.get<{
+        state: string;
+        processed: number;
+        total: number;
+        results: MigrationResult[];
+        uuid_collisions?: UuidCollisions | null;
+        error?: string | null;
+      }>(`/migration/3x-ui/status/${jobId}`);
+      setProgress({ processed: s.processed || 0, total: s.total || 0 });
+      if (s.state === "done") {
+        return { results: s.results || [], uuid_collisions: s.uuid_collisions ?? undefined };
+      }
+      if (s.state === "error") {
+        throw new Error(s.error || t("common.error"));
+      }
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+  };
+
   const run = async (dryRun: boolean) => {
     const selected = panels.filter((p) => p.slug.trim());
     if (!validate(selected)) return;
@@ -150,9 +175,30 @@ export const MigrationWizard: FC = () => {
     };
 
     setBusy(true);
+    setProgress(null);
     try {
-      const path = dryRun ? "/migration/3x-ui/dry-run" : "/migration/3x-ui/run";
-      const data = await api.post<{ results: MigrationResult[]; uuid_collisions?: UuidCollisions }>(path, payload);
+      let data: { results: MigrationResult[]; uuid_collisions?: UuidCollisions };
+      if (dryRun) {
+        data = await api.post<{ results: MigrationResult[]; uuid_collisions?: UuidCollisions }>(
+          "/migration/3x-ui/dry-run",
+          payload,
+        );
+      } else {
+        // Real imports run in the background so the request returns instantly
+        // (thousands of clients can outlive proxy/client timeouts). Poll status.
+        const started = await api.post<{
+          job_id?: string;
+          async?: boolean;
+          results?: MigrationResult[];
+          uuid_collisions?: UuidCollisions;
+        }>("/migration/3x-ui/run", payload);
+        if (started.job_id) {
+          setProgress({ processed: 0, total: 0 });
+          data = await pollJob(started.job_id);
+        } else {
+          data = { results: started.results ?? [], uuid_collisions: started.uuid_collisions };
+        }
+      }
       setResults(data.results);
       setUuidCollisions(data.uuid_collisions ?? null);
       const failed = data.results.filter((r) => r.error);
@@ -177,6 +223,7 @@ export const MigrationWizard: FC = () => {
       toast.push(e instanceof Error ? e.message : t("common.error"), "error");
     } finally {
       setBusy(false);
+      setProgress(null);
     }
   };
 
@@ -268,7 +315,33 @@ export const MigrationWizard: FC = () => {
         <Button variant="primary" disabled={busy} onClick={() => run(false)}>{t("migration.run")}</Button>
       </div>
 
-      {busy && <SkeletonRows rows={3} cols={3} />}
+      {busy && progress ? (
+        <Callout tone="info" title={t("migration.importing")}>
+          {progress.total > 0
+            ? t("migration.importProgress", { processed: progress.processed, total: progress.total })
+            : t("migration.importStarting")}
+          <div
+            style={{
+              marginTop: 8,
+              height: 6,
+              borderRadius: 4,
+              background: "var(--nx-border, rgba(255,255,255,0.12))",
+              overflow: "hidden",
+            }}
+          >
+            <div
+              style={{
+                height: "100%",
+                width: `${progress.total > 0 ? Math.min(100, Math.round((progress.processed / progress.total) * 100)) : 8}%`,
+                background: "var(--nx-accent, #2ee0c4)",
+                transition: "width .4s ease",
+              }}
+            />
+          </div>
+        </Callout>
+      ) : busy ? (
+        <SkeletonRows rows={3} cols={3} />
+      ) : null}
 
       {uuidCollisions?.has_conflicts ? (
         <Callout tone="warn" title={t("migration.uuidCollisionsTitle")}>

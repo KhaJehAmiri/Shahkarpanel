@@ -1,12 +1,15 @@
 """3x-ui migration API."""
 from __future__ import annotations
 
+import threading
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
-from app.db import Session, get_db
+from app import logger
+from app.db import GetDB, Session, get_db
+from app.migration import jobs as migration_jobs
 from app.migration.sqlite_dump import save_uploaded_backup
 from app.migration.three_x_ui import MigrationFetchError, MigrationResult, PanelSource, run_batch
 from app.models.admin import Admin
@@ -67,13 +70,7 @@ def migration_dry_run(
     return _run_migration(body, db)
 
 
-@router.post("/3x-ui/run")
-def migration_run(
-    body: ThreeXUIMigrateRequest,
-    db: Session = Depends(get_db),
-    _: Admin = Depends(Admin.check_sudo_admin),
-):
-    result = _run_migration(body, db)
+def _post_migration_sync(db: Session, *, applied: bool) -> None:
     try:
         from app import app
         from app.routers import api_router
@@ -84,15 +81,84 @@ def migration_run(
 
         sync_subscription_legacy_nginx(db)
     except Exception:
-        pass
-    if not body.dry_run:
+        logger.exception("Post-migration subscription/nginx refresh failed")
+    if applied:
         try:
             from app.xray.serving import sync_core_users_now
 
             sync_core_users_now()
         except Exception:
-            pass
-    return result
+            logger.exception("Post-migration core user sync failed")
+
+
+def _run_migration_job(job_id: str, sources: List[PanelSource]) -> None:
+    """Background worker: full import + post-sync, streaming progress to the job."""
+    def progress(processed_delta: int = 0, total_delta: int = 0) -> None:
+        migration_jobs.bump_progress(job_id, processed_delta, total_delta)
+
+    try:
+        with GetDB() as db:
+            batch = run_batch(db, sources, dry_run=False, progress_cb=progress)
+            results = [_result_dict(r) for r in batch.results]
+            applied = any(r.applied for r in batch.results)
+            _post_migration_sync(db, applied=applied)
+        migration_jobs.finish(
+            job_id,
+            state="done",
+            results=results,
+            uuid_collisions=batch.uuid_collisions,
+        )
+    except MigrationFetchError as exc:
+        migration_jobs.finish(job_id, state="error", error=str(exc))
+    except Exception as exc:  # noqa: BLE001 - surface any failure to the poller
+        logger.exception("Background migration job %s failed", job_id)
+        migration_jobs.finish(job_id, state="error", error=f"Migration failed: {exc}")
+
+
+@router.post("/3x-ui/run")
+def migration_run(
+    body: ThreeXUIMigrateRequest,
+    db: Session = Depends(get_db),
+    _: Admin = Depends(Admin.check_sudo_admin),
+):
+    # Dry-run (preview) is cheap and read-only — keep it synchronous.
+    if body.dry_run:
+        result = _run_migration(body, db)
+        _post_migration_sync(db, applied=False)
+        return result
+
+    # A real import can process thousands of clients (tens of seconds), which
+    # outlives reverse-proxy/client timeouts. Run it in the background and let
+    # the client poll /3x-ui/status/{job_id} instead of holding the request.
+    sources = _validated_sources(body)
+
+    active = migration_jobs.active_job()
+    if active is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="A migration is already running. Wait for it to finish.",
+        )
+
+    job = migration_jobs.create()
+    thread = threading.Thread(
+        target=_run_migration_job,
+        args=(job.id, sources),
+        name=f"migration-{job.id[:8]}",
+        daemon=True,
+    )
+    thread.start()
+    return {"job_id": job.id, "state": job.state, "async": True}
+
+
+@router.get("/3x-ui/status/{job_id}")
+def migration_status(
+    job_id: str,
+    _: Admin = Depends(Admin.check_sudo_admin),
+):
+    job = migration_jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Unknown or expired migration job")
+    return job.to_dict()
 
 
 def _result_dict(r: MigrationResult) -> dict:
@@ -113,7 +179,7 @@ def _result_dict(r: MigrationResult) -> dict:
     }
 
 
-def _run_migration(body: ThreeXUIMigrateRequest, db: Session) -> dict:
+def _validated_sources(body: ThreeXUIMigrateRequest) -> List[PanelSource]:
     sources = [PanelSource(**p.model_dump()) for p in body.panels]
     if not sources:
         raise HTTPException(status_code=400, detail="Add at least one panel")
@@ -138,6 +204,11 @@ def _run_migration(body: ThreeXUIMigrateRequest, db: Session) -> dict:
                 status_code=400,
                 detail=f"Panel «{slug}»: admin username and password required for API import",
             )
+    return sources
+
+
+def _run_migration(body: ThreeXUIMigrateRequest, db: Session) -> dict:
+    sources = _validated_sources(body)
     try:
         batch = run_batch(db, sources, dry_run=body.dry_run)
     except MigrationFetchError as exc:

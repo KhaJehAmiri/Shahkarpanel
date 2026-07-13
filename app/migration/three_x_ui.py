@@ -624,13 +624,19 @@ def preview_panel(db: Session, source: PanelSource) -> MigrationResult:
     return preview
 
 
-def run_panel_migration(db: Session, source: PanelSource, *, dry_run: bool = False) -> MigrationResult:
+def run_panel_migration(
+    db: Session,
+    source: PanelSource,
+    *,
+    dry_run: bool = False,
+    progress_cb=None,
+) -> MigrationResult:
     preview = preview_panel(db, source)
     if preview.error or dry_run:
         return preview
 
     try:
-        return _apply_panel_migration(db, source, preview)
+        return _apply_panel_migration(db, source, preview, progress_cb=progress_cb)
     except Exception as exc:
         logger.exception("Migration failed for panel %s", source.slug)
         preview.error = str(exc)
@@ -638,7 +644,13 @@ def run_panel_migration(db: Session, source: PanelSource, *, dry_run: bool = Fal
         return preview
 
 
-def _apply_panel_migration(db: Session, source: PanelSource, preview: MigrationResult) -> MigrationResult:
+def _apply_panel_migration(
+    db: Session,
+    source: PanelSource,
+    preview: MigrationResult,
+    *,
+    progress_cb=None,
+) -> MigrationResult:
     settings, inbounds, _ = _fetch_panel_data(source)
     sub = _parse_panel_settings(settings if settings else {})
 
@@ -757,6 +769,11 @@ def _apply_panel_migration(db: Session, source: PanelSource, preview: MigrationR
             if not email:
                 continue
             username = _migration_username(source.slug, email, client)
+            # 3x-ui's ``email`` is the human-facing account label/username there.
+            # Our panel username is derived from subId (for stable subscription
+            # routing), so keep the original email searchable — an admin who only
+            # knows the 3x-ui username (no sub link) can then still find the user.
+            legacy_email = str(client.get("email") or "").strip()
 
             expire_raw = int(client.get("expiryTime") or client.get("expire") or 0)
             expire = expire_raw // 1000 if expire_raw > 1_000_000_000_000 else expire_raw
@@ -777,8 +794,12 @@ def _apply_panel_migration(db: Session, source: PanelSource, preview: MigrationR
                     "used": 0,
                     "any_enabled": False,
                     "sub_id": "",
+                    "email": "",
                 }
                 grouped[username] = pu
+
+            if legacy_email and not pu["email"]:
+                pu["email"] = legacy_email
 
             for p_type, p_settings in _client_proxies(client, inbound).items():
                 pu["proxies"].setdefault(p_type, p_settings)
@@ -799,11 +820,20 @@ def _apply_panel_migration(db: Session, source: PanelSource, preview: MigrationR
             if sub_id and not pu["sub_id"]:
                 pu["sub_id"] = sub_id
 
+    if progress_cb:
+        try:
+            progress_cb(0, len(grouped))
+        except Exception:
+            pass
+
     for pu in grouped.values():
         username = pu["username"]
         status = UserStatus.active if pu["any_enabled"] else UserStatus.disabled
         proxies = pu["proxies"]
         inbounds_map = {proto: tags for proto, tags in pu["inbounds"].items() if tags}
+        # Searchable breadcrumb back to the source account (panel search matches
+        # username/note/sub_token), so the 3x-ui username stays findable.
+        legacy_note = f"3x-ui: {pu['email']}" if pu["email"] else None
 
         try:
             # A SAVEPOINT per user isolates a single malformed client (e.g. an
@@ -827,6 +857,8 @@ def _apply_panel_migration(db: Session, source: PanelSource, preview: MigrationR
                     )
                     if pu["used"] > 0:
                         existing.used_traffic = pu["used"]
+                    if legacy_note and not (existing.note or "").strip():
+                        existing.note = legacy_note
                     user_id = existing.id
                     was_created = False
                 else:
@@ -839,6 +871,7 @@ def _apply_panel_migration(db: Session, source: PanelSource, preview: MigrationR
                             data_limit=pu["data_limit"] or None,
                             proxies=proxies,
                             inbounds=inbounds_map,
+                            note=legacy_note,
                         ),
                         commit=False,
                         inbound_cache=inbound_cache,
@@ -893,6 +926,11 @@ def _apply_panel_migration(db: Session, source: PanelSource, preview: MigrationR
             preview.aliases_created += 1
 
         processed += 1
+        if progress_cb and processed % 25 == 0:
+            try:
+                progress_cb(25, 0)
+            except Exception:
+                pass
         if processed % _COMMIT_BATCH_SIZE == 0:
             # Bound session/transaction growth — SQLAlchemy's autoflush cost on
             # every subsequent query scales with the number of pending objects,
@@ -901,6 +939,11 @@ def _apply_panel_migration(db: Session, source: PanelSource, preview: MigrationR
             db.commit()
 
     db.commit()
+    if progress_cb:
+        try:
+            progress_cb(processed % 25, 0)  # flush the remainder
+        except Exception:
+            pass
 
     from app.migration.validation import validate_panel_import
 
@@ -928,6 +971,7 @@ def run_batch(
     sources: list[PanelSource],
     *,
     dry_run: bool = False,
+    progress_cb=None,
 ) -> MigrationBatchResult:
     from app.migration.collisions import detect_uuid_collisions
     from app.migration.state import migration_context
@@ -972,7 +1016,7 @@ def run_batch(
             if src.slug in fetch_errors:
                 results.append(_failed_result(src, fetch_errors[src.slug]))
                 continue
-            result = run_panel_migration(db, src, dry_run=dry_run)
+            result = run_panel_migration(db, src, dry_run=dry_run, progress_cb=progress_cb)
             if collision_report.has_conflicts:
                 for hit in collision_report.collisions:
                     if hit.first_panel == src.slug or hit.second_panel == src.slug:

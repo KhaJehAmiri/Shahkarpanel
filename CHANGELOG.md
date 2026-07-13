@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.16.0 — 2026-07-14
+
+- Fix "delete expired/disabled" and "delete all" users: defer subscription-alias removal to the DB cascade and purge un-cascaded analytics/order rows (node protocol usage, client probes/telemetry/devices, user orders) before delete, so bulk delete no longer aborts on a foreign-key/not-null violation.
+- Detach (instead of drop) nullable user references on delete: payment history and dedicated-IP pool survive.
+
 ## 0.15.0 — 2026-07-14
 
 - 3x-ui migration: run imports in a background job with live progress polling (instant API response, no proxy timeout).

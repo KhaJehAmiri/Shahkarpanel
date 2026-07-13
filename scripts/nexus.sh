@@ -231,6 +231,12 @@ EN[nothing_changed]="Nothing to change."
 FA[nothing_changed]="چیزی برای تغییر نبود."
 EN[user_required]="Username is required."
 FA[user_required]="نام‌کاربری الزامی است."
+EN[creds_updated]="Login credentials updated."
+FA[creds_updated]="اطلاعات ورود بروزرسانی شد."
+EN[hash_failed]="Failed to hash the new password (is the panel container running?)."
+FA[hash_failed]="هش کردن رمز جدید ناموفق بود (آیا کانتینر پنل در حال اجراست؟)."
+EN[new_login_hint]="Use the new username & password to sign in to the panel."
+FA[new_login_hint]="برای ورود به پنل از نام‌کاربری و رمز جدید استفاده کنید."
 
 EN[p_new_path]="New dashboard path (blank = random)"
 FA[p_new_path]="مسیر جدید داشبورد (خالی = تصادفی)"
@@ -389,6 +395,52 @@ get_runtime_var() {
   sed -n "s/^${key}=//p" "$f" 2>/dev/null | head -n1
 }
 
+# Write KEY=VALUE into the runtime secrets file ($DATA_DIR/.env). Rewrites via a
+# temp file (not sed) so values with sed-hostile characters — bcrypt hashes
+# contain `$`, `/`, `.` — are stored verbatim. Only lines with an exact `KEY=`
+# prefix are replaced (so SUDO_PASSWORD does not touch SUDO_PASSWORD_HASH).
+set_runtime_var() {
+  local key="$1" val="$2" f="$DATA_DIR/.env" tmp
+  mkdir -p "$DATA_DIR"
+  [ -f "$f" ] || { : > "$f"; chmod 600 "$f"; }
+  tmp="$(mktemp)"
+  grep -v "^${key}=" "$f" > "$tmp" 2>/dev/null || true
+  printf '%s=%s\n' "$key" "$val" >> "$tmp"
+  cat "$tmp" > "$f"
+  rm -f "$tmp"
+}
+
+remove_runtime_var() {
+  local key="$1" f="$DATA_DIR/.env" tmp
+  [ -f "$f" ] || return 0
+  tmp="$(mktemp)"
+  grep -v "^${key}=" "$f" > "$tmp" 2>/dev/null || true
+  cat "$tmp" > "$f"
+  rm -f "$tmp"
+}
+
+# bcrypt-hash a plaintext password using the panel's own passlib (never puts the
+# plaintext on the command line — it is passed through the environment).
+owner_bcrypt() { # $1 = plaintext
+  local pass="$1"
+  local py='import os;from passlib.hash import bcrypt;print(bcrypt.using(rounds=12).hash(os.environ["NEXUSPANEL_ADMIN_PASSWORD"]))'
+  case "$DEPLOY_MODE" in
+    docker)  dc exec -T -e "NEXUSPANEL_ADMIN_PASSWORD=$pass" "$SERVICE" python3 -c "$py" 2>/dev/null | tr -d '\r\n' ;;
+    systemd) ( cd "$APP_DIR" && NEXUSPANEL_ADMIN_PASSWORD="$pass" python3 -c "$py" ) 2>/dev/null | tr -d '\r\n' ;;
+    *) return 1 ;;
+  esac
+}
+
+# Recreate the panel so a changed env_file (runtime secrets) is re-read. A plain
+# `restart` keeps the old container env, so credential changes need a recreate.
+apply_env_and_restart() {
+  if [ "$DEPLOY_MODE" = "docker" ]; then
+    dc up -d --force-recreate "$SERVICE"
+  else
+    systemctl restart "$SERVICE"
+  fi
+}
+
 rand_path() { printf '/%s/' "$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 16)"; }
 
 # --------------------------------------------------------------------------
@@ -526,7 +578,9 @@ action_disable_auto() {
   elif [ "$DEPLOY_MODE" = "systemd" ]; then systemctl disable "$SERVICE" && ok "$(t done)"; fi
 }
 
-reset_creds_via_env() { # $1=password(may be empty) $2=new username(may be empty)
+# DB-admins fallback: only used when the panel has NO env-based owner login
+# (e.g. after `admin import-from-env`). Targets the sole sudo admin row.
+reset_db_admin_via_env() { # $1=password(may be empty) $2=new username(may be empty)
   local pass="$1" newu="$2"
   local -a extra=()
   [ -n "$newu" ] && extra=(--new-username "$newu")
@@ -539,23 +593,52 @@ reset_creds_via_env() { # $1=password(may be empty) $2=new username(may be empty
 
 action_reset_userpass() {
   require_root || return 1
-  local newu p p2
-  # No "current username" prompt: recovery must work even if the operator has
-  # forgotten it. The CLI targets the sole sudo admin automatically. We only
-  # show the detected name for confirmation (best-effort, non-blocking).
-  local cur; cur="$(panel_cli admin whoami </dev/null 2>/dev/null | tr -d '\r\n')"
-  [ -n "$cur" ] && msg "$(t p_editing_admin): ${C_CYAN}${cur}${C_RESET}"
+  local cur newu p p2 hash
+  # The primary panel login is the env-based sudo owner (SUDO_USERNAME +
+  # SUDO_PASSWORD_HASH in the runtime secrets file), NOT a database admin row.
+  # Reset that in place — no old username/password needed, so a locked-out
+  # operator can always recover (mirrors x-ui's owner reset).
+  cur="$(get_runtime_var SUDO_USERNAME)"; [ -z "$cur" ] && cur="$(get_env_var SUDO_USERNAME)"
+
+  if [ -z "$cur" ]; then
+    # No env owner on this install → fall back to resetting the DB sudo admin.
+    local dbcur; dbcur="$(panel_cli admin whoami </dev/null 2>/dev/null | tr -d '\r\n')"
+    [ -n "$dbcur" ] && msg "$(t p_editing_admin): ${C_CYAN}${dbcur}${C_RESET}"
+    printf "%b" "$(t p_new_user): "; read -r newu
+    printf "%b" "$(t p_new_pass): "; read -r -s p; echo
+    if [ -n "$p" ]; then
+      printf "%b" "$(t p_confirm_pass): "; read -r -s p2; echo
+      [ "$p" = "$p2" ] || { err "$(t pass_mismatch)"; return 1; }
+    fi
+    if [ -z "$p" ] && [ -z "$newu" ]; then warn "$(t nothing_changed)"; return 0; fi
+    reset_db_admin_via_env "$p" "$newu" && { ok "$(t creds_updated)"; msg "$(t new_login_hint)"; }
+    return
+  fi
+
+  msg "$(t p_editing_admin): ${C_CYAN}${cur}${C_RESET}"
   printf "%b" "$(t p_new_user): "; read -r newu
   printf "%b" "$(t p_new_pass): "; read -r -s p; echo
   if [ -n "$p" ]; then
     printf "%b" "$(t p_confirm_pass): "; read -r -s p2; echo
     [ "$p" = "$p2" ] || { err "$(t pass_mismatch)"; return 1; }
   fi
-  if [ -z "$p" ] && [ -z "$newu" ]; then
-    warn "$(t nothing_changed)"
-    return 0
+  if [ -z "$p" ] && { [ -z "$newu" ] || [ "$newu" = "$cur" ]; }; then
+    warn "$(t nothing_changed)"; return 0
   fi
-  reset_creds_via_env "$p" "$newu"
+
+  if [ -n "$newu" ]; then set_runtime_var SUDO_USERNAME "$newu"; fi
+  if [ -n "$p" ]; then
+    hash="$(owner_bcrypt "$p")"
+    [ -n "$hash" ] || { err "$(t hash_failed)"; return 1; }
+    set_runtime_var SUDO_PASSWORD_HASH "\"$hash\""
+    remove_runtime_var SUDO_PASSWORD
+  fi
+
+  ok "$(t creds_updated)"
+  msg "$(t p_admin_user): ${C_CYAN}${newu:-$cur}${C_RESET}"
+  msg "$(t new_login_hint)"
+  warn "$(t restart_needed)"
+  apply_env_and_restart
 }
 
 action_reset_path() {

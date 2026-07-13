@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.15.0 — 2026-07-14
+
+- 3x-ui migration: run imports in a background job with live progress polling (instant API response, no proxy timeout).
+- 3x-ui migration: preserve source `email` (3x-ui username) in user `note` for panel search.
+- 3x-ui migration: merge multi-inbound clients by subId; per-user savepoints; faster bulk import.
+- Reseller `max_total_traffic`: block new users and auto-suspend when cap is exceeded.
+- `nexus password`: reset owner login without the previous username; clearer install summary with password recovery.
+
 ## 0.14.0 — 2026-07-07
 
 - Fix ruff lint in admin/user routers (unused imports, isort).

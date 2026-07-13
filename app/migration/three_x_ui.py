@@ -728,6 +728,17 @@ def _apply_panel_migration(db: Session, source: PanelSource, preview: MigrationR
     processed = 0
     _COMMIT_BATCH_SIZE = 300
 
+    # 3x-ui stores one client row per (inbound, subscriber), and a single
+    # subscriber normally appears in several inbounds under the SAME subId.
+    # Importing inbound-by-inbound used to create the user from the first
+    # inbound it was seen in and then merely *status-update* them for every
+    # other inbound — silently dropping all their other protocols/inbounds, so
+    # a subscription that served vless+vmess+trojan came across with a single
+    # protocol. Group every client by its resolved panel username first and
+    # merge all of their protocols, inbound tags and traffic so nothing is lost.
+    from collections import OrderedDict
+
+    grouped: "OrderedDict[str, dict]" = OrderedDict()
     for inbound in inbounds:
         new_tag = _slugify_tag(source.slug, str(inbound.get("tag") or inbound.get("remark") or ""))
         for client in _clients_from_inbound(inbound):
@@ -735,75 +746,132 @@ def _apply_panel_migration(db: Session, source: PanelSource, preview: MigrationR
             if not email:
                 continue
             username = _migration_username(source.slug, email, client)
-            sub_id = str(client.get("subId") or client.get("sub_id") or "").strip()
 
             expire_raw = int(client.get("expiryTime") or client.get("expire") or 0)
             expire = expire_raw // 1000 if expire_raw > 1_000_000_000_000 else expire_raw
             total_raw = float(client.get("totalGB") or client.get("total") or 0)
             data_limit = int(total_raw * 1024**3) if 0 < total_raw < 10_000 else int(total_raw)
             used = int(client.get("up") or 0) + int(client.get("down") or 0)
-            status = UserStatus.active if client.get("enable", True) else UserStatus.disabled
+            enabled = bool(client.get("enable", True))
+            sub_id = str(client.get("subId") or client.get("sub_id") or "").strip()
 
-            existing = crud.get_user(db, username)
-            if existing:
-                crud.update_user(
-                    db,
-                    existing,
-                    UserModify(
-                        status=status,
-                        expire=expire or None,
-                        data_limit=data_limit or None,
-                    ),
-                    commit=False,
-                    inbound_cache=inbound_cache,
-                )
-                preview.users_updated += 1
-                user_id = existing.id
-            else:
-                proxies = _client_proxies(client, inbound)
-                proto = str(inbound.get("protocol") or "vless").lower()
-                new_tag = _slugify_tag(source.slug, str(inbound.get("tag") or inbound.get("remark") or ""))
-                created = crud.create_user(
-                    db,
-                    UserCreate(
-                        username=username,
-                        status=UserStatusCreate.active,
-                        expire=expire or None,
-                        data_limit=data_limit or None,
-                        proxies=proxies,
-                        inbounds={proto: [new_tag]} if new_tag else {},
-                    ),
-                    commit=False,
-                    inbound_cache=inbound_cache,
-                )
-                if status == UserStatus.disabled:
+            pu = grouped.get(username)
+            if pu is None:
+                pu = {
+                    "username": username,
+                    "proxies": {},   # proto -> settings dict
+                    "inbounds": {},  # proto -> list[str] tags
+                    "expire": 0,
+                    "data_limit": 0,
+                    "used": 0,
+                    "any_enabled": False,
+                    "sub_id": "",
+                }
+                grouped[username] = pu
+
+            for p_type, p_settings in _client_proxies(client, inbound).items():
+                pu["proxies"].setdefault(p_type, p_settings)
+                tags = pu["inbounds"].setdefault(p_type, [])
+                if new_tag and new_tag not in tags:
+                    tags.append(new_tag)
+
+            # Most-permissive expiry/limit, summed traffic, enabled if enabled on
+            # any inbound (3x-ui tracks enable + up/down per inbound per client).
+            pu["expire"] = max(pu["expire"], expire) if (pu["expire"] and expire) else (pu["expire"] or expire)
+            pu["data_limit"] = (
+                max(pu["data_limit"], data_limit)
+                if (pu["data_limit"] and data_limit)
+                else (pu["data_limit"] or data_limit)
+            )
+            pu["used"] += used
+            pu["any_enabled"] = pu["any_enabled"] or enabled
+            if sub_id and not pu["sub_id"]:
+                pu["sub_id"] = sub_id
+
+    for pu in grouped.values():
+        username = pu["username"]
+        status = UserStatus.active if pu["any_enabled"] else UserStatus.disabled
+        proxies = pu["proxies"]
+        inbounds_map = {proto: tags for proto, tags in pu["inbounds"].items() if tags}
+
+        try:
+            # A SAVEPOINT per user isolates a single malformed client (e.g. an
+            # incompatible inbound/settings combo) so it rolls back only that
+            # user instead of aborting — and losing — the entire panel import.
+            with db.begin_nested():
+                existing = crud.get_user(db, username)
+                if existing is not None:
                     crud.update_user(
-                        db, created, UserModify(status=UserStatus.disabled),
-                        commit=False, inbound_cache=inbound_cache,
+                        db,
+                        existing,
+                        UserModify(
+                            status=status,
+                            expire=pu["expire"] or None,
+                            data_limit=pu["data_limit"] or None,
+                            proxies=proxies,
+                            inbounds=inbounds_map,
+                        ),
+                        commit=False,
+                        inbound_cache=inbound_cache,
                     )
-                if used > 0:
-                    created.used_traffic = used
-                preview.users_created += 1
-                user_id = created.id
+                    if pu["used"] > 0:
+                        existing.used_traffic = pu["used"]
+                    user_id = existing.id
+                    was_created = False
+                else:
+                    created = crud.create_user(
+                        db,
+                        UserCreate(
+                            username=username,
+                            status=UserStatusCreate.active,
+                            expire=pu["expire"] or None,
+                            data_limit=pu["data_limit"] or None,
+                            proxies=proxies,
+                            inbounds=inbounds_map,
+                        ),
+                        commit=False,
+                        inbound_cache=inbound_cache,
+                    )
+                    if status == UserStatus.disabled:
+                        crud.update_user(
+                            db, created, UserModify(status=UserStatus.disabled),
+                            commit=False, inbound_cache=inbound_cache,
+                        )
+                    if pu["used"] > 0:
+                        created.used_traffic = pu["used"]
+                    user_id = created.id
+                    was_created = True
 
-            if sub_id and user_id:
-                crud.upsert_subscription_token_alias(
-                    db,
-                    token=sub_id,
-                    user_id=user_id,
-                    endpoint_id=ep.id,
-                    source="3x-ui-migration",
-                    commit=False,
-                )
-                preview.aliases_created += 1
+                alias_added = False
+                if pu["sub_id"] and user_id:
+                    crud.upsert_subscription_token_alias(
+                        db,
+                        token=pu["sub_id"],
+                        user_id=user_id,
+                        endpoint_id=ep.id,
+                        source="3x-ui-migration",
+                        commit=False,
+                    )
+                    alias_added = True
+        except Exception as exc:
+            logger.warning("Migration: skipped user %s: %s", username, exc)
+            preview.warnings.append(f"Skipped user '{username}': {exc}")
+            continue
 
-            processed += 1
-            if processed % _COMMIT_BATCH_SIZE == 0:
-                # Bound session/transaction growth — SQLAlchemy's autoflush
-                # cost on every subsequent query scales with the number of
-                # pending objects, so one giant transaction for the whole
-                # panel degrades quadratically on large imports.
-                db.commit()
+        if was_created:
+            preview.users_created += 1
+        else:
+            preview.users_updated += 1
+        if alias_added:
+            preview.aliases_created += 1
+
+        processed += 1
+        if processed % _COMMIT_BATCH_SIZE == 0:
+            # Bound session/transaction growth — SQLAlchemy's autoflush cost on
+            # every subsequent query scales with the number of pending objects,
+            # so one giant transaction for the whole panel degrades
+            # quadratically on large imports.
+            db.commit()
 
     db.commit()
 

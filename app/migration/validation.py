@@ -83,7 +83,18 @@ def validate_panel_import(
     result.alias_count = aliases_created
     result.hosts_count = hosts_created
 
-    expected_users = len({c.get("email") or c.get("id") for c in clients if c.get("email") or c.get("id")})
+    # Match the importer's grouping key: a subscriber is keyed by subId when it
+    # has one (a single subId spanning multiple inbounds is one panel user),
+    # otherwise by email/id. Counting raw client rows here would spuriously
+    # fail the check for every multi-inbound subscription.
+    def _user_key(c: dict):
+        sid = str(c.get("subId") or c.get("sub_id") or "").strip()
+        if sid:
+            return ("sub", sid)
+        ident = str(c.get("email") or c.get("id") or "").strip()
+        return ("email", ident) if ident else None
+
+    expected_users = len({k for k in (_user_key(c) for c in clients) if k})
     if result.user_count < expected_users:
         result.errors.append(
             f"Expected at least {expected_users} users from backup, got {result.user_count} "
@@ -93,7 +104,13 @@ def validate_panel_import(
     else:
         result.checks.append(f"User count OK ({result.user_count} >= {expected_users} clients)")
 
-    alias_clients = sum(1 for c in clients if c.get("subId") or c.get("sub_id"))
+    # One alias == one (subId, endpoint); a subId repeated across inbounds is a
+    # single legacy sub route, so count distinct subIds, not client rows.
+    alias_clients = len({
+        str(c.get("subId") or c.get("sub_id") or "").strip()
+        for c in clients
+        if c.get("subId") or c.get("sub_id")
+    })
     if aliases_created < alias_clients:
         result.errors.append(
             f"Expected {alias_clients} legacy sub routes, created {aliases_created}"

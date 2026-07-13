@@ -11,7 +11,14 @@ from app.models.system import SystemStats
 from app.models.user import UserStatus
 from app.rbac import require_permission
 from app.utils import responses
-from app.utils.system import cpu_usage, disk_usage, memory_usage, os_uptime, realtime_bandwidth, realtime_bandwidth_source
+from app.utils.system import (
+    cpu_usage,
+    disk_usage,
+    memory_usage,
+    os_uptime,
+    realtime_bandwidth,
+    realtime_bandwidth_source,
+)
 
 router = APIRouter(tags=["System"], prefix="/api", responses={401: responses._401})
 

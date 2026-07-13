@@ -19,7 +19,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import CITEXT, JSONB
 from sqlalchemy.ext.hybrid import hybrid_property
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import backref, relationship
 from sqlalchemy.sql.expression import select, text
 
 from app import xray
@@ -1203,5 +1203,16 @@ class SubscriptionTokenAlias(Base):
     source = Column(String(64), nullable=False, server_default=text("'manual'"))
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    user = relationship("User", backref="subscription_token_aliases")
+    # ``user_id`` is NOT NULL with a DB-level ON DELETE CASCADE. Without
+    # ``passive_deletes`` the ORM would try to NULL ``user_id`` when a user is
+    # deleted (violating the NOT NULL constraint and aborting bulk deletes) —
+    # defer to the DB cascade instead so deleting a user drops its aliases.
+    user = relationship(
+        "User",
+        backref=backref(
+            "subscription_token_aliases",
+            passive_deletes=True,
+            cascade="all, delete-orphan",
+        ),
+    )
     endpoint = relationship("SubscriptionEndpoint", back_populates="token_aliases")

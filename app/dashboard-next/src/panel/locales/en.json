@@ -1629,6 +1629,8 @@
     "role": "Role",
     "maxUsers": "Max users",
     "maxNodes": "Max nodes",
+    "maxTotalTraffic": "Max total traffic (GB)",
+    "maxTotalTrafficHint": "When the reseller's total usage reaches this, its users are auto-disabled until the cap is raised or usage is reset. Blank = unlimited.",
     "newPassword": "New password",
     "cannotDeleteSudo": "Sudo accounts can only be removed via CLI",
     "tabUpdates": "Updates",

@@ -592,6 +592,16 @@ def create_user(
         if current >= admin.max_users:
             raise ValueError(f"Reseller user limit reached ({admin.max_users})")
 
+    if (
+        admin is not None
+        and not admin.is_sudo
+        and admin.max_total_traffic is not None
+        and int(admin.users_usage or 0) >= int(admin.max_total_traffic)
+    ):
+        raise ValueError(
+            f"Reseller total-traffic limit reached ({admin.max_total_traffic} bytes)"
+        )
+
     excluded_inbounds_tags = user.excluded_inbounds
     proxies = []
     for proxy_type, settings in user.proxies.items():

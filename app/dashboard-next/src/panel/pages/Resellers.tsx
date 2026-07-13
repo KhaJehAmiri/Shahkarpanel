@@ -16,6 +16,7 @@ type ResellerAccount = {
   role?: string;
   max_users?: number | null;
   max_nodes?: number | null;
+  max_total_traffic?: number | null;
 };
 
 export const Resellers: FC<{ embedded?: boolean }> = ({ embedded }) => {
@@ -318,6 +319,7 @@ const AddResellerAccount: FC<{ onClose: () => void; onDone: () => void }> = ({ o
   const [role, setRole] = useState("reseller");
   const [maxUsers, setMaxUsers] = useState("");
   const [maxNodes, setMaxNodes] = useState("");
+  const [maxTraffic, setMaxTraffic] = useState("");
   const [busy, setBusy] = useState(false);
 
   const submit = async () => {
@@ -326,6 +328,7 @@ const AddResellerAccount: FC<{ onClose: () => void; onDone: () => void }> = ({ o
       const body: Record<string, unknown> = { username: username.trim(), password, is_sudo: false, role };
       if (maxUsers.trim()) body.max_users = parseInt(maxUsers, 10);
       if (maxNodes.trim()) body.max_nodes = parseInt(maxNodes, 10);
+      if (maxTraffic.trim()) body.max_total_traffic = Math.round(parseFloat(maxTraffic) * 1024 ** 3);
       await api.post("/admin", body);
       toast.push(t("common.created"), "success");
       onDone();
@@ -361,10 +364,15 @@ const AddResellerAccount: FC<{ onClose: () => void; onDone: () => void }> = ({ o
             <Input type="number" min={1} value={maxNodes} onChange={(e: any) => setMaxNodes(e.target.value)} placeholder="∞" />
           </Field>
         </div>
+        <Field label={`${t("system.maxTotalTraffic")} (${t("common.optional")})`} hint={t("system.maxTotalTrafficHint")}>
+          <Input type="number" min={0} step="0.1" value={maxTraffic} onChange={(e: any) => setMaxTraffic(e.target.value)} placeholder="∞" />
+        </Field>
       </div>
     </Modal>
   );
 };
+
+const BYTES_PER_GB = 1024 ** 3;
 
 const EditResellerAccount: FC<{ account: ResellerAccount; onClose: () => void; onDone: () => void }> = ({ account, onClose, onDone }) => {
   const { t } = useTranslation();
@@ -372,6 +380,9 @@ const EditResellerAccount: FC<{ account: ResellerAccount; onClose: () => void; o
   const [role, setRole] = useState(account.role || "reseller");
   const [maxUsers, setMaxUsers] = useState(account.max_users != null ? String(account.max_users) : "");
   const [maxNodes, setMaxNodes] = useState(account.max_nodes != null ? String(account.max_nodes) : "");
+  const [maxTraffic, setMaxTraffic] = useState(
+    account.max_total_traffic != null ? String(+(account.max_total_traffic / BYTES_PER_GB).toFixed(2)) : ""
+  );
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -381,6 +392,7 @@ const EditResellerAccount: FC<{ account: ResellerAccount; onClose: () => void; o
       const body: Record<string, unknown> = { is_sudo: false, role };
       if (maxUsers.trim()) body.max_users = parseInt(maxUsers, 10);
       if (maxNodes.trim()) body.max_nodes = parseInt(maxNodes, 10);
+      body.max_total_traffic = maxTraffic.trim() ? Math.round(parseFloat(maxTraffic) * BYTES_PER_GB) : null;
       if (password.trim()) body.password = password;
       await api.put(`/admin/${encodeURIComponent(account.username)}`, body);
       toast.push(t("common.saved"), "success");
@@ -411,6 +423,9 @@ const EditResellerAccount: FC<{ account: ResellerAccount; onClose: () => void; o
             <Input type="number" min={1} value={maxNodes} onChange={(e: any) => setMaxNodes(e.target.value)} placeholder="∞" />
           </Field>
         </div>
+        <Field label={`${t("system.maxTotalTraffic")} (${t("common.optional")})`} hint={t("system.maxTotalTrafficHint")}>
+          <Input type="number" min={0} step="0.1" value={maxTraffic} onChange={(e: any) => setMaxTraffic(e.target.value)} placeholder="∞" />
+        </Field>
         <Field label={`${t("common.password")} (${t("common.optional")})`}>
           <Input type="password" value={password} onChange={(e: any) => setPassword(e.target.value)} placeholder={t("resellers.newPasswordPlaceholder")} />
         </Field>

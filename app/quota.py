@@ -9,7 +9,7 @@ from typing import Iterable, List, Optional, Sequence, Tuple
 from sqlalchemy.orm import Session
 
 from app.db import crud
-from app.db.models import User
+from app.db.models import Admin, User
 from app.models.user import UserStatus
 
 logger = logging.getLogger("nexus-quota")
@@ -138,6 +138,79 @@ def limit_user_quota(db: Session, dbuser: User, *, cap_usage: bool = True, disco
         disconnect_user_everywhere(dbuser)
     logger.info('User "%s" limited at %s/%s bytes', dbuser.username, dbuser.used_traffic, dbuser.data_limit)
     return True
+
+
+def resellers_over_traffic_cap(db: Session) -> Tuple[set, set]:
+    """Split non-sudo admins with a total-traffic cap into (over, under) sets.
+
+    A reseller is "over" once the running ``users_usage`` total reaches their
+    ``max_total_traffic``. Admins with no cap (NULL) are ignored entirely.
+    """
+    over: set = set()
+    under: set = set()
+    rows = (
+        db.query(Admin.id, Admin.users_usage, Admin.max_total_traffic)
+        .filter(Admin.is_sudo.is_(False), Admin.max_total_traffic.isnot(None))
+        .all()
+    )
+    for admin_id, usage, cap in rows:
+        if int(usage or 0) >= int(cap):
+            over.add(admin_id)
+        else:
+            under.add(admin_id)
+    return over, under
+
+
+def enforce_reseller_traffic_caps(db: Session):
+    """Suspend/restore users based on their reseller's total-traffic cap.
+
+    - Over-cap resellers: every currently ``active`` user is disabled and flagged
+      ``capped_by_reseller`` so it can be brought back later.
+    - Under-cap resellers: users this flag marks are reactivated (to ``active``,
+      or ``limited`` if their own quota is exhausted), never touching users the
+      admin disabled manually.
+
+    Returns ``(newly_suspended, reactivated_ids)`` so the caller can run the live
+    disconnect / core re-sync **after** the DB session closes (mirrors review()).
+    """
+    from types import SimpleNamespace
+
+    over_ids, under_ids = resellers_over_traffic_cap(db)
+    newly: List[SimpleNamespace] = []
+    reactivated: List[int] = []
+
+    if over_ids:
+        for u in (
+            db.query(User)
+            .filter(User.admin_id.in_(over_ids), User.status == UserStatus.active)
+            .all()
+        ):
+            u.status = UserStatus.disabled
+            u.capped_by_reseller = True
+            u.last_status_change = datetime.utcnow()
+            newly.append(SimpleNamespace(id=int(u.id), username=u.username))
+
+    if under_ids:
+        for u in (
+            db.query(User)
+            .filter(
+                User.admin_id.in_(under_ids),
+                User.capped_by_reseller.is_(True),
+            )
+            .all()
+        ):
+            u.capped_by_reseller = False
+            u.last_status_change = datetime.utcnow()
+            if quota_exhausted(u):
+                # Their own package is spent — don't serve, let review() manage it.
+                u.status = UserStatus.limited
+            else:
+                u.status = UserStatus.active
+                reactivated.append(int(u.id))
+
+    if newly or reactivated:
+        db.commit()
+    return newly, reactivated
 
 
 def flush_live_serving(*, force_restart: bool = False) -> None:

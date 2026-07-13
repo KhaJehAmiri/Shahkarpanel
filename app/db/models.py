@@ -150,6 +150,14 @@ class User(Base):
     hashed_portal_password = Column(String(128), nullable=True)
     portal_password_reset_at = Column(DateTime, nullable=True)
 
+    # True when the user was auto-disabled because its owning reseller exceeded
+    # its ``max_total_traffic`` cap (phase 3). Only these users are auto-
+    # reactivated when the reseller drops back under the cap, so a reseller's
+    # own manual disables are never silently re-enabled.
+    capped_by_reseller = Column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
+
     # SigmaGuard client profile (phase A): 'gamer' | 'trader' | 'normal'.
     # Drives protocol priority and node-selection policy in the client API.
     client_profile = Column(

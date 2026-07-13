@@ -208,7 +208,7 @@ def add_user(
             admin=crud.get_admin(db, admin.username),
         )
     except ValueError as exc:
-        if "user limit" in str(exc).lower():
+        if "limit reached" in str(exc).lower():
             raise HTTPException(status_code=403, detail=str(exc))
         raise
     except IntegrityError:
@@ -253,7 +253,7 @@ def add_user_from_template(
     try:
         dbuser = crud.create_user(db, new_user, admin=crud.get_admin(db, admin.username))
     except ValueError as exc:
-        if "user limit" in str(exc).lower():
+        if "limit reached" in str(exc).lower():
             raise HTTPException(status_code=403, detail=str(exc))
         raise
     except IntegrityError:

@@ -11,6 +11,7 @@ from app.models.user import ReminderType, UserResponse, UserStatus
 from app.quota import (
     disconnect_limited_users_if_due,
     disconnect_users_everywhere,
+    enforce_reseller_traffic_caps,
     enforce_usage_cap,
     limit_user_quota,
     reactivate_if_quota_available,
@@ -192,6 +193,43 @@ def review():
             xray.operations.sync_core_users_async()
         except Exception:
             logger.exception("review: on-hold activation core sync failed")
+
+    # --- reseller total-traffic cap enforcement ---
+    # Disable users whose reseller exceeded max_total_traffic, and restore them
+    # once the reseller is back under the cap (usage reset or raised limit).
+    cap_suspended: list[SimpleNamespace] = []
+    cap_reactivated: list[int] = []
+    with GetDB() as db:
+        try:
+            cap_suspended, cap_reactivated = enforce_reseller_traffic_caps(db)
+        except Exception:
+            logger.exception("review: reseller traffic-cap enforcement failed")
+
+    if cap_suspended:
+        try:
+            disconnect_users_everywhere(cap_suspended)
+        except Exception:
+            logger.exception("review: reseller-cap disconnect failed")
+
+    if cap_reactivated:
+        from app.db import crud
+
+        live_users = []
+        with GetDB() as db:
+            for uid in cap_reactivated:
+                dbuser = crud.get_user_by_id(db, uid)
+                if dbuser is None:
+                    continue
+                db.expunge(dbuser)
+                live_users.append(dbuser)
+        for dbuser in live_users:
+            try:
+                xray.operations.update_user(dbuser)
+            except Exception:
+                logger.exception(
+                    "review: reseller-cap reactivation live update failed for id=%s",
+                    dbuser.id,
+                )
 
 
 from app.ha import run_if_leader  # noqa: E402

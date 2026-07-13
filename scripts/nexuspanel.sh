@@ -50,6 +50,54 @@ warn() { echo "${YELLOW}[!]${NC} $*"; }
 err()  { echo "${BADC}[x]${NC} $*" >&2; }
 die()  { err "$*"; exit 1; }
 
+# ── Clean summary box primitives ──────────────────────────────────────────
+# A single, aligned box for the post-install summary so operators can see the
+# panel URL and credentials at a glance instead of hunting through log lines.
+BOX_INNER=68  # visible columns between the left/right borders
+
+_rep() { # $1=count $2=char  -> repeats char count times (no external deps)
+  local n="$1" ch="$2" out=''
+  while [ "$n" -gt 0 ]; do out="${out}${ch}"; n=$((n - 1)); done
+  printf '%s' "$out"
+}
+
+# Visible column width of a string, independent of the shell's locale. Under a
+# C/POSIX locale ${#str} counts *bytes*, so multibyte glyphs (◆ — ·) would
+# throw the box borders out of alignment. We drop UTF-8 continuation bytes
+# (0x80–0xBF) so the remaining byte count equals the number of code points,
+# which for the box glyphs equals their display width.
+_vwidth() {
+  ( LC_ALL=C; local s="${1//[$'\x80'-$'\xBF']/}"; printf '%s' "${#s}" )
+}
+
+box_top() { printf '%b╭%s╮%b\n' "$BRAND" "$(_rep "$BOX_INNER" '─')" "$NC"; }
+box_bot() { printf '%b╰%s╯%b\n' "$BRAND" "$(_rep "$BOX_INNER" '─')" "$NC"; }
+box_sep() { printf '%b├%s┤%b\n' "$BRAND" "$(_rep "$BOX_INNER" '─')" "$NC"; }
+
+box_head() { # $1 = title text (bold, brand-tinted)
+  local text="$1" pad
+  pad=$(( BOX_INNER - $(_vwidth "$text") - 2 ))
+  [ "$pad" -lt 0 ] && pad=0
+  printf '%b│%b %b%s%b%*s %b│%b\n' \
+    "$BRAND" "$NC" "${BOLD}${BRAND}" "$text" "$NC" "$pad" '' "$BRAND" "$NC"
+}
+
+box_kv() { # $1=label $2=value [$3=value color]
+  local label="$1" value="$2" vcolor="${3:-${BOLD}${WHITE}}" pad
+  pad=$(( BOX_INNER - $(_vwidth "$(printf ' %-12s%s' "$label" "$value")") - 1 ))
+  [ "$pad" -lt 0 ] && pad=0
+  printf '%b│%b %b%-12s%b%b%s%b%*s %b│%b\n' \
+    "$BRAND" "$NC" "$MUTED" "$label" "$NC" "$vcolor" "$value" "$NC" "$pad" '' "$BRAND" "$NC"
+}
+
+box_note() { # $1=text [$2=color]  full-width single-column line
+  local text="$1" color="${2:-$MUTED}" pad
+  pad=$(( BOX_INNER - $(_vwidth "$text") - 2 ))
+  [ "$pad" -lt 0 ] && pad=0
+  printf '%b│%b %b%s%b%*s %b│%b\n' \
+    "$BRAND" "$NC" "$color" "$text" "$NC" "$pad" '' "$BRAND" "$NC"
+}
+
 need_root() {
   [ "$(id -u)" -eq 0 ] || die "Please run as root (sudo)."
 }
@@ -715,6 +763,8 @@ EOF
 Admin username : ${admin_user}
 Admin password : ${admin_pass}
 Dashboard path : ${dash_path}
+Panel port     : ${PANEL_PORT}
+Database       : PostgreSQL nexuspanel@127.0.0.1:5432/nexuspanel
 CREDS
   chmod 600 "$cred_file"
   ok "Credentials saved to ${cred_file}"
@@ -898,7 +948,7 @@ dashboard_url() {
 
 print_access() {
   load_env_creds
-  local ip ver panel_state node_state base_url
+  local ip ver base_url panel_txt panel_col node_txt node_col db_txt
   ip="$(curl -fsSL --max-time 5 https://api.ipify.org 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}')"
   [ -n "$ip" ] || ip="YOUR_SERVER_IP"
   base_url="$(public_base_url "$ip")"
@@ -908,58 +958,56 @@ print_access() {
     ver="$(git -C "${APP_DIR}" rev-parse --short HEAD 2>/dev/null || echo unknown)"
   fi
   if panel_is_listening; then
-    panel_state="${OKC}listening on :${PANEL_PORT}${NC}"
+    panel_txt="running · listening on :${PANEL_PORT}"; panel_col="$OKC"
   elif compose ps --status running 2>/dev/null | grep -q nexuspanel; then
-    panel_state="${YELLOW}container up but API down${NC} (run: nexuspanel logs)"
+    panel_txt="container up, API down (run: nexuspanel logs)"; panel_col="$YELLOW"
   else
-    panel_state="${BADC}not running${NC} (run: nexuspanel up)"
+    panel_txt="not running (run: nexuspanel up)"; panel_col="$BADC"
   fi
   if docker image inspect nexuspanel/node:latest >/dev/null 2>&1; then
-    node_state="${OKC}built${NC}"
+    node_txt="built"; node_col="$OKC"
   else
-    node_state="${YELLOW}missing${NC} (run: docker build -t nexuspanel/node:latest ${APP_DIR}/node)"
+    node_txt="missing (docker build -t nexuspanel/node:latest node/)"; node_col="$YELLOW"
   fi
+  db_txt="PostgreSQL · ${POSTGRES_USER:-nexuspanel}@127.0.0.1:5432/${POSTGRES_DB:-nexuspanel}"
+
   echo
-  printf "%b" "$BRAND"
-  cat <<'EOF'
-      ╭──╮
-   ◆──┤ NX ├──◆
-      ╰──╯
-EOF
-  printf "%b" "$NC"
-  echo "  ${BOLD}${BRAND}NEXUS${NC} ${BOLD}PANEL${NC}  ${MUTED}install complete${NC}"
-  echo "  ${MUTED}──────────────────────────────────────────────${NC}"
-  echo
-  echo "  ${BRAND}◆${NC} ${BOLD}hub${NC}"
-  echo "  ${BRAND_DIM}│${NC}  Version     ${BRAND}git ${ver}${NC}  ·  port ${PANEL_PORT}"
-  echo "  ${BRAND_DIM}│${NC}  Panel       ${panel_state}"
-  echo "  ${BRAND_DIM}│${NC}  Node image  ${node_state}"
-  echo "  ${BRAND_DIM}│${NC}  Data        ${MUTED}${DATA_DIR}${NC}"
-  echo
-  echo "  ${BRAND}◆${NC} ${BOLD}access${NC}"
-  echo "  ${BRAND_DIM}│${NC}  Dashboard   ${BOLD}${dash_url}${NC}"
-  echo "  ${BRAND_DIM}│${NC}  System      ${dash_url}#/system"
-  echo "  ${BRAND_DIM}│${NC}  Subscribe   ${base_url}/sub/…  ·  Portal  ${base_url}/portal/"
+  box_top
+  box_head "◆  NEXUS PANEL — installation complete"
+  box_sep
+  box_head "ACCESS"
+  box_kv "URL" "$dash_url" "${BOLD}${BRAND}"
+  box_kv "Web Path" "${DASHBOARD_PATH}"
+  box_kv "Port" "${PANEL_PORT}"
+  box_kv "Subscribe" "${base_url}/sub/"
+  box_kv "Portal" "${base_url}/portal/"
   case "$base_url" in
     https://*) :;;
-    *) echo "  ${BRAND_DIM}│${NC}  ${YELLOW}HTTPS not enabled yet — run: nexuspanel https${NC}";;
+    *) box_note "! HTTPS not enabled yet — run: nexuspanel https" "$YELLOW";;
   esac
-  echo "  ${BRAND_DIM}│${NC}  Creds file  ${MUTED}${DATA_DIR}/install-credentials.txt${NC}"
-  if [ -n "${ADMIN_USERNAME:-}" ] && [ -n "${ADMIN_PASSWORD:-}" ]; then
-    echo
-    echo "  ${BRAND}◆${NC} ${BOLD}admin login${NC}"
-    echo "  ${BRAND_DIM}│${NC}  Username    ${BOLD}${ADMIN_USERNAME}${NC}"
-    echo "  ${BRAND_DIM}│${NC}  Password    ${BOLD}${ADMIN_PASSWORD}${NC}"
-    echo "  ${BRAND_DIM}│${NC}  ${YELLOW}Save now — password is stored only as a bcrypt hash.${NC}"
+  box_sep
+  box_head "ADMIN LOGIN"
+  box_kv "Username" "${ADMIN_USERNAME:-—}" "${BOLD}${WHITE}"
+  if [ -n "${ADMIN_PASSWORD:-}" ]; then
+    box_kv "Password" "${ADMIN_PASSWORD}" "${BOLD}${YELLOW}"
+    box_note "Save now — the password is stored only as a bcrypt hash." "$MUTED"
   else
-    echo
-    echo "  ${YELLOW}Admin: ${ADMIN_USERNAME:-?} — see ${DATA_DIR}/install-credentials.txt or: nexus password${NC}"
+    box_kv "Password" "set earlier (reset via: nexus password)" "$MUTED"
   fi
-  echo
-  echo "  ${BRAND}◆${NC} ${BOLD}manage${NC}"
-  echo "  ${BRAND_DIM}│${NC}  ${BOLD}nexus${NC}            interactive host console (status, update, SSL, …)"
-  echo "  ${BRAND_DIM}│${NC}  ${BOLD}nexuspanel${NC}       check · info · status · logs · update · backup"
-  echo "  ${BRAND_DIM}│${NC}  ${MUTED}First login → in-panel setup wizard (tenants, branding, tunnels).${NC}"
+  box_kv "Creds file" "${DATA_DIR}/install-credentials.txt" "$MUTED"
+  box_sep
+  box_head "SYSTEM"
+  box_kv "Version" "git ${ver}"
+  box_kv "Panel" "$panel_txt" "$panel_col"
+  box_kv "Node image" "$node_txt" "$node_col"
+  box_kv "Database" "$db_txt"
+  box_kv "Data dir" "${DATA_DIR}" "$MUTED"
+  box_sep
+  box_head "MANAGE"
+  box_kv "nexus" "host console (status · update · SSL · password)" "$MUTED"
+  box_kv "nexuspanel" "check · info · logs · update · backup" "$MUTED"
+  box_note "First login opens the in-panel setup wizard." "$MUTED"
+  box_bot
   echo
 }
 

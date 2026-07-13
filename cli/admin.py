@@ -1,3 +1,4 @@
+import os
 from datetime import datetime
 from typing import Optional, Union
 
@@ -197,6 +198,84 @@ def set_password(
         admin.password_reset_at = datetime.utcnow()
         db.commit()
         utils.success(f'Password for "{username}" updated successfully.')
+
+
+def _resolve_target_admin(db, username: Optional[str]) -> Admin:
+    """Pick the admin to operate on for a recovery-style credential reset.
+
+    When ``username`` is given it is used directly. Otherwise we target the
+    *sole* sudo admin — this is the whole point of the recovery flow: the
+    operator can set brand-new credentials without remembering the old
+    username. Ambiguity (0 or >1 sudo admins) is a hard error so we never
+    silently reset the wrong account.
+    """
+    if username:
+        admin = crud.get_admin(db, username=username)
+        if not admin:
+            utils.error(f'There\'s no admin with username "{username}"!')
+        return admin
+
+    sudo_admins = db.query(Admin).filter(Admin.is_sudo.is_(True)).order_by(Admin.id).all()
+    if not sudo_admins:
+        utils.error("No sudo admin found to reset.")
+    if len(sudo_admins) > 1:
+        names = ", ".join(a.username for a in sudo_admins)
+        utils.error(
+            "Multiple sudo admins exist; pass --username to pick one. "
+            f"Candidates: {names}"
+        )
+    return sudo_admins[0]
+
+
+@app.command(name="reset-credentials")
+def reset_credentials(
+    new_username: Optional[str] = typer.Option(
+        None, "--new-username", "-nu", help="New username (blank/omit = keep current)."
+    ),
+    username: Optional[str] = typer.Option(
+        None, *utils.FLAGS["username"],
+        help="Target admin. Only needed when more than one sudo admin exists.",
+    ),
+):
+    """
+    Reset the sudo admin's username and/or password WITHOUT the old username.
+
+    This is the "I forgot my login" recovery path: it targets the sole sudo
+    admin automatically, so you can set a fresh username and password even if
+    the previous ones are lost. The new password is read from the
+    ``NEXUSPANEL_ADMIN_PASSWORD`` env var (never passed on the command line);
+    leave it unset to keep the current password. Resetting the password also
+    invalidates existing login sessions.
+    """
+    password = os.environ.get(utils.PASSWORD_ENVIRON_NAME) or None
+    new_username = (new_username or "").strip() or None
+
+    if not password and not new_username:
+        utils.error(
+            "Nothing to change: set NEXUSPANEL_ADMIN_PASSWORD and/or pass --new-username."
+        )
+
+    with GetDB() as db:
+        admin = _resolve_target_admin(db, username)
+
+        if new_username and new_username != admin.username:
+            if crud.get_admin(db, username=new_username):
+                utils.error(f'An admin with username "{new_username}" already exists!')
+            admin.username = new_username
+
+        if password:
+            admin.hashed_password = pwd_context.hash(password)
+            admin.password_reset_at = datetime.utcnow()
+
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            utils.error(f'An admin with username "{new_username}" already exists!')
+
+        utils.success(
+            f'Credentials reset. Login username is now "{admin.username}".'
+        )
 
 
 @app.command(name="whoami")

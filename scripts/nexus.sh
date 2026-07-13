@@ -526,39 +526,36 @@ action_disable_auto() {
   elif [ "$DEPLOY_MODE" = "systemd" ]; then systemctl disable "$SERVICE" && ok "$(t done)"; fi
 }
 
-set_password_via_env() { # $1=username $2=password
+reset_creds_via_env() { # $1=password(may be empty) $2=new username(may be empty)
+  local pass="$1" newu="$2"
+  local -a extra=()
+  [ -n "$newu" ] && extra=(--new-username "$newu")
   case "$DEPLOY_MODE" in
-    docker)  dc exec -T -e "NEXUSPANEL_ADMIN_PASSWORD=$2" "$SERVICE" nexuspanel-cli admin set-password --username "$1" ;;
-    systemd) ( cd "$APP_DIR" && NEXUSPANEL_ADMIN_PASSWORD="$2" python3 nexuspanel-cli.py admin set-password --username "$1" ) ;;
+    docker)  dc exec -T -e "NEXUSPANEL_ADMIN_PASSWORD=$pass" "$SERVICE" nexuspanel-cli admin reset-credentials "${extra[@]}" ;;
+    systemd) ( cd "$APP_DIR" && NEXUSPANEL_ADMIN_PASSWORD="$pass" python3 nexuspanel-cli.py admin reset-credentials "${extra[@]}" ) ;;
     *) return 1 ;;
   esac
 }
 
 action_reset_userpass() {
   require_root || return 1
-  local u newu p p2
-  # Auto-detect the sole sudo admin instead of asking the operator to type the
-  # existing/previous username; only fall back to asking if that's ambiguous
-  # (e.g. more than one sudo admin) or the panel isn't reachable yet.
-  u="$(panel_cli admin whoami </dev/null 2>/dev/null | tr -d '\r\n')"
-  if [ -n "$u" ]; then
-    msg "$(t p_editing_admin): ${C_CYAN}${u}${C_RESET}"
-  else
-    printf "%b" "$(t p_admin_user): "; read -r u
-    [ -n "$u" ] || { err "$(t user_required)"; return 1; }
-  fi
+  local newu p p2
+  # No "current username" prompt: recovery must work even if the operator has
+  # forgotten it. The CLI targets the sole sudo admin automatically. We only
+  # show the detected name for confirmation (best-effort, non-blocking).
+  local cur; cur="$(panel_cli admin whoami </dev/null 2>/dev/null | tr -d '\r\n')"
+  [ -n "$cur" ] && msg "$(t p_editing_admin): ${C_CYAN}${cur}${C_RESET}"
   printf "%b" "$(t p_new_user): "; read -r newu
   printf "%b" "$(t p_new_pass): "; read -r -s p; echo
-  local changed=0
   if [ -n "$p" ]; then
     printf "%b" "$(t p_confirm_pass): "; read -r -s p2; echo
     [ "$p" = "$p2" ] || { err "$(t pass_mismatch)"; return 1; }
-    set_password_via_env "$u" "$p" && changed=1
   fi
-  if [ -n "$newu" ] && [ "$newu" != "$u" ]; then
-    panel_cli admin rename --current "$u" --new "$newu" && changed=1
+  if [ -z "$p" ] && [ -z "$newu" ]; then
+    warn "$(t nothing_changed)"
+    return 0
   fi
-  [ "$changed" -eq 1 ] || warn "$(t nothing_changed)"
+  reset_creds_via_env "$p" "$newu"
 }
 
 action_reset_path() {

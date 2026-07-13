@@ -641,10 +641,18 @@ load_env_creds() {
   _load_env_file "${RUNTIME_ENV_FILE}"
   ADMIN_USERNAME="${SUDO_USERNAME:-${ADMIN_USERNAME:-}}"
   DASHBOARD_PATH="${DASHBOARD_PATH:-/dashboard/}"
-  # Password is bcrypt-hashed in runtime .env and cannot be recovered; only the value
-  # generated during this install run (if any) is available for display.
+  # The runtime .env only keeps a bcrypt hash (not recoverable), but the installer
+  # also drops the plaintext password into the creds file. Recover it from there so
+  # a re-run / `nexuspanel info` can still show the operator their real password
+  # instead of an unhelpful "set earlier" placeholder.
+  if [ -z "${ADMIN_PASSWORD:-}" ] && [ -f "${DATA_DIR}/install-credentials.txt" ]; then
+    local _recovered
+    _recovered="$(sed -n 's/^Admin password[[:space:]]*:[[:space:]]*//p' \
+      "${DATA_DIR}/install-credentials.txt" 2>/dev/null | head -n1)"
+    [ -n "$_recovered" ] && ADMIN_PASSWORD="$_recovered"
+  fi
   PANEL_PORT="${UVICORN_PORT:-${PANEL_PORT:-8000}}"
-  export ADMIN_USERNAME PANEL_PORT DASHBOARD_PATH
+  export ADMIN_USERNAME ADMIN_PASSWORD PANEL_PORT DASHBOARD_PATH
 }
 
 ensure_runtime_env() {
@@ -990,11 +998,17 @@ print_access() {
   box_kv "Username" "${ADMIN_USERNAME:-—}" "${BOLD}${WHITE}"
   if [ -n "${ADMIN_PASSWORD:-}" ]; then
     box_kv "Password" "${ADMIN_PASSWORD}" "${BOLD}${YELLOW}"
-    box_note "Save now — the password is stored only as a bcrypt hash." "$MUTED"
+    box_note "Save it now — stored only as a bcrypt hash from here on." "$MUTED"
   else
-    box_kv "Password" "set earlier (reset via: nexus password)" "$MUTED"
+    box_kv "Password" "not shown — recover or reset (see below)" "$YELLOW"
   fi
-  box_kv "Creds file" "${DATA_DIR}/install-credentials.txt" "$MUTED"
+  if [ -f "${DATA_DIR}/install-credentials.txt" ]; then
+    box_kv "Creds file" "${DATA_DIR}/install-credentials.txt" "${BOLD}${WHITE}"
+    box_note "Show password: cat ${DATA_DIR}/install-credentials.txt" "$MUTED"
+  else
+    box_kv "Creds file" "— (file removed)" "$MUTED"
+    box_note "Forgot it? Set a new one: nexus password" "$MUTED"
+  fi
   box_sep
   box_head "SYSTEM"
   box_kv "Version" "git ${ver}"

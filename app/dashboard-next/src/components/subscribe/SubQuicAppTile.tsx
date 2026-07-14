@@ -77,13 +77,13 @@ export function SubQuicAppTile({
 
   return (
     <div className="sub-app-tile">
-      <div className="sub-app-icon" style={{ background: `linear-gradient(135deg, ${app.color}, #5b21b6)` }}>
+      <div className="sub-app-icon" style={{ background: `linear-gradient(145deg, ${app.color}, #0f766e)` }}>
         {app.short}
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div className="sub-app-name">{app.name}</div>
         {dl ? (
-          <a href={dl} target="_blank" rel="noopener noreferrer" className="sub-app-link" style={{ color: "#c4b5fd" }}>
+          <a href={dl} target="_blank" rel="noopener noreferrer" className="sub-app-link">
             {downloadLabel}
           </a>
         ) : (

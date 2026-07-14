@@ -84,7 +84,7 @@ export function ConnectCard({
       </div>
       {downloadHref && downloadLabel ? (
         <a href={downloadHref} download className={btnCls} style={{ textAlign: "center", textDecoration: "none", width: "100%" }}>
-          ↓ {downloadLabel}
+          {downloadLabel}
         </a>
       ) : null}
     </div>

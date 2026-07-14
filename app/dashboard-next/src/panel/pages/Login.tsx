@@ -4,7 +4,7 @@ import { api, login, setRefreshToken, setToken } from "../api/client";
 import { Branding } from "../api/types";
 import { useApp } from "../context/AppContext";
 import { LANGUAGES, setLanguage } from "../i18n";
-import { applyBranding, brandingTitle } from "../lib/branding";
+import { applyBranding, brandLogoUrl, brandingTitle } from "../lib/branding";
 import { Button, Field, Input } from "../components/ui";
 
 export const Login: FC = () => {
@@ -87,11 +87,12 @@ export const Login: FC = () => {
       <div className="nx-app-bg" aria-hidden />
       <div className="nx-login-card">
         <div className="nx-brand" style={{ padding: "0 0 22px", justifyContent: "center" }}>
-          {branding?.logo_url ? (
-            <img src={branding.logo_url} alt="" className="nx-brand-logo" style={{ width: 40, height: 40, objectFit: "contain" }} />
-          ) : (
-            <div className="nx-brand-logo" style={{ width: 40, height: 40, fontSize: 18 }}>N</div>
-          )}
+          <img
+            src={brandLogoUrl(branding)}
+            alt=""
+            className="nx-brand-logo nx-brand-logo-img"
+            style={{ width: 40, height: 40 }}
+          />
           <div>
             <div className="nx-brand-name" style={{ fontSize: 18 }}>{brandingTitle(branding, t("common.appName"))}</div>
             <div className="nx-brand-sub">{t("common.tagline")}</div>

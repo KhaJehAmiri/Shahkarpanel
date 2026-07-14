@@ -35,11 +35,11 @@ export function UsageBar({ used, total, usedLabel, totalLabel, pct, exhausted, o
           {total ? `${displayPct}%` : "∞"}
         </span>
       </div>
-      <div className="sub-usage-track">
+      <div className="sub-usage-track" role="progressbar" aria-valuenow={displayPct} aria-valuemin={0} aria-valuemax={100}>
         <div className={`sub-usage-fill ${tone}`} style={{ width: `${total ? displayPct : 4}%` }} />
       </div>
       {overage > 0 && overageLabel ? (
-        <div className="sub-usage-overage" style={{ marginTop: 8, fontSize: 12, color: "var(--sub-danger, #ef4444)" }}>
+        <div className="sub-usage-overage">
           {overageLabel}: <strong dir="ltr">{fmt(overage)}</strong>
         </div>
       ) : null}

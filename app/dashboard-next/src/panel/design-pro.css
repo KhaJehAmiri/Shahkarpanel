@@ -106,6 +106,12 @@
   background: linear-gradient(135deg, var(--nx-accent), var(--nx-accent-2)) !important;
   box-shadow: 0 4px 14px rgba(99, 102, 241, 0.35);
 }
+.nx-brand-logo-img {
+  background: transparent !important;
+  object-fit: cover !important;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.25) !important;
+  padding: 0 !important;
+}
 .nx-nav-item {
   border-radius: var(--nx-radius-sm) !important;
   transition: all 0.2s var(--nx-ease) !important;

@@ -17,12 +17,12 @@ import "./i18n";
 
 const Splash: FC = () => (
   <div style={{ minHeight: "100vh", display: "grid", placeItems: "center" }}>
-    <div
-      className="nx-brand-logo"
-      style={{ width: 48, height: 48, fontSize: 22, animation: "nx-shimmer 1.3s infinite" }}
-    >
-      N
-    </div>
+    <img
+      src="/sub-assets/brand/nexuspanel-logo.png"
+      alt=""
+      className="nx-brand-logo nx-brand-logo-img"
+      style={{ width: 48, height: 48, animation: "nx-shimmer 1.3s infinite" }}
+    />
   </div>
 );
 

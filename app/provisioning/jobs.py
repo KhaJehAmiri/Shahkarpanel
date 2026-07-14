@@ -141,6 +141,37 @@ def _run_job(job_id: str, creds: provisioning.SSHCredentials, command: str,
     ticker.start()
 
     try:
+        with _lock:
+            job.progress = 12
+            job.step = "docker"
+            job.message = "Installing Docker on the node…"
+        _set_node_provision(job.node_id, status="provisioning", message=job.message)
+        provisioning.run_remote_command(
+            creds,
+            "set -e; " + provisioning.install_docker_shell(),
+            timeout=ssh_timeout,
+            exec_timeout=min(exec_timeout, 600),
+        )
+
+        with _lock:
+            job.progress = 28
+            job.step = "image"
+            job.message = "Uploading node agent image over SSH…"
+        _set_node_provision(job.node_id, status="provisioning", message=job.message)
+        from config import NODE_AGENT_IMAGE
+
+        provisioning.push_agent_image_via_ssh(
+            creds,
+            NODE_AGENT_IMAGE,
+            timeout=ssh_timeout,
+            transfer_timeout=max(exec_timeout, 1800),
+        )
+
+        with _lock:
+            job.progress = 55
+            job.step = "agent"
+            job.message = "Starting node agent…"
+        _set_node_provision(job.node_id, status="provisioning", message=job.message)
         provisioning.run_remote_command(
             creds, command, timeout=ssh_timeout, exec_timeout=exec_timeout,
         )

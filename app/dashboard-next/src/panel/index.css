@@ -149,6 +149,12 @@ button { font-family: inherit; }
   display: grid; place-items: center; color: var(--nx-on-accent); font-weight: 800;
   letter-spacing: -0.02em;
 }
+.nx-brand-logo-img {
+  background: transparent !important;
+  object-fit: cover;
+  padding: 0;
+  box-shadow: none;
+}
 .nx-brand-name { font-weight: 700; font-size: 16px; letter-spacing: -0.02em; }
 .nx-brand-sub { font-size: 11px; color: var(--nx-text-faint); }
 

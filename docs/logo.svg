@@ -1,12 +1,21 @@
-<svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="NexusPanel">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 160" fill="none" role="img" aria-label="NexusPanel">
   <defs>
-    <linearGradient id="nxg" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#2DD4BF"/>
-      <stop offset="1" stop-color="#6366F1"/>
+    <linearGradient id="nx" x1="44" y1="46" x2="116" y2="114" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2ee0c4"/>
+      <stop offset="1" stop-color="#6366f1"/>
     </linearGradient>
   </defs>
-  <rect x="4" y="4" width="56" height="56" rx="16" fill="url(#nxg)" opacity="0.15"/>
-  <rect x="4" y="4" width="56" height="56" rx="16" stroke="url(#nxg)" stroke-width="2"/>
-  <path d="M20 44V20h8.5l11 17.5V20H48v24h-8.5L28.5 26.5V44H20z" fill="url(#nxg)"/>
-  <circle cx="48" cy="16" r="4" fill="#2DD4BF"/>
+
+  <g transform="translate(16 16)">
+    <rect width="128" height="128" rx="30" fill="#09090b"/>
+    <rect x="1" y="1" width="126" height="126" rx="29" stroke="url(#nx)" stroke-opacity="0.16" stroke-width="1"/>
+    <path fill="url(#nx)" d="M22 64 L46 34 C48.5 31 52.5 31 55 34 L61 41.5 L61 86.5 L55 94 C52.5 97 48.5 97 46 94 L22 64Z"/>
+    <path fill="url(#nx)" fill-opacity="0.86" d="M106 64 L82 34 C79.5 31 75.5 31 73 34 L67 41.5 L67 86.5 L73 94 C75.5 97 79.5 97 82 94 L106 64Z"/>
+    <rect x="61.5" y="40" width="5" height="48" rx="2.5" fill="#09090b"/>
+    <rect x="62.75" y="48" width="2.5" height="32" rx="1.25" fill="#2ee0c4"/>
+    <circle cx="98" cy="30" r="3.25" fill="#2ee0c4"/>
+  </g>
+
+  <text x="168" y="97" fill="#f4f4f5" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="54" font-weight="700" letter-spacing="-1.8">Nexus</text>
+  <text x="346" y="97" fill="#71717a" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="54" font-weight="600" letter-spacing="-1.4">Panel</text>
 </svg>

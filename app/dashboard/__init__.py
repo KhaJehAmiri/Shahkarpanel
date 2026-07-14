@@ -5,6 +5,7 @@ from pathlib import Path
 
 from app import app
 from config import DASHBOARD_PATH
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 log = logging.getLogger("uvicorn.error")
@@ -12,6 +13,9 @@ log = logging.getLogger("uvicorn.error")
 _base = Path(__file__).parent.parent
 _next_out = _base / "dashboard-next" / "out"
 _dashboard_dir = _next_out / "dashboard"
+_brand_dir = _next_out / "brand"
+if not _brand_dir.is_dir():
+    _brand_dir = _base / "dashboard-next" / "public" / "brand"
 
 
 def _require_build() -> None:
@@ -36,6 +40,27 @@ def _ensure_spa_fallback(directory: Path) -> None:
             pass
 
 
+def _favicon_path() -> Path | None:
+    for candidate in (
+        _next_out / "favicon.ico",
+        _brand_dir / "favicon.ico",
+        _base / "dashboard-next" / "public" / "favicon.ico",
+    ):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    path = _favicon_path()
+    if path is None:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=404)
+    return FileResponse(path)
+
+
 @app.on_event("startup")
 def startup() -> None:
     _require_build()
@@ -52,6 +77,12 @@ def startup() -> None:
             StaticFiles(directory=sub_static),
             name="subscription-assets",
         )
+
+    brand_dir = _next_out / "brand"
+    if not brand_dir.is_dir():
+        brand_dir = _base / "dashboard-next" / "public" / "brand"
+    if brand_dir.is_dir():
+        app.mount("/brand", StaticFiles(directory=brand_dir), name="brand-assets")
 
     if (_next_out / "index.html").is_file():
         _ensure_spa_fallback(_next_out)

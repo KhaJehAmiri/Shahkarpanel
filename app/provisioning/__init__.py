@@ -26,6 +26,8 @@ __all__ = [
     "ProvisioningUnavailable",
     "SSHCredentials",
     "build_install_command",
+    "install_docker_shell",
+    "push_agent_image_via_ssh",
     "resolve_panel_public_url",
     "ssh_available",
     "run_remote_command",
@@ -86,6 +88,39 @@ class SSHCredentials:
     private_key: Optional[str] = None
 
 
+def install_docker_shell() -> str:
+    """Bash fragment: ensure ``docker`` exists (get.docker.com, else distro packages)."""
+    # get.docker.com is often HTTP-403 from some DCs/countries; fall back to the
+    # distro package so provisioning doesn't die with a misleading
+    # "curl: (22) ... 403" + exit 127 (docker: command not found).
+    return (
+        "if ! command -v docker >/dev/null 2>&1; then "
+        "echo 'Installing Docker…'; "
+        "(curl -fsSL https://get.docker.com -o /tmp/np-get-docker.sh "
+        "&& sh /tmp/np-get-docker.sh) || true; "
+        "rm -f /tmp/np-get-docker.sh; "
+        "if ! command -v docker >/dev/null 2>&1; then "
+        "if command -v apt-get >/dev/null 2>&1; then "
+        "export DEBIAN_FRONTEND=noninteractive; "
+        "apt-get update -y >/dev/null "
+        "&& apt-get install -y docker.io docker-compose-v2 2>/dev/null "
+        "|| apt-get install -y docker.io; "
+        "systemctl enable --now docker 2>/dev/null || service docker start 2>/dev/null || true; "
+        "elif command -v dnf >/dev/null 2>&1; then "
+        "dnf install -y docker && systemctl enable --now docker; "
+        "elif command -v yum >/dev/null 2>&1; then "
+        "yum install -y docker && systemctl enable --now docker; "
+        "fi; "
+        "fi; "
+        "if ! command -v docker >/dev/null 2>&1; then "
+        "echo 'fatal: could not install Docker "
+        "(get.docker.com blocked and no distro package available)' >&2; "
+        "exit 1; "
+        "fi; "
+        "fi; "
+    )
+
+
 def build_install_command(
     panel_address: str,
     bootstrap_token: str,
@@ -136,8 +171,9 @@ def build_install_command(
 
     q = shlex.quote
     # Single-line JSON for SSH: -d "..." breaks on inner quotes; heredocs break in sh -c.
+    # -k: panel often presents a self-signed / IP cert that nodes do not trust.
     bootstrap_curl = (
-        f"curl -fsSL --connect-timeout 15 --max-time 60 -X POST {q(panel_url + '/api/node/bootstrap')} "
+        f"curl -fskSL --connect-timeout 15 --max-time 60 -X POST {q(panel_url + '/api/node/bootstrap')} "
         "-H 'Content-Type: application/json' -d "
         f"'{{\"token\":{json.dumps(bootstrap_token)},"
         f"\"name\":{json.dumps(node_name)},"
@@ -167,7 +203,6 @@ def build_install_command(
             f"chmod 600 {q(client_cert_path)}; "
         )
 
-    bundle_url = f"{panel_url.rstrip('/')}/api/nodes/agent-bundle?token={bootstrap_token}"
     image_url = f"{panel_url.rstrip('/')}/api/nodes/agent-image?token={bootstrap_token}"
 
     wg_host_egress = ""
@@ -188,71 +223,42 @@ def build_install_command(
             "fi; "
         )
 
-    # Prefer loading a prebuilt image from the panel. Many node DCs block Docker
-    # Hub / CloudFront (HTTP 403 on blob pulls), so `docker build` on the node
-    # cannot FROM python:*-slim even when the source bundle downloads fine.
-    awg_flag = "1" if include_awg else "0"
+    # Prefer a prebuilt image from the panel (HTTP) or SSH upload from the panel
+    # job. Never `docker build` on the node: restricted DCs get HTTP 403 from
+    # Docker Hub / CloudFront and the CloudFront blob URL becomes the only
+    # visible error after a successful agent-bundle download.
     if force_image_rebuild:
         ensure_image = (
             f"NP_IMG={q(image)}; "
-            "NP_BD=$(mktemp -d); "
-            f"curl -fsSL {q(bundle_url)} | tar -xzf - -C \"$NP_BD\"; "
-            f"docker build --build-arg INCLUDE_AWG={awg_flag} -t \"$NP_IMG\" \"$NP_BD/node\"; "
-            "rm -rf \"$NP_BD\"; "
+            "echo 'Refreshing node image from panel…'; "
+            f"if ! curl -fskSL --connect-timeout 30 --max-time 1800 {q(image_url)} | docker load; then "
+            "echo 'fatal: could not download node agent image from panel "
+            "(this network cannot pull Docker Hub / CloudFront either — "
+            "retry SSH provision so the panel can upload the image)' >&2; "
+            "exit 1; "
+            "fi; "
         )
     else:
         ensure_image = (
             f"NP_IMG={q(image)}; "
             "if ! docker image inspect \"$NP_IMG\" >/dev/null 2>&1; then "
             "echo 'Loading node image from panel…'; "
-            f"if ! curl -fsSL --connect-timeout 30 --max-time 1800 {q(image_url)} | docker load; then "
-            "echo 'Panel image load failed — falling back to on-node docker build…'; "
-            "NP_BD=$(mktemp -d); "
-            f"curl -fsSL {q(bundle_url)} | tar -xzf - -C \"$NP_BD\"; "
-            f"docker build --build-arg INCLUDE_AWG={awg_flag} -t \"$NP_IMG\" \"$NP_BD/node\"; "
-            "rm -rf \"$NP_BD\"; "
+            f"if ! curl -fskSL --connect-timeout 30 --max-time 1800 {q(image_url)} | docker load; then "
+            "echo 'fatal: could not load node agent image from panel "
+            "(SSH provision uploads it over SSH; for manual install check "
+            "PANEL_PUBLIC_ADDRESS and that /api/nodes/agent-image works)' >&2; "
+            "exit 1; "
             "fi; "
             "fi; "
             "if ! docker image inspect \"$NP_IMG\" >/dev/null 2>&1; then "
-            "echo 'fatal: node agent image not available "
-            "(panel image download failed and docker build cannot reach Docker Hub)' >&2; "
+            "echo 'fatal: node agent image not tagged as '\"$NP_IMG\"' after docker load' >&2; "
             "exit 1; "
             "fi; "
         )
 
-    # get.docker.com is often HTTP-403 from some DCs/countries; fall back to the
-    # distro package so provisioning doesn't die with a misleading
-    # "curl: (22) ... 403" + exit 127 (docker: command not found).
-    install_docker = (
-        "if ! command -v docker >/dev/null 2>&1; then "
-        "echo 'Installing Docker…'; "
-        "(curl -fsSL https://get.docker.com -o /tmp/np-get-docker.sh "
-        "&& sh /tmp/np-get-docker.sh) || true; "
-        "rm -f /tmp/np-get-docker.sh; "
-        "if ! command -v docker >/dev/null 2>&1; then "
-        "if command -v apt-get >/dev/null 2>&1; then "
-        "export DEBIAN_FRONTEND=noninteractive; "
-        "apt-get update -y >/dev/null "
-        "&& apt-get install -y docker.io docker-compose-v2 2>/dev/null "
-        "|| apt-get install -y docker.io; "
-        "systemctl enable --now docker 2>/dev/null || service docker start 2>/dev/null || true; "
-        "elif command -v dnf >/dev/null 2>&1; then "
-        "dnf install -y docker && systemctl enable --now docker; "
-        "elif command -v yum >/dev/null 2>&1; then "
-        "yum install -y docker && systemctl enable --now docker; "
-        "fi; "
-        "fi; "
-        "if ! command -v docker >/dev/null 2>&1; then "
-        "echo 'fatal: could not install Docker "
-        "(get.docker.com blocked and no distro package available)' >&2; "
-        "exit 1; "
-        "fi; "
-        "fi; "
-    )
-
     return (
         "set -e; "
-        f"{install_docker}"
+        f"{install_docker_shell()}"
         # WireGuard needs IPv4 forwarding on the host kernel.
         "sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true; "
         "grep -q '^net.ipv4.ip_forward=1' /etc/sysctl.conf 2>/dev/null "
@@ -304,6 +310,10 @@ def _summarize_remote_error(stderr: str, stdout: str, exit_code: int, limit: int
         "command not found",
         "could not install Docker",
         "get.docker.com",
+        "cloudfront",
+        "403 Forbidden",
+        "could not load node agent image",
+        "could not download node agent image",
     )
     hits = [ln for ln in lines if any(m in ln for m in markers)]
     # Prefer the last actionable hit; when exit 127, call out missing commands.
@@ -316,17 +326,8 @@ def _summarize_remote_error(stderr: str, stdout: str, exit_code: int, limit: int
     return msg
 
 
-def run_remote_command(
-    creds: SSHCredentials,
-    command: str,
-    timeout: int = 30,
-    exec_timeout: int = 600,
-) -> str:
-    """Run ``command`` on the remote host over SSH, returning combined output.
-
-    Raises :class:`ProvisioningUnavailable` if paramiko isn't installed and
-    :class:`ProvisioningError` on connection/exec failure.
-    """
+def _connect_ssh(creds: SSHCredentials, timeout: int = 30):
+    """Open a connected paramiko SSHClient (caller must ``close()``)."""
     try:
         import paramiko
     except Exception as exc:  # pragma: no cover - exercised when paramiko absent
@@ -354,38 +355,122 @@ def run_remote_command(
         # Trust-on-first-use: expected default when bootstrapping a fresh node
         # you own (it has never been seen before).
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+    connect_kwargs = dict(
+        hostname=creds.host,
+        port=creds.port,
+        username=creds.username,
+        timeout=timeout,
+        banner_timeout=timeout,
+        auth_timeout=timeout,
+    )
+    if creds.private_key:
+        import io
+
+        key_data = io.StringIO(creds.private_key)
+        pkey = None
+        for key_cls in (
+            paramiko.Ed25519Key,
+            paramiko.RSAKey,
+            paramiko.ECDSAKey,
+        ):
+            try:
+                key_data.seek(0)
+                pkey = key_cls.from_private_key(key_data)
+                break
+            except Exception:
+                continue
+        if pkey is None:
+            raise ProvisioningError("unsupported SSH private key format")
+        connect_kwargs["pkey"] = pkey
+    else:
+        connect_kwargs["password"] = creds.password
+
     try:
-        connect_kwargs = dict(
-            hostname=creds.host,
-            port=creds.port,
-            username=creds.username,
-            timeout=timeout,
-            banner_timeout=timeout,
-            auth_timeout=timeout,
-        )
-        if creds.private_key:
-            import io
-
-            key_data = io.StringIO(creds.private_key)
-            pkey = None
-            for key_cls in (
-                paramiko.Ed25519Key,
-                paramiko.RSAKey,
-                paramiko.ECDSAKey,
-            ):
-                try:
-                    key_data.seek(0)
-                    pkey = key_cls.from_private_key(key_data)
-                    break
-                except Exception:
-                    continue
-            if pkey is None:
-                raise ProvisioningError("unsupported SSH private key format")
-            connect_kwargs["pkey"] = pkey
-        else:
-            connect_kwargs["password"] = creds.password
         client.connect(**connect_kwargs)
+    except Exception as exc:
+        try:
+            client.close()
+        except Exception:
+            pass
+        msg = str(exc)
+        if "not found in known_hosts" in msg or "not in known_hosts" in msg:
+            raise ProvisioningError(
+                f"SSH host key for '{creds.host}' is not trusted "
+                "(PROVISIONING_SSH_STRICT_HOST_KEY is on). For a brand-new node, "
+                "set PROVISIONING_SSH_STRICT_HOST_KEY=False in the panel .env to "
+                "trust it on first connect, or add its key to known_hosts first."
+            ) from exc
+        raise ProvisioningError(f"SSH provisioning failed: {exc}") from exc
+    return client
 
+
+def push_agent_image_via_ssh(
+    creds: SSHCredentials,
+    image: Optional[str] = None,
+    *,
+    timeout: int = 30,
+    transfer_timeout: int = 1800,
+) -> str:
+    """Upload the panel's ``docker save`` of the node agent and ``docker load`` it.
+
+    Bypasses Docker Hub and any need for the node to download from the panel's
+    public HTTPS URL — critical when the node DC returns CloudFront 403.
+    """
+    from app.provisioning.agent_image import AgentImageUnavailable, cached_image_path
+    from config import NODE_AGENT_IMAGE
+
+    ref = (image or NODE_AGENT_IMAGE).strip() or "nexuspanel/node:latest"
+    try:
+        local = cached_image_path(ref)
+    except AgentImageUnavailable as exc:
+        raise ProvisioningError(str(exc)) from exc
+
+    remote = f"/tmp/nexuspanel-node-agent-{os.getpid()}.tar.gz"
+    client = _connect_ssh(creds, timeout=timeout)
+    try:
+        sftp = client.open_sftp()
+        try:
+            sftp.put(str(local), remote)
+        finally:
+            sftp.close()
+
+        load_cmd = (
+            f"set -e; "
+            f"docker load -i {shlex.quote(remote)}; "
+            f"rm -f {shlex.quote(remote)}; "
+            f"docker image inspect {shlex.quote(ref)} >/dev/null"
+        )
+        stdin, stdout, stderr = client.exec_command(load_cmd, timeout=transfer_timeout)
+        exit_code = stdout.channel.recv_exit_status()
+        out = stdout.read().decode("utf-8", "replace")
+        err = stderr.read().decode("utf-8", "replace")
+        if exit_code != 0:
+            raise ProvisioningError(
+                _summarize_remote_error(err, out, exit_code)
+                or f"docker load failed on {creds.host} (exit {exit_code})"
+            )
+        return out
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+
+def run_remote_command(
+    creds: SSHCredentials,
+    command: str,
+    timeout: int = 30,
+    exec_timeout: int = 600,
+) -> str:
+    """Run ``command`` on the remote host over SSH, returning combined output.
+
+    Raises :class:`ProvisioningUnavailable` if paramiko isn't installed and
+    :class:`ProvisioningError` on connection/exec failure.
+    """
+    client = _connect_ssh(creds, timeout=timeout)
+    try:
         stdin, stdout, stderr = client.exec_command(command, timeout=exec_timeout)
         exit_code = stdout.channel.recv_exit_status()
         out = stdout.read().decode("utf-8", "replace")
@@ -396,14 +481,6 @@ def run_remote_command(
     except ProvisioningError:
         raise
     except Exception as exc:
-        msg = str(exc)
-        if "not found in known_hosts" in msg or "not in known_hosts" in msg:
-            raise ProvisioningError(
-                f"SSH host key for '{creds.host}' is not trusted "
-                "(PROVISIONING_SSH_STRICT_HOST_KEY is on). For a brand-new node, "
-                "set PROVISIONING_SSH_STRICT_HOST_KEY=False in the panel .env to "
-                "trust it on first connect, or add its key to known_hosts first."
-            ) from exc
         raise ProvisioningError(f"SSH provisioning failed: {exc}") from exc
     finally:
         try:

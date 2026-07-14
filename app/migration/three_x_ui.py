@@ -436,8 +436,17 @@ def _listen_port_key(listen: str, port: int) -> tuple[str, int]:
     return listen, port
 
 
-def _occupied_listen_ports(xray_config: dict, *, include_live: bool = False) -> set[tuple[str, int]]:
+def _occupied_listen_ports(
+    xray_config: dict,
+    *,
+    include_live: bool = False,
+    exclude_tags: set[str] | None = None,
+) -> set[tuple[str, int]]:
     occupied: set[tuple[str, int]] = set()
+    exclude_tags = exclude_tags or set()
+    # Ports currently owned by inbounds we are about to replace must not force a remap
+    # (live listeners still hold them until Xray restarts with the updated config).
+    excluded_ports: set[int] = set()
     for ib in xray_config.get("inbounds") or []:
         if not isinstance(ib, dict):
             continue
@@ -448,12 +457,17 @@ def _occupied_listen_ports(xray_config: dict, *, include_live: bool = False) -> 
             port = int(raw_port)
         except (TypeError, ValueError):
             continue
+        if str(ib.get("tag") or "") in exclude_tags:
+            excluded_ports.add(port)
+            continue
         occupied.add(_listen_port_key(str(ib.get("listen") or "0.0.0.0"), port))
     if include_live:
         try:
             from app.xray.inbound_ports import listener_pids_by_port
 
             for port in listener_pids_by_port():
+                if port in excluded_ports:
+                    continue
                 occupied.add(_listen_port_key("0.0.0.0", port))
                 occupied.add(_listen_port_key("127.0.0.1", port))
                 occupied.add(_listen_port_key("::", port))
@@ -535,7 +549,7 @@ def _merge_inbound_to_xray(panel_slug: str, inbound: dict, xray_config: dict) ->
             tls_warnings.append(
                 f"Inbound {new_tag}: listen set to 127.0.0.1 (privileged port {port_num} cannot bind as panel user)"
             )
-    occupied = _occupied_listen_ports(xray_config, include_live=True)
+    occupied = _occupied_listen_ports(xray_config, include_live=True, exclude_tags={new_tag})
     listen = str(entry.get("listen") or "0.0.0.0")
     try:
         port_num = int(entry.get("port") or 0)

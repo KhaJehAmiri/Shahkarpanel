@@ -5,7 +5,13 @@ export const metadata: Metadata = {
   title: "NexusPanel",
   description: "NexusPanel — professional proxy management",
   icons: {
-    icon: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><circle cx='12' cy='12' r='10' fill='%232ee0c4'/></svg>",
+    icon: [
+      { url: "/sub-assets/brand/favicon.ico", sizes: "any" },
+      { url: "/sub-assets/brand/favicon-32.png", type: "image/png", sizes: "32x32" },
+      { url: "/sub-assets/brand/favicon-48.png", type: "image/png", sizes: "48x48" },
+    ],
+    apple: { url: "/sub-assets/brand/apple-touch-icon.png", sizes: "180x180" },
+    shortcut: "/sub-assets/brand/favicon.ico",
   },
 };
 

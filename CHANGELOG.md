@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.21.6 — 2026-07-14
+
+- Node SSH provision: never fall back to on-node `docker build` when Docker Hub / CloudFront returns HTTP 403. The panel now uploads its prebuilt `nexuspanel/node` image over the SSH session (`docker load`) before starting the agent, so restricted node DCs no longer hit CloudFront blob 403 after a failed HTTP image download.
+- Install curls use `-k` so a self-signed / IP panel cert does not force a failed image download.
+- 3x-ui reimport: skip port-remap when the live listener belongs to the inbound tag being replaced (fixes 8443→8444 remaps on same-panel re-import).
+- Branding: built-in NexusPanel logo/favicon assets, `/brand` + `/favicon.ico` routes, subscription page layout refresh and i18n cleanup.
+
 ## 0.21.5 — 2026-07-14
 
 - 3x-ui migration: stop double-counting used traffic. Shared `client_traffics` meters (and the same up/down stamped onto every inbound's client settings) were summed across inbounds, so a 50 GB user on two inbounds showed ~100 GB used. Merge with `max()` instead of sum (sqlite dump + in-memory group).

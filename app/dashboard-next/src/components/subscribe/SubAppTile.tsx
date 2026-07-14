@@ -69,7 +69,7 @@ export function SubAppTile({
 
   return (
     <div className="sub-app-tile">
-      <div className="sub-app-icon" style={{ background: `linear-gradient(135deg, ${app.color}, #312e81)` }}>
+      <div className="sub-app-icon" style={{ background: `linear-gradient(145deg, ${app.color}, #0f766e)` }}>
         {app.short}
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>

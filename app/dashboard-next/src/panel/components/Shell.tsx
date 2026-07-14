@@ -2,7 +2,7 @@ import { FC, useMemo, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useApp } from "../context/AppContext";
-import { brandingTitle } from "../lib/branding";
+import { brandLogoUrl, brandingTitle } from "../lib/branding";
 import { useCopilot } from "../copilot/CopilotContext";
 import { Copilot } from "../copilot/Copilot";
 import { LANGUAGES, setLanguage } from "../i18n";
@@ -93,11 +93,7 @@ export const Shell: FC = () => {
       <div className={`nx-scrim ${open ? "show" : ""}`} onClick={closeNav} />
       <aside className={`nx-sidebar ${open ? "open" : ""}`}>
         <div className="nx-brand">
-          {branding?.logo_url ? (
-            <img src={branding.logo_url} alt="" className="nx-brand-logo nx-brand-logo-img" />
-          ) : (
-            <div className="nx-brand-logo">N</div>
-          )}
+          <img src={brandLogoUrl(branding)} alt="" className="nx-brand-logo nx-brand-logo-img" />
           <div>
             <div className="nx-brand-name">{appTitle}</div>
             <div className="nx-brand-sub">{t("common.tagline")}</div>

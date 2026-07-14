@@ -13,7 +13,7 @@ export function SubWgAppTile({ app, platform, downloadLabel }: Props) {
   const dl = app.download?.[platform];
   return (
     <div className="sub-app-tile">
-      <div className="sub-app-icon" style={{ background: `linear-gradient(135deg, ${app.color}, #881337)` }}>
+      <div className="sub-app-icon" style={{ background: `linear-gradient(145deg, ${app.color}, #9a3412)` }}>
         {app.short}
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>

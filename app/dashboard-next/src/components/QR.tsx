@@ -8,7 +8,7 @@ export function QR({ value, size = 180 }: { value: string; size?: number }) {
 
   useEffect(() => {
     let alive = true;
-    QRCode.toDataURL(value, { width: size, margin: 1, errorCorrectionLevel: "M" })
+    QRCode.toDataURL(value, { width: size, margin: 3, errorCorrectionLevel: "M" })
       .then((url) => alive && setSrc(url))
       .catch(() => alive && setSrc(""));
     return () => {

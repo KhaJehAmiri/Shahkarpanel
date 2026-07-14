@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.20.0 — 2026-07-14
+
+- 3x-ui migration: block silently hijacking another panel's subscription route. Many panels can share one port (e.g. every panel on `:2096/sub`) as long as each has its own domain; importing a panel whose `(host, path)` is already owned by a *different* panel — or a panel with an empty `subURI` (route collapses to "any domain" + `/sub/`) — now fails with a clear message instead of upserting in place and merging two panels' users onto one link. Re-importing the *same* panel still updates in place.
+- UI: fix the user-stat popover (Limited / On hold / etc.) squishing rows into an unreadable sliver when a status bucket had many users — rows are pinned so the list scrolls instead of collapsing.
+
 ## 0.19.0 — 2026-07-14
 
 - Fix in-app update not taking effect: the panel recreated itself with `compose up --force-recreate` from *inside* the container, so stopping the old container killed the orchestrator before the new one started — leaving the panel on the OLD in-memory code after a successful pull. Restart is now a single atomic `docker restart <cid>` the daemon completes even after the CLI dies (and it preserves `pip`-mode installs).

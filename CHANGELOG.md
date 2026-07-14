@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.21.2 — 2026-07-14
+
+- Node SSH provision: when `get.docker.com` returns HTTP 403 (common from some DCs/countries), fall back to the distro Docker package (`apt`/`dnf`/`yum`) instead of failing with a misleading `curl: (22) 403` + exit 127 (`docker: command not found`) after the agent bundle already downloaded successfully.
+
 ## 0.21.1 — 2026-07-14
 
 - Fix in-dashboard "Update" saying it succeeded while the panel kept running the old code (only the on-server manager updated correctly): the restart step wrote to `/var/lib/nexuspanel/update-rebuild.log`, but the panel runs unprivileged (uid 1000) and that data dir is usually `root:root 0755`, so creating the log raised `PermissionError` and aborted the restart *before* it ran — the pulled code sat on disk but the container never reloaded it. Logging is now best-effort (falls back to `/tmp`, then to no log) so the restart always fires.

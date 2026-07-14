@@ -199,10 +199,39 @@ def build_install_command(
         "rm -rf \"$NP_BD\"; "
     )
 
+    # get.docker.com is often HTTP-403 from some DCs/countries; fall back to the
+    # distro package so provisioning doesn't die with a misleading
+    # "curl: (22) ... 403" + exit 127 (docker: command not found).
+    install_docker = (
+        "if ! command -v docker >/dev/null 2>&1; then "
+        "echo 'Installing Docker…'; "
+        "(curl -fsSL https://get.docker.com -o /tmp/np-get-docker.sh "
+        "&& sh /tmp/np-get-docker.sh) || true; "
+        "rm -f /tmp/np-get-docker.sh; "
+        "if ! command -v docker >/dev/null 2>&1; then "
+        "if command -v apt-get >/dev/null 2>&1; then "
+        "export DEBIAN_FRONTEND=noninteractive; "
+        "apt-get update -y >/dev/null "
+        "&& apt-get install -y docker.io docker-compose-v2 2>/dev/null "
+        "|| apt-get install -y docker.io; "
+        "systemctl enable --now docker 2>/dev/null || service docker start 2>/dev/null || true; "
+        "elif command -v dnf >/dev/null 2>&1; then "
+        "dnf install -y docker && systemctl enable --now docker; "
+        "elif command -v yum >/dev/null 2>&1; then "
+        "yum install -y docker && systemctl enable --now docker; "
+        "fi; "
+        "fi; "
+        "if ! command -v docker >/dev/null 2>&1; then "
+        "echo 'fatal: could not install Docker "
+        "(get.docker.com blocked and no distro package available)' >&2; "
+        "exit 1; "
+        "fi; "
+        "fi; "
+    )
+
     return (
         "set -e; "
-        "if ! command -v docker >/dev/null 2>&1; then "
-        "curl -fsSL https://get.docker.com | sh; fi; "
+        f"{install_docker}"
         # WireGuard needs IPv4 forwarding on the host kernel.
         "sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true; "
         "grep -q '^net.ipv4.ip_forward=1' /etc/sysctl.conf 2>/dev/null "
@@ -244,9 +273,22 @@ def _summarize_remote_error(stderr: str, stdout: str, exit_code: int, limit: int
     if not blob:
         return f"remote command failed (exit {exit_code})"
     lines = blob.splitlines()
-    markers = ("fatal:", "error:", "ERROR:", "failed to", "FAILED", "exit code")
+    markers = (
+        "fatal:",
+        "error:",
+        "ERROR:",
+        "failed to",
+        "FAILED",
+        "exit code",
+        "command not found",
+        "could not install Docker",
+        "get.docker.com",
+    )
     hits = [ln for ln in lines if any(m in ln for m in markers)]
+    # Prefer the last actionable hit; when exit 127, call out missing commands.
     tail = "\n".join((hits or lines)[-10:])
+    if exit_code == 127 and "command not found" not in tail.lower() and "docker" in blob.lower():
+        tail = (tail + "\n" if tail else "") + "hint: docker was not installed on the node"
     msg = f"remote command failed (exit {exit_code}): {tail}"
     if len(msg) > limit:
         return msg[: limit - 3] + "..."

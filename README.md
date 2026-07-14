@@ -10,12 +10,11 @@
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Xray](https://img.shields.io/badge/Powered%20by-Xray--core-512BD4)](https://github.com/XTLS/Xray-core)
-[![Tests](https://img.shields.io/badge/Tests-pytest-0A9EDC)](tests/)
 [![Docker](https://img.shields.io/badge/Deploy-Docker-2496ED?logo=docker&logoColor=white)](docker-compose.yml)
 
 **English** · [فارسی](./README-fa.md) · [简体中文](./README-zh-cn.md) · [Русский](./README-ru.md)
 
-[Quick install](#-one-line-install-vps) · [Architecture](#-architecture) · [Features](#-feature-matrix) · [Security & tests](#-security-is-the-tests-folder-on-github) · [**Central handoff (docs/CENTRAL-HANDOFF.md)**](docs/CENTRAL-HANDOFF.md) · [Repository](https://github.com/KhaJehAmiri/nexuspanel)
+[Quick install](#-one-line-install-vps) · [Architecture](#-architecture) · [Features](#-feature-matrix) · [Security & tests](#-security-is-the-tests-folder-on-github) · [Repository](https://github.com/KhaJehAmiri/nexuspanel)
 
 </div>
 
@@ -240,43 +239,32 @@ See [`.env.example`](.env.example).
 
 ---
 
-## Central handoff
-
-For AI-assisted audits, security reviews, app design, or resuming work in a new chat:
-
-**Dual product model:** one backend, two faces — (1) **public NexusPanel** via `/sub/` for standard apps (v2rayNG, WireGuard, …), (2) **SigmaGuard** via `/api/v2/client/*` (our proprietary Flutter+Rust app). See [`docs/PUBLIC_DEPLOYMENT.md`](docs/PUBLIC_DEPLOYMENT.md) and [`/opt/sigmaguard/SIGMAGUARD_APP_BRIEF.md`](../sigmaguard/SIGMAGUARD_APP_BRIEF.md).
+## Docs & deployment
 
 | Resource | Path |
 |----------|------|
-| **Unified README** | [`docs/CENTRAL-HANDOFF.md`](docs/CENTRAL-HANDOFF.md) |
-| **Visual map (Cursor Canvas)** | `nexuspanel-central.canvas.tsx` |
-| Layer 1 (operators) | [`docs/PUBLIC_DEPLOYMENT.md`](docs/PUBLIC_DEPLOYMENT.md) |
-| Layer 2 (SigmaGuard API) | [`docs/CLIENT_API.md`](docs/CLIENT_API.md) |
-| Layer 2 (app design) | `/opt/sigmaguard/SIGMAGUARD_APP_BRIEF.md` |
-| Phase history | [`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md) |
-| Security closure log | [`docs/AUDIT-CLOSURE.md`](docs/AUDIT-CLOSURE.md) |
-
-Older canvases (`master-status`, `full-audit`, etc.) redirect to **central**.
+| Public deployment | [`docs/PUBLIC_DEPLOYMENT.md`](docs/PUBLIC_DEPLOYMENT.md) |
+| HTTPS setup | [`docs/HTTPS_SETUP.md`](docs/HTTPS_SETUP.md) |
+| Client API (SigmaGuard) | [`docs/CLIENT_API.md`](docs/CLIENT_API.md) |
+| Local secrets (never commit) | [`docs/LOCAL_SECRETS.md`](docs/LOCAL_SECRETS.md) |
 
 ---
 
 ## Security: is the `tests/` folder on GitHub?
 
-### Should `tests/` be in the repo?
+### Public install repo
 
-**Yes — it is recommended and not a security risk.**
+The **full pytest suite, e2e scripts, and internal handoff docs stay local** on development servers — they are listed in `.gitignore` and are not pushed to this public repository (Marzban/3x-ui style).
 
 | Question | Answer |
 |----------|--------|
-| Passwords or `.env` in tests? | **No** — temp SQLite + fake xray stub only |
-| Does production install run tests? | **No** — developers & CI only |
-| Safer to delete tests? | **No** — you lose regression coverage |
+| Are tests on GitHub? | **No** — run locally or on your private CI clone |
+| Passwords or `.env` in the public tree? | **No** — never commit real `.env`, dumps, or keys |
+| What runs in GitHub Actions? | **Lint + Alembic migrations** on PostgreSQL |
 
-`tests/conftest.py` uses a temporary database under `/tmp` and never touches production data.
+Details: [SECURITY.md](SECURITY.md) · [docs/LOCAL_SECRETS.md](docs/LOCAL_SECRETS.md)
 
-Details: [SECURITY.md](SECURITY.md) · [tests/README.md](tests/README.md)
-
-**Never commit:** real `.env`, DB dumps, private TLS keys (all in `.gitignore`).
+**Never commit:** real `.env`, DB dumps, private TLS keys, server IPs/passwords in scripts (all in `.gitignore`).
 
 ---
 

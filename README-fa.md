@@ -284,21 +284,19 @@ docker compose -f docker-compose.monitoring.yml up -d
 
 ## امنیت و پوشه `tests` روی گیت‌هاب
 
-### آیا `tests/` باید روی گیت باشد؟
+### مخزن عمومی نصب
 
-**بله — نه تنها مشکلی ندارد، بلکه توصیه می‌شود.**
+**سوئیت کامل pytest، اسکریپت‌های e2e و مستندات handoff داخلی روی سرور توسعه می‌مانند** — در `.gitignore` هستند و به این مخزن عمومی push نمی‌شوند (مثل Marzban/3x-ui).
 
 | سوال | پاسخ |
 |------|------|
-| آیا رمز یا `.env` داخل tests است؟ | **خیر** — فقط دیتابیس موقت و xray ساختگی |
-| آیا با نصب پنل، tests اجرا می‌شود؟ | **خیر** — فقط برای توسعه‌دهنده و CI |
-| آیا حذف tests امن‌تر است؟ | **خیر** — کیفیت و regression بدون تست پایین می‌آید |
+| آیا tests روی گیت‌هاب است؟ | **خیر** — فقط روی کلون خصوصی/لوکال اجرا کنید |
+| آیا رمز یا `.env` در درخت عمومی است؟ | **خیر** — هرگز `.env` واقعی، dump یا کلید commit نکنید |
+| GitHub Actions چه می‌کند؟ | **Lint + مایگریشن Alembic** روی PostgreSQL |
 
-فایل `tests/conftest.py` یک SQLite موقت در `/tmp` می‌سازد و هیچ اطلاعات production را لمس نمی‌کند.
+جزئیات: [SECURITY.md](SECURITY.md) · [docs/LOCAL_SECRETS.md](docs/LOCAL_SECRETS.md)
 
-جزئیات: [SECURITY.md](SECURITY.md) · [tests/README.md](tests/README.md)
-
-**هرگز commit نکنید:** `.env` واقعی، dump دیتابیس، کلید TLS خصوصی (همه در `.gitignore` هستند).
+**هرگز commit نکنید:** `.env` واقعی، dump دیتابیس، کلید TLS خصوصی، IP/رمز سرور در اسکریپت‌ها (همه در `.gitignore` هستند).
 
 ---
 

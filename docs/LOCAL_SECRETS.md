@@ -61,9 +61,11 @@ Copy `.env.example` → `.env` and use `setup_env.sh` on the server. Never commi
 
 ## What goes in git
 
-- Application code, Dockerfiles, migrations, tests
+- Application code, Dockerfiles, migrations, public install scripts (`install-nexus.sh`, `nexus.sh`, `nexuspanel.sh`, installer wizard)
 - `.env.example` with placeholder comments only
-- Docs with `YOUR_PANEL_IP` / `YOUR_WG_NODE_IP` placeholders
+- Public docs (`PUBLIC_DEPLOYMENT.md`, `HTTPS_SETUP.md`, `CLIENT_API.md`, …)
+
+**Stays local only** (`.gitignore`): full `tests/`, e2e/smoke scripts, internal handoff docs, `.cursor/`, real server IPs/passwords in ops scripts.
 
 ## If you already pushed a secret
 

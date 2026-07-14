@@ -399,18 +399,53 @@ def _origin_tls_listen_port(public_port: int) -> int:
     return int(public_port)
 
 
+def _edge_cert_paths(domain: str) -> tuple[str, str] | None:
+    """Return Let's Encrypt cert paths for a CDN origin domain when they exist."""
+    d = (domain or "").strip()
+    if not d or d == "_":
+        return None
+    cert = Path(f"/etc/letsencrypt/live/{d}/fullchain.pem")
+    key = Path(f"/etc/letsencrypt/live/{d}/privkey.pem")
+    if cert.is_file() and key.is_file():
+        return str(cert), str(key)
+    return None
+
+
 def render_nginx_site(routes: list[EdgeRoute]) -> str:
     if not routes:
         return ""
     primary = routes[0]
-    cert = f"/etc/letsencrypt/live/{primary.cert_domain}/fullchain.pem"
-    key = f"/etc/letsencrypt/live/{primary.cert_domain}/privkey.pem"
+    tags = ", ".join(sorted({r.inbound_tag for r in routes}))
+
+    # Only emit the TLS server block once the certificate actually exists on
+    # disk. Emitting `ssl_certificate` for a missing cert makes `nginx -t` fail
+    # for the WHOLE server — one CDN origin domain whose cert can't be issued
+    # yet (e.g. its DNS still points at the CDN edge, so HTTP-01 on this origin
+    # never resolves here) would otherwise wedge every reload and take down the
+    # panel's own vhost and all subscription vhosts with it. Ship an HTTP-only
+    # placeholder (ACME challenge + 503) until the cert lands; a later sync pass
+    # re-renders with TLS. Mirrors the subscription renderer's cert fallback.
+    tls = _edge_cert_paths(primary.cert_domain)
+    if not tls:
+        return f"""# CDN origin (cert pending for {primary.cert_domain}) — managed by NexusPanel
+server {{
+    listen 80;
+    listen [::]:80;
+    server_name {primary.domain};
+    location /.well-known/acme-challenge/ {{
+        root {WEBROOT};
+        default_type "text/plain";
+    }}
+    location / {{ return 503; }}
+}}
+"""
+
+    cert, key = tls
     origin_port = _origin_tls_listen_port(primary.public_port)
     listen_public = (
         f"    listen {origin_port} ssl http2;\n"
         f"    listen [::]:{origin_port} ssl http2;"
     )
-    tags = ", ".join(sorted({r.inbound_tag for r in routes}))
     proxy_blocks = "\n\n".join(_nginx_proxy_block(route) for route in routes)
 
     return f"""# CDN origin TLS → Xray ({tags}) — managed by NexusPanel (not the panel web vhost)
@@ -664,6 +699,20 @@ def sync_edge_nginx(db) -> EdgeSyncResult:
 
     write_desired_state(result.routes)
     applied, message = try_reconcile_nginx()
+
+    # The first reconcile pass renders cert-pending domains HTTP-only (see
+    # render_nginx_site) and issues their certs. Re-render + reconcile so any
+    # domain whose cert just landed gets its real TLS vhost, exactly like the
+    # subscription sync's two-pass. Without this, a freshly-issued cert would
+    # sit unused until the next unrelated sync.
+    if result.routes:
+        write_desired_state(result.routes)
+        applied2, message2 = try_reconcile_nginx()
+        if applied2:
+            applied = True
+        if message2:
+            message = f"{message}\n{message2}" if message else message2
+
     result.nginx_applied = applied
     result.nginx_message = message
     if result.routes and not applied:

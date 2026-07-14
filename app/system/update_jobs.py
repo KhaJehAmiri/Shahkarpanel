@@ -19,7 +19,7 @@ from urllib.request import urlopen
 
 JobStatus = Literal["pending", "running", "success", "failed"]
 StepStatus = Literal["pending", "running", "done", "failed"]
-UpdateMode = Literal["restart", "pip", "dashboard", "rebuild"]
+UpdateMode = Literal["restart", "pip", "dashboard", "recreate", "rebuild"]
 
 _ROOT = Path(__file__).resolve().parents[2]
 _VERSION_FILE = _ROOT / "VERSION"
@@ -32,6 +32,20 @@ STEP_ORDER = ("pull", "backup", "migrate", "build", "restart")
 
 _IMAGE_REBUILD_FILES = frozenset({"Dockerfile", "docker-entrypoint.sh"})
 _PIP_FILES = frozenset({"requirements.txt"})
+# Changing any of these alters the container's runtime shape (bind mounts,
+# pid/network namespace, capabilities). A plain `docker restart` reuses the
+# existing container's HostConfig, so those changes never take effect — the
+# container must be recreated. This is exactly what silently broke subscription
+# serving on custom ports: the compose file gained the nginx bind mounts, but
+# updated panels only `docker restart`ed, so the running container had no nginx
+# access and could never write the `:2096` vhost.
+_COMPOSE_FILES = frozenset(
+    {
+        "docker-compose.yml",
+        "docker-compose.postgres.yml",
+        "docker-compose.monitoring.yml",
+    }
+)
 
 
 def _github_repo() -> str:
@@ -338,6 +352,9 @@ def plan_update(changed: List[str]) -> Tuple[UpdateMode, str]:
     if any(name in _IMAGE_REBUILD_FILES for name in changed):
         return "rebuild", "Dockerfile/entrypoint changed"
 
+    if any(name in _COMPOSE_FILES for name in changed):
+        return "recreate", "docker-compose changed (recreate for new mounts/caps/namespaces)"
+
     if any(name in _PIP_FILES for name in changed):
         return "pip", "requirements.txt changed"
 
@@ -399,34 +416,79 @@ def _own_container_id() -> Optional[str]:
     return out[0].strip() if out and out[0].strip() else None
 
 
+def _own_image() -> Optional[str]:
+    """Image ref of this panel container (for the self-update sidecar)."""
+    cid = _own_container_id()
+    if not cid:
+        return None
+    try:
+        out = subprocess.check_output(
+            ["docker", "inspect", "-f", "{{.Config.Image}}", cid],
+            text=True,
+            stderr=subprocess.DEVNULL,
+            timeout=15,
+        ).strip()
+    except (subprocess.SubprocessError, FileNotFoundError, OSError):
+        return None
+    return out or None
+
+
 def _schedule_compose_action(mode: UpdateMode) -> None:
     """Restart/recreate the panel (detached) so Python reloads the pulled code.
 
-    This runs *inside the very container being restarted*, which is why the
-    previous ``compose up --force-recreate`` was unreliable: recreate is a
+    This runs *inside the very container being restarted*, which is why a plain
+    ``compose up --force-recreate`` invoked here is unreliable: recreate is a
     multi-step, client-orchestrated operation — the moment it stops the old
     container, the orchestrating process (running inside it) is killed before
     the new container is created/started. The panel then keeps serving the OLD
     in-memory code even though ``/code`` already holds the new files (the exact
     "the update didn't take effect / no restart happened" bug).
 
-    For the common code-only path we instead issue a single **atomic**
-    ``docker restart <cid>`` — one daemon-side operation the daemon finishes
-    even after the CLI is killed when the container goes down. With ``.:/code``
-    bind-mounted, a plain restart re-execs the entrypoint and imports the new
-    code (and, unlike ``--force-recreate``, keeps any ``pip``-installed
-    packages from the ``pip`` mode). Only a genuine image change (``rebuild``)
-    needs a full ``up --build --force-recreate``.
+    - ``restart`` (common, code-only): a single **atomic** ``docker restart
+      <cid>`` — one daemon-side operation the daemon finishes even after the CLI
+      is killed when the container goes down. With ``.:/code`` bind-mounted, a
+      plain restart re-execs the entrypoint and imports the new code (and,
+      unlike ``--force-recreate``, keeps any ``pip``-installed packages).
+    - ``recreate``/``rebuild``: the container's runtime shape changed (compose
+      mounts/caps/namespaces, or the image itself), which ``docker restart``
+      can NOT apply — it reuses the old HostConfig. A recreate must survive the
+      old container being torn down, so we launch it from a **detached sidecar
+      container** (same image, own docker.sock + project dir) instead of a
+      shell that dies with us. The sidecar runs ``compose up -d
+      --force-recreate`` (``--build`` for rebuild) and outlives the swap.
     """
     log_path = _META_FILE.parent / "update-rebuild.log"
     cid = _own_container_id()
 
-    if mode == "rebuild":
-        cmd = _compose_cmd("up", "-d", "--build", "--force-recreate", "--no-deps", "nexuspanel")
-        label = "rebuild"
+    label = mode
+    if mode in ("recreate", "rebuild"):
+        up_args = ["up", "-d", "--force-recreate", "--no-deps", "nexuspanel"]
+        if mode == "rebuild":
+            up_args.insert(2, "--build")
+        image = _own_image()
+        compose = _compose_file()
+        if image and compose and Path("/var/run/docker.sock").exists():
+            # Reliable path: a separate throwaway container does the recreate so
+            # tearing down THIS container can't abort the operation midway.
+            inner_compose = " ".join(
+                shlex.quote(c)
+                for c in ["docker", "compose", "-p", _COMPOSE_PROJECT, "-f", compose.name, *up_args]
+            )
+            cmd = [
+                "docker", "run", "-d", "--rm",
+                "--network", "none",
+                "-v", "/var/run/docker.sock:/var/run/docker.sock",
+                "-v", f"{_ROOT}:{_ROOT}",
+                "-w", str(_ROOT),
+                "--entrypoint", "sh",
+                image,
+                "-c", f"sleep 2; {inner_compose}",
+            ]
+        else:
+            # Best effort if we can't resolve the image/socket: recreate inline.
+            cmd = _compose_cmd(*up_args)
     elif cid:
         cmd = ["docker", "restart", cid]
-        label = "restart"
     else:
         # No container id — fall back to compose recreate (best effort).
         cmd = _compose_cmd("up", "-d", "--force-recreate", "--no-deps", "nexuspanel")
@@ -531,7 +593,10 @@ def _worker(job_id: str) -> None:
         job.status = "success"
         if use_docker:
             time.sleep(3)
-            _schedule_compose_action("rebuild" if mode == "rebuild" else "restart")
+            # Preserve rebuild/recreate: a plain restart can't apply an image
+            # rebuild or docker-compose shape changes (mounts/caps/namespaces).
+            action: UpdateMode = mode if mode in ("rebuild", "recreate") else "restart"
+            _schedule_compose_action(action)
     except Exception as exc:
         job.error_message = str(exc)
         for s in job.steps:

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.21.0 — 2026-07-14
+
+- Fix subscription serving on custom ports (e.g. migrated 3x-ui panels on `:2096/sub`) silently not working after an in-app update: the updater only ran `docker restart`, which reuses the old container's HostConfig and never applies `docker-compose.yml` changes — so a container predating the nginx bind mounts kept running with no nginx access and could never write the `:2096` vhost. Updates now detect docker-compose changes and recreate the container (via a detached sidecar that survives the swap) so new mounts/capabilities/namespaces take effect.
+- Fix a missing CDN-origin TLS certificate wedging *all* of nginx: `render_nginx_site` always emitted `ssl_certificate`, so one origin domain whose cert couldn't be issued (e.g. its DNS points at the CDN edge, not this origin) made `nginx -t` fail for every vhost — taking down the panel UI and all subscription links. The origin vhost now degrades to an HTTP-only ACME placeholder until its cert lands, then a second sync pass re-renders it with TLS.
+
 ## 0.20.0 — 2026-07-14
 
 - 3x-ui migration: block silently hijacking another panel's subscription route. Many panels can share one port (e.g. every panel on `:2096/sub`) as long as each has its own domain; importing a panel whose `(host, path)` is already owned by a *different* panel — or a panel with an empty `subURI` (route collapses to "any domain" + `/sub/`) — now fails with a clear message instead of upserting in place and merging two panels' users onto one link. Re-importing the *same* panel still updates in place.

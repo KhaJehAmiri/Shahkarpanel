@@ -496,6 +496,7 @@
       "deleteInactiveConfirm": "Permanently delete all disabled and expired users (~{{n}})? This cannot be undone.",
       "deleteAllConfirm": "Permanently delete ALL {{n}} user(s)? This cannot be undone.",
       "deleteAllConfirm2": "Are you absolutely sure? Every user will be removed permanently.",
+      "deleteStarted": "Deleting {{n}} user(s) in the background…",
       "deleteDone": "Deleted {{n}} user(s)"
     },
     "cleanup": "Cleanup",

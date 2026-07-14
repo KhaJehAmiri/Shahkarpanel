@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.18.0 — 2026-07-14
+
+- Bulk delete (expired/disabled / all): run large deletes as a background job with status polling so reverse-proxy timeouts no longer show "Server error" while the delete actually completes.
+- Swallow Xray ``TagNotFoundError`` on hot user-remove (orphan inbound tags left after 3x-ui migration no longer spam exception threads).
+
 ## 0.17.0 — 2026-07-14
 
 - Updates modal: cache the update check (stale-while-revalidate, 5 min TTL) so the Install button enables immediately instead of waiting on a blocking `git fetch`/GitHub round-trip on every open.

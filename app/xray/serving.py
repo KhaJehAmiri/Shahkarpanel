@@ -194,7 +194,11 @@ def _api_add_user(inbound_tag: str, account: "Account") -> None:
 def _api_remove_user(inbound_tag: str, email: str) -> None:
     try:
         xray.api.remove_inbound_user(tag=inbound_tag, email=email, timeout=10)
-    except (xray.exc.EmailNotFoundError, xray.exc.ConnectionError):
+    except (
+        xray.exc.EmailNotFoundError,
+        xray.exc.ConnectionError,
+        xray.exc.TagNotFoundError,
+    ):
         pass
     with _hot_lock:
         s = _registered.get(inbound_tag)

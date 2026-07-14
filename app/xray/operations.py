@@ -48,7 +48,14 @@ def _remove_user_from_inbound(api: XRayAPI, inbound_tag: str, email: str):
         return
     try:
         api.remove_inbound_user(tag=inbound_tag, email=email, timeout=5)
-    except (xray.exc.EmailNotFoundError, xray.exc.ConnectionError):
+    except (
+        xray.exc.EmailNotFoundError,
+        xray.exc.ConnectionError,
+        # Orphan inbound tags left after a 3x-ui migration (or deleted hosts)
+        # are not present on the live core — removing against them must not
+        # explode the caller thread.
+        xray.exc.TagNotFoundError,
+    ):
         pass
 
 
@@ -58,11 +65,15 @@ def _alter_inbound_user(api: XRayAPI, inbound_tag: str, account: Account):
         return
     try:
         api.remove_inbound_user(tag=inbound_tag, email=account.email, timeout=30)
-    except (xray.exc.EmailNotFoundError, xray.exc.ConnectionError):
+    except (
+        xray.exc.EmailNotFoundError,
+        xray.exc.ConnectionError,
+        xray.exc.TagNotFoundError,
+    ):
         pass
     try:
         api.add_inbound_user(tag=inbound_tag, user=account, timeout=30)
-    except (xray.exc.EmailExistsError, xray.exc.ConnectionError):
+    except (xray.exc.EmailExistsError, xray.exc.ConnectionError, xray.exc.TagNotFoundError):
         pass
 
 
@@ -130,7 +141,11 @@ def _remove_user_from_inbound_sync(api: XRayAPI, inbound_tag: str, email: str):
     try:
         # Keep hot-path removes short so a hung node cannot stall the usage job.
         api.remove_inbound_user(tag=inbound_tag, email=email, timeout=5)
-    except (xray.exc.EmailNotFoundError, xray.exc.ConnectionError):
+    except (
+        xray.exc.EmailNotFoundError,
+        xray.exc.ConnectionError,
+        xray.exc.TagNotFoundError,
+    ):
         pass
 
 

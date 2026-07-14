@@ -323,12 +323,38 @@ export const Users: FC = () => {
     if (!confirm(t(opts.confirmKey, { n: opts.count }))) return;
     if (opts.scope === "all" && !confirm(t("users.bulk.deleteAllConfirm2"))) return;
     try {
-      const r = await api.post<{ deleted: number }>("/users/bulk/delete", {
+      const started = await api.post<{
+        deleted?: number;
+        job_id?: string;
+        async?: boolean;
+        total?: number;
+      }>("/users/bulk/delete", {
         scope: opts.scope,
         usernames: opts.scope === "selected" ? Array.from(selected) : [],
         statuses: opts.statuses || [],
       });
-      toast.push(t("users.bulk.deleteDone", { n: r.deleted }), "success");
+      let deleted = started.deleted ?? 0;
+      if (started.job_id) {
+        toast.push(t("users.bulk.deleteStarted", { n: started.total ?? opts.count }), "info");
+        for (;;) {
+          const s = await api.get<{
+            state: string;
+            processed: number;
+            total: number;
+            deleted: number;
+            error?: string | null;
+          }>(`/users/bulk/delete/status/${started.job_id}`);
+          if (s.state === "done") {
+            deleted = s.deleted;
+            break;
+          }
+          if (s.state === "error") {
+            throw new Error(s.error || t("common.error"));
+          }
+          await new Promise((r) => setTimeout(r, 1500));
+        }
+      }
+      toast.push(t("users.bulk.deleteDone", { n: deleted }), "success");
       clearSelection(); reload();
     } catch (e: any) { toast.push(e.message, "error"); }
   };

@@ -832,7 +832,15 @@ def apply_bulk_delete(
     body: BulkDeleteRequest,
     *,
     admin: Optional[Admin] = None,
+    progress_cb=None,
+    chunk_size: int = 200,
 ) -> BulkDeleteResult:
+    """Delete matching users, in chunks so large filters stay tractable.
+
+    ``progress_cb(processed_delta, deleted_delta)`` is optional and lets a
+    background job stream live counts to the UI without holding the HTTP
+    request open (large deletes otherwise outlive reverse-proxy timeouts).
+    """
     started = time.perf_counter()
     users = _iter_delete_targets(
         db,
@@ -842,13 +850,33 @@ def apply_bulk_delete(
         statuses=body.statuses,
         filters=body.filters,
     )
+    # Snapshot ids + "was any active" up front — after the first chunk commits
+    # the original ORM instances are expired/detached.
+    user_ids = [int(u.id) for u in users]
     touched_active = any(
         u.status in (UserStatus.active, UserStatus.on_hold) for u in users
     )
-    count = len(users)
+    count = len(user_ids)
+    deleted = 0
 
     if count:
-        crud.remove_users(db, users)
+        from app.db.models import User as DBUser
+
+        step = max(1, int(chunk_size or 200))
+        for i in range(0, count, step):
+            batch_ids = user_ids[i : i + step]
+            batch = (
+                db.query(DBUser).filter(DBUser.id.in_(batch_ids)).all()
+            )
+            if batch:
+                crud.remove_users(db, batch)
+                deleted += len(batch)
+            if progress_cb:
+                try:
+                    progress_cb(len(batch_ids), len(batch))
+                except Exception:
+                    pass
+
         if touched_active:
             _sync_after_membership_change()
 
@@ -857,10 +885,10 @@ def apply_bulk_delete(
         "bulk delete scope=%s statuses=%s deleted=%s %sms",
         body.scope.value,
         [s.value for s in body.statuses],
-        count,
+        deleted,
         duration_ms,
     )
-    return BulkDeleteResult(deleted=count, duration_ms=duration_ms)
+    return BulkDeleteResult(deleted=deleted, duration_ms=duration_ms)
 
 
 # ─────────────────────────── bulk enable / disable ───────────────────────────

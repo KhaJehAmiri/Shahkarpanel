@@ -432,20 +432,98 @@ def bulk_status_users(
 
 @router.post(
     "/users/bulk/delete",
-    responses={400: responses._400, 403: responses._403},
+    responses={400: responses._400, 403: responses._403, 409: responses._409},
 )
 def bulk_delete_users(
     body: BulkDeleteRequest,
     db: Session = Depends(get_db),
     admin: Admin = Depends(require_permission("users:write")),
 ):
-    """Delete many users at once (selected / filtered by status / all)."""
-    from app.services.user_bulk import apply_bulk_delete
+    """Delete many users at once (selected / filtered by status / all).
+
+    Small selected deletes stay synchronous; large filtered/all scopes run as a
+    background job (returns ``{job_id, async: true}``) so reverse-proxy
+    timeouts cannot abort the request while thousands of rows are removed.
+    Poll ``GET /users/bulk/delete/status/{job_id}`` for progress.
+    """
+    import threading
+
+    from app.db import GetDB
+    from app.services import bulk_delete_jobs
+    from app.services.user_bulk import _iter_delete_targets, apply_bulk_delete
 
     try:
-        return apply_bulk_delete(db, body, admin=admin)
+        targets = _iter_delete_targets(
+            db,
+            admin=admin,
+            scope=body.scope,
+            usernames=body.usernames,
+            statuses=body.statuses,
+            filters=body.filters,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    count = len(targets)
+    # Keep tiny selected deletions snappy (confirm dialog → immediate toast).
+    sync_ok = body.scope.value == "selected" and count <= 25
+    if sync_ok or count == 0:
+        try:
+            return apply_bulk_delete(db, body, admin=admin)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if bulk_delete_jobs.active_job() is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="A bulk delete is already running. Wait for it to finish.",
+        )
+
+    # Capture identifiers for the worker — don't hand the request Session across threads.
+    admin_username = admin.username if admin and not admin.is_sudo else None
+    payload = body.model_dump()
+    job = bulk_delete_jobs.create(total=count)
+
+    def _worker(job_id: str) -> None:
+        def progress(processed_delta: int = 0, deleted_delta: int = 0) -> None:
+            bulk_delete_jobs.bump(
+                job_id, processed_delta=processed_delta, deleted_delta=deleted_delta
+            )
+
+        try:
+            with GetDB() as wdb:
+                worker_admin = None
+                if admin_username:
+                    worker_admin = crud.get_admin(wdb, admin_username)
+                req = BulkDeleteRequest(**payload)
+                result = apply_bulk_delete(
+                    wdb, req, admin=worker_admin, progress_cb=progress
+                )
+            bulk_delete_jobs.finish(job_id, state="done", deleted=result.deleted)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Background bulk delete %s failed", job_id)
+            bulk_delete_jobs.finish(job_id, state="error", error=str(exc))
+
+    threading.Thread(
+        target=_worker,
+        args=(job.id,),
+        name=f"bulk-delete-{job.id[:8]}",
+        daemon=True,
+    ).start()
+    return {"job_id": job.id, "state": job.state, "async": True, "total": count}
+
+
+@router.get("/users/bulk/delete/status/{job_id}")
+def bulk_delete_status(
+    job_id: str,
+    _: Admin = Depends(require_permission("users:write")),
+):
+    from app.services import bulk_delete_jobs
+
+    job = bulk_delete_jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Unknown or expired bulk-delete job")
+    return job.to_dict()
 
 
 @router.get("/user/{username}", response_model=UserResponse, responses={403: responses._403, 404: responses._404})

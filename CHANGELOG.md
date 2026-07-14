@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.17.0 — 2026-07-14
+
+- Updates modal: cache the update check (stale-while-revalidate, 5 min TTL) so the Install button enables immediately instead of waiting on a blocking `git fetch`/GitHub round-trip on every open.
+- Cap `git fetch` at 12s and shorten GitHub HTTPS timeouts to 8s on slow/filtered networks.
+- Add `?force=true` for the explicit "Check for updates" button; keep Install enabled during background re-checks.
+
 ## 0.16.0 — 2026-07-14
 
 - Fix "delete expired/disabled" and "delete all" users: defer subscription-alias removal to the DB cascade and purge un-cascaded analytics/order rows (node protocol usage, client probes/telemetry/devices, user orders) before delete, so bulk delete no longer aborts on a foreign-key/not-null violation.

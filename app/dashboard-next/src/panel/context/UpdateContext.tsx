@@ -19,7 +19,7 @@ interface UpdateState {
   checking: boolean;
   /** Best-known installed version (sidebar + post-update). */
   displayVersion: string | null;
-  refreshCheck: () => Promise<void>;
+  refreshCheck: (force?: boolean) => Promise<void>;
   refreshDisplayVersion: () => Promise<string | null>;
   openUpdateModal: () => void;
   closeUpdateModal: () => void;
@@ -63,11 +63,13 @@ export const UpdateProvider: FC<{ sudo: boolean; lang: string; children: ReactNo
     return ver;
   }, []);
 
-  const refreshCheck = useCallback(async () => {
+  const refreshCheck = useCallback(async (force = false) => {
     if (!sudo) return;
     setChecking(true);
     try {
-      const res = await api.get<UpdateCheck>(`/system/updates/check?_=${Date.now()}`);
+      const res = await api.get<UpdateCheck>(
+        `/system/updates/check?_=${Date.now()}${force ? "&force=true" : ""}`,
+      );
       setCheck(res);
       if (res.current_version) {
         setDisplayVersion(res.current_version);
@@ -196,7 +198,7 @@ export const UpdateProvider: FC<{ sudo: boolean; lang: string; children: ReactNo
             job={job}
             applying={applying}
             onClose={closeUpdateModal}
-            onRefresh={refreshCheck}
+            onRefresh={() => refreshCheck(true)}
             onApply={startApply}
           />
           {whatsNew && (

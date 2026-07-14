@@ -101,8 +101,8 @@ def get_deployment(_: Admin = Depends(Admin.check_sudo_admin)):
 
 
 @router.get("/system/updates/check", response_model=UpdateCheckResponse)
-def check_panel_updates(_: Admin = Depends(Admin.check_sudo_admin)):
-    return UpdateCheckResponse(**update_jobs.check_updates())
+def check_panel_updates(force: bool = False, _: Admin = Depends(Admin.check_sudo_admin)):
+    return UpdateCheckResponse(**update_jobs.check_updates(force=force))
 
 
 @router.post("/system/updates/apply", response_model=UpdateApplyResponse)

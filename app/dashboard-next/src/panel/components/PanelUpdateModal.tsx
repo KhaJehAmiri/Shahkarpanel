@@ -40,7 +40,9 @@ export const PanelUpdateModal: FC<{
         <>
           <Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
           <Button variant="ghost" disabled={checking} onClick={onRefresh}>{t("system.checkUpdates")}</Button>
-          <Button variant="primary" disabled={checking || !hasUpdate} onClick={handleApply}>
+          {/* Only gate on whether an update exists — a background re-check must
+              not disable the button once we already know an update is available. */}
+          <Button variant="primary" disabled={!hasUpdate || !!running} onClick={handleApply}>
             {t("system.applyUpdates")}
           </Button>
         </>

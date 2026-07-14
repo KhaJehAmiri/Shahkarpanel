@@ -56,7 +56,7 @@ def _github_raw(path: str) -> str:
     return f"https://raw.githubusercontent.com/{_github_repo()}/{branch}/{path.lstrip('/')}"
 
 
-def _fetch_text(url: str, timeout: int = 20) -> Optional[str]:
+def _fetch_text(url: str, timeout: int = 8) -> Optional[str]:
     try:
         with urlopen(url, timeout=timeout) as resp:
             return resp.read().decode("utf-8", errors="replace").strip()
@@ -163,7 +163,7 @@ def _remote_sha_https() -> Optional[str]:
     branch = _github_branch()
     url = f"https://api.github.com/repos/{repo}/commits/{branch}"
     try:
-        with urlopen(url, timeout=20) as resp:
+        with urlopen(url, timeout=8) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         sha = data.get("sha") or ""
         return sha[:7] if sha else None
@@ -516,7 +516,68 @@ def get_job(job_id: str) -> Optional[UpdateJob]:
         return _jobs.get(job_id)
 
 
-def check_updates() -> dict:
+# Cache the (network-bound) update check so opening the Updates modal is
+# instant. The check does a `git fetch` + optional GitHub HTTPS calls which can
+# be slow on filtered/poor networks; without caching, every modal open blocked
+# the "Install update" button behind that latency.
+_CHECK_TTL = 300.0  # a fresh result is reused for this long
+_check_cache: Optional[dict] = None
+_check_cache_at: float = 0.0
+_check_lock = threading.Lock()
+_check_refreshing = False
+
+
+def _refresh_check_cache() -> dict:
+    global _check_cache, _check_cache_at
+    result = _compute_check_updates()
+    with _check_lock:
+        _check_cache = result
+        _check_cache_at = time.time()
+    return result
+
+
+def _background_refresh_check() -> None:
+    global _check_refreshing
+    try:
+        _refresh_check_cache()
+    finally:
+        with _check_lock:
+            _check_refreshing = False
+
+
+def check_updates(force: bool = False) -> dict:
+    """Return the update check, served from cache with stale-while-revalidate.
+
+    - Fresh cache (< ``_CHECK_TTL``): returned immediately, no network.
+    - Stale cache: returned immediately while a background thread refreshes it,
+      so the modal/button never blocks on ``git fetch``/GitHub latency.
+    - No cache yet (first call): computed synchronously.
+    """
+    global _check_refreshing
+    now = time.time()
+    with _check_lock:
+        cached = _check_cache
+        age = now - _check_cache_at
+
+    if not force and cached is not None:
+        if age < _CHECK_TTL:
+            return cached
+        # Stale: trigger a single background refresh and return the stale copy.
+        with _check_lock:
+            if not _check_refreshing:
+                _check_refreshing = True
+                start = True
+            else:
+                start = False
+        if start:
+            threading.Thread(target=_background_refresh_check, daemon=True).start()
+        return cached
+
+    # No cache (or forced): must compute now.
+    return _refresh_check_cache()
+
+
+def _compute_check_updates() -> dict:
     """Compare installed semver to GitHub master (git fetch or HTTPS fallback)."""
     current_version = _local_version()
     meta = _read_install_meta()
@@ -550,11 +611,15 @@ def check_updates() -> dict:
                     text=True,
                 ).strip()
             )
+            # Hard timeout: on a filtered/slow network a fetch to github.com can
+            # otherwise hang for minutes, blocking the whole check (and the
+            # Install button). Failing fast falls through to the HTTPS path.
             subprocess.check_call(
                 ["git", *_GIT_SAFE, "fetch", "origin", branch, "--depth", "1"],
                 cwd=_ROOT,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                timeout=12,
             )
             remote_sha = (
                 subprocess.check_output(

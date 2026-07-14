@@ -168,6 +168,7 @@ def build_install_command(
         )
 
     bundle_url = f"{panel_url.rstrip('/')}/api/nodes/agent-bundle?token={bootstrap_token}"
+    image_url = f"{panel_url.rstrip('/')}/api/nodes/agent-image?token={bootstrap_token}"
 
     wg_host_egress = ""
     if core_kind == "wireguard":
@@ -187,17 +188,37 @@ def build_install_command(
             "fi; "
         )
 
-    # If the image tag is not on the remote host, try pull then build from the
-    # panel's bundled node-agent source (nexuspanel/node is not on Docker Hub).
-    # Always rebuild from the panel bundle so agent code updates reach the node.
+    # Prefer loading a prebuilt image from the panel. Many node DCs block Docker
+    # Hub / CloudFront (HTTP 403 on blob pulls), so `docker build` on the node
+    # cannot FROM python:*-slim even when the source bundle downloads fine.
     awg_flag = "1" if include_awg else "0"
-    ensure_image = (
-        f"NP_IMG={q(image)}; "
-        "NP_BD=$(mktemp -d); "
-        f"curl -fsSL {q(bundle_url)} | tar -xzf - -C \"$NP_BD\"; "
-        f"docker build --build-arg INCLUDE_AWG={awg_flag} -t \"$NP_IMG\" \"$NP_BD/node\"; "
-        "rm -rf \"$NP_BD\"; "
-    )
+    if force_image_rebuild:
+        ensure_image = (
+            f"NP_IMG={q(image)}; "
+            "NP_BD=$(mktemp -d); "
+            f"curl -fsSL {q(bundle_url)} | tar -xzf - -C \"$NP_BD\"; "
+            f"docker build --build-arg INCLUDE_AWG={awg_flag} -t \"$NP_IMG\" \"$NP_BD/node\"; "
+            "rm -rf \"$NP_BD\"; "
+        )
+    else:
+        ensure_image = (
+            f"NP_IMG={q(image)}; "
+            "if ! docker image inspect \"$NP_IMG\" >/dev/null 2>&1; then "
+            "echo 'Loading node image from panel…'; "
+            f"if ! curl -fsSL --connect-timeout 30 --max-time 1800 {q(image_url)} | docker load; then "
+            "echo 'Panel image load failed — falling back to on-node docker build…'; "
+            "NP_BD=$(mktemp -d); "
+            f"curl -fsSL {q(bundle_url)} | tar -xzf - -C \"$NP_BD\"; "
+            f"docker build --build-arg INCLUDE_AWG={awg_flag} -t \"$NP_IMG\" \"$NP_BD/node\"; "
+            "rm -rf \"$NP_BD\"; "
+            "fi; "
+            "fi; "
+            "if ! docker image inspect \"$NP_IMG\" >/dev/null 2>&1; then "
+            "echo 'fatal: node agent image not available "
+            "(panel image download failed and docker build cannot reach Docker Hub)' >&2; "
+            "exit 1; "
+            "fi; "
+        )
 
     # get.docker.com is often HTTP-403 from some DCs/countries; fall back to the
     # distro package so provisioning doesn't die with a misleading

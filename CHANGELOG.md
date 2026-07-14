@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.21.3 — 2026-07-14
+
+- Node SSH provision: when Docker Hub / CloudFront returns HTTP 403 during on-node `docker build` (common in restricted DCs), load a prebuilt `nexuspanel/node` image from the panel (`GET /api/nodes/agent-image`) via `docker load` instead. Falls back to source bundle + build only if the panel image is unavailable.
+
 ## 0.21.2 — 2026-07-14
 
 - Node SSH provision: when `get.docker.com` returns HTTP 403 (common from some DCs/countries), fall back to the distro Docker package (`apt`/`dnf`/`yum`) instead of failing with a misleading `curl: (22) 403` + exit 127 (`docker: command not found`) after the agent bundle already downloaded successfully.

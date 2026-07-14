@@ -7,7 +7,7 @@ import hmac
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 
@@ -15,6 +15,7 @@ from app import feature_flags, provisioning
 from app.bootstrap_limit import enforce_bootstrap_rate_limit
 from app.provisioning import jobs as provision_jobs
 from app.provisioning.agent_bundle import build_agent_bundle
+from app.provisioning.agent_image import AgentImageUnavailable, cached_image_path
 from app import tenant as tenant_svc
 from app.db import Session, crud, get_db
 from app.models.admin import Admin
@@ -241,6 +242,28 @@ def agent_bundle(request: Request, token: str):
         content=payload,
         media_type="application/gzip",
         headers={"Content-Disposition": 'attachment; filename="nexuspanel-node-agent.tar.gz"'},
+    )
+
+
+@router.get("/agent-image")
+def agent_image(request: Request, token: str):
+    """Gzipped ``docker save`` of the panel's node-agent image.
+
+    Used when the remote node cannot pull FROM Docker Hub (HTTP 403 from
+    CloudFront etc.): the node ``docker load``s this archive instead of
+    building.
+    """
+    enforce_bootstrap_rate_limit(request)
+    if not NODE_BOOTSTRAP_TOKEN or not hmac.compare_digest(token, NODE_BOOTSTRAP_TOKEN):
+        raise HTTPException(status_code=403, detail="Invalid bootstrap token")
+    try:
+        path = cached_image_path(NODE_AGENT_IMAGE)
+    except AgentImageUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return FileResponse(
+        path,
+        media_type="application/gzip",
+        filename="nexuspanel-node-agent-image.tar.gz",
     )
 
 

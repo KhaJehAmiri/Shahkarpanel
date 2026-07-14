@@ -1503,6 +1503,10 @@ body > .nx-drawer {
 .nx-userstat-pop-row {
   display: block;
   width: 100%;
+  /* Flex column children default to flex-shrink:1, so with many rows the list
+     squished each row (clipping the text to a thin sliver) instead of
+     scrolling. Pin the height so the list scrolls once it overflows. */
+  flex: none;
   direction: ltr;
   text-align: left;
   padding: 7px 9px;

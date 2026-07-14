@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.21.1 — 2026-07-14
+
+- Fix in-dashboard "Update" saying it succeeded while the panel kept running the old code (only the on-server manager updated correctly): the restart step wrote to `/var/lib/nexuspanel/update-rebuild.log`, but the panel runs unprivileged (uid 1000) and that data dir is usually `root:root 0755`, so creating the log raised `PermissionError` and aborted the restart *before* it ran — the pulled code sat on disk but the container never reloaded it. Logging is now best-effort (falls back to `/tmp`, then to no log) so the restart always fires.
+
 ## 0.21.0 — 2026-07-14
 
 - Fix subscription serving on custom ports (e.g. migrated 3x-ui panels on `:2096/sub`) silently not working after an in-app update: the updater only ran `docker restart`, which reuses the old container's HostConfig and never applies `docker-compose.yml` changes — so a container predating the nginx bind mounts kept running with no nginx access and could never write the `:2096` vhost. Updates now detect docker-compose changes and recreate the container (via a detached sidecar that survives the swap) so new mounts/capabilities/namespaces take effect.

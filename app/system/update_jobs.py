@@ -416,6 +416,25 @@ def _own_container_id() -> Optional[str]:
     return out[0].strip() if out and out[0].strip() else None
 
 
+def _open_update_log():
+    """Open the update/restart log, best-effort — never block the restart on it.
+
+    The panel process runs unprivileged (uid 1000), but the data dir
+    (``/var/lib/nexuspanel``) is commonly ``root:root 0755``, so *creating* a
+    new ``update-rebuild.log`` there raises ``PermissionError``. That used to
+    abort ``_schedule_compose_action`` entirely — the pulled code landed on
+    disk but the container was NEVER restarted, so the panel kept running the
+    OLD in-memory version ("update says done but source didn't change"). Fall
+    back to ``/tmp`` and finally to no log so the restart always proceeds.
+    """
+    for candidate in (_META_FILE.parent / "update-rebuild.log", Path("/tmp") / "nexuspanel-update-rebuild.log"):
+        try:
+            return open(candidate, "a", encoding="utf-8")
+        except OSError:
+            continue
+    return None
+
+
 def _own_image() -> Optional[str]:
     """Image ref of this panel container (for the self-update sidecar)."""
     cid = _own_container_id()
@@ -457,7 +476,6 @@ def _schedule_compose_action(mode: UpdateMode) -> None:
       shell that dies with us. The sidecar runs ``compose up -d
       --force-recreate`` (``--build`` for rebuild) and outlives the swap.
     """
-    log_path = _META_FILE.parent / "update-rebuild.log"
     cid = _own_container_id()
 
     label = mode
@@ -496,19 +514,28 @@ def _schedule_compose_action(mode: UpdateMode) -> None:
 
     # A short delay lets the update-job status flush before we go down.
     inner = "sleep 2; " + " ".join(shlex.quote(c) for c in cmd)
-    with open(log_path, "a", encoding="utf-8") as logf:
-        logf.write(
-            f"\n--- {label} {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} "
-            f"mode={mode} cid={cid or '?'} ---\n"
-        )
-        logf.flush()
+    # Logging is best-effort and MUST NOT prevent the restart (see
+    # _open_update_log): if the log dir isn't writable we still spawn the
+    # restart with output discarded, otherwise the update would silently never
+    # take effect.
+    logf = _open_update_log()
+    try:
+        if logf is not None:
+            logf.write(
+                f"\n--- {label} {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} "
+                f"mode={mode} cid={cid or '?'} ---\n"
+            )
+            logf.flush()
         subprocess.Popen(
             ["sh", "-c", inner],
             cwd=str(_ROOT),
-            stdout=logf,
+            stdout=logf or subprocess.DEVNULL,
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
+    finally:
+        if logf is not None:
+            logf.close()
 
 
 def _restart_panel(job: UpdateJob) -> None:

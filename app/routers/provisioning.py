@@ -258,7 +258,7 @@ def agent_image(request: Request, token: str):
         raise HTTPException(status_code=403, detail="Invalid bootstrap token")
     try:
         path = cached_image_path(NODE_AGENT_IMAGE)
-    except AgentImageUnavailable as exc:
+    except (AgentImageUnavailable, OSError) as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return FileResponse(
         path,

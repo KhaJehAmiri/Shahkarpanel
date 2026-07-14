@@ -17,12 +17,29 @@ from config import NODE_AGENT_IMAGE
 
 logger = logging.getLogger("uvicorn.error")
 
-_CACHE_DIR = Path("/var/lib/nexuspanel/cache/agent-images")
+_PREFERRED_CACHE = Path("/var/lib/nexuspanel/cache/agent-images")
+_FALLBACK_CACHE = Path("/tmp/nexuspanel-agent-images")
 
 
 class AgentImageUnavailable(RuntimeError):
     """Panel cannot produce a loadable node-agent image tarball."""
 
+
+def _cache_dir() -> Path:
+    """Writable cache dir — data dir may be root-owned (panel runs as uid 1000)."""
+    for candidate in (_PREFERRED_CACHE, _FALLBACK_CACHE):
+        try:
+            candidate.mkdir(parents=True, exist_ok=True)
+            probe = candidate / ".write_probe"
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink(missing_ok=True)
+            return candidate
+        except OSError:
+            continue
+    raise AgentImageUnavailable(
+        "No writable cache directory for agent image "
+        f"(tried {_PREFERRED_CACHE} and {_FALLBACK_CACHE})"
+    )
 
 def _docker(*args: str, timeout: int = 120) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
@@ -52,12 +69,12 @@ def cached_image_path(image: Optional[str] = None) -> Path:
     ref = (image or NODE_AGENT_IMAGE).strip() or "nexuspanel/node:latest"
     iid = image_id(ref)
     short = iid.split(":", 1)[-1][:16]
-    _CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    out = _CACHE_DIR / f"{short}.tar.gz"
+    cache_dir = _cache_dir()
+    out = cache_dir / f"{short}.tar.gz"
     if out.is_file() and out.stat().st_size > 0:
         return out
 
-    for stale in _CACHE_DIR.glob("*.tar.gz"):
+    for stale in cache_dir.glob("*.tar.gz"):
         if stale.name != out.name:
             try:
                 stale.unlink()

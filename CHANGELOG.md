@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.21.4 — 2026-07-14
+
+- Agent-image cache: fall back to `/tmp` when `/var/lib/nexuspanel/cache` is not writable for the unprivileged panel user (same root-owned data-dir issue as the update log), so `/api/nodes/agent-image` no longer 500s during provision.
+
 ## 0.21.3 — 2026-07-14
 
 - Node SSH provision: when Docker Hub / CloudFront returns HTTP 403 during on-node `docker build` (common in restricted DCs), load a prebuilt `nexuspanel/node` image from the panel (`GET /api/nodes/agent-image`) via `docker load` instead. Falls back to source bundle + build only if the panel image is unavailable.

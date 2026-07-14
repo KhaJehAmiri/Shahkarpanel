@@ -834,15 +834,20 @@ def _apply_panel_migration(
                 if new_tag and new_tag not in tags:
                     tags.append(new_tag)
 
-            # Most-permissive expiry/limit, summed traffic, enabled if enabled on
-            # any inbound (3x-ui tracks enable + up/down per inbound per client).
+            # Most-permissive expiry/limit. For used traffic take the MAX across
+            # inbound copies — NOT a sum. 3x-ui stores one shared meter per
+            # email in ``client_traffics`` and then stamps that same up+down onto
+            # every inbound's client settings during backup load; summing made a
+            # 50 GB user look like 100 GB used (exactly 2× when on two inbounds).
+            # Independent per-inbound meters with the same subId are rare; max
+            # is the safe merge for the common shared-quota model.
             pu["expire"] = max(pu["expire"], expire) if (pu["expire"] and expire) else (pu["expire"] or expire)
             pu["data_limit"] = (
                 max(pu["data_limit"], data_limit)
                 if (pu["data_limit"] and data_limit)
                 else (pu["data_limit"] or data_limit)
             )
-            pu["used"] += used
+            pu["used"] = max(pu["used"], used)
             pu["any_enabled"] = pu["any_enabled"] or enabled
             if sub_id and not pu["sub_id"]:
                 pu["sub_id"] = sub_id

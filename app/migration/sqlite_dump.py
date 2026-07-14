@@ -163,9 +163,16 @@ def _traffic_by_email(tables: _PanelTableAccess) -> dict[str, dict[str, Any]]:
         prev = merged.get(email, {})
         prev_up = int(prev.get("up") or 0)
         prev_down = int(prev.get("down") or 0)
+        new_up = int(row.get("up") or 0)
+        new_down = int(row.get("down") or 0)
+        # Prefer MAX, not SUM. 3x-ui often has one client_traffics row per
+        # inbound for the same email, each carrying the same cumulative
+        # up/down. Summing those duplicates doubled (or tripled) used traffic
+        # on import. Distinct per-inbound meters with the same email are
+        # unusual; max keeps the higher shared counter.
         merged[email] = {
-            "up": prev_up + int(row.get("up") or 0),
-            "down": prev_down + int(row.get("down") or 0),
+            "up": max(prev_up, new_up),
+            "down": max(prev_down, new_down),
             "total": row.get("total") or row.get("Total") or prev.get("total"),
             "expiry_time": row.get("expiry_time") or row.get("expiryTime") or prev.get("expiry_time"),
             "enable": row.get("enable") if row.get("enable") is not None else prev.get("enable"),

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.21.5 — 2026-07-14
+
+- 3x-ui migration: stop double-counting used traffic. Shared `client_traffics` meters (and the same up/down stamped onto every inbound's client settings) were summed across inbounds, so a 50 GB user on two inbounds showed ~100 GB used. Merge with `max()` instead of sum (sqlite dump + in-memory group).
+
 ## 0.21.4 — 2026-07-14
 
 - Agent-image cache: fall back to `/tmp` when `/var/lib/nexuspanel/cache` is not writable for the unprivileged panel user (same root-owned data-dir issue as the update log), so `/api/nodes/agent-image` no longer 500s during provision.

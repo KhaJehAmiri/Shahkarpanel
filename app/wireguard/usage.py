@@ -156,7 +156,11 @@ def collect_wg_usage_params(db=None) -> Tuple[Dict[int, List[dict]], Dict[int, f
                 break
             pool = ThreadPoolExecutor(max_workers=1)
             try:
-                part = pool.submit(client.transfer, iface).result(timeout=8)
+                # Reading WG counters on a healthy node is sub-second; a longer
+                # wait only ever happens on a broken/slow node. Cap it well under
+                # the 5s usage-job interval so one bad node can't repeatedly make
+                # the job overrun ("maximum number of running instances" skips).
+                part = pool.submit(client.transfer, iface).result(timeout=4)
             except Exception as exc:
                 logger.warning(
                     "WireGuard transfer read from node %s iface %s failed: %s",

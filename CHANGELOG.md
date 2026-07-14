@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.19.0 — 2026-07-14
+
+- Fix in-app update not taking effect: the panel recreated itself with `compose up --force-recreate` from *inside* the container, so stopping the old container killed the orchestrator before the new one started — leaving the panel on the OLD in-memory code after a successful pull. Restart is now a single atomic `docker restart <cid>` the daemon completes even after the CLI dies (and it preserves `pip`-mode installs).
+- Fix bulk delete still failing on some panels with a `subscription_token_aliases` not-null violation: purge alias rows explicitly before deleting users, independent of the ORM cascade config.
+- Fix Overview stats freeze / repeated "maximum number of running instances" scheduler spam: WireGuard usage collection triggered the RPyC `remote` connect (with lock + retries) merely while detecting a node's transport type — now detected on the class without dialing, so a down WG node can't stall the 5s usage job.
+
 ## 0.18.0 — 2026-07-14
 
 - Bulk delete (expired/disabled / all): run large deletes as a background job with status polling so reverse-proxy timeouts no longer show "Server error" while the delete actually completes.

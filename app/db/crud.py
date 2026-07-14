@@ -710,7 +710,16 @@ def _purge_user_dependents(db: Session, user_ids: List[int]) -> None:
     from app.db.models import ClientDevice, PaymentIntent
 
     # Hard-delete pure per-user analytics / logs / orders.
+    #
+    # ``SubscriptionTokenAlias`` is included on purpose: although the ORM
+    # relationship declares ``passive_deletes`` (+ the DB FK has ON DELETE
+    # CASCADE), deleting the rows explicitly here makes bulk delete correct
+    # even if the ORM cascade config isn't applied — e.g. a panel still
+    # running an older in-memory build after ``git pull`` but before a real
+    # process restart. Without this the delete raised NotNullViolation trying
+    # to set ``subscription_token_aliases.user_id = NULL`` and rolled back.
     for model in (
+        SubscriptionTokenAlias,
         NodeUserProtocolUsage,
         ClientProbe,
         ClientTelemetry,

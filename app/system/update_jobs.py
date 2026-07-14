@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -378,21 +379,69 @@ def _build_dashboard() -> None:
         raise RuntimeError("npm unavailable and dashboard out/ is missing")
 
 
+def _own_container_id() -> Optional[str]:
+    """Resolve this panel's own container id.
+
+    ``$HOSTNAME``/cgroup are unreliable inside our container (compose sets a
+    custom hostname; cgroup v2 exposes nothing), so ask compose for the id of
+    the ``nexuspanel`` service while the container is still alive.
+    """
+    try:
+        out = subprocess.check_output(
+            _compose_cmd("ps", "-q", "nexuspanel"),
+            cwd=str(_ROOT),
+            text=True,
+            stderr=subprocess.DEVNULL,
+            timeout=15,
+        ).strip().splitlines()
+    except (subprocess.SubprocessError, FileNotFoundError, OSError, RuntimeError):
+        return None
+    return out[0].strip() if out and out[0].strip() else None
+
+
 def _schedule_compose_action(mode: UpdateMode) -> None:
-    """Run compose restart/rebuild detached so the API can report success first."""
+    """Restart/recreate the panel (detached) so Python reloads the pulled code.
+
+    This runs *inside the very container being restarted*, which is why the
+    previous ``compose up --force-recreate`` was unreliable: recreate is a
+    multi-step, client-orchestrated operation — the moment it stops the old
+    container, the orchestrating process (running inside it) is killed before
+    the new container is created/started. The panel then keeps serving the OLD
+    in-memory code even though ``/code`` already holds the new files (the exact
+    "the update didn't take effect / no restart happened" bug).
+
+    For the common code-only path we instead issue a single **atomic**
+    ``docker restart <cid>`` — one daemon-side operation the daemon finishes
+    even after the CLI is killed when the container goes down. With ``.:/code``
+    bind-mounted, a plain restart re-execs the entrypoint and imports the new
+    code (and, unlike ``--force-recreate``, keeps any ``pip``-installed
+    packages from the ``pip`` mode). Only a genuine image change (``rebuild``)
+    needs a full ``up --build --force-recreate``.
+    """
     log_path = _META_FILE.parent / "update-rebuild.log"
+    cid = _own_container_id()
+
     if mode == "rebuild":
-        cmd = _compose_cmd("up", "-d", "--build", "nexuspanel")
+        cmd = _compose_cmd("up", "-d", "--build", "--force-recreate", "--no-deps", "nexuspanel")
         label = "rebuild"
+    elif cid:
+        cmd = ["docker", "restart", cid]
+        label = "restart"
     else:
-        # Force a new container so Python reloads code from the bind-mounted /code tree.
+        # No container id — fall back to compose recreate (best effort).
         cmd = _compose_cmd("up", "-d", "--force-recreate", "--no-deps", "nexuspanel")
         label = "recreate"
+
+    # A short delay lets the update-job status flush before we go down.
+    inner = "sleep 2; " + " ".join(shlex.quote(c) for c in cmd)
     with open(log_path, "a", encoding="utf-8") as logf:
-        logf.write(f"\n--- {label} {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} mode={mode} ---\n")
+        logf.write(
+            f"\n--- {label} {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} "
+            f"mode={mode} cid={cid or '?'} ---\n"
+        )
         logf.flush()
         subprocess.Popen(
-            cmd,
+            ["sh", "-c", inner],
             cwd=str(_ROOT),
             stdout=logf,
             stderr=subprocess.STDOUT,

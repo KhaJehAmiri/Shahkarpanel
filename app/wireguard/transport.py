@@ -370,11 +370,19 @@ def client_for_node(node) -> Optional[object]:
 
     Detection mirrors ``XRayNode``: ReST nodes expose ``make_request``; RPyC
     nodes expose ``remote``.
+
+    IMPORTANT: probe the *class*, not the instance. On an RPyC node ``remote``
+    is a property whose getter grabs the connection lock and calls
+    ``connect()`` (with retries/sleeps). Using ``hasattr(node, "remote")`` here
+    would trigger that connect on a down node — blocking the 5s usage job
+    entirely (Overview freeze + "maximum number of running instances" spam).
+    Checking the type never invokes the getter; the actual (bounded, timed-out)
+    RPyC call happens later inside the collector's own executor.
     """
     if node is None:
         return None
-    if hasattr(node, "make_request"):
-        return RESTWireGuardClient(node)
-    if hasattr(node, "remote"):
+    if hasattr(type(node), "make_request") or hasattr(type(node), "remote"):
+        if hasattr(type(node), "make_request"):
+            return RESTWireGuardClient(node)
         return RPyCWireGuardClient(node)
     return None

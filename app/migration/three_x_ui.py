@@ -613,10 +613,37 @@ def preview_panel(db: Session, source: PanelSource) -> MigrationResult:
             db, sub["host"], sub["path_prefix"], enabled_only=False
         )
         if existing:
-            preview.warnings.append(
-                f"Host/path already registered as slug '{existing.slug}' — "
-                f"run will update that endpoint (requested slug '{source.slug}' ignored for URL route)"
-            )
+            # Subscription routing is keyed on (host, path) — many panels may
+            # share the same port (e.g. every 3x-ui panel on :2096/sub) as long
+            # as each has its own domain. If THIS panel's (host, path) is
+            # already owned by a DIFFERENT panel's endpoint, upserting would
+            # silently hijack that route and merge two panels' users onto one
+            # link — a destructive conflict, not a warning. Only allow the
+            # in-place update when it's clearly the same panel re-imported.
+            source_panel_id = source.legacy_panel_id or source.slug
+            existing_panel_id = existing.legacy_panel_id or existing.slug
+            if existing_panel_id == source_panel_id:
+                preview.warnings.append(
+                    f"Host/path already registered as slug '{existing.slug}' — "
+                    f"run will update that endpoint (requested slug '{source.slug}' ignored for URL route)"
+                )
+            elif not sub["host"]:
+                preview.error = (
+                    f"Panel '{source.slug}' has no subscription domain (subURI is empty in "
+                    "its 3x-ui settings), so its route would be 'any domain' + "
+                    f"'/{sub['path_prefix']}/' — which is already taken by endpoint "
+                    f"'{existing.slug}'. Importing would merge both panels' users onto one "
+                    "subscription route. Set a unique subscription domain (subURI) on the "
+                    "source panel (or fix the endpoint) and re-run."
+                )
+            else:
+                preview.error = (
+                    f"Subscription route '{sub['host']}/{sub['path_prefix']}' is already "
+                    f"owned by endpoint '{existing.slug}' (panel '{existing_panel_id}'). "
+                    f"Two different panels cannot share the same domain + path — the port "
+                    f"(e.g. 2096) may be shared, but each panel needs its own domain. Give "
+                    f"panel '{source.slug}' a unique subscription domain and re-run."
+                )
     if len(source.slug) > 20:
         preview.warnings.append(
             f"Slug '{source.slug}' is long — use a short slug (e.g. sr1) so usernames stay unique"

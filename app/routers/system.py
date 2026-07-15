@@ -107,7 +107,7 @@ def get_inbounds(admin: Admin = Depends(Admin.get_current)) -> Dict[str, List[di
 
 
 def _host_tags() -> list[str]:
-    from app.subscription.host_buckets import host_bucket_tags, is_native_host_tag
+    from app.subscription.host_buckets import host_bucket_tags
 
     return host_bucket_tags(xray.config.inbounds_by_tag)
 

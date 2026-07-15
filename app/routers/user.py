@@ -481,8 +481,8 @@ def bulk_native_protocol(
     """Enable or disable WireGuard / Amnezia / Hysteria2 / TUIC / AnyTLS on many users."""
     from app.services.user_bulk import (
         BulkNativeAction,
-        apply_bulk_native_protocol,
         _native_proxy_type,
+        apply_bulk_native_protocol,
     )
 
     if body.action == BulkNativeAction.enable:

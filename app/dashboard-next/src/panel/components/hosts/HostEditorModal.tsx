@@ -8,7 +8,8 @@ import { Button, Field, Input, Modal, Select, Toggle } from "../ui";
 import { ExternalProxyEditor } from "./ExternalProxyEditor";
 import { StructuredHostJsonFields } from "./StructuredHostJsonFields";
 import { HOST_ALPN_PRESETS, HOST_FINGERPRINT_PRESETS } from "../../lib/xrayHelpers";
-import type { HostRecord } from "./types";
+import type { NodeItem } from "../../api/types";
+import { hostTagLabel, isNativeHostTag, type HostRecord } from "./types";
 import "./host-editor-modal.css";
 
 type TabId = "basic" | "security" | "advanced";
@@ -38,7 +39,7 @@ const REMARK_TOKENS = [
   "{DAYS_LEFT}",
 ] as const;
 
-const ADDRESS_TOKENS = ["{SERVER_IP}", "{PORT}"] as const;
+const ADDRESS_TOKENS = ["{SERVER_IP}", "{NODE_IP}", "{PORT}"] as const;
 
 function TokenPanel({
   label,
@@ -83,6 +84,8 @@ export const HostEditorModal: FC<Props> = ({
     () => api.get("/hosts/region-presets"),
     [],
   );
+  const nodes = useFetch<NodeItem[]>(() => (open ? api.get("/nodes") : Promise.resolve([])), [open]);
+  const isNative = isNativeHostTag(tag);
 
   useEffect(() => {
     if (!open) return;
@@ -90,6 +93,24 @@ export const HostEditorModal: FC<Props> = ({
     setTag(inboundTag);
     setForm({ ...initial, region: initial.region || "" });
   }, [open, inboundTag, initial]);
+
+  const selectedNodeIds = useMemo(() => {
+    const raw = (form.node_ids || "").trim();
+    if (!raw) return new Set<number>();
+    return new Set(
+      raw
+        .split(",")
+        .map((p) => parseInt(p.trim(), 10))
+        .filter((n) => Number.isFinite(n)),
+    );
+  }, [form.node_ids]);
+
+  const toggleNodeId = (id: number) => {
+    const next = new Set(selectedNodeIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    set("node_ids", [...next].sort((a, b) => a - b).join(","));
+  };
 
   const set = <K extends keyof HostRecord>(key: K, value: HostRecord[K]) => {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -107,7 +128,7 @@ export const HostEditorModal: FC<Props> = ({
 
   const tabs: { id: TabId; label: string }[] = [
     { id: "basic", label: t("infra.hostTabBasic") },
-    { id: "security", label: t("infra.hostTabSecurity") },
+    ...(!isNative ? [{ id: "security" as const, label: t("infra.hostTabSecurity") }] : []),
     { id: "advanced", label: t("infra.hostTabAdvanced") },
   ];
 
@@ -175,11 +196,14 @@ export const HostEditorModal: FC<Props> = ({
                     >
                       {inboundTags.map((tg) => (
                         <option key={tg} value={tg}>
-                          {tg}
+                          {hostTagLabel(tg)}
                         </option>
                       ))}
                     </Select>
                   </Field>
+                  {isNative && (
+                    <p className="nx-host-callout">{t("infra.hostNativeHint")}</p>
+                  )}
                   <div className="nx-host-span-2">
                     <Field label={t("infra.remark")} hint={t("infra.hostRemarkHintShort")}>
                       <Input value={form.remark} onChange={(e) => set("remark", e.target.value)} dir="ltr" />
@@ -308,9 +332,44 @@ export const HostEditorModal: FC<Props> = ({
 
           {tab === "advanced" && (
             <div className="nx-host-modal-grid">
-              <Field label={t("infra.hostNodeIds", "Node IDs")} hint={t("infra.hostNodeIdsHint", "Comma-separated node IDs; 0 = panel core. Empty = all nodes.")}>
-                <Input value={form.node_ids || ""} onChange={(e) => set("node_ids", e.target.value)} dir="ltr" placeholder="0,1,2" />
-              </Field>
+              <div className="nx-host-span-2">
+                <Field
+                  label={t("infra.hostNodeIds", "Nodes")}
+                  hint={t(
+                    "infra.hostNodeIdsHint",
+                    "Empty = all nodes. Select specific servers so this host only appears for them in the subscription.",
+                  )}
+                >
+                  <div className="nx-stack" style={{ gap: 6, maxHeight: 180, overflow: "auto" }}>
+                    {(nodes.data || []).map((n) => (
+                      <label key={n.id} className="nx-row" style={{ gap: 8, fontSize: 13 }}>
+                        <input
+                          type="checkbox"
+                          checked={selectedNodeIds.has(n.id)}
+                          onChange={() => toggleNodeId(n.id)}
+                        />
+                        <span>
+                          #{n.id} {n.name}
+                          <span className="nx-faint"> · {n.address}</span>
+                          {n.core_kind ? (
+                            <span className="nx-faint"> · {n.core_kind}</span>
+                          ) : null}
+                        </span>
+                      </label>
+                    ))}
+                    {!nodes.data?.length && (
+                      <span className="nx-faint">{t("common.noData")}</span>
+                    )}
+                  </div>
+                  <Input
+                    value={form.node_ids || ""}
+                    onChange={(e) => set("node_ids", e.target.value)}
+                    dir="ltr"
+                    placeholder="1,2,3"
+                    style={{ marginTop: 8 }}
+                  />
+                </Field>
+              </div>
               <Field label={t("infra.hostVlessRoute")} hint={t("infra.hostVlessRouteHint")}>
                 <Input value={form.vless_route || ""} onChange={(e) => set("vless_route", e.target.value)} dir="ltr" placeholder="443" />
               </Field>

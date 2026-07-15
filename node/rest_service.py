@@ -64,6 +64,7 @@ class Service(object):
         # spec and reads back per-peer transfer counters for central accounting.
         self.router.add_api_route("/wg/apply", self.wg_apply, methods=["POST"])
         self.router.add_api_route("/wg/apply-specs", self.wg_apply_specs, methods=["POST"])
+        self.router.add_api_route("/wg/open-udp-ports", self.wg_open_udp_ports, methods=["POST"])
         self.router.add_api_route("/wg/transfer", self.wg_transfer, methods=["POST"])
         self.router.add_api_route("/wg/down", self.wg_down, methods=["POST"])
         self.router.add_api_route("/wg/amnezia-available", self.wg_amnezia_available, methods=["POST"])
@@ -288,7 +289,8 @@ class Service(object):
         except (KeyError, ValueError, TypeError) as exc:
             raise HTTPException(status_code=422, detail={"spec": f"Invalid WireGuard spec: {exc}"})
         try:
-            self.wg.apply(wg_spec)
+            # apply_specs also opens UDP INPUT + egress NAT.
+            self.wg.apply_specs([wg_spec])
             limits = peer_limits_from_spec(spec)
             if limits:
                 self.speed_limit.apply_wireguard(wg_spec.interface, limits)
@@ -315,6 +317,16 @@ class Service(object):
             logger.error(f"Failed to apply WireGuard specs: {exc}")
             raise HTTPException(status_code=503, detail=str(exc))
         return {"interfaces": [s.interface for s in wg_specs], "peers": sum(len(s.peers) for s in wg_specs)}
+
+    def wg_open_udp_ports(self, session_id: UUID = Body(embed=True), ports: list = Body(embed=True)):
+        self.match_session_id(session_id)
+        try:
+            wanted = [int(p) for p in (ports or []) if p]
+            self.wg.open_udp_ports(wanted)
+        except Exception as exc:
+            logger.error(f"Failed to open UDP ports: {exc}")
+            raise HTTPException(status_code=503, detail=str(exc))
+        return {"ports": wanted, "opened": len(wanted)}
 
     def wg_transfer(self, session_id: UUID = Body(embed=True), interface: str = Body(embed=True)):
         self.match_session_id(session_id)

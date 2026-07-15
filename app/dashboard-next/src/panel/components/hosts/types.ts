@@ -1,3 +1,19 @@
+/** Sentinel tags for native (non-Xray) products in the Hosts UI. */
+export const NATIVE_HOST_LABELS: Record<string, string> = {
+  "__native:wireguard": "WireGuard",
+  "__native:amneziawg": "AmneziaWG",
+  "__native:hysteria2": "Hysteria2",
+  "__native:tuic": "TUIC",
+};
+
+export function hostTagLabel(tag: string): string {
+  return NATIVE_HOST_LABELS[tag] || tag;
+}
+
+export function isNativeHostTag(tag: string): boolean {
+  return tag.startsWith("__native:");
+}
+
 export interface HostRecord {
   remark: string;
   address: string;
@@ -35,10 +51,10 @@ export interface HostRecord {
 
 export type HostRowRef = { tag: string; index: number; host: HostRecord };
 
-export function emptyHost(): HostRecord {
+export function emptyHost(tag?: string): HostRecord {
   return {
     remark: "{REGION_FLAG} {REGION_NAME} · {PROTOCOL}",
-    address: "{SERVER_IP}",
+    address: tag && isNativeHostTag(tag) ? "{NODE_IP}" : "{SERVER_IP}",
     port: null,
     sni: "",
     host: "",

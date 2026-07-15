@@ -978,12 +978,16 @@
     "xrayEnable": "Xray-native WG (Finalmask)",
     "xrayHint": "Userspace WireGuard inbound inside Xray with noise",
     "xrayPort": "Xray-native listen port",
-    "xrayBody": "Opens a separate UDP port with Finalmask noise. Open that UDP port on the cloud firewall.",
+    "xrayBody": "Separate UDP port with Finalmask noise. Saving opens the port on the node automatically. Only in Xray JSON subscriptions.",
     "xrayPill": "Xray WG :{{port}}",
     "directPort": "Direct WG port (optional)",
     "directPortHint": "Extra plain kernel WireGuard listener. Empty = off. Use 0 to clear.",
     "directPortPlaceholder": "e.g. 51900",
     "directPill": "Direct :{{port}}",
+    "clientHost": "Client host (Endpoint)",
+    "clientHostHint": "Hostname or IP written into client configs as Endpoint=. Empty = use node address.",
+    "awgClientHost": "AmneziaWG host (optional)",
+    "awgClientHostHint": "Separate dial host for AWG. Empty = same as plain/auto host.",
     "badPort": "Invalid port number"
   },
   "dedip": {

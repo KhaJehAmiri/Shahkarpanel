@@ -65,7 +65,17 @@ def _lock_for_subnet(subnet: str) -> threading.Lock:
 
 
 def ensure_user_address(db, proxy: Proxy, subnet: str, *, cfg=None) -> Optional[str]:
-    """Allocate a peer IP from ``subnet`` for plain or AWG stack."""
+    """Allocate a peer IP from ``subnet`` for plain or AWG stack.
+
+    When the subnet is full the node's configured subnet is auto-widened
+    (existing peer IPs stay valid) so allocation can continue.
+    """
+    from app.wireguard.capacity import (
+        ensure_cfg_subnet_capacity,
+        ensure_interface_host_pinned,
+        pinned_interface_host,
+        usable_peer_slots,
+    )
     from app.wireguard.kind import wg_wants_awg_address, wg_wants_plain_address
 
     key = _settings_key_for_subnet(cfg, subnet)
@@ -76,25 +86,53 @@ def ensure_user_address(db, proxy: Proxy, subnet: str, *, cfg=None) -> Optional[
     if settings.get(key):
         return settings[key]
 
-    with _lock_for_subnet(subnet):
-        # Re-check under the lock: another thread may have allocated (and
-        # committed) an address for this exact proxy while we were waiting,
-        # or the caller's copy of `proxy` may simply be stale.
+    # Lock by allocation family so widen+allocate stays atomic across subnet string changes.
+    with _lock_for_subnet(key):
         if proxy.id is not None:
             db.refresh(proxy)
         settings = dict(proxy.settings or {})
         if settings.get(key):
             return settings[key]
 
+        active_subnet = subnet
+        if cfg is not None:
+            db.refresh(cfg)
+            active_subnet = cfg.awg_subnet if key == "awg_address" else cfg.subnet
+            ensure_interface_host_pinned(cfg, key, db=db)
+
         used = [
             p.settings.get(key)
             for p in _all_wg_proxies(db)
             if p.settings and p.settings.get(key)
         ]
-        allocator = WireGuardPeerIPAllocator(subnet, used=used)
+        used_count = len([u for u in used if u])
+        pending = 1
+        if usable_peer_slots(active_subnet) < used_count + pending:
+            expanded = ensure_cfg_subnet_capacity(
+                db,
+                cfg,
+                settings_key=key,
+                needed_peers=used_count + pending,
+            )
+            if expanded:
+                active_subnet = expanded
+
+        reserved = []
+        pin = pinned_interface_host(cfg, key) if cfg is not None else None
+        if pin:
+            reserved.append(pin)
+        allocator = WireGuardPeerIPAllocator(
+            active_subnet,
+            used=used,
+            reserved_hosts=reserved,
+        )
         address = allocator.allocate()
         if not address:
-            logger.warning("WireGuard subnet %s exhausted; cannot allocate peer IP", subnet)
+            logger.warning(
+                "WireGuard subnet %s exhausted; cannot allocate peer IP (key=%s)",
+                active_subnet,
+                key,
+            )
             return None
 
         settings[key] = address
@@ -103,32 +141,112 @@ def ensure_user_address(db, proxy: Proxy, subnet: str, *, cfg=None) -> Optional[
         return address
 
 
-def ensure_addresses_for_subnet(db, subnet: str, *, cfg=None) -> None:
-    """Allocate peer IPs for WG users missing one in ``subnet``."""
+def ensure_addresses_for_subnet(
+    db,
+    subnet: str,
+    *,
+    cfg=None,
+    for_all_wg: bool = False,
+) -> None:
+    """Allocate peer IPs for WG users missing one in ``subnet``.
+
+    Auto-widens the node subnet when the pool would run out so bulk enables
+    (thousands of users) succeed without IP collisions.
+
+    ``for_all_wg``: allocate the plain ``address`` for every WireGuard proxy
+    missing one (including amnezia-only). Used when Finalmask is enabled so
+    every peer gets a stable tunnel IP in the plain pool.
+    """
+    from app.wireguard.capacity import (
+        ensure_cfg_subnet_capacity,
+        ensure_interface_host_pinned,
+        pinned_interface_host,
+        usable_peer_slots,
+    )
     from app.wireguard.kind import wg_wants_awg_address, wg_wants_plain_address
 
     key = _settings_key_for_subnet(cfg, subnet)
-    wants = wg_wants_awg_address if key == "awg_address" else wg_wants_plain_address
-    # Shares the per-subnet lock with `ensure_user_address` so this batch pass
-    # can never race with (or double-allocate on top of) a concurrent
-    # per-request allocation for the same subnet.
-    with _lock_for_subnet(subnet):
+    if for_all_wg and key == "awg_address":
+        for_all_wg = False
+
+    def _wants(settings: dict) -> bool:
+        if for_all_wg and key == "address":
+            return True
+        return wg_wants_awg_address(settings) if key == "awg_address" else wg_wants_plain_address(settings)
+
+    with _lock_for_subnet(key):
+        if cfg is not None:
+            db.refresh(cfg)
+            active_subnet = cfg.awg_subnet if key == "awg_address" else cfg.subnet
+            ensure_interface_host_pinned(cfg, key, db=db)
+        else:
+            active_subnet = subnet
+
         proxies = _all_wg_proxies(db)
         used = [p.settings.get(key) for p in proxies if p.settings and p.settings.get(key)]
-        allocator = WireGuardPeerIPAllocator(subnet, used=used)
-        for proxy in proxies:
+        missing = [
+            p for p in proxies
+            if _wants(dict(p.settings or {})) and not (p.settings or {}).get(key)
+        ]
+        used_count = len([u for u in used if u])
+        need = used_count + len(missing)
+        if cfg is not None and usable_peer_slots(active_subnet) < need:
+            expanded = ensure_cfg_subnet_capacity(
+                db,
+                cfg,
+                settings_key=key,
+                needed_peers=need,
+            )
+            if expanded:
+                active_subnet = expanded
+
+        reserved = []
+        pin = pinned_interface_host(cfg, key) if cfg is not None else None
+        if pin:
+            reserved.append(pin)
+        allocator = WireGuardPeerIPAllocator(
+            active_subnet,
+            used=used,
+            reserved_hosts=reserved,
+        )
+        assigned = 0
+        for proxy in missing:
             settings = dict(proxy.settings or {})
-            if not wants(settings):
-                continue
-            if settings.get(key):
-                continue
             address = allocator.allocate()
             if not address:
-                logger.warning("WireGuard subnet %s exhausted while assigning peers", subnet)
+                logger.warning(
+                    "WireGuard subnet %s exhausted while assigning peers (key=%s, assigned=%s, remaining=%s)",
+                    active_subnet,
+                    key,
+                    assigned,
+                    len(missing) - assigned,
+                )
                 break
             settings[key] = address
             proxy.settings = settings
+            assigned += 1
         db.commit()
+        if assigned:
+            logger.info(
+                "Allocated %s WireGuard peer IPs on %s (key=%s for_all_wg=%s)",
+                assigned,
+                active_subnet,
+                key,
+                for_all_wg,
+            )
+
+
+def ensure_plain_addresses_for_finalmask(db) -> None:
+    """When any node serves Finalmask, give every WG user a plain tunnel IP.
+
+    Delegates to ``address_authority`` so autoscale and legacy never allocate
+    from different pools for the same Finalmask inbound.
+    """
+    from app.wireguard.address_authority import (
+        ensure_plain_addresses_for_finalmask as _ensure,
+    )
+
+    _ensure(db)
 
 
 def ensure_preshared_key(db, proxy: Proxy) -> dict:
@@ -254,6 +372,59 @@ def restore_relay_native_wireguard(
         return False
 
 
+def listen_udp_ports_for_cfg(cfg) -> list[int]:
+    """UDP ports this WG node should expose on the public firewall."""
+    from app.wireguard.sync import (
+        amneziawg_enabled,
+        direct_wg_enabled,
+        plain_wg_enabled,
+    )
+    from app.wireguard.xray_native import xray_native_wg_enabled
+
+    ports: list[int] = []
+    if cfg is None:
+        return ports
+    if plain_wg_enabled(cfg) and cfg.listen_port:
+        ports.append(int(cfg.listen_port))
+    if amneziawg_enabled(cfg) and cfg.awg_listen_port:
+        ports.append(int(cfg.awg_listen_port))
+    if direct_wg_enabled(cfg) and cfg.direct_listen_port:
+        ports.append(int(cfg.direct_listen_port))
+    if xray_native_wg_enabled(cfg) and cfg.xray_wg_listen_port:
+        ports.append(int(cfg.xray_wg_listen_port))
+    return sorted({p for p in ports if p > 0})
+
+
+def open_node_listen_ports(dbnode, *, node_object=None, client=None) -> int:
+    """Ask the agent to open every active WG UDP port (best-effort)."""
+    cfg = dbnode.wireguard
+    ports = listen_udp_ports_for_cfg(cfg)
+    if not ports:
+        return 0
+    if client is None:
+        node_object = node_object if node_object is not None else _node_object(dbnode.id)
+        client = client_for_node(node_object)
+    if client is None or not hasattr(client, "open_udp_ports"):
+        return 0
+    try:
+        opened = int(client.open_udp_ports(ports) or 0)
+        if opened:
+            logger.info(
+                "Opened UDP listen ports on node %s: %s",
+                dbnode.id,
+                ports,
+            )
+        return opened
+    except Exception as exc:
+        logger.warning(
+            "Could not open UDP ports on node %s (%s): %s",
+            dbnode.id,
+            ports,
+            exc,
+        )
+        return 0
+
+
 def sync_node(db, dbnode, *, peers: Optional[List[WGUserPeer]] = None, node_object=None) -> bool:
     """Push the current peer set to one WG node. Returns True on a successful
     apply, False when the node is unconfigured/disconnected/unsupported."""
@@ -321,6 +492,7 @@ def sync_node(db, dbnode, *, peers: Optional[List[WGUserPeer]] = None, node_obje
                 from app.wireguard.host_sync import sync_panel_exit_wireguard
 
                 sync_panel_exit_wireguard(db, peers=peers)
+                open_node_listen_ports(dbnode, node_object=node_object, client=client)
                 return True
             from app.wireguard.host_sync import sync_panel_exit_wireguard
 
@@ -330,6 +502,7 @@ def sync_node(db, dbnode, *, peers: Optional[List[WGUserPeer]] = None, node_obje
                 "(native WG left down until Xray starts or explicit restore)",
                 dbnode.id,
             )
+            open_node_listen_ports(dbnode, node_object=node_object, client=client)
             return True
     except Exception as exc:
         logger.warning(
@@ -366,15 +539,23 @@ def sync_node(db, dbnode, *, peers: Optional[List[WGUserPeer]] = None, node_obje
             )
             specs = [awg_spec]
         elif autoscale_enabled() and plain_wg_enabled(cfg):
+            open_node_listen_ports(dbnode, node_object=node_object, client=client)
             return True
         else:
             specs = build_node_specs(cfg, peers)
         if not specs:
+            # Still open firewall for Xray-native-only stacks.
+            open_node_listen_ports(dbnode, node_object=node_object, client=client)
             return False
         client.apply_specs(specs)
+        open_node_listen_ports(dbnode, node_object=node_object, client=client)
         return True
     except Exception as exc:  # best-effort: log and move on
         logger.warning("WireGuard sync to node %s failed: %s", dbnode.id, exc)
+        try:
+            open_node_listen_ports(dbnode, node_object=node_object, client=client)
+        except Exception:
+            pass
         return False
 
 
@@ -388,6 +569,9 @@ def sync_all_nodes(db=None) -> int:
             return 0
         if autoscale_enabled():
             ensure_all_peers(session)
+            from app.wireguard.address_authority import mirror_autoscale_addresses_to_proxies
+
+            mirror_autoscale_addresses_to_proxies(session)
         # Single-subnet model: allocate any missing peer IPs from the first
         # configured node's subnet before computing the shared peer set.
         for n in wg_nodes:
@@ -400,6 +584,9 @@ def sync_all_nodes(db=None) -> int:
                 ensure_addresses_for_subnet(session, cfg.awg_subnet, cfg=cfg)
                 crud.ensure_awg_server_keys(session, n)
             break
+        # Finalmask needs a tunnel IP per WG user — legacy allocates from
+        # cfg.subnet; autoscale mirrors WgPeer (see address_authority).
+        ensure_plain_addresses_for_finalmask(session)
         peers = collect_wg_peers(session)
         count = sum(1 for n in wg_nodes if sync_node(session, n, peers=peers))
         from app.wireguard.host_sync import sync_panel_exit_wireguard
@@ -458,8 +645,17 @@ def sync_user_change() -> None:
     Pushes the full (idempotent) peer set via ``wg syncconf`` so additions,
     removals and status changes all converge. Cheap no-op when no WG node
     exists. Runs off-thread so it never blocks the Xray path.
+
+    Also schedules a debounced Xray restart on Finalmask-enabled nodes so the
+    baked-in peer list matches kernel membership (enable / disable / bulk).
     """
     try:
         sync_all_nodes()
     except Exception as exc:
         logger.warning("WireGuard user-change sync failed: %s", exc)
+    try:
+        from app.wireguard.finalmask_reload import schedule_finalmask_xray_reload
+
+        schedule_finalmask_xray_reload()
+    except Exception as exc:
+        logger.warning("Finalmask reload schedule failed: %s", exc)

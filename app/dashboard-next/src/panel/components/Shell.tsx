@@ -214,15 +214,11 @@ export const Shell: FC = () => {
 
 export const PageHeader: FC<{ title: string; subtitle?: string; description?: any; actions?: any }> = ({ title, subtitle, description, actions }) => (
   <div className="nx-page-head">
-    <div style={{ minWidth: 240, flex: "1 1 260px" }}>
+    <div className="nx-page-head-copy">
       <div className="nx-page-title">{title}</div>
       {subtitle && <div className="nx-page-subtitle">{subtitle}</div>}
       {description && <div className="nx-page-desc">{description}</div>}
     </div>
-    {actions && (
-      <div className="nx-row" style={{ flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end", gap: 8 }}>
-        {actions}
-      </div>
-    )}
+    {actions && <div className="nx-page-head-actions">{actions}</div>}
   </div>
 );

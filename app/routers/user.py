@@ -25,8 +25,10 @@ from app.models.user import (
 from app.rbac import require_permission
 from app.services.user_bulk import (
     BulkDeleteRequest,
+    BulkEnableWireGuardRequest,
     BulkExtendRequest,
     BulkInboundRequest,
+    BulkNativeProtocolRequest,
     BulkResetUsageRequest,
     BulkStatusRequest,
     BulkUserCreateBody,
@@ -408,6 +410,85 @@ def bulk_reset_users_usage(
 
     try:
         return apply_bulk_reset_usage(db, body, admin=admin)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post(
+    "/users/bulk/wireguard/preview",
+    responses={400: responses._400, 403: responses._403},
+)
+def bulk_enable_wireguard_preview(
+    body: BulkEnableWireGuardRequest,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(require_permission("users:write")),
+):
+    """Preview enabling native WireGuard on many users (compat)."""
+    from app.services.user_bulk import preview_bulk_enable_wireguard
+
+    try:
+        return preview_bulk_enable_wireguard(db, body, admin=admin)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post(
+    "/users/bulk/wireguard",
+    responses={400: responses._400, 403: responses._403},
+)
+def bulk_enable_wireguard(
+    body: BulkEnableWireGuardRequest,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(require_permission("users:write")),
+):
+    """Enable native WireGuard / AmneziaWG for many users (compat)."""
+    from app.services.user_bulk import apply_bulk_enable_wireguard
+
+    _ensure_protocol_enabled(ProxyTypes.WireGuard, db)
+    try:
+        return apply_bulk_enable_wireguard(db, body, admin=admin)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post(
+    "/users/bulk/native-protocols/preview",
+    responses={400: responses._400, 403: responses._403},
+)
+def bulk_native_protocol_preview(
+    body: BulkNativeProtocolRequest,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(require_permission("users:write")),
+):
+    """Preview enable/disable of a native node protocol on many users."""
+    from app.services.user_bulk import preview_bulk_native_protocol
+
+    try:
+        return preview_bulk_native_protocol(db, body, admin=admin)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post(
+    "/users/bulk/native-protocols",
+    responses={400: responses._400, 403: responses._403},
+)
+def bulk_native_protocol(
+    body: BulkNativeProtocolRequest,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(require_permission("users:write")),
+):
+    """Enable or disable WireGuard / Amnezia / Hysteria2 / TUIC / AnyTLS on many users."""
+    from app.services.user_bulk import (
+        BulkNativeAction,
+        apply_bulk_native_protocol,
+        _native_proxy_type,
+    )
+
+    if body.action == BulkNativeAction.enable:
+        _ensure_protocol_enabled(_native_proxy_type(body.protocol), db)
+    try:
+        return apply_bulk_native_protocol(db, body, admin=admin)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

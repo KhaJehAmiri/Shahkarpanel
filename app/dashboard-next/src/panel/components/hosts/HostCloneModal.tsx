@@ -4,6 +4,7 @@ import { FC, useState, type ChangeEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../api/client";
 import { Button, Field, Modal, Select, useToast } from "../ui";
+import { hostTagLabel } from "./types";
 
 type Props = {
   inboundTags: string[];
@@ -59,7 +60,7 @@ export const HostCloneModal: FC<Props> = ({ inboundTags, onClose, onDone }) => {
       <div className="nx-stack" style={{ gap: 14 }}>
         <Field label={t("infra.hostCloneSource", { defaultValue: "Source inbound" })}>
           <Select value={sourceTag} onChange={(e: ChangeEvent<HTMLSelectElement>) => setSourceTag(e.target.value)}>
-            {inboundTags.map((tg) => <option key={tg} value={tg}>{tg}</option>)}
+            {inboundTags.map((tg) => <option key={tg} value={tg}>{hostTagLabel(tg)}</option>)}
           </Select>
         </Field>
         <Field label={t("infra.hostCloneTargets", { defaultValue: "Target inbounds" })}>
@@ -71,7 +72,7 @@ export const HostCloneModal: FC<Props> = ({ inboundTags, onClose, onDone }) => {
                 className={`nx-btn sm ${targets.includes(tg) ? "primary" : ""}`}
                 onClick={() => toggleTarget(tg)}
               >
-                {targets.includes(tg) ? "✓ " : ""}{tg}
+                {targets.includes(tg) ? "✓ " : ""}{hostTagLabel(tg)}
               </button>
             ))}
           </div>

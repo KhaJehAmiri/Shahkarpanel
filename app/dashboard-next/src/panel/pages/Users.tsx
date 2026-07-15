@@ -17,9 +17,9 @@ import { QR } from "../components/QR";
 import { absoluteUrl } from "../lib/url";
 import { resolveSubscribeBrowserUrl, resolveWgUrl } from "../../lib/subscribe-url";
 import { copyToClipboard } from "../lib/clipboard";
-import { IcCopy, IcEdit, IcExternal, IcEye, IcPlus, IcRefresh, IcShare, IcTrash } from "../components/icons";
+import { IcClose, IcCopy, IcEdit, IcExternal, IcEye, IcPlus, IcRefresh, IcShare, IcTrash } from "../components/icons";
 import { UserTemplatesPanel, UserTemplateRow } from "../components/UserTemplates";
-import { BulkInboundModal } from "../components/BulkInboundModal";
+import { BulkAssignModal } from "../components/BulkAssignModal";
 import { BulkExtendModal, BulkResetUsageModal } from "../components/BulkUserActionModals";
 import { BulkCreateUsersModal } from "../components/BulkCreateUsersModal";
 import { UserProtocolChips } from "../components/UserProtocolChips";
@@ -64,15 +64,15 @@ const NATIVE_PROTOCOLS = ["wireguard", "amneziawg", "hysteria2", "tuic", "anytls
 const PROTO_ORDER = ["vless", "vmess", "trojan", "shadowsocks", "wireguard", "amneziawg", "hysteria2", "tuic", "anytls"];
 
 const PROTO_VISUAL: Record<string, { icon: string; hue: string }> = {
-  vless: { icon: "⚡", hue: "#2ee0c4" },
-  vmess: { icon: "◆", hue: "#6366f1" },
-  trojan: { icon: "🔒", hue: "#f59e0b" },
-  shadowsocks: { icon: "🛡", hue: "#38bdf8" },
-  wireguard: { icon: "⬡", hue: "#a78bfa" },
-  amneziawg: { icon: "🛡", hue: "#22d3ee" },
-  hysteria2: { icon: "🚀", hue: "#f472b6" },
-  tuic: { icon: "◉", hue: "#34d399" },
-  anytls: { icon: "🛡", hue: "#a78bfa" },
+  vless: { icon: "VL", hue: "#2ee0c4" },
+  vmess: { icon: "VM", hue: "#818cf8" },
+  trojan: { icon: "TR", hue: "#f59e0b" },
+  shadowsocks: { icon: "SS", hue: "#38bdf8" },
+  wireguard: { icon: "WG", hue: "#94a3b8" },
+  amneziawg: { icon: "AW", hue: "#22d3ee" },
+  hysteria2: { icon: "H2", hue: "#f472b6" },
+  tuic: { icon: "TU", hue: "#34d399" },
+  anytls: { icon: "AT", hue: "#a78bfa" },
 };
 
 // Above this count a hover list is just noise, so the tile only shows the number.
@@ -207,7 +207,7 @@ export const Users: FC = () => {
   const [viewUser, setViewUser] = useState<UserItem | null>(null);
   const [showImport, setShowImport] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
-  const [showBulkInbound, setShowBulkInbound] = useState(false);
+  const [showBulkAssign, setShowBulkAssign] = useState(false);
   const [showBulkExtend, setShowBulkExtend] = useState(false);
   const [showBulkReset, setShowBulkReset] = useState(false);
   const [showBulkCreate, setShowBulkCreate] = useState(false);
@@ -221,6 +221,7 @@ export const Users: FC = () => {
 
   const templates = useFetch<UserTemplateRow[]>(() => api.get("/user_template"), []);
   const inboundsList = useFetch<InboundsByProtocol>(() => api.get("/inbounds"), []);
+  const nodesForBulk = useFetch<NodeItem[]>(() => api.get("/nodes"), []);
   const inboundTags = useMemo(() => {
     const ib = inboundsList.data;
     if (!ib) return [] as string[];
@@ -407,8 +408,8 @@ export const Users: FC = () => {
             </Button>
           )}
           {canWrite && (
-            <Button variant="ghost" onClick={() => setShowBulkInbound(true)}>
-              {t("bulkInbound.short")}
+            <Button variant="ghost" onClick={() => setShowBulkAssign(true)}>
+              {t("bulkAssign.short")}
             </Button>
           )}
           {canWrite && <Button variant="primary" onClick={() => setShowCreate(true)}><IcPlus className="nx-ico" /> {t("common.create")}</Button>}
@@ -508,7 +509,7 @@ export const Users: FC = () => {
           <div className="nx-row" style={{ flexWrap: "wrap", gap: 10 }}>
             <span style={{ fontWeight: 600 }}>{t("bulkInbound.selectedCount", { n: selected.size })}</span>
             <Button size="sm" variant="primary" onClick={() => setShowBulkExtend(true)}>{t("bulkExtend.short")}</Button>
-            <Button size="sm" variant="ghost" onClick={() => setShowBulkInbound(true)}>{t("bulkInbound.assign")}</Button>
+            <Button size="sm" variant="ghost" onClick={() => setShowBulkAssign(true)}>{t("bulkAssign.short")}</Button>
             <Button size="sm" variant="ghost" onClick={() => setShowBulkReset(true)}>{t("bulkReset.short")}</Button>
             <Button size="sm" variant="ghost" onClick={() => bulkStatus("enable")}>{t("users.bulk.enable")}</Button>
             <Button size="sm" variant="ghost" onClick={() => bulkStatus("disable")}>{t("users.bulk.disable")}</Button>
@@ -627,14 +628,16 @@ export const Users: FC = () => {
       {editUser && <UserFormDrawer mode="edit" user={editUser} onClose={() => setEditUser(null)} onDone={() => { setEditUser(null); reload(); }} />}
       {showImport && <UserImportWizard onClose={() => setShowImport(false)} onDone={() => { setShowImport(false); reload(); }} />}
       {viewUser && <UserDetail username={viewUser.username} onClose={() => setViewUser(null)} onEdit={() => { setEditUser(viewUser); setViewUser(null); }} />}
-      {showBulkInbound && (
-        <BulkInboundModal
+      {showBulkAssign && (
+        <BulkAssignModal
           open
-          onClose={() => setShowBulkInbound(false)}
+          onClose={() => setShowBulkAssign(false)}
           onDone={() => { clearSelection(); reload(); }}
           selectedUsernames={Array.from(selected)}
           totalUsers={total}
           inboundTags={inboundTags}
+          inbounds={inboundsList.data ?? undefined}
+          nodes={nodesForBulk.data ?? undefined}
         />
       )}
       {showBulkExtend && (
@@ -752,7 +755,7 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
   const [subscriptionUrl, setSubscriptionUrl] = useState("");
   const [subRevokedAt, setSubRevokedAt] = useState<string | null>(null);
   const [credBusy, setCredBusy] = useState(false);
-  const [formTab, setFormTab] = useState<UserFormTab>("protocols");
+  const [formTab, setFormTab] = useState<UserFormTab>(mode === "edit" ? "plan" : "protocols");
   const [wizardStep, setWizardStep] = useState(1);
   const useWizard = mode === "create" && !expertMode && !templateId;
   const tabbedForm = !useWizard;
@@ -1033,7 +1036,7 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
       const body: any = {
         proxies,
         inbounds: inb,
-        data_limit: !dataLimitValue.trim() ? 0 : dataLimitToBytes(dataLimitValue, dataLimitUnit),
+        data_limit: dataLimitToBytes(dataLimitValue, dataLimitUnit),
         data_limit_reset_strategy: reset,
         note: note || "",
         client_profile: clientProfile,
@@ -1232,23 +1235,65 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
     );
   };
 
+  const editStatusOptions = mode === "edit"
+    ? (["active", "on_hold", "disabled"] as const)
+    : (["active", "on_hold"] as const);
+
   return (
     <Drawer
       open
-      wide={useWizard}
+      wide={useWizard || mode === "edit"}
+      hideHead={mode === "edit"}
       overlayClassName={useWizard ? "centered" : ""}
-      drawerClassName={useWizard ? "wizard-mode" : "nx-user-form-drawer"}
-      title={mode === "create" ? t("common.create") : `${t("common.edit")} — ${user?.username}`}
+      drawerClassName={useWizard ? "wizard-mode" : `nx-user-form-drawer${mode === "edit" ? " nx-user-edit" : ""}`}
+      title={mode === "create" ? t("common.create") : t("common.edit")}
       onClose={onClose}
     >
-      <div className={`nx-stack nx-user-form ${useWizard ? "compact" : ""} ${tabbedForm ? "nx-user-form-tabbed" : ""}`}>
-        {mode === "edit" && loadingEdit && (
-          <div className="nx-faint" style={{ fontSize: 13, padding: "4px 0 14px" }}>{t("common.loading")}</div>
+      <div className={`nx-stack nx-user-form ${useWizard ? "compact" : ""} ${tabbedForm ? "nx-user-form-tabbed" : ""} ${mode === "edit" ? "is-edit" : ""}`}>
+        {mode === "edit" && (
+          <header className="nx-ue-top">
+            <div className="nx-ue-top-main">
+              {loadingEdit ? (
+                <div className="nx-uf-loading" style={{ padding: 0 }}>{t("common.loading")}</div>
+              ) : (
+                <>
+                  <div className="nx-ue-eyebrow">{t("common.edit")}</div>
+                  <h2 className="nx-ue-title" dir="ltr">{editProfile?.username || user?.username}</h2>
+                  <div className="nx-ue-sub">
+                    <span className={`nx-ue-dot ${editProfile?.online ? "live" : statusTone(editProfile?.status || status)}`} />
+                    <span>
+                      {editProfile?.online
+                        ? t("users.stats.online")
+                        : t(`users.status.${editProfile?.status || status}`, editProfile?.status || status)}
+                    </span>
+                    <span className="nx-ue-sep" aria-hidden>·</span>
+                    <span dir="ltr">
+                      {formatBytes(editProfile?.used_traffic ?? 0)}
+                      {" / "}
+                      {(editProfile?.data_limit) ? formatBytes(editProfile.data_limit) : t("users.unlimited")}
+                    </span>
+                    <span className="nx-ue-sep" aria-hidden>·</span>
+                    <span>
+                      {editProfile?.expire
+                        ? relativeExpiryLabel(editProfile.expire, t)
+                        : t("users.never")}
+                    </span>
+                  </div>
+                </>
+              )}
+            </div>
+            <button type="button" className="nx-btn icon ghost nx-ue-close" onClick={onClose} aria-label={t("common.close")}>
+              <IcClose />
+            </button>
+          </header>
         )}
 
         {tabbedForm && !loadingEdit && (
-          <div className="nx-user-form-tabstrip" role="tablist">
-            {(["protocols", "plan", "advanced"] as UserFormTab[]).map((tab) => (
+          <div className={`nx-user-form-tabstrip${mode === "edit" ? " nx-ue-tabs" : ""}`} role="tablist">
+            {(mode === "edit"
+              ? (["plan", "protocols", "advanced"] as UserFormTab[])
+              : (["protocols", "plan", "advanced"] as UserFormTab[])
+            ).map((tab) => (
               <button
                 key={tab}
                 type="button"
@@ -1280,7 +1325,7 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
           </div>
         )}
 
-        <div className={useWizard ? "nx-user-form-main" : undefined}>
+        <div className={useWizard ? "nx-user-form-main" : "nx-uf-scroll"}>
         {mode === "create" && templateId ? (
           <Callout tone="info">{t("users.templateHint")}</Callout>
         ) : null}
@@ -1328,8 +1373,8 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
         {showProtocols && (
         <div className="nx-user-form-pane">
           {(useWizard || tabbedForm) && (
-            <div className="nx-row" style={{ justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-              <p className="nx-user-form-proto-lead" style={{ margin: 0 }}>
+            <div className="nx-uf-pane-head">
+              <p className="nx-user-form-proto-lead">
                 {useWizard ? t("users.wizardPickProtoHint") : t("users.formTabProtocolsHint")}
               </p>
               <div className="nx-row" style={{ gap: 8, flexWrap: "wrap" }}>
@@ -1359,7 +1404,7 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
               <>
                 <div className="nx-proto-pick">
                   {availableProtos.map((p) => {
-                    const vis = PROTO_VISUAL[p] || { icon: "🔗", hue: "var(--nx-accent)" };
+                    const vis = PROTO_VISUAL[p] || { icon: "·", hue: "var(--nx-accent)" };
                     const selected = !!protos[p]?.enabled;
                     return (
                       <button
@@ -1383,7 +1428,7 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
                 </div>
                 {enabledProtoDetailRows.length > 0 && (
                   <div className="nx-user-form-proto-details">
-                    <div className="nx-faint" style={{ fontSize: 12, fontWeight: 600 }}>{t("users.inboundSettings")}</div>
+                    <div className="nx-ue-label">{t("users.inboundSettings")}</div>
                     {enabledProtoDetailRows.map((p) => renderProtoDetail(p, protos[p]))}
                   </div>
                 )}
@@ -1393,84 +1438,97 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
         )}
 
         {showPlan && (
-        <div className="nx-user-form-pane">
+        <div className={`nx-user-form-pane${mode === "edit" ? " nx-ue-pane" : ""}`}>
         {useWizard && wizardStep === 3 && (
           <Callout tone="info" title={t("users.wizardReview")}>
             <b>{username.trim() || t("users.usernameWillAuto")}</b> · {enabledProtos.map(([p]) => PROTO_LABEL[p] || p).join(", ")}
           </Callout>
         )}
-          <div className="nx-user-form-grid">
-            <Field label={t("users.dataLimit")} hint={t("users.dataLimitHint")}>
-              <div className="nx-row" style={{ gap: 8 }}>
-                <Input
-                  type="number"
-                  min="0"
-                  step={dataLimitUnit === "MB" ? "1" : "0.001"}
-                  value={dataLimitValue}
-                  placeholder={t("users.unlimited")}
-                  onChange={(e: any) => setDataLimitValue(e.target.value)}
-                  style={{ flex: 1 }}
-                  dir="ltr"
-                />
-                <Select
-                  value={dataLimitUnit}
-                  onChange={(e: any) => setDataLimitUnit(e.target.value as DataLimitUnit)}
-                  style={{ width: 88 }}
-                >
-                  <option value="MB">MB</option>
-                  <option value="GB">GB</option>
-                </Select>
-              </div>
-            </Field>
-            <Field label={t("common.status")}>
-              <Select value={status} onChange={(e: any) => setStatus(e.target.value)}>
-                <option value="active">{t("users.status.active")}</option>
-                <option value="on_hold">{t("users.status.on_hold")}</option>
-                {mode === "edit" && <option value="disabled">{t("users.status.disabled")}</option>}
-              </Select>
-            </Field>
-            <Field label={t("users.expire")}>
-              <div className="nx-row" style={{ gap: 8, flexWrap: "wrap" }}>
-                <Input type="date" value={noExpire ? "" : expireDate} disabled={noExpire} onChange={(e: any) => setExpireDate(e.target.value)} style={{ flex: 1, minWidth: 140, maxWidth: 200 }} />
-                <label className="nx-row" style={{ gap: 6, fontSize: 12, whiteSpace: "nowrap" }}>
-                  <Checkbox checked={noExpire} onChange={() => setNoExpire((u) => !u)} /> {t("users.never")}
-                </label>
-              </div>
-              {!noExpire && (
-                <div className="nx-row" style={{ gap: 4, marginTop: 8 }}>
-                  {[30, 60, 90].map((d) => <Button key={d} size="sm" variant="ghost" onClick={() => preset(d)}>{d}d</Button>)}
-                </div>
-              )}
-            </Field>
-            <Field label={t("users.resetStrategy")}>
-              <Select value={reset} onChange={(e: any) => setReset(e.target.value)}>
-                {["no_reset", "day", "week", "month", "year"].map((r) => <option key={r} value={r}>{t(`users.resetStrategies.${r}`, r)}</option>)}
-              </Select>
-            </Field>
-            {(!useWizard || wizardStep === 3) && (
-              <Field label={t("users.clientProfile")}>
-                <Select value={clientProfile} onChange={(e: any) => setClientProfile(e.target.value)}>
-                  {["normal", "gamer", "trader"].map((p) => (
-                    <option key={p} value={p}>{t(`users.profile.${p}`)}</option>
-                  ))}
-                </Select>
-              </Field>
-            )}
-          </div>
-          {(!useWizard || wizardStep === 3) && (
+
+          {mode === "edit" ? (
             <>
-              <div
-                style={{
-                  fontSize: 12,
-                  fontWeight: 600,
-                  color: "var(--nx-text-dim)",
-                  marginTop: 6,
-                  marginBottom: 2,
-                }}
-              >
-                {t("users.sectionPerformance")}
+              <div className="nx-ue-field">
+                <div className="nx-ue-label">{t("common.status")}</div>
+                <div className="nx-ue-seg" role="group">
+                  {editStatusOptions.map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      className={status === s ? "on" : ""}
+                      onClick={() => setStatus(s)}
+                    >
+                      {t(`users.status.${s}`)}
+                    </button>
+                  ))}
+                </div>
               </div>
-              <div className="nx-user-form-grid">
+
+              <div className="nx-ue-field">
+                <div className="nx-ue-label">{t("users.dataLimit")}</div>
+                <div className="nx-ue-inline">
+                  <Input
+                    type="number"
+                    min="0"
+                    step={dataLimitUnit === "MB" ? "1" : "0.001"}
+                    value={dataLimitValue}
+                    placeholder={t("users.unlimited")}
+                    onChange={(e: any) => setDataLimitValue(e.target.value)}
+                    dir="ltr"
+                  />
+                  <Select
+                    value={dataLimitUnit}
+                    onChange={(e: any) => setDataLimitUnit(e.target.value as DataLimitUnit)}
+                  >
+                    <option value="MB">MB</option>
+                    <option value="GB">GB</option>
+                  </Select>
+                </div>
+                <p className="nx-ue-help">{t("users.dataLimitHint")}</p>
+              </div>
+
+              <div className="nx-ue-field">
+                <div className="nx-ue-label">{t("users.expire")}</div>
+                <label className="nx-ue-check">
+                  <Checkbox checked={noExpire} onChange={() => setNoExpire((u) => !u)} />
+                  <span>{t("users.never")}</span>
+                </label>
+                {!noExpire && (
+                  <>
+                    <Input
+                      type="date"
+                      className="nx-input-date"
+                      value={expireDate}
+                      onChange={(e: any) => setExpireDate(e.target.value)}
+                      dir="ltr"
+                      inputMode="none"
+                    />
+                    <div className="nx-ue-chips">
+                      {[30, 60, 90].map((d) => (
+                        <button key={d} type="button" className="nx-ue-chip" onClick={() => preset(d)}>+{d}d</button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              <div className="nx-ue-grid">
+                <Field label={t("users.resetStrategy")}>
+                  <Select value={reset} onChange={(e: any) => setReset(e.target.value)}>
+                    {["no_reset", "day", "week", "month", "year"].map((r) => <option key={r} value={r}>{t(`users.resetStrategies.${r}`, r)}</option>)}
+                  </Select>
+                </Field>
+                <Field label={t("users.clientProfile")}>
+                  <Select value={clientProfile} onChange={(e: any) => setClientProfile(e.target.value)}>
+                    {["normal", "gamer", "trader"].map((p) => (
+                      <option key={p} value={p}>{t(`users.profile.${p}`)}</option>
+                    ))}
+                  </Select>
+                </Field>
+              </div>
+
+              <div className="nx-ue-divider" />
+
+              <div className="nx-ue-grid">
                 <Field label={t("users.speedUp")}>
                   <Input type="number" min={0} placeholder="Mbps" value={speedUp} onChange={(e: any) => setSpeedUp(e.target.value)} dir="ltr" />
                 </Field>
@@ -1482,69 +1540,124 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
                 </Field>
               </div>
             </>
+          ) : (
+            <>
+              <div className="nx-user-form-grid">
+                <Field label={t("users.dataLimit")} hint={t("users.dataLimitHint")}>
+                  <div className="nx-row" style={{ gap: 8 }}>
+                    <Input
+                      type="number"
+                      min="0"
+                      step={dataLimitUnit === "MB" ? "1" : "0.001"}
+                      value={dataLimitValue}
+                      placeholder={t("users.unlimited")}
+                      onChange={(e: any) => setDataLimitValue(e.target.value)}
+                      style={{ flex: 1 }}
+                      dir="ltr"
+                    />
+                    <Select
+                      value={dataLimitUnit}
+                      onChange={(e: any) => setDataLimitUnit(e.target.value as DataLimitUnit)}
+                      style={{ width: 88 }}
+                    >
+                      <option value="MB">MB</option>
+                      <option value="GB">GB</option>
+                    </Select>
+                  </div>
+                </Field>
+                <Field label={t("common.status")}>
+                  <Select value={status} onChange={(e: any) => setStatus(e.target.value)}>
+                    <option value="active">{t("users.status.active")}</option>
+                    <option value="on_hold">{t("users.status.on_hold")}</option>
+                  </Select>
+                </Field>
+                <Field label={t("users.expire")}>
+                  <div className="nx-row" style={{ gap: 8, flexWrap: "wrap" }}>
+                    <Input type="date" value={noExpire ? "" : expireDate} disabled={noExpire} onChange={(e: any) => setExpireDate(e.target.value)} style={{ flex: 1, minWidth: 140, maxWidth: 200 }} />
+                    <label className="nx-row" style={{ gap: 6, fontSize: 12, whiteSpace: "nowrap" }}>
+                      <Checkbox checked={noExpire} onChange={() => setNoExpire((u) => !u)} /> {t("users.never")}
+                    </label>
+                  </div>
+                  {!noExpire && (
+                    <div className="nx-uf-presets">
+                      {[30, 60, 90].map((d) => (
+                        <button key={d} type="button" className="nx-uf-preset" onClick={() => preset(d)}>{d}d</button>
+                      ))}
+                    </div>
+                  )}
+                </Field>
+                <Field label={t("users.resetStrategy")}>
+                  <Select value={reset} onChange={(e: any) => setReset(e.target.value)}>
+                    {["no_reset", "day", "week", "month", "year"].map((r) => <option key={r} value={r}>{t(`users.resetStrategies.${r}`, r)}</option>)}
+                  </Select>
+                </Field>
+                {(!useWizard || wizardStep === 3) && (
+                  <Field label={t("users.clientProfile")}>
+                    <Select value={clientProfile} onChange={(e: any) => setClientProfile(e.target.value)}>
+                      {["normal", "gamer", "trader"].map((p) => (
+                        <option key={p} value={p}>{t(`users.profile.${p}`)}</option>
+                      ))}
+                    </Select>
+                  </Field>
+                )}
+              </div>
+              {(!useWizard || wizardStep === 3) && (
+                <div className="nx-user-form-grid" style={{ marginTop: 8 }}>
+                  <Field label={t("users.speedUp")}>
+                    <Input type="number" min={0} placeholder="Mbps" value={speedUp} onChange={(e: any) => setSpeedUp(e.target.value)} dir="ltr" />
+                  </Field>
+                  <Field label={t("users.speedDown")}>
+                    <Input type="number" min={0} placeholder="Mbps" value={speedDown} onChange={(e: any) => setSpeedDown(e.target.value)} dir="ltr" />
+                  </Field>
+                  <Field label={t("users.deviceLimit")} hint={t("users.deviceLimitHint")}>
+                    <Input type="number" min={0} value={deviceLimit} onChange={(e: any) => setDeviceLimit(e.target.value)} placeholder={t("common.none")} dir="ltr" />
+                  </Field>
+                </div>
+              )}
+            </>
           )}
         </div>
         )}
 
         {showAdvanced && (
-        <div className="nx-user-form-pane">
+        <div className={`nx-user-form-pane${mode === "edit" ? " nx-ue-pane" : ""}`}>
           {mode === "edit" && canWrite && (
-            <div className="nx-user-form-proto-detail" style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>
-                {t("users.subSecuritySection")}
-              </div>
-              <p className="nx-faint" style={{ fontSize: 12, margin: "0 0 12px", lineHeight: 1.5 }}>
-                {t("users.subSecurityHint")}
-              </p>
+            <div className="nx-ue-secure">
+              <div className="nx-ue-label">{t("users.subSecuritySection")}</div>
+              <p className="nx-ue-help">{t("users.subSecurityHint")}</p>
               {subToken ? (
                 <Field label={t("users.subToken")} hint={t("users.subTokenHint")}>
                   <CopyField value={subToken} />
                 </Field>
               ) : null}
               {subscriptionUrl ? (
-                <div style={{ marginTop: 10 }}>
-                  <Field label={t("users.subscriptionLink")}>
-                    <CopyField value={absoluteUrl(subscriptionUrl)} />
-                  </Field>
-                </div>
+                <Field label={t("users.subscriptionLink")}>
+                  <CopyField value={absoluteUrl(subscriptionUrl)} />
+                </Field>
               ) : null}
               {credentialLines.length > 0 ? (
-                <div style={{ marginTop: 10 }}>
-                  <Field label={t("users.proxyCredentials")}>
-                    <div className="nx-faint" style={{ fontSize: 12, lineHeight: 1.6, fontFamily: "var(--nx-mono, monospace)" }}>
-                      {credentialLines.map((line) => <div key={line}>{line}</div>)}
-                    </div>
-                  </Field>
-                </div>
+                <Field label={t("users.proxyCredentials")}>
+                  <div className="nx-uf-creds">
+                    {credentialLines.map((line) => <div key={line}>{line}</div>)}
+                  </div>
+                </Field>
               ) : null}
               {subRevokedAt ? (
-                <div style={{ marginTop: 10 }}>
-                  <Callout tone="warn">
-                    {t("users.subRevokedAt", { date: formatDate(subRevokedAt) })}
-                  </Callout>
-                </div>
+                <Callout tone="warn">
+                  {t("users.subRevokedAt", { date: formatDate(subRevokedAt) })}
+                </Callout>
               ) : null}
-              <div className="nx-row" style={{ gap: 8, marginTop: 14, flexWrap: "wrap" }}>
-                <Button
-                  size="sm"
-                  variant="danger"
-                  disabled={credBusy || loadingEdit}
-                  onClick={handleRevokeSub}
-                >
+              <div className="nx-uf-security-actions">
+                <Button size="sm" variant="danger" disabled={credBusy || loadingEdit} onClick={handleRevokeSub}>
                   {t("users.revokeSubFull")}
                 </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  disabled={credBusy || loadingEdit}
-                  onClick={handleRotateSub}
-                >
+                <Button size="sm" variant="ghost" disabled={credBusy || loadingEdit} onClick={handleRotateSub}>
                   {t("users.rotateSubLink")}
                 </Button>
               </div>
             </div>
           )}
-          <div className="nx-user-form-grid">
+          <div className={mode === "edit" ? "nx-ue-grid" : "nx-user-form-grid"}>
             <Field label={t("users.sessionLimit", { defaultValue: "Session limit (minutes)" })}>
               <Input type="number" min="0" value={sessionLimitMinutes} onChange={(e: any) => setSessionLimitMinutes(e.target.value)} placeholder={t("common.none")} />
             </Field>
@@ -1575,10 +1688,10 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
             </div>
           </div>
           {isEnabled("user_portal") && (
-            <div className="nx-user-form-proto-detail" style={{ marginTop: 4 }}>
-              <label className="nx-row" style={{ gap: 8, marginBottom: portalEnabled ? 12 : 0 }}>
+            <div className="nx-ue-field" style={{ marginTop: 8 }}>
+              <label className="nx-ue-check">
                 <Checkbox checked={portalEnabled} onChange={() => setPortalEnabled((v) => !v)} />
-                <span style={{ fontSize: 13, fontWeight: 600 }}>{t("users.portalEnabled")}</span>
+                <span>{t("users.portalEnabled")}</span>
               </label>
               {portalEnabled && (
                 <Field label={t("users.portalPassword")} hint={mode === "edit" ? t("users.portalPasswordHint") : t("users.portalCreateHint")}>

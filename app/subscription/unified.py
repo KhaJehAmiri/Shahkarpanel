@@ -130,33 +130,56 @@ def _collect_wireguard_exports(user: "UserResponse", wg_nodes: list) -> list[tup
     settings = _client_settings(user, ProxyTypes.WireGuard)
     if not (settings and wg_nodes):
         return []
+    from app.subscription.wireguard import node_host_endpoints
+
     exports: list[tuple[str, str, object, dict, str, int, str, Optional[dict]]] = []
     for wg in wg_nodes:
         if not wg.wireguard:
             continue
         for variant in ("plain", "awg"):
-            if not user_config(settings, wg, variant=variant):
+            try:
+                if not user_config(settings, wg, variant=variant):
+                    continue
+                endpoints = node_host_endpoints(wg, variant=variant)
+            except Exception:
                 continue
-            host, port_str = node_endpoint(wg, variant=variant).rsplit(":", 1)
-            tag = f"wg-{wg.name}" + ("-awg" if variant == "awg" else "")
+            if not endpoints:
+                continue
             addr = settings.get("awg_address" if variant == "awg" else "address") or ""
-            exports.append((variant, tag, wg, settings, host, int(port_str), addr, None))
-        if xray_native_wg_enabled(wg.wireguard):
-            # Reuse the plain listener's public host (cfg.endpoint takes
-            # priority over dbnode.address — e.g. relay nodes reachable via a
-            # tunnelled/loopback RPyC address still advertise a real public
-            # endpoint here), just swapping in the noise inbound's own port.
-            host = node_endpoint(wg, variant="plain").rsplit(":", 1)[0]
-            exports.append((
-                "xray_native",
-                f"wg-{wg.name}-xray",
-                wg,
-                settings,
-                host,
-                int(wg.wireguard.xray_wg_listen_port),
-                settings.get("address") or "",
-                wg.wireguard.xray_wg_noise or DEFAULT_NOISE_SETTINGS,
-            ))
+            for i, ep in enumerate(endpoints):
+                host, port_str = ep.rsplit(":", 1)
+                # Strip IPv6 brackets from host for outbound JSON fields.
+                host_clean = host[1:-1] if host.startswith("[") and host.endswith("]") else host
+                suffix = "" if i == 0 else f"-h{i + 1}"
+                tag = f"wg-{wg.name}" + ("-awg" if variant == "awg" else "") + suffix
+                exports.append((variant, tag, wg, settings, host_clean, int(port_str), addr, None))
+        if xray_native_wg_enabled(wg.wireguard) and settings.get("private_key"):
+            # Prefer Hosts / plain endpoint host, swap in the noise inbound port.
+            # Always emit even when plain/awg .conf can't be built so Finalmask
+            # reaches the v2ray-json subscription.
+            try:
+                plain_eps = node_host_endpoints(wg, variant="plain")
+            except Exception:
+                plain_eps = []
+            if not plain_eps:
+                try:
+                    plain_eps = [node_endpoint(wg, variant="plain")]
+                except Exception:
+                    plain_eps = [f"{wg.address}:{int(wg.wireguard.xray_wg_listen_port)}"]
+            host = plain_eps[0].rsplit(":", 1)[0]
+            host_clean = host[1:-1] if host.startswith("[") and host.endswith("]") else host
+            addr = settings.get("address") or settings.get("awg_address") or ""
+            if addr:
+                exports.append((
+                    "xray_native",
+                    f"wg-{wg.name}-xray",
+                    wg,
+                    settings,
+                    host_clean,
+                    int(wg.wireguard.xray_wg_listen_port),
+                    addr,
+                    wg.wireguard.xray_wg_noise or DEFAULT_NOISE_SETTINGS,
+                ))
     return exports
 
 
@@ -237,14 +260,12 @@ def _append_singbox(user: "UserResponse", config_text: str) -> str:
                     outbounds[-1]["pre_shared_key"] = wg_settings["preshared_key"]
                 tags.add(tag)
 
+        from app.subscription.host_buckets import singbox_dial_endpoints
+
         settings = _client_settings(user, ProxyTypes.Hysteria2)
         if settings:
             for node in sb_nodes:
                 if not (node.singbox and node.singbox.hysteria2_enabled):
-                    continue
-                host = node.singbox.sni or node.address
-                tag = f"hy2-{node.name}"
-                if tag in tags:
                     continue
                 from app.singbox.sync import hysteria2_port_for_user
 
@@ -254,30 +275,36 @@ def _append_singbox(user: "UserResponse", config_text: str) -> str:
                     user.speed_limit_down,
                 )
                 tier_limited = speed_tier(user.speed_limit_up, user.speed_limit_down) is not None
-                outbounds.append({
-                    "type": "hysteria2",
-                    "tag": tag,
-                    "server": host,
-                    "server_port": hy2_port,
-                    "password": settings.get("password"),
-                    "tls": _singbox_tls(node, host),
-                    **hysteria2_outbound_quality(tier_limited=tier_limited),
-                })
-                if node.singbox.hysteria2_obfs_password:
-                    outbounds[-1]["obfs"] = {
-                        "type": "salamander",
-                        "password": node.singbox.hysteria2_obfs_password,
-                    }
-                tags.add(tag)
+                dials = singbox_dial_endpoints(
+                    node,
+                    "__native:hysteria2",
+                    default_host=node.singbox.sni or node.address,
+                    default_port=hy2_port,
+                )
+                for i, (host, port) in enumerate(dials):
+                    tag = f"hy2-{node.name}" + ("" if i == 0 else f"-h{i + 1}")
+                    if tag in tags:
+                        continue
+                    outbounds.append({
+                        "type": "hysteria2",
+                        "tag": tag,
+                        "server": host,
+                        "server_port": port,
+                        "password": settings.get("password"),
+                        "tls": _singbox_tls(node, host),
+                        **hysteria2_outbound_quality(tier_limited=tier_limited),
+                    })
+                    if node.singbox.hysteria2_obfs_password:
+                        outbounds[-1]["obfs"] = {
+                            "type": "salamander",
+                            "password": node.singbox.hysteria2_obfs_password,
+                        }
+                    tags.add(tag)
 
         settings = _client_settings(user, ProxyTypes.TUIC)
         if settings:
             for node in sb_nodes:
                 if not (node.singbox and node.singbox.tuic_enabled):
-                    continue
-                host = node.singbox.sni or node.address
-                tag = f"tuic-{node.name}"
-                if tag in tags:
                     continue
                 from app.singbox.sync import tuic_port_for_user
 
@@ -286,19 +313,29 @@ def _append_singbox(user: "UserResponse", config_text: str) -> str:
                     user.speed_limit_up,
                     user.speed_limit_down,
                 )
-                outbounds.append({
-                    "type": "tuic",
-                    "tag": tag,
-                    "server": host,
-                    "server_port": tuic_port,
-                    "uuid": str(settings.get("uuid") or ""),
-                    "password": settings.get("password"),
-                    "tls": _singbox_tls(node, host),
-                    **tuic_outbound_quality(
-                        congestion_control=node.singbox.tuic_congestion_control or "bbr"
-                    ),
-                })
-                tags.add(tag)
+                dials = singbox_dial_endpoints(
+                    node,
+                    "__native:tuic",
+                    default_host=node.singbox.sni or node.address,
+                    default_port=tuic_port,
+                )
+                for i, (host, port) in enumerate(dials):
+                    tag = f"tuic-{node.name}" + ("" if i == 0 else f"-h{i + 1}")
+                    if tag in tags:
+                        continue
+                    outbounds.append({
+                        "type": "tuic",
+                        "tag": tag,
+                        "server": host,
+                        "server_port": port,
+                        "uuid": str(settings.get("uuid") or ""),
+                        "password": settings.get("password"),
+                        "tls": _singbox_tls(node, host),
+                        **tuic_outbound_quality(
+                            congestion_control=node.singbox.tuic_congestion_control or "bbr"
+                        ),
+                    })
+                    tags.add(tag)
 
         settings = _client_settings(user, ProxyTypes.AnyTLS)
         if settings:
@@ -359,35 +396,66 @@ def _append_clash_meta(user: "UserResponse", config_text: str) -> str:
         sb_nodes = [n for n in nodes if getattr(n, "singbox", None)]
         wg_nodes = [n for n in nodes if n.core_kind == "wireguard" or getattr(n, "wireguard", None)]
 
+        from app.subscription.host_buckets import singbox_dial_endpoints
+        from app.singbox.sync import hysteria2_port_for_user, tuic_port_for_user
+
         settings = _client_settings(user, ProxyTypes.Hysteria2)
         if settings:
             for node in sb_nodes:
                 if not (node.singbox and node.singbox.hysteria2_enabled):
                     continue
-                tag = f"hy2-{node.name}"
-                link = user_hysteria2_link(
-                    settings, node, remark=tag,
-                    speed_limit_up=user.speed_limit_up,
-                    speed_limit_down=user.speed_limit_down,
+                hy2_port = hysteria2_port_for_user(
+                    int(node.singbox.hysteria2_port),
+                    user.speed_limit_up,
+                    user.speed_limit_down,
                 )
-                if link and tag not in names:
-                    proxies.append(_clash_from_uri(link, tag, "hysteria2"))
-                    names.add(tag)
+                dials = singbox_dial_endpoints(
+                    node,
+                    "__native:hysteria2",
+                    default_host=node.singbox.sni or node.address,
+                    default_port=hy2_port,
+                )
+                for i, (host, port) in enumerate(dials):
+                    tag = f"hy2-{node.name}" + ("" if i == 0 else f"-h{i + 1}")
+                    link = user_hysteria2_link(
+                        settings, node, remark=tag,
+                        speed_limit_up=user.speed_limit_up,
+                        speed_limit_down=user.speed_limit_down,
+                        host=host,
+                        port=port,
+                    )
+                    if link and tag not in names:
+                        proxies.append(_clash_from_uri(link, tag, "hysteria2"))
+                        names.add(tag)
 
         settings = _client_settings(user, ProxyTypes.TUIC)
         if settings:
             for node in sb_nodes:
                 if not (node.singbox and node.singbox.tuic_enabled):
                     continue
-                tag = f"tuic-{node.name}"
-                link = user_tuic_link(
-                    settings, node, remark=tag,
-                    speed_limit_up=user.speed_limit_up,
-                    speed_limit_down=user.speed_limit_down,
+                tuic_port = tuic_port_for_user(
+                    int(node.singbox.tuic_port),
+                    user.speed_limit_up,
+                    user.speed_limit_down,
                 )
-                if link and tag not in names:
-                    proxies.append(_clash_from_uri(link, tag, "tuic"))
-                    names.add(tag)
+                dials = singbox_dial_endpoints(
+                    node,
+                    "__native:tuic",
+                    default_host=node.singbox.sni or node.address,
+                    default_port=tuic_port,
+                )
+                for i, (host, port) in enumerate(dials):
+                    tag = f"tuic-{node.name}" + ("" if i == 0 else f"-h{i + 1}")
+                    link = user_tuic_link(
+                        settings, node, remark=tag,
+                        speed_limit_up=user.speed_limit_up,
+                        speed_limit_down=user.speed_limit_down,
+                        host=host,
+                        port=port,
+                    )
+                    if link and tag not in names:
+                        proxies.append(_clash_from_uri(link, tag, "tuic"))
+                        names.add(tag)
 
         settings = _client_settings(user, ProxyTypes.AnyTLS)
         if settings:

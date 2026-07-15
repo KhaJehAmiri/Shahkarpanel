@@ -14,6 +14,7 @@ import {
   cloneHosts,
   flattenHosts,
   formatEndpoint,
+  hostTagLabel,
   reindexSortOrder,
   type HostRecord,
   type HostRowRef,
@@ -77,9 +78,13 @@ export const HostsTab: FC = () => {
   );
 
   const openAdd = () => {
-    const tag = inboundTags[0];
+    // Prefer WireGuard bucket when present so "Add host" lands on native products.
+    const tag =
+      inboundTags.find((t) => t === "__native:wireguard") ||
+      inboundTags.find((t) => t.startsWith("__native:")) ||
+      inboundTags[0];
     if (!tag) return;
-    setEditor({ mode: "add", tag, host: emptyHost() });
+    setEditor({ mode: "add", tag, host: emptyHost(tag) });
   };
 
   const openEdit = (row: HostRowRef) => {
@@ -284,7 +289,7 @@ export const HostsTab: FC = () => {
                         {formatEndpoint(row.host)}
                       </td>
                       <td>
-                        <Pill tone="accent">{row.tag}</Pill>
+                        <Pill tone="accent">{hostTagLabel(row.tag)}</Pill>
                       </td>
                       <td>
                         <Pill>{securityLabel(row.host.security)}</Pill>

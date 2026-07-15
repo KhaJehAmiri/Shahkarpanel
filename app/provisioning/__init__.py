@@ -207,7 +207,8 @@ def build_install_command(
 
     wg_host_egress = ""
     if core_kind == "wireguard":
-        # Host-network agent: NAT/FORWARD must exist on the host (container may lack iptables).
+        # Host-network agent: NAT/FORWARD + UDP INPUT so listen ports work
+        # without the operator touching the firewall by hand.
         wg_host_egress = (
             "WG_OUT=$(ip route get 8.8.8.8 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i==\"dev\") print $(i+1)}'); "
             "if [ -n \"$WG_OUT\" ]; then "
@@ -221,6 +222,11 @@ def build_install_command(
             "|| iptables -A FORWARD -o \"$IF\" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT; "
             "done; "
             "fi; "
+            "for WP in 51820 51821 51901; do "
+            "iptables -C INPUT -p udp --dport \"$WP\" -j ACCEPT 2>/dev/null "
+            "|| iptables -I INPUT -p udp --dport \"$WP\" -j ACCEPT; "
+            "command -v ufw >/dev/null 2>&1 && ufw allow \"$WP/udp\" comment nexuspanel-wg >/dev/null 2>&1 || true; "
+            "done; "
         )
 
     # Prefer a prebuilt image from the panel (HTTP) or SSH upload from the panel

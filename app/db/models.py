@@ -492,7 +492,11 @@ class NodeWireGuard(Base):
     node = relationship("Node", back_populates="wireguard")
     interface = Column(String(32), nullable=False, server_default=text("'wg0'"), default="wg0")
     listen_port = Column(Integer, nullable=False, server_default=text("51820"), default=51820)
-    subnet = Column(String(64), nullable=False, server_default=text("'10.10.0.0/24'"), default="10.10.0.0/24")
+    subnet = Column(String(64), nullable=False, server_default=text("'10.10.0.0/16'"), default="10.10.0.0/16")
+    # Historical gateway host (no prefix). Pinned before auto-widen so a
+    # non-aligned supernet cannot move the interface Address or free that IP
+    # for peer allocation.
+    interface_host = Column(String(64), nullable=True)
     private_key = Column(String(64), nullable=False)
     public_key = Column(String(64), nullable=False)
     endpoint = Column(String(256), nullable=True)
@@ -504,7 +508,8 @@ class NodeWireGuard(Base):
     awg_enabled = Column(Boolean, nullable=False, server_default=text("0"), default=False)
     awg_interface = Column(String(32), nullable=False, server_default=text("'wg1'"), default="wg1")
     awg_listen_port = Column(Integer, nullable=False, server_default=text("51821"), default=51821)
-    awg_subnet = Column(String(64), nullable=False, server_default=text("'10.11.0.0/24'"), default="10.11.0.0/24")
+    awg_subnet = Column(String(64), nullable=False, server_default=text("'10.11.0.0/16'"), default="10.11.0.0/16")
+    awg_interface_host = Column(String(64), nullable=True)
     awg_private_key = Column(String(64), nullable=True)
     awg_public_key = Column(String(64), nullable=True)
     awg_endpoint = Column(String(256), nullable=True)

@@ -40,6 +40,15 @@ def wg_wants_awg_address(settings: Dict) -> bool:
     return "amneziawg" in user_wg_stack_labels(settings)
 
 
+def wg_tunnel_ip_for_finalmask(settings: Dict) -> str:
+    """Client tunnel IP for Finalmask AllowedIPs / subscription export.
+
+    Prefer the plain pool address; fall back to Amnezia address so amnezia-only
+    users still appear on the Xray-native inbound until a plain IP is allocated.
+    """
+    return (settings.get("address") or settings.get("awg_address") or "").strip()
+
+
 def wg_kind_from_template_tags(tags: List[str]) -> str | None:
     has_plain = "__native:wireguard" in tags
     has_awg = "__native:amneziawg" in tags

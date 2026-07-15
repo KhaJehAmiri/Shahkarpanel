@@ -341,12 +341,63 @@ def public_dial_host(dbnode) -> str:
     return ""
 
 
+def node_host_endpoints(dbnode, *, variant: str = "plain", db=None) -> List[str]:
+    """All ``host:port`` endpoints for a WG node+variant (Hosts UI first).
+
+    When Hosts has ``__native:wireguard`` / ``__native:amneziawg`` rows bound to
+    this node, every matching address is returned. Otherwise a single fallback
+    from the node's stack ``endpoint`` / ``awg_endpoint`` / address is used.
+    """
+    from app.subscription.host_buckets import resolve_native_host_endpoints, wireguard_host_tag
+    from app.wireguard.sync import amneziawg_enabled, direct_wg_enabled
+
+    cfg = dbnode.wireguard
+    if cfg is None:
+        return []
+
+    if variant == "awg":
+        default_port = int(cfg.awg_listen_port or 51821)
+    elif variant == "direct":
+        default_port = int(cfg.direct_listen_port or 0)
+    else:
+        default_port = int(cfg.listen_port or 51820)
+        # Tunnel-delegated plain WG: clients must hit dokodemo capture port.
+        try:
+            from app.tunnel.relay import relay_wireguard_tunnel_port
+
+            if db is not None:
+                tun_port = relay_wireguard_tunnel_port(db, int(dbnode.id))
+            else:
+                from app.db import GetDB
+
+                with GetDB() as session:
+                    tun_port = relay_wireguard_tunnel_port(session, int(dbnode.id))
+            if tun_port:
+                default_port = int(tun_port)
+        except Exception:
+            pass
+
+    if variant in ("plain", "awg") and default_port > 0:
+        native = resolve_native_host_endpoints(
+            wireguard_host_tag(variant),
+            dbnode,
+            default_port=default_port,
+        )
+        if native:
+            return [_join_host_port(h, p) for h, p, _remark in native]
+
+    return [node_endpoint(dbnode, variant=variant, db=db)]
+
+
 def node_endpoint(dbnode, *, variant: str = "plain", db=None) -> str:
     """Resolve the peer ``Endpoint`` (``host:port``) for a WG node variant.
 
-    Never advertise control-plane loopback to clients. When the relay delegates
-    plain WG through an Xray dokodemo tunnel, use that tunnel's capture port.
+    Prefers the first matching Hosts row (``__native:wireguard`` /
+    ``__native:amneziawg``). Never advertise control-plane loopback to clients.
+    When the relay delegates plain WG through an Xray dokodemo tunnel, use that
+    tunnel's capture port.
     """
+    from app.subscription.host_buckets import resolve_native_host_endpoints, wireguard_host_tag
     from app.wireguard.sync import amneziawg_enabled, direct_wg_enabled
 
     cfg = dbnode.wireguard
@@ -354,6 +405,11 @@ def node_endpoint(dbnode, *, variant: str = "plain", db=None) -> str:
 
     if variant == "awg" and amneziawg_enabled(cfg):
         port = int(cfg.awg_listen_port or 0)
+        native = resolve_native_host_endpoints(
+            wireguard_host_tag("awg"), dbnode, default_port=port,
+        )
+        if native:
+            return _join_host_port(native[0][0], native[0][1])
         awg_host = _endpoint_host(cfg.awg_endpoint)
         if awg_host and not _is_non_routable_host(awg_host):
             host = awg_host
@@ -362,12 +418,18 @@ def node_endpoint(dbnode, *, variant: str = "plain", db=None) -> str:
                     port = int(str(cfg.awg_endpoint).rsplit(":", 1)[-1])
                 except ValueError:
                     pass
-        return f"{host}:{port}"
+        return _join_host_port(host, port) if host and port else f"{host}:{port}"
 
     if variant == "direct" and direct_wg_enabled(cfg):
-        return f"{host}:{int(cfg.direct_listen_port)}"
+        return _join_host_port(host, int(cfg.direct_listen_port))
 
     port = int(cfg.listen_port or 0)
+    native = resolve_native_host_endpoints(
+        wireguard_host_tag("plain"), dbnode, default_port=port or 51820,
+    )
+    if native:
+        return _join_host_port(native[0][0], native[0][1])
+
     # Prefer an explicit routable endpoint's port when present.
     ep_host = _endpoint_host(cfg.endpoint)
     if cfg.endpoint and ep_host and not _is_non_routable_host(ep_host):
@@ -395,7 +457,7 @@ def node_endpoint(dbnode, *, variant: str = "plain", db=None) -> str:
     except Exception:
         pass
 
-    return f"{host}:{port}"
+    return _join_host_port(host, port) if host and port else f"{host}:{port}"
 
 
 def user_config(user_settings: dict, dbnode, *, variant: str = "plain", db=None) -> Optional[str]:

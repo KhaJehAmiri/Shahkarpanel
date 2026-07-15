@@ -106,14 +106,27 @@ def get_inbounds(admin: Admin = Depends(Admin.get_current)) -> Dict[str, List[di
     return {key: list(items) for key, items in xray.config.inbounds_by_protocol.items()}
 
 
+def _host_tags() -> list[str]:
+    from app.subscription.host_buckets import host_bucket_tags, is_native_host_tag
+
+    return host_bucket_tags(xray.config.inbounds_by_tag)
+
+
 @router.get(
     "/hosts", response_model=Dict[str, List[ProxyHost]], responses={403: responses._403}
 )
 def get_hosts(
     db: Session = Depends(get_db), admin: Admin = Depends(require_permission("hosts:read"))
 ):
-    """Get a list of proxy hosts grouped by inbound tag."""
-    hosts = {tag: crud.get_hosts(db, tag) for tag in xray.config.inbounds_by_tag}
+    """Get a list of proxy hosts grouped by inbound tag (incl. native WG/H2/…)."""
+    from app.subscription.host_buckets import is_native_host_tag
+
+    hosts = {}
+    for tag in _host_tags():
+        if is_native_host_tag(tag):
+            hosts[tag] = crud.get_hosts_existing(db, tag)
+        else:
+            hosts[tag] = crud.get_hosts(db, tag)
     return hosts
 
 
@@ -136,8 +149,11 @@ def modify_hosts(
     admin: Admin = Depends(require_permission("hosts:write")),
 ):
     """Modify proxy hosts and update the configuration."""
+    from app.subscription.host_buckets import is_native_host_tag
+
+    allowed = set(_host_tags())
     for inbound_tag in modified_hosts:
-        if inbound_tag not in xray.config.inbounds_by_tag:
+        if inbound_tag not in allowed:
             raise HTTPException(
                 status_code=400, detail=f"Inbound {inbound_tag} doesn't exist"
             )
@@ -157,7 +173,14 @@ def modify_hosts(
     except Exception as exc:
         logger.exception("edge sync failed (hosts saved): %s", exc)
 
-    return {tag: crud.get_hosts(db, tag) for tag in xray.config.inbounds_by_tag}
+    # Return same shape as GET (native tags included; empty until configured).
+    out = {}
+    for tag in _host_tags():
+        if is_native_host_tag(tag):
+            out[tag] = crud.get_hosts_existing(db, tag)
+        else:
+            out[tag] = crud.get_hosts(db, tag)
+    return out
 
 
 class HostCloneBody(BaseModel):
@@ -173,18 +196,27 @@ def clone_hosts(
     admin: Admin = Depends(require_permission("hosts:write")),
 ):
     """Clone host rows from one inbound to others (bulk template)."""
-    if body.source_tag not in xray.config.inbounds_by_tag:
+    from app.subscription.host_buckets import is_native_host_tag
+
+    allowed = set(_host_tags())
+    if body.source_tag not in allowed:
         raise HTTPException(status_code=404, detail="Source inbound not found")
-    source = crud.get_hosts(db, body.source_tag)
+    if is_native_host_tag(body.source_tag):
+        source = crud.get_hosts_existing(db, body.source_tag)
+    else:
+        source = crud.get_hosts(db, body.source_tag)
     if not source:
         raise HTTPException(status_code=404, detail="Source inbound has no hosts")
     cloned = 0
     for tag in body.target_tags:
-        if tag not in xray.config.inbounds_by_tag:
+        if tag not in allowed:
             continue
         if body.mode == "replace":
             crud.update_hosts(db, tag, [])
-        existing = crud.get_hosts(db, tag)
+        if is_native_host_tag(tag):
+            existing = crud.get_hosts_existing(db, tag)
+        else:
+            existing = crud.get_hosts(db, tag)
         merged = list(existing) + [h.model_copy(deep=True) for h in source]
         crud.update_hosts(db, tag, merged)
         cloned += len(source)

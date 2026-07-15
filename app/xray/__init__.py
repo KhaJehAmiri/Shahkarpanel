@@ -83,11 +83,15 @@ if TYPE_CHECKING:
 @DictStorage
 def hosts(storage: dict):
     from app.db import GetDB, crud
+    from app.subscription.host_buckets import host_bucket_tags, is_native_host_tag
 
     storage.clear()
     with GetDB() as db:
-        for inbound_tag in config.inbounds_by_tag:
-            inbound_hosts: Sequence[ProxyHost] = crud.get_hosts(db, inbound_tag)
+        for inbound_tag in host_bucket_tags(config.inbounds_by_tag):
+            if is_native_host_tag(inbound_tag):
+                inbound_hosts: Sequence[ProxyHost] = crud.get_hosts_existing(db, inbound_tag)
+            else:
+                inbound_hosts = crud.get_hosts(db, inbound_tag)
 
             storage[inbound_tag] = [
                 {

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.21.8 — 2026-07-15
+
+- WireGuard: when stack / Finalmask ports change, the panel syncs the node and opens UDP INPUT (iptables / ufw / firewalld) automatically — no manual firewall steps.
+- New WG nodes seed Xray-native Finalmask (UDP 51901) by default; provision install also pre-opens 51820/51821/51901 on the host.
+- UI copy no longer tells operators to open firewall ports by hand.
+
 ## 0.21.6 — 2026-07-14
 
 - Node SSH provision: never fall back to on-node `docker build` when Docker Hub / CloudFront returns HTTP 403. The panel now uploads its prebuilt `nexuspanel/node` image over the SSH session (`docker load`) before starting the agent, so restricted node DCs no longer hit CloudFront blob 403 after a failed HTTP image download.

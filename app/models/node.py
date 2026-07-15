@@ -55,7 +55,8 @@ class NodeWireGuardConfig(BaseModel):
 
     interface: str = "wg0"
     listen_port: int = Field(default=51820, gt=0, lt=65536)
-    subnet: str = "10.10.0.0/24"
+    subnet: str = "10.10.0.0/16"
+    interface_host: Optional[str] = None
     public_key: Optional[str] = None
     endpoint: Optional[str] = None
     mtu: int = Field(default=1420, gt=0)
@@ -64,7 +65,8 @@ class NodeWireGuardConfig(BaseModel):
     awg_enabled: bool = False
     awg_interface: str = "wg1"
     awg_listen_port: int = Field(default=51821, gt=0, lt=65536)
-    awg_subnet: str = "10.11.0.0/24"
+    awg_subnet: str = "10.11.0.0/16"
+    awg_interface_host: Optional[str] = None
     awg_public_key: Optional[str] = None
     awg_endpoint: Optional[str] = None
     # AmneziaWG obfuscation params for the awg listener.

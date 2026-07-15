@@ -92,12 +92,12 @@ def _sync_wireguard():
         from app.wireguard.operations import sync_user_change
         sync_user_change()
     except Exception:
-        pass
+        logger.exception("WireGuard user-change sync failed to start")
     try:
         from app.singbox.operations import sync_user_change as singbox_sync
         singbox_sync()
     except Exception:
-        pass
+        logger.exception("sing-box user-change sync failed to start")
 
 
 def _sync_wireguard_node(node_id: int, node_object):
@@ -280,10 +280,17 @@ def _apply_native_wireguard_inbound(config, node_id: int):
     Best-effort and independent of the tunnel injection above: this is a
     self-contained inbound (terminates locally, dispatches to ``DIRECT``),
     not a relay/transit/exit tunnel fragment.
+
+    Always replaces an existing ``node-{id}-xray-wg-in`` entry so peer IP
+    expansions (thousands of users) are reflected on the next Xray restart —
+    appending only when the tag is missing would leave a stale peer set.
     """
     try:
         from app.db import GetDB, crud
-        from app.wireguard.operations import collect_wg_peers
+        from app.wireguard.operations import (
+            collect_wg_peers,
+            ensure_plain_addresses_for_finalmask,
+        )
         from app.wireguard.xray_native import (
             build_xray_wireguard_inbound,
             xray_native_wg_enabled,
@@ -294,18 +301,31 @@ def _apply_native_wireguard_inbound(config, node_id: int):
             cfg = dbnode.wireguard if dbnode else None
             if not xray_native_wg_enabled(cfg):
                 return config
+
+            ensure_plain_addresses_for_finalmask(db)
             peers = collect_wg_peers(db)
             inbound, rule = build_xray_wireguard_inbound(cfg, peers, node_id=node_id)
         if inbound is None:
             return config
 
         result = config.copy()
-        inbounds = result.setdefault("inbounds", [])
-        existing_tags = {ib.get("tag") for ib in inbounds if isinstance(ib, dict)}
-        if inbound["tag"] not in existing_tags:
-            inbounds.append(inbound)
-            rules = result.setdefault("routing", {}).setdefault("rules", [])
-            rules.insert(0, rule)
+        inbounds = list(result.get("inbounds") or [])
+        tag = inbound["tag"]
+        inbounds = [ib for ib in inbounds if not (isinstance(ib, dict) and ib.get("tag") == tag)]
+        inbounds.append(inbound)
+        result["inbounds"] = inbounds
+
+        routing = result.setdefault("routing", {})
+        rules = list(routing.get("rules") or [])
+        rules = [
+            r for r in rules
+            if not (
+                isinstance(r, dict)
+                and tag in (r.get("inboundTag") or [])
+            )
+        ]
+        rules.insert(0, rule)
+        routing["rules"] = rules
         return result
     except Exception as exc:
         logger.warning("Failed to inject native WireGuard inbound for node %s: %s", node_id, exc)

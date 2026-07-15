@@ -60,6 +60,18 @@ const AmneziaNodeCard: FC<{
   const [directPort, setDirectPort] = useState(
     node.wireguard?.direct_listen_port != null ? String(node.wireguard.direct_listen_port) : "",
   );
+  const hostFromEndpoint = (ep?: string | null) => {
+    const raw = (ep || "").trim();
+    if (!raw) return "";
+    if (raw.startsWith("[")) {
+      const end = raw.indexOf("]");
+      return end > 1 ? raw.slice(1, end) : raw;
+    }
+    if ((raw.match(/:/g) || []).length === 1) return raw.split(":")[0];
+    return raw;
+  };
+  const [clientHost, setClientHost] = useState(hostFromEndpoint(node.wireguard?.endpoint));
+  const [awgClientHost, setAwgClientHost] = useState(hostFromEndpoint(node.wireguard?.awg_endpoint));
   const initial = () => {
     const v: Record<string, string> = {};
     for (const f of AWG_FIELDS) {
@@ -83,8 +95,10 @@ const AmneziaNodeCard: FC<{
     setDirectPort(
       node.wireguard?.direct_listen_port != null ? String(node.wireguard.direct_listen_port) : "",
     );
+    setClientHost(hostFromEndpoint(node.wireguard?.endpoint));
+    setAwgClientHost(hostFromEndpoint(node.wireguard?.awg_endpoint));
     /* eslint-disable-next-line */
-  }, [node.id]);
+  }, [node.id, node.wireguard?.endpoint, node.wireguard?.awg_endpoint]);
 
   const loadStatus = async () => {
     try {
@@ -135,6 +149,8 @@ const AmneziaNodeCard: FC<{
         plain_enabled: plainOn,
         awg_enabled: awgOn,
         ...(direct_listen_port !== undefined ? { direct_listen_port } : {}),
+        endpoint: clientHost.trim(),
+        awg_endpoint: awgClientHost.trim(),
       });
       if (awgOn) {
         const body = saveBody();
@@ -248,6 +264,22 @@ const AmneziaNodeCard: FC<{
         )}
       </div>
       <div className="nx-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10, marginBottom: 12 }}>
+        <Field label={t("wireguard.clientHost")} hint={t("wireguard.clientHostHint")}>
+          <Input
+            value={clientHost}
+            placeholder={node.address || "wg.example.com"}
+            onChange={(e: any) => setClientHost(e.target.value)}
+          />
+        </Field>
+        {awgOn && (
+          <Field label={t("wireguard.awgClientHost")} hint={t("wireguard.awgClientHostHint")}>
+            <Input
+              value={awgClientHost}
+              placeholder={clientHost.trim() || node.address || "awg.example.com"}
+              onChange={(e: any) => setAwgClientHost(e.target.value)}
+            />
+          </Field>
+        )}
         {xrayOn && (
           <Field label={t("wireguard.xrayPort")}>
             <Input type="number" value={xrayPort} placeholder="51901" onChange={(e: any) => setXrayPort(e.target.value)} />

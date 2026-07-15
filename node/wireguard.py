@@ -147,6 +147,62 @@ def subnets_from_specs(specs: Sequence[WireGuardSpec]) -> List[str]:
     return subnets
 
 
+def ensure_udp_input_ports(
+    ports: Sequence[int],
+    run: Optional[Callable] = None,
+) -> None:
+    """Open UDP listen ports on the host firewall (iptables INPUT + ufw).
+
+    Idempotent. Safe to call on every sync when a WG / Xray-native port changes —
+    operators should not need to touch the firewall by hand.
+    """
+    runner = run or WireGuardManager._default_run
+    wanted = sorted({int(p) for p in ports if p and 0 < int(p) < 65536})
+    if not wanted:
+        return
+
+    if shutil.which("iptables"):
+        for port in wanted:
+            check = [
+                "iptables", "-C", "INPUT", "-p", "udp", "--dport", str(port), "-j", "ACCEPT",
+            ]
+            add = [
+                "iptables", "-I", "INPUT", "-p", "udp", "--dport", str(port), "-j", "ACCEPT",
+            ]
+            if getattr(runner(check, check=False), "returncode", 1) != 0:
+                runner(add, check=False)
+
+    if shutil.which("ufw"):
+        # Never prompt; skip when ufw is inactive to avoid hanging sync.
+        status = runner(["ufw", "status"], check=False)
+        status_out = (getattr(status, "stdout", "") or "").lower()
+        if "status: active" in status_out:
+            for port in wanted:
+                runner(
+                    [
+                        "ufw",
+                        "--force",
+                        "allow",
+                        f"{port}/udp",
+                        "comment",
+                        "nexuspanel-wg",
+                    ],
+                    check=False,
+                )
+
+    if shutil.which("firewall-cmd"):
+        state = runner(["firewall-cmd", "--state"], check=False)
+        if getattr(state, "returncode", 1) == 0 and "running" in (
+            getattr(state, "stdout", "") or ""
+        ).lower():
+            for port in wanted:
+                runner(
+                    ["firewall-cmd", "--permanent", f"--add-port={port}/udp"],
+                    check=False,
+                )
+            runner(["firewall-cmd", "--reload"], check=False)
+
+
 def ensure_egress_forwarding(
     specs: Sequence[WireGuardSpec],
     run: Optional[Callable] = None,
@@ -201,6 +257,7 @@ def ensure_egress_forwarding(
                 "ACCEPT",
             ],
         )
+    ensure_udp_input_ports([spec.listen_port for spec in specs], run=runner)
     logger.info(
         "Ensured WG egress (ifaces=%s, subnets=%s, out=%s)",
         interfaces,
@@ -324,6 +381,10 @@ class WireGuardManager:
             except Exception as exc:
                 logger.warning("WireGuard apply for %s failed: %s", spec.interface, exc)
         ensure_egress_forwarding(specs, run=self._run)
+
+    def open_udp_ports(self, ports: Sequence[int]) -> None:
+        """Expose UDP ports publicly (used for Xray-native WG + stack ports)."""
+        ensure_udp_input_ports(ports, run=self._run)
 
     def _peer_handshakes(self, interface: str) -> dict:
         """Return ``public_key -> unix_timestamp`` from ``awg/wg show … handshakes``."""

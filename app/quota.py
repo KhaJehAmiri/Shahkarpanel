@@ -309,6 +309,13 @@ def disconnect_users_everywhere(
         logger.debug("WG peer toggle during disconnect skipped", exc_info=True)
 
     try:
+        from app.wireguard.operations import sync_user_change as wg_sync
+
+        wg_sync()
+    except Exception:
+        logger.debug("WireGuard sync during disconnect skipped", exc_info=True)
+
+    try:
         from app.singbox.operations import sync_user_change
 
         sync_user_change()

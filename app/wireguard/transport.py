@@ -8,12 +8,64 @@ holds for Xray. ``client_for_node`` auto-detects, mirroring ``XRayNode``.
 The clients only depend on a tiny duck-typed surface so they are unit testable
 with fakes (no live node required).
 """
+from __future__ import annotations
+
 import json
-from typing import Any, Optional
+import logging
+from contextlib import contextmanager
+from typing import Any, Iterator, Optional
+
+logger = logging.getLogger("nexus-wg")
 
 
 class WireGuardTransportError(Exception):
     pass
+
+
+# Full ``wg syncconf`` of thousands of peers (often ×2 for plain+AWG) is I/O
+# heavy. Old formula ``30 + n/20`` gave ~180s at 3k — too tight once dual-stack
+# and PSK tempfile work are counted. Floor 120s, ~125ms/peer, cap 15min.
+_APPLY_TIMEOUT_FLOOR_SEC = 120
+_APPLY_TIMEOUT_CEILING_SEC = 900
+_APPLY_TIMEOUT_BASE_SEC = 90
+
+
+def wg_apply_timeout_sec(peer_count: int, *, minimum: int = 30) -> int:
+    """Seconds to wait for a full peer-set apply (REST or RPyC).
+
+    ``peer_count`` should be the sum of peers across all specs in one call
+    (e.g. plain + Amnezia).
+    """
+    n = max(0, int(peer_count or 0))
+    scaled = _APPLY_TIMEOUT_BASE_SEC + (n // 8)
+    return int(
+        max(
+            _APPLY_TIMEOUT_FLOOR_SEC,
+            min(_APPLY_TIMEOUT_CEILING_SEC, max(int(minimum), scaled)),
+        )
+    )
+
+
+@contextmanager
+def _rpyc_sync_timeout(conn, timeout: float) -> Iterator[None]:
+    """Temporarily raise RPyC ``sync_request_timeout``, then always restore.
+
+    Mutating the shared connection config without restore would leave later
+    health checks / usage RPCs waiting minutes on a wedged channel.
+    """
+    if conn is None or not hasattr(conn, "_config"):
+        yield
+        return
+    cfg = conn._config
+    prev = cfg.get("sync_request_timeout")
+    cfg["sync_request_timeout"] = float(timeout)
+    try:
+        yield
+    finally:
+        if prev is None:
+            cfg.pop("sync_request_timeout", None)
+        else:
+            cfg["sync_request_timeout"] = prev
 
 
 class AutoScaleWireGuardMixin:
@@ -60,13 +112,26 @@ class RESTWireGuardClient(AutoScaleWireGuardMixin):
         self._node = node
 
     def apply(self, spec: dict, timeout: int = 15) -> None:
+        peer_n = len((spec or {}).get("peers") or [])
+        timeout = wg_apply_timeout_sec(peer_n, minimum=timeout)
+        logger.debug("REST wg/apply peers=%s timeout=%ss", peer_n, timeout)
         self._node.make_request("/wg/apply", timeout, spec=spec)
 
     def apply_specs(self, specs: list, timeout: int = 30) -> None:
+        peer_n = sum(len((s or {}).get("peers") or []) for s in (specs or []))
+        timeout = wg_apply_timeout_sec(peer_n, minimum=timeout)
+        logger.debug("REST wg/apply-specs peers=%s specs=%s timeout=%ss", peer_n, len(specs or []), timeout)
         if len(specs) == 1:
             self.apply(specs[0], timeout=timeout)
             return
         self._node.make_request("/wg/apply-specs", timeout, specs=specs)
+
+    def open_udp_ports(self, ports: list, timeout: int = 15) -> int:
+        try:
+            res = self._node.make_request("/wg/open-udp-ports", timeout, ports=list(ports or []))
+            return int((res or {}).get("opened", 0))
+        except Exception:
+            return 0
 
     def transfer(self, interface: str, timeout: int = 10) -> dict:
         res = self._node.make_request("/wg/transfer", timeout, interface=interface)
@@ -217,25 +282,55 @@ class RPyCWireGuardClient(AutoScaleWireGuardMixin):
         self._node = node
 
     def apply(self, spec: dict, timeout: int = 15) -> None:
+        peer_n = len((spec or {}).get("peers") or [])
+        timeout = wg_apply_timeout_sec(peer_n, minimum=timeout)
         self.apply_specs([spec], timeout=timeout)
 
     def apply_specs(self, specs: list, timeout: int = 30) -> None:
+        peer_n = sum(len((s or {}).get("peers") or []) for s in (specs or []))
+        timeout = wg_apply_timeout_sec(peer_n, minimum=timeout)
         plain_specs = [_plain_tree(s) for s in specs]
         remote = self._node.remote
+        conn = getattr(self._node, "connection", None) or getattr(remote, "_conn", None)
+        logger.debug(
+            "RPyC wg apply peers=%s specs=%s timeout=%ss",
+            peer_n,
+            len(plain_specs),
+            timeout,
+        )
         payload = json.dumps(plain_specs, separators=(",", ":"))
-        if hasattr(remote, "wg_apply_specs_json"):
-            remote.wg_apply_specs_json(payload)
-        elif len(plain_specs) == 1:
-            if hasattr(remote, "wg_apply_json"):
-                remote.wg_apply_json(json.dumps(plain_specs[0], separators=(",", ":")))
-            else:
-                remote.wg_apply(plain_specs[0])
-        else:
-            for spec in plain_specs:
-                if hasattr(remote, "wg_apply_json"):
-                    remote.wg_apply_json(json.dumps(spec, separators=(",", ":")))
+        with _rpyc_sync_timeout(conn, timeout):
+            try:
+                if hasattr(remote, "wg_apply_specs_json"):
+                    remote.wg_apply_specs_json(payload)
+                elif len(plain_specs) == 1:
+                    if hasattr(remote, "wg_apply_json"):
+                        remote.wg_apply_json(json.dumps(plain_specs[0], separators=(",", ":")))
+                    else:
+                        remote.wg_apply(plain_specs[0])
                 else:
-                    remote.wg_apply(spec)
+                    for spec in plain_specs:
+                        if hasattr(remote, "wg_apply_json"):
+                            remote.wg_apply_json(json.dumps(spec, separators=(",", ":")))
+                        else:
+                            remote.wg_apply(spec)
+            except Exception as exc:
+                logger.warning(
+                    "RPyC WireGuard apply failed (peers=%s timeout=%ss): %s",
+                    peer_n,
+                    timeout,
+                    exc,
+                )
+                raise
+
+    def open_udp_ports(self, ports: list, timeout: int = 15) -> int:
+        remote = getattr(self._node, "remote", None)
+        if remote is None or not hasattr(remote, "wg_open_udp_ports"):
+            return 0
+        try:
+            return int(remote.wg_open_udp_ports(list(ports or [])) or 0)
+        except Exception:
+            return 0
 
     def transfer(self, interface: str, timeout: int = 10) -> dict:
         try:

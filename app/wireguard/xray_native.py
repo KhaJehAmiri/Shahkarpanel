@@ -57,15 +57,21 @@ def _peer_email(peer: WGUserPeer) -> str:
 
 
 def build_xray_wireguard_peers(peers: List[WGUserPeer]) -> List[Dict]:
+    """Peers for the Finalmask inbound.
+
+    Tunnel IP prefers plain ``address``; falls back to ``awg_address`` so
+    amnezia-only users are not dropped from the inbound.
+    """
     out = []
     seen = set()
     for p in peers:
-        if not p.active or not p.public_key or not p.address or p.public_key in seen:
+        tunnel = (p.address or p.awg_address or "").strip()
+        if not p.active or not p.public_key or not tunnel or p.public_key in seen:
             continue
         seen.add(p.public_key)
         entry: Dict = {
             "publicKey": p.public_key,
-            "allowedIPs": [_normalize_allowed(p.address)],
+            "allowedIPs": [_normalize_allowed(tunnel)],
             "email": _peer_email(p),
         }
         if p.preshared_key:

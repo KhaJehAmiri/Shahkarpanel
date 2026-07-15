@@ -8,9 +8,24 @@ from typing import Optional
 from urllib import parse
 
 
-def node_host(dbnode) -> str:
-    """Client-facing host for a sing-box node."""
+def node_host(dbnode, *, protocol: str = "hysteria2") -> str:
+    """Client-facing host for a sing-box node (Hosts UI first)."""
+    from app.subscription.host_buckets import resolve_native_host_endpoints
+
     cfg = dbnode.singbox
+    default_port = 443
+    if cfg:
+        if protocol == "hysteria2":
+            default_port = int(cfg.hysteria2_port or 443)
+        elif protocol == "tuic":
+            default_port = int(cfg.tuic_port or 443)
+        elif protocol == "anytls":
+            default_port = int(cfg.anytls_port or 443)
+    native = resolve_native_host_endpoints(
+        f"__native:{protocol}", dbnode, default_port=default_port,
+    )
+    if native:
+        return native[0][0]
     if cfg and cfg.sni:
         return cfg.sni
     return dbnode.address
@@ -118,6 +133,8 @@ def user_hysteria2_link(
     insecure: Optional[bool] = None,
     speed_limit_up: Optional[int] = None,
     speed_limit_down: Optional[int] = None,
+    host: Optional[str] = None,
+    port: Optional[int] = None,
 ) -> Optional[str]:
     cfg = dbnode.singbox
     if cfg is None or not cfg.hysteria2_enabled or not cfg.hysteria2_port:
@@ -125,23 +142,33 @@ def user_hysteria2_link(
     password = user_settings.get("password")
     if not password:
         return None
-    host = node_host(dbnode)
     if insecure is None:
         insecure = singbox_link_insecure(cfg)
     from app.singbox.sync import hysteria2_port_for_user
+    from app.subscription.host_buckets import singbox_dial_endpoints
 
-    port = hysteria2_port_for_user(
+    base_port = hysteria2_port_for_user(
         int(cfg.hysteria2_port),
         speed_limit_up,
         speed_limit_down,
     )
+    if host is None or port is None:
+        dials = singbox_dial_endpoints(
+            dbnode,
+            "__native:hysteria2",
+            default_host=cfg.sni or dbnode.address,
+            default_port=base_port,
+        )
+        if not dials:
+            return None
+        host, port = dials[0]
     from app.singbox.speed import speed_tier
 
     tier = speed_tier(speed_limit_up, speed_limit_down)
     return hysteria2_link(
         password=password,
         host=host,
-        port=port,
+        port=int(port),
         sni=cfg.sni or host,
         obfs_password=cfg.hysteria2_obfs_password,
         remark=remark,
@@ -159,6 +186,8 @@ def user_tuic_link(
     insecure: Optional[bool] = None,
     speed_limit_up: Optional[int] = None,
     speed_limit_down: Optional[int] = None,
+    host: Optional[str] = None,
+    port: Optional[int] = None,
 ) -> Optional[str]:
     cfg = dbnode.singbox
     if cfg is None or not cfg.tuic_enabled or not cfg.tuic_port:
@@ -167,17 +196,27 @@ def user_tuic_link(
     password = user_settings.get("password")
     if not uuid or not password:
         return None
-    host = node_host(dbnode)
     if insecure is None:
         insecure = singbox_link_insecure(cfg)
     from app.singbox.sync import tuic_port_for_user
+    from app.subscription.host_buckets import singbox_dial_endpoints
 
-    port = tuic_port_for_user(int(cfg.tuic_port), speed_limit_up, speed_limit_down)
+    base_port = tuic_port_for_user(int(cfg.tuic_port), speed_limit_up, speed_limit_down)
+    if host is None or port is None:
+        dials = singbox_dial_endpoints(
+            dbnode,
+            "__native:tuic",
+            default_host=cfg.sni or dbnode.address,
+            default_port=base_port,
+        )
+        if not dials:
+            return None
+        host, port = dials[0]
     return tuic_link(
         uuid=str(uuid),
         password=password,
         host=host,
-        port=port,
+        port=int(port),
         sni=cfg.sni or host,
         congestion_control=cfg.tuic_congestion_control or "bbr",
         remark=remark,

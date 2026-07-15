@@ -45,7 +45,47 @@ def _reserved_interface_names(cfg) -> set:
     return names
 
 
-def _subnet_for_slot(slot: int) -> str:
+def _max_peers_for_subnet(subnet: str) -> int:
+    """Fill the configured subnet before opening another address space."""
+    from app.wireguard.capacity import usable_peer_slots
+
+    usable = usable_peer_slots(subnet)
+    if usable <= 0:
+        return DEFAULT_MAX_PEERS
+    # Cap so a /16 does not create a single multi-million peer interface.
+    return max(DEFAULT_MAX_PEERS, min(usable, 4094))
+
+
+def _subnet_for_slot(slot: int, cfg=None) -> str:
+    """Pick the peer subnet for an auto-scale interface slot.
+
+    Slot 0 always follows the node's configured ``cfg.subnet`` (legacy / Finalmask
+    pool) so we never invent a parallel ``10.8.0.0/24`` identity for the same
+    users. Extra slots carve ``/24`` networks from a ``/16`` container around
+    that subnet, skipping the primary range; only if that is exhausted do we
+    fall back to the historic ``10.8.{slot}.0/24`` scheme.
+    """
+    if cfg is None or not getattr(cfg, "subnet", None):
+        return f"{BASE_SUBNET_PREFIX}.{slot}.0/24"
+
+    primary = ipaddress.ip_network(cfg.subnet, strict=False)
+    if slot == 0:
+        return str(primary)
+
+    container = primary
+    while container.prefixlen > 16:
+        try:
+            container = container.supernet(new_prefix=container.prefixlen - 1)
+        except ValueError:
+            break
+
+    extras = [
+        sub for sub in container.subnets(new_prefix=24)
+        if not sub.overlaps(primary)
+    ]
+    idx = slot - 1
+    if 0 <= idx < len(extras):
+        return str(extras[idx])
     return f"{BASE_SUBNET_PREFIX}.{slot}.0/24"
 
 
@@ -141,7 +181,7 @@ def bootstrap_legacy_interfaces(db: Session, dbnode: Node) -> None:
         private_key=cfg.private_key,
         public_key=cfg.public_key,
         peer_count=0,
-        max_peers=DEFAULT_MAX_PEERS,
+        max_peers=_max_peers_for_subnet(cfg.subnet),
         slot_index=slot,
         created_at=datetime.utcnow(),
     )
@@ -240,15 +280,16 @@ def create_interface(db: Session, dbnode: Node) -> WgInterface:
 
     slot, name = _next_slot(dbnode.id, cfg, db)
     priv, pub = generate_keypair()
+    subnet = _subnet_for_slot(slot, cfg)
     iface = WgInterface(
         node_id=dbnode.id,
         name=name,
-        subnet=_subnet_for_slot(slot),
+        subnet=subnet,
         listen_port=_port_for_slot(slot),
         private_key=priv,
         public_key=pub,
         peer_count=0,
-        max_peers=DEFAULT_MAX_PEERS,
+        max_peers=_max_peers_for_subnet(subnet),
         slot_index=slot,
         created_at=datetime.utcnow(),
     )

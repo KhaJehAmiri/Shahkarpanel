@@ -673,6 +673,10 @@ class WGStackConfig(BaseModel):
     # Parallel, untunneled plain-WG port that stays up even when this node
     # delegates its main WG port to the Xray tunnel. 0 disables/clears it.
     direct_listen_port: Optional[int] = Field(default=None, ge=0, lt=65536)
+    # Client-facing dial address (host or host:port). Empty string clears to
+    # auto (provision_host / node.address). Used in .conf / subscription Endpoint=.
+    endpoint: Optional[str] = Field(default=None, max_length=256)
+    awg_endpoint: Optional[str] = Field(default=None, max_length=256)
 
 
 class AmneziaWGStatus(BaseModel):
@@ -726,16 +730,24 @@ def set_node_wireguard_stack(
     if dbnode.core_kind != CoreKind.wireguard.value:
         raise HTTPException(status_code=400, detail="Node is not a WireGuard node")
     try:
-        crud.set_node_wg_stack(
-            db, dbnode,
+        stack_kwargs = dict(
             plain_enabled=body.plain_enabled,
             awg_enabled=body.awg_enabled,
             direct_listen_port=body.direct_listen_port,
         )
+        # Distinguish omitted vs explicitly cleared ("" / null → auto).
+        payload = body.model_dump(exclude_unset=True)
+        if "endpoint" in payload:
+            stack_kwargs["endpoint"] = payload["endpoint"]
+            stack_kwargs["endpoint_set"] = True
+        if "awg_endpoint" in payload:
+            stack_kwargs["awg_endpoint"] = payload["awg_endpoint"]
+            stack_kwargs["awg_endpoint_set"] = True
+        crud.set_node_wg_stack(db, dbnode, **stack_kwargs)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     db.refresh(dbnode)
-    bg.add_task(_sync_wireguard_node, dbnode.id)
+    bg.add_task(_activate_wireguard_node, dbnode.id)
     return dbnode
 
 
@@ -761,7 +773,7 @@ def set_node_amneziawg(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     db.refresh(dbnode)
-    bg.add_task(_sync_wireguard_node, dbnode.id)
+    bg.add_task(_activate_wireguard_node, dbnode.id)
     return dbnode
 
 
@@ -806,7 +818,8 @@ def set_node_xray_native_wireguard(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     db.refresh(dbnode)
-    bg.add_task(xray.operations.restart_node, dbnode.id)
+    # Sync peers + open UDP firewall + restart Xray so Finalmask inbound is live.
+    bg.add_task(_activate_wireguard_node, dbnode.id, restart_xray=True)
     return dbnode
 
 
@@ -831,22 +844,50 @@ def set_node_sigmaguard_wire(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     db.refresh(dbnode)
-    bg.add_task(_sync_wireguard_node, dbnode.id)
+    bg.add_task(_activate_wireguard_node, dbnode.id)
     return dbnode
 
 
 def _sync_wireguard_node(node_id: int) -> None:
+    """Backward-compatible alias for stack syncs."""
+    _activate_wireguard_node(node_id, restart_xray=False)
+
+
+def _activate_wireguard_node(node_id: int, *, restart_xray: bool = False) -> None:
+    """Apply WG peers, open listen ports on the node, optionally restart Xray.
+
+    Port / firewall changes are automatic — operators should not run iptables
+    by hand when enabling Finalmask or changing UDP listen ports.
+    """
     try:
         from app.db import GetDB
-        from app.wireguard.operations import sync_node
+        from app.wireguard.operations import open_node_listen_ports, sync_node
+        from app.wireguard.xray_native import xray_native_wg_enabled
 
         with GetDB() as db:
             dbnode = crud.get_node_by_id(db, node_id)
-            if dbnode:
-                sync_node(db, dbnode)
+            if not dbnode:
+                return
+            sync_ok = sync_node(db, dbnode)
+            if not sync_ok:
+                logger.warning(
+                    "WireGuard sync during activate did not apply on node %s",
+                    node_id,
+                )
+            cfg = dbnode.wireguard
+            need_xray = restart_xray or xray_native_wg_enabled(cfg)
+            if need_xray:
+                try:
+                    xray.operations.restart_node(node_id)
+                except Exception:
+                    logger.exception(
+                        "Xray restart during WireGuard activate failed on node %s",
+                        node_id,
+                    )
+            # Firewall rules live on the host; refresh after sync/restart.
+            open_node_listen_ports(dbnode)
     except Exception:
-        pass
-
+        logger.exception("WireGuard activate failed on node %s", node_id)
 
 @router.get("/node/{node_id}/xray-config")
 def get_node_xray_config(

@@ -174,7 +174,7 @@ class XrayService(rpyc.Service):
             # Legacy callers may still pass a netref dict — obtain locally first.
             plain = obtain(spec)
         wg_spec = WireGuardSpec.from_dict(plain)
-        self.wg.apply(wg_spec)
+        self.wg.apply_specs([wg_spec])
         limits = peer_limits_from_spec(plain)
         if limits:
             self.speed_limit.apply_wireguard(wg_spec.interface, limits)
@@ -185,7 +185,7 @@ class XrayService(rpyc.Service):
 
         plain = json.loads(spec_json)
         wg_spec = WireGuardSpec.from_dict(plain)
-        self.wg.apply(wg_spec)
+        self.wg.apply_specs([wg_spec])
         limits = peer_limits_from_spec(plain)
         if limits:
             self.speed_limit.apply_wireguard(wg_spec.interface, limits)
@@ -201,6 +201,20 @@ class XrayService(rpyc.Service):
             limits = peer_limits_from_spec(plain)
             if limits:
                 self.speed_limit.apply_wireguard(wg_spec.interface, limits)
+
+    @rpyc.exposed
+    def wg_open_udp_ports(self, ports) -> int:
+        """Open UDP INPUT ports on the host (plain/AWG/Xray-native WG)."""
+        from rpyc.utils.classic import obtain
+
+        plain = obtain(ports) if ports is not None else []
+        if isinstance(plain, str):
+            import json
+
+            plain = json.loads(plain)
+        wanted = [int(p) for p in (plain or []) if p]
+        self.wg.open_udp_ports(wanted)
+        return len(wanted)
 
     @rpyc.exposed
     def wg_transfer(self, interface: str) -> str:

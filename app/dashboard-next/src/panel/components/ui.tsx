@@ -83,8 +83,28 @@ export const Field: FC<{ label?: string; hint?: string; children: ReactNode }> =
   </div>
 );
 
-export const Input: FC<InputHTMLAttributes<HTMLInputElement>> = ({ className = "", ...props }) => (
-  <input className={`nx-input ${className}`.trim()} {...props} />
+export const Input: FC<InputHTMLAttributes<HTMLInputElement>> = ({
+  className = "",
+  onClick,
+  type,
+  ...props
+}) => (
+  <input
+    {...props}
+    type={type}
+    className={`nx-input${type === "date" ? " nx-input-date" : ""} ${className}`.trim()}
+    onClick={(e) => {
+      onClick?.(e);
+      if (e.defaultPrevented) return;
+      if (type !== "date" || props.disabled || props.readOnly) return;
+      const el = e.currentTarget as HTMLInputElement & { showPicker?: () => void };
+      try {
+        el.showPicker?.();
+      } catch {
+        /* NotAllowedError / unsupported — native tap still works where possible */
+      }
+    }}
+  />
 );
 export const Textarea: FC<any> = ({ className = "", ...rest }) => (
   <textarea className={`nx-textarea ${className}`.trim()} {...rest} />
@@ -315,9 +335,10 @@ export const Drawer: FC<{
   onClose: () => void;
   children: ReactNode;
   wide?: boolean;
+  hideHead?: boolean;
   overlayClassName?: string;
   drawerClassName?: string;
-}> = ({ open, title, onClose, children, wide, overlayClassName = "", drawerClassName = "" }) => {
+}> = ({ open, title, onClose, children, wide, hideHead, overlayClassName = "", drawerClassName = "" }) => {
   const guardedDismiss = useOverlayDismissGuard(open);
   useEffect(() => {
     if (!open) return;
@@ -339,10 +360,12 @@ export const Drawer: FC<{
   return createPortal(
     <div className={overlayCls} onClick={guardedDismiss(onClose)}>
       <div className={drawerCls} role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
-        <div className="nx-drawer-head">
-          <div className="nx-card-title">{title}</div>
-          <CloseButton onClose={onClose} />
-        </div>
+        {!hideHead && (
+          <div className="nx-drawer-head">
+            <div className="nx-card-title">{title}</div>
+            <CloseButton onClose={onClose} />
+          </div>
+        )}
         <div className="nx-drawer-body">{children}</div>
       </div>
     </div>,

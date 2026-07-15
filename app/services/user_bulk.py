@@ -582,6 +582,408 @@ class BulkUserActionResult(BaseModel):
     duration_ms: int
 
 
+class BulkEnableWireGuardKind(str, Enum):
+    """Deprecated alias — prefer BulkNativeProtocol."""
+
+    wireguard = "wireguard"
+    amneziawg = "amneziawg"
+    both = "both"
+
+
+class BulkNativeProtocol(str, Enum):
+    wireguard = "wireguard"
+    amneziawg = "amneziawg"
+    both = "both"  # WG + AmneziaWG on one proxy row
+    hysteria2 = "hysteria2"
+    tuic = "tuic"
+    anytls = "anytls"
+
+
+class BulkNativeAction(str, Enum):
+    enable = "enable"
+    disable = "disable"
+
+
+class BulkNativeProtocolRequest(BaseModel):
+    """Enable/disable a native node protocol (not an Xray inbound tag)."""
+
+    protocol: BulkNativeProtocol
+    action: BulkNativeAction = BulkNativeAction.enable
+    scope: BulkInboundScope = BulkInboundScope.all
+    usernames: List[str] = Field(default_factory=list)
+    status: Optional[UserStatus] = None
+    filters: Optional[UserListFilters] = None
+    # When true (default), block until kernel/sing-box sync (+ Finalmask flush)
+    # finishes so ``applied`` is not confused with “peers are live.”
+    wait_sync: bool = True
+
+
+class BulkNativeProtocolPreview(BaseModel):
+    protocol: str
+    action: str
+    total_users: int
+    would_apply: int
+    already_set: int
+
+
+class BulkNativeProtocolResult(BaseModel):
+    protocol: str
+    action: str
+    applied: int
+    skipped: int
+    failed: int
+    errors: List[str] = Field(default_factory=list)
+    duration_ms: int
+    # Dataplane converge (absent / null sync_ok means fire-and-forget).
+    sync_pending: bool = False
+    sync_ok: Optional[bool] = None
+    sync_nodes: int = 0
+    singbox_nodes: int = 0
+    finalmask_reloaded: bool = False
+    sync_ms: int = 0
+    sync_error: Optional[str] = None
+
+
+# Backward-compatible WireGuard-only shapes (map onto BulkNativeProtocol*).
+class BulkEnableWireGuardRequest(BaseModel):
+    scope: BulkInboundScope = BulkInboundScope.all
+    usernames: List[str] = Field(default_factory=list)
+    status: Optional[UserStatus] = None
+    filters: Optional[UserListFilters] = None
+    kind: BulkEnableWireGuardKind = BulkEnableWireGuardKind.wireguard
+
+
+class BulkEnableWireGuardPreview(BaseModel):
+    kind: str
+    total_users: int
+    would_apply: int
+    already_set: int
+
+
+class BulkEnableWireGuardResult(BaseModel):
+    kind: str
+    applied: int
+    skipped: int
+    failed: int
+    errors: List[str] = Field(default_factory=list)
+    duration_ms: int
+    sync_pending: bool = False
+    sync_ok: Optional[bool] = None
+    sync_nodes: int = 0
+    finalmask_reloaded: bool = False
+    sync_ms: int = 0
+    sync_error: Optional[str] = None
+
+
+def _proxy_for_type(user: User, proxy_type: ProxyTypes) -> Optional[Proxy]:
+    for proxy in user.proxies or []:
+        if proxy.type == proxy_type:
+            return proxy
+    return None
+
+
+def _wg_labels(settings: Optional[dict]) -> List[str]:
+    from app.wireguard.kind import user_wg_stack_labels
+
+    return user_wg_stack_labels(settings or {})
+
+
+def _merge_wg_kind(current_labels: List[str], add: str) -> str:
+    labels = set(current_labels)
+    if add == "both":
+        labels.update({"wireguard", "amneziawg"})
+    else:
+        labels.add(add)
+    if "wireguard" in labels and "amneziawg" in labels:
+        return "both"
+    if "amneziawg" in labels:
+        return "amneziawg"
+    return "wireguard"
+
+
+def _remove_wg_kind(current_labels: List[str], remove: str) -> Optional[str]:
+    labels = set(current_labels)
+    if remove == "both":
+        return None
+    labels.discard(remove)
+    if not labels:
+        return None
+    if "wireguard" in labels and "amneziawg" in labels:
+        return "both"
+    if "amneziawg" in labels:
+        return "amneziawg"
+    return "wireguard"
+
+
+def _native_proxy_type(protocol: BulkNativeProtocol) -> ProxyTypes:
+    if protocol in (
+        BulkNativeProtocol.wireguard,
+        BulkNativeProtocol.amneziawg,
+        BulkNativeProtocol.both,
+    ):
+        return ProxyTypes.WireGuard
+    return ProxyTypes(protocol.value)
+
+
+def _user_has_native(user: User, protocol: BulkNativeProtocol) -> bool:
+    proxy_type = _native_proxy_type(protocol)
+    proxy = _proxy_for_type(user, proxy_type)
+    if proxy is None:
+        return False
+    if proxy_type != ProxyTypes.WireGuard:
+        return True
+    labels = _wg_labels(proxy.settings)
+    if protocol == BulkNativeProtocol.both:
+        return "wireguard" in labels and "amneziawg" in labels
+    if protocol == BulkNativeProtocol.wireguard:
+        return "wireguard" in labels
+    if protocol == BulkNativeProtocol.amneziawg:
+        return "amneziawg" in labels
+    return False
+
+
+def _apply_native_change(user: User, protocol: BulkNativeProtocol, action: BulkNativeAction) -> bool:
+    """Mutate user proxies. Returns True if something changed."""
+    from app.models.proxy import apply_proxy_patch
+    from app.wireguard.kind import NXPANEL_WG_KIND
+
+    proxy_type = _native_proxy_type(protocol)
+
+    if proxy_type == ProxyTypes.WireGuard:
+        wg = _proxy_for_type(user, ProxyTypes.WireGuard)
+        labels = _wg_labels(wg.settings if wg else None)
+
+        if action == BulkNativeAction.enable:
+            new_kind = _merge_wg_kind(labels, protocol.value)
+            if wg and set(_wg_labels(wg.settings)) == (
+                {"wireguard", "amneziawg"} if new_kind == "both"
+                else {new_kind}
+            ):
+                return False
+            settings = apply_proxy_patch(
+                ProxyTypes.WireGuard,
+                wg.settings if wg else None,
+                {NXPANEL_WG_KIND: new_kind},
+            )
+            if wg:
+                wg.settings = settings
+            else:
+                user.proxies.append(Proxy(type=ProxyTypes.WireGuard, settings=settings))
+            return True
+
+        # disable
+        if not wg:
+            return False
+        new_kind = _remove_wg_kind(labels, protocol.value)
+        if new_kind is None:
+            user.proxies.remove(wg)
+            return True
+        if set(_wg_labels(wg.settings)) == (
+            {"wireguard", "amneziawg"} if new_kind == "both" else {new_kind}
+        ):
+            return False
+        wg.settings = apply_proxy_patch(
+            ProxyTypes.WireGuard,
+            wg.settings,
+            {NXPANEL_WG_KIND: new_kind},
+        )
+        return True
+
+    # Hysteria2 / TUIC / AnyTLS
+    proxy = _proxy_for_type(user, proxy_type)
+    if action == BulkNativeAction.enable:
+        if proxy is not None:
+            return False
+        user.proxies.append(
+            Proxy(
+                type=proxy_type,
+                settings=apply_proxy_patch(proxy_type, None, {}),
+            )
+        )
+        return True
+    if proxy is None:
+        return False
+    user.proxies.remove(proxy)
+    return True
+
+
+def preview_bulk_native_protocol(
+    db: Session,
+    body: BulkNativeProtocolRequest,
+    *,
+    admin: Optional[Admin] = None,
+) -> BulkNativeProtocolPreview:
+    users = _iter_target_users(
+        db,
+        admin=admin,
+        scope=body.scope,
+        usernames=body.usernames,
+        status=body.status,
+        filters=body.filters,
+    )
+    would_apply = already_set = 0
+    for user in users:
+        has = _user_has_native(user, body.protocol)
+        want_change = (not has) if body.action == BulkNativeAction.enable else has
+        if want_change:
+            would_apply += 1
+        else:
+            already_set += 1
+    return BulkNativeProtocolPreview(
+        protocol=body.protocol.value,
+        action=body.action.value,
+        total_users=len(users),
+        would_apply=would_apply,
+        already_set=already_set,
+    )
+
+
+def apply_bulk_native_protocol(
+    db: Session,
+    body: BulkNativeProtocolRequest,
+    *,
+    admin: Optional[Admin] = None,
+) -> BulkNativeProtocolResult:
+    """Add/remove native protocol proxy rows without wiping other protocols."""
+    from app.wireguard.converge import converge_after_bulk_native, pending_sync_meta
+
+    started = time.perf_counter()
+    users = _iter_target_users(
+        db,
+        admin=admin,
+        scope=body.scope,
+        usernames=body.usernames,
+        status=body.status,
+        filters=body.filters,
+    )
+    applied = skipped = failed = 0
+    errors: List[str] = []
+    edit_at = datetime.utcnow()
+    sync_meta = pending_sync_meta() if not body.wait_sync else {
+        "sync_pending": False,
+        "sync_ok": True,
+        "sync_nodes": 0,
+        "singbox_nodes": 0,
+        "finalmask_reloaded": False,
+        "sync_error": None,
+        "sync_ms": 0,
+    }
+
+    for user in users:
+        try:
+            changed = _apply_native_change(user, body.protocol, body.action)
+            if not changed:
+                skipped += 1
+                continue
+            user.edit_at = edit_at
+            db.add(user)
+            applied += 1
+        except Exception as exc:
+            failed += 1
+            errors.append(f"{user.username}: {exc}")
+            if len(errors) >= 20:
+                errors.append("…")
+                break
+
+    if applied:
+        db.commit()
+        if body.wait_sync:
+            sync_meta = converge_after_bulk_native(
+                protocol=body.protocol.value,
+                wait_finalmask=True,
+            )
+        else:
+            from app import xray as xray_mod
+
+            xray_mod.operations._sync_wireguard()
+            sync_meta = pending_sync_meta()
+
+    duration_ms = int((time.perf_counter() - started) * 1000)
+    logger.info(
+        "bulk native protocol=%s action=%s scope=%s applied=%s skipped=%s failed=%s "
+        "sync_ok=%s sync_pending=%s %sms",
+        body.protocol.value,
+        body.action.value,
+        body.scope.value,
+        applied,
+        skipped,
+        failed,
+        sync_meta.get("sync_ok"),
+        sync_meta.get("sync_pending"),
+        duration_ms,
+    )
+    return BulkNativeProtocolResult(
+        protocol=body.protocol.value,
+        action=body.action.value,
+        applied=applied,
+        skipped=skipped,
+        failed=failed,
+        errors=errors,
+        duration_ms=duration_ms,
+        sync_pending=bool(sync_meta.get("sync_pending")),
+        sync_ok=sync_meta.get("sync_ok"),
+        sync_nodes=int(sync_meta.get("sync_nodes") or 0),
+        singbox_nodes=int(sync_meta.get("singbox_nodes") or 0),
+        finalmask_reloaded=bool(sync_meta.get("finalmask_reloaded")),
+        sync_ms=int(sync_meta.get("sync_ms") or 0),
+        sync_error=sync_meta.get("sync_error"),
+    )
+
+
+def preview_bulk_enable_wireguard(
+    db: Session,
+    body: BulkEnableWireGuardRequest,
+    *,
+    admin: Optional[Admin] = None,
+) -> BulkEnableWireGuardPreview:
+    mapped = BulkNativeProtocolRequest(
+        protocol=BulkNativeProtocol(body.kind.value),
+        action=BulkNativeAction.enable,
+        scope=body.scope,
+        usernames=body.usernames,
+        status=body.status,
+        filters=body.filters,
+    )
+    p = preview_bulk_native_protocol(db, mapped, admin=admin)
+    return BulkEnableWireGuardPreview(
+        kind=p.protocol,
+        total_users=p.total_users,
+        would_apply=p.would_apply,
+        already_set=p.already_set,
+    )
+
+
+def apply_bulk_enable_wireguard(
+    db: Session,
+    body: BulkEnableWireGuardRequest,
+    *,
+    admin: Optional[Admin] = None,
+) -> BulkEnableWireGuardResult:
+    mapped = BulkNativeProtocolRequest(
+        protocol=BulkNativeProtocol(body.kind.value),
+        action=BulkNativeAction.enable,
+        scope=body.scope,
+        usernames=body.usernames,
+        status=body.status,
+        filters=body.filters,
+    )
+    r = apply_bulk_native_protocol(db, mapped, admin=admin)
+    return BulkEnableWireGuardResult(
+        kind=r.protocol,
+        applied=r.applied,
+        skipped=r.skipped,
+        failed=r.failed,
+        errors=r.errors,
+        duration_ms=r.duration_ms,
+        sync_pending=r.sync_pending,
+        sync_ok=r.sync_ok,
+        sync_nodes=r.sync_nodes,
+        finalmask_reloaded=r.finalmask_reloaded,
+        sync_ms=r.sync_ms,
+        sync_error=r.sync_error,
+    )
+
+
 def apply_bulk_extend(
     db: Session,
     body: BulkExtendRequest,
@@ -761,13 +1163,13 @@ def _sync_after_membership_change() -> None:
     try:
         xray_mod.operations._sync_wireguard()
     except Exception:
-        pass
+        logger.exception("bulk: WireGuard resync failed")
     try:
         from app.singbox.operations import sync_user_change as singbox_sync
 
         singbox_sync()
     except Exception:
-        pass
+        logger.exception("bulk: sing-box resync failed")
 
 
 # ─────────────────────────── bulk delete ───────────────────────────

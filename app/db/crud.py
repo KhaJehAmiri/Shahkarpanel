@@ -71,7 +71,13 @@ def add_default_host(db: Session, inbound: ProxyInbound, *, commit: bool = True)
         db (Session): Database session.
         inbound (ProxyInbound): Proxy inbound to add the default host to.
     """
-    host = ProxyHost(remark="{REGION_FLAG} {REGION_NAME} · {PROTOCOL}", address="{SERVER_IP}", inbound=inbound)
+    # Native product buckets dial *node* endpoints, not the panel's public IP.
+    address = "{NODE_IP}" if str(inbound.tag or "").startswith("__native:") else "{SERVER_IP}"
+    host = ProxyHost(
+        remark="{REGION_FLAG} {REGION_NAME} · {PROTOCOL}",
+        address=address,
+        inbound=inbound,
+    )
     db.add(host)
     if commit:
         db.commit()
@@ -181,6 +187,18 @@ def get_hosts(db: Session, inbound_tag: str) -> List[ProxyHost]:
         List[ProxyHost]: List of hosts for the inbound.
     """
     inbound = get_or_create_inbound(db, inbound_tag)
+    return sorted(inbound.hosts, key=lambda h: (h.sort_order or 0, h.id or 0))
+
+
+def get_hosts_existing(db: Session, inbound_tag: str) -> List[ProxyHost]:
+    """Like ``get_hosts`` but never creates the inbound / default host row.
+
+    Used for native ``__native:*`` host buckets so listing Hosts does not
+    invent a ``{SERVER_IP}`` WireGuard endpoint until the operator adds one.
+    """
+    inbound = db.query(ProxyInbound).filter(ProxyInbound.tag == inbound_tag).first()
+    if not inbound:
+        return []
     return sorted(inbound.hosts, key=lambda h: (h.sort_order or 0, h.id or 0))
 
 
@@ -2059,6 +2077,11 @@ def provision_wireguard_defaults(
         cfg.awg_endpoint = f"{dbnode.address}:{cfg.awg_listen_port}"
         for field, value in random_awg_preset().items():
             setattr(cfg, field, value)
+    # Seed Finalmask inbound once so new nodes work without extra setup.
+    # Ports are opened automatically on the node during sync.
+    if cfg.xray_wg_listen_port is None:
+        cfg.xray_wg_listen_port = 51901
+        cfg.xray_wg_enabled = True
     db.commit()
     db.refresh(cfg)
     return cfg
@@ -2083,6 +2106,29 @@ def ensure_awg_server_keys(db: Session, dbnode: Node) -> "NodeWireGuard":
     return cfg
 
 
+def _normalize_wg_client_endpoint(value: Optional[str], default_port: int) -> Optional[str]:
+    """Accept ``host`` or ``host:port``; empty clears. Stores ``host:port``."""
+    from app.subscription.wireguard import _endpoint_host
+
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    host = _endpoint_host(raw)
+    if not host:
+        return None
+    if raw.startswith("[") and "]:" in raw:
+        return raw
+    if raw.count(":") == 1:
+        return raw
+    port = int(default_port or 0)
+    if port <= 0 or port > 65535:
+        raise ValueError("endpoint needs a port (listen port is unset)")
+    if ":" in host and not host.startswith("["):
+        # IPv6 without brackets — wrap so clients parse host/port correctly.
+        return f"[{host}]:{port}"
+    return f"{host}:{port}"
+
+
 def set_node_wg_stack(
     db: Session,
     dbnode: Node,
@@ -2090,6 +2136,10 @@ def set_node_wg_stack(
     plain_enabled: Optional[bool] = None,
     awg_enabled: Optional[bool] = None,
     direct_listen_port: Optional[int] = None,
+    endpoint: Optional[str] = None,
+    awg_endpoint: Optional[str] = None,
+    endpoint_set: bool = False,
+    awg_endpoint_set: bool = False,
 ) -> "NodeWireGuard":
     cfg = dbnode.wireguard
     if cfg is None:
@@ -2115,6 +2165,16 @@ def set_node_wg_stack(
                 from app.wireguard.awg import random_awg_preset
                 for field, value in random_awg_preset().items():
                     setattr(cfg, field, value)
+    # Prefer explicit *_set flags; callers that pass endpoint= via kwargs treat
+    # None as clear when endpoint_set is True (API maps "" → clear).
+    if endpoint_set or endpoint is not None:
+        cfg.endpoint = _normalize_wg_client_endpoint(
+            endpoint, int(cfg.listen_port or 51820),
+        )
+    if awg_endpoint_set or awg_endpoint is not None:
+        cfg.awg_endpoint = _normalize_wg_client_endpoint(
+            awg_endpoint, int(cfg.awg_listen_port or 51821),
+        )
     if not cfg.plain_enabled and not cfg.awg_enabled:
         raise ValueError("At least one of plain WireGuard or AmneziaWG must stay enabled")
     db.commit()
@@ -2163,7 +2223,7 @@ def set_node_xray_wireguard(
 
 
 def set_node_wireguard(db: Session, dbnode: Node, *, interface: str = "wg0",
-                       listen_port: int = 51820, subnet: str = "10.10.0.0/24",
+                       listen_port: int = 51820, subnet: str = "10.10.0.0/16",
                        private_key: str, public_key: str,
                        endpoint: Optional[str] = None, mtu: int = 1420,
                        dns: Optional[str] = None) -> "NodeWireGuard":

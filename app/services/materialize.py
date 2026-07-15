@@ -99,14 +99,17 @@ def materialize_wireguard(db, dbnode, bindings) -> None:
         merged = merge_overrides(plain.service.config or {}, plain.overrides)
         if merged.get("listen_port"):
             cfg.listen_port = int(merged["listen_port"])
-            cfg.endpoint = f"{dbnode.address}:{cfg.listen_port}"
+            # Do not clobber an operator-set client host on every materialize.
+            if not (cfg.endpoint or "").strip():
+                cfg.endpoint = f"{dbnode.address}:{cfg.listen_port}"
         if merged.get("subnet"):
             cfg.subnet = merged["subnet"]
     if awg and awg.service:
         merged = merge_overrides(awg.service.config or {}, awg.overrides)
         if merged.get("awg_listen_port"):
             cfg.awg_listen_port = int(merged["awg_listen_port"])
-            cfg.awg_endpoint = f"{dbnode.address}:{cfg.awg_listen_port}"
+            if not (cfg.awg_endpoint or "").strip():
+                cfg.awg_endpoint = f"{dbnode.address}:{cfg.awg_listen_port}"
         if merged.get("awg_subnet"):
             cfg.awg_subnet = merged["awg_subnet"]
     db.commit()
@@ -114,33 +117,49 @@ def materialize_wireguard(db, dbnode, bindings) -> None:
 
 
 def reconcile_wireguard_endpoints(db, dbnode) -> bool:
-    """Keep WG peer endpoints aligned with the node's public dial address.
+    """Keep WG peer endpoints' *ports* aligned; never stomp a custom host.
 
-    Uses ``provision_host`` when ``nodes.address`` is loopback/control-plane
-    only (SSH tunnel nodes). Tunnel-delegated relays get the dokodemo capture
-    port so subscriptions match what Xray actually listens on.
+    Operators set client dial hosts via the WireGuard page / Hosts UI.
+    Reconcile may refresh the port (tunnel remap) but must not rewrite a
+    custom hostname/IP back to ``nodes.address``.
     """
-    from app.subscription.wireguard import _is_non_routable_host, public_dial_host
+    from app.subscription.wireguard import (
+        _endpoint_host,
+        _is_non_routable_host,
+        _join_host_port,
+        public_dial_host,
+    )
     from app.tunnel.relay import relay_wireguard_tunnel_port
 
     cfg = dbnode.wireguard
-    addr = public_dial_host(dbnode)
-    if cfg is None or not addr or _is_non_routable_host(addr):
+    fallback = public_dial_host(dbnode)
+    if cfg is None:
         return False
     changed = False
     listen_port = int(cfg.listen_port or 0)
     tun_port = relay_wireguard_tunnel_port(db, int(dbnode.id))
     plain_port = int(tun_port) if tun_port else listen_port
+
+    def _pick_host(current_endpoint: str | None) -> str:
+        cur = _endpoint_host(current_endpoint)
+        if cur and not _is_non_routable_host(cur):
+            return cur
+        return fallback
+
     if plain_port:
-        endpoint = f"{addr}:{plain_port}"
-        if cfg.endpoint != endpoint:
-            cfg.endpoint = endpoint
-            changed = True
+        host = _pick_host(cfg.endpoint)
+        if host and not _is_non_routable_host(host):
+            endpoint = _join_host_port(host, plain_port)
+            if cfg.endpoint != endpoint:
+                cfg.endpoint = endpoint
+                changed = True
     if cfg.awg_listen_port:
-        awg_endpoint = f"{addr}:{int(cfg.awg_listen_port)}"
-        if cfg.awg_endpoint != awg_endpoint:
-            cfg.awg_endpoint = awg_endpoint
-            changed = True
+        host = _pick_host(cfg.awg_endpoint) or _pick_host(cfg.endpoint)
+        if host and not _is_non_routable_host(host):
+            awg_endpoint = _join_host_port(host, int(cfg.awg_listen_port))
+            if cfg.awg_endpoint != awg_endpoint:
+                cfg.awg_endpoint = awg_endpoint
+                changed = True
     if changed:
         db.commit()
         db.refresh(cfg)

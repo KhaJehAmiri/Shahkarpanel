@@ -699,11 +699,13 @@ def user_subscription_wireguard(
         local_address = settings.get("address")
         if not local_address or not settings.get("private_key") or not cfg.public_key:
             raise HTTPException(status_code=404, detail="No WireGuard configuration available")
+        from app.subscription.wireguard import public_dial_host
+
         client_cfg = build_xray_native_client_config(
             private_key=settings["private_key"],
             local_address=local_address.split("/")[0] + "/32",
             server_public_key=cfg.public_key,
-            server_host=dbnode.address,
+            server_host=public_dial_host(dbnode) or dbnode.address,
             server_port=cfg.xray_wg_listen_port,
             preshared_key=settings.get("preshared_key"),
             mtu=cfg.xray_wg_mtu,

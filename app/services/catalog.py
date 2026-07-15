@@ -22,7 +22,7 @@ SERVICE_SEEDS: List[Dict[str, Any]] = [
         "display_name": "WireGuard",
         "engine": "wireguard",
         "protocol": "wireguard",
-        "config": {"listen_port": 51820, "subnet": "10.10.0.0/24", "mtu": 1420},
+        "config": {"listen_port": 51820, "subnet": "10.10.0.0/16", "mtu": 1420},
         "sort_order": 20,
     },
     {
@@ -30,7 +30,7 @@ SERVICE_SEEDS: List[Dict[str, Any]] = [
         "display_name": "AmneziaWG",
         "engine": "wireguard",
         "protocol": "amneziawg",
-        "config": {"awg_listen_port": 51821, "awg_subnet": "10.11.0.0/24", "mtu": 1420},
+        "config": {"awg_listen_port": 51821, "awg_subnet": "10.11.0.0/16", "mtu": 1420},
         "sort_order": 21,
     },
     {

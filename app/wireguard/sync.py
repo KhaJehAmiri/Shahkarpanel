@@ -30,15 +30,21 @@ class WGUserPeer:
     username: str = ""                # for Xray stats email attribution (see xray_native.py)
 
 
-def server_interface_address(subnet: str) -> str:
-    """The node interface address: first usable host carrying the subnet prefix.
+def server_interface_address(
+    subnet: str,
+    *,
+    interface_host: Optional[str] = None,
+) -> str:
+    """The node interface address carrying the subnet prefix.
 
-    e.g. ``"10.10.0.0/24" -> "10.10.0.1/24"``.
+    Prefer ``interface_host`` when set (historical gateway after a non-aligned
+    widen). e.g. ``"10.10.0.0/24" -> "10.10.0.1/24"``;
+    ``"10.10.4.0/23", interface_host="10.10.5.1" -> "10.10.5.1/23"``.
     """
+    from app.wireguard.capacity import resolve_interface_host
+
     network = ipaddress.ip_network(subnet, strict=False)
-    server = next(network.hosts(), None)
-    if server is None:
-        raise ValueError(f"subnet {subnet!r} has no usable host address")
+    server = resolve_interface_host(subnet, interface_host)
     return f"{server}/{network.prefixlen}"
 
 
@@ -116,6 +122,7 @@ def build_node_spec(
     peers: List[WGUserPeer],
     mtu: Optional[int] = None,
     amnezia: Optional[dict] = None,
+    interface_host: Optional[str] = None,
 ) -> dict:
     """Build the declarative spec dict for the node agent's ``/wg/apply``.
 
@@ -150,7 +157,7 @@ def build_node_spec(
         "interface": interface,
         "listen_port": int(listen_port),
         "private_key": private_key,
-        "address": server_interface_address(subnet),
+        "address": server_interface_address(subnet, interface_host=interface_host),
         "peers": peer_payload,
         "mtu": int(mtu) if mtu else None,
     }
@@ -174,6 +181,7 @@ def build_node_specs(cfg, peers: List[WGUserPeer]) -> List[dict]:
                 peers=peers,
                 mtu=cfg.mtu,
                 amnezia=None,
+                interface_host=getattr(cfg, "interface_host", None),
             )
         )
     if amneziawg_enabled(cfg):
@@ -202,6 +210,7 @@ def build_node_specs(cfg, peers: List[WGUserPeer]) -> List[dict]:
                 peers=awg_peers,
                 mtu=AWG_RECOMMENDED_MTU,
                 amnezia=awg_params_from_cfg(cfg) or None,
+                interface_host=getattr(cfg, "awg_interface_host", None),
             )
         )
     return specs
@@ -219,6 +228,7 @@ def build_direct_spec(cfg, peers: List[WGUserPeer]) -> Optional[dict]:
         peers=peers,
         mtu=cfg.mtu,
         amnezia=None,
+        interface_host=getattr(cfg, "interface_host", None),
     )
 
 

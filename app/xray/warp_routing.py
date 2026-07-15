@@ -1,11 +1,16 @@
-"""WARP outbound bootstrap: DNS bypass rules + stable WireGuard endpoint."""
+"""WARP outbound bootstrap: DNS bypass rules + stable WireGuard endpoint.
+
+Also owns **clean removal**: when WARP credentials/outbounds disappear, routing
+must fall back to ``DIRECT`` so clients are never black-holed on a missing tag.
+"""
 from __future__ import annotations
 
+import json
 import socket
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from copy import deepcopy
-from typing import Any
+from typing import Any, Iterable, Optional, Sequence, Set
 
 WARP_BYPASS_RULE: dict[str, Any] = {
     "type": "field",
@@ -34,15 +39,18 @@ DEFAULT_WARP_ENDPOINT_HOST = "engage.cloudflareclient.com"
 DEFAULT_WARP_ENDPOINT_PORT = 2408
 DNS_RESOLVE_TIMEOUT = 3.0
 
-# Persisted (written into xray_config.json, harmless extra field Xray
-# ignores — same trick as NXPANEL_INBOUND_KIND) marker recording which IP we
-# last pinned onto this outbound. Lets us tell "an IP we chose" apart from an
-# admin's manually configured endpoint across process restarts, so we can
-# safely re-resolve/rotate it (self-heal if Cloudflare's anycast IP goes
-# stale) without ever clobbering a manually configured outbound. A plain
-# in-memory cache would not survive a panel restart, which is exactly when
-# you'd most want a fresh lookup.
 WARP_PINNED_IP_MARKER = "_nxWarpPinnedIp"
+
+
+def is_warp_tag(tag: str | None) -> bool:
+    """True for ``warp``, ``warp-2``, … (panel WARP account tags)."""
+    t = str(tag or "").strip()
+    return t == "warp" or t.startswith("warp-")
+
+
+def _endpoint_looks_like_warp(endpoint: str) -> bool:
+    ep = str(endpoint or "")
+    return DEFAULT_WARP_ENDPOINT_HOST in ep
 
 
 def _warp_outbounds(outbounds: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -56,20 +64,19 @@ def _warp_outbounds(outbounds: list[dict[str, Any]]) -> list[dict[str, Any]]:
         endpoint = ""
         if peers and isinstance(peers[0], dict):
             endpoint = str(peers[0].get("endpoint") or "")
-        # Non-default tags (multi-account WARP, e.g. "warp-2") are only
-        # matched by hostname the first time around — once pinned to an IP
-        # the hostname is gone, so the persisted marker is what keeps them
-        # recognizable as "ours" across later normalize passes / health checks.
         is_pinned_by_us = isinstance(settings, dict) and bool(settings.get(WARP_PINNED_IP_MARKER))
-        if tag == "warp" or DEFAULT_WARP_ENDPOINT_HOST in endpoint or is_pinned_by_us:
+        if is_warp_tag(tag) or _endpoint_looks_like_warp(endpoint) or is_pinned_by_us:
             found.append(ob)
     return found
 
 
 def find_warp_outbounds(outbounds: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Public entry point for callers (e.g. the WARP health-check job) that
-    need to locate the live WARP wireguard outbound(s) in a config."""
+    """Public entry point for callers that need live WARP wireguard outbound(s)."""
     return _warp_outbounds(outbounds)
+
+
+def warp_outbound_tags(outbounds: Sequence[dict[str, Any]]) -> Set[str]:
+    return {str(o.get("tag") or "") for o in _warp_outbounds(list(outbounds)) if o.get("tag")}
 
 
 def resolve_warp_endpoint_ip(
@@ -77,31 +84,48 @@ def resolve_warp_endpoint_ip(
     port: int = DEFAULT_WARP_ENDPOINT_PORT,
     timeout: float = DNS_RESOLVE_TIMEOUT,
 ) -> str | None:
-    """Resolve the WARP endpoint host, bounded by ``timeout``.
-
-    ``socket.getaddrinfo`` ignores ``socket.setdefaulttimeout`` (it calls the
-    system resolver directly), so a broken/censored DNS path can otherwise
-    hang the calling request for a long time. Run it in a worker thread and
-    give up after ``timeout`` seconds instead.
-    """
+    """Resolve the WARP endpoint host, bounded by ``timeout``."""
     def _lookup() -> str | None:
         try:
-            infos = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
+            infos = socket.getaddrinfo(host, port, type=socket.SOCK_DGRAM)
         except OSError:
             return None
+        for info in infos:
+            if info[0] == socket.AF_INET:
+                return info[4][0]
         return infos[0][4][0] if infos else None
 
-    # Don't use the executor as a context manager: shutdown(wait=True) would
-    # block on the lookup thread even after we've already given up on it,
-    # defeating the whole point of the timeout.
-    pool = ThreadPoolExecutor(max_workers=1)
-    future = pool.submit(_lookup)
-    try:
-        return future.result(timeout=timeout)
-    except FuturesTimeoutError:
-        return None
-    finally:
-        pool.shutdown(wait=False)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        fut = pool.submit(_lookup)
+        try:
+            return fut.result(timeout=timeout)
+        except FuturesTimeoutError:
+            return None
+
+
+def apply_warp_endpoint(outbound: dict[str, Any], host: str, port: int) -> bool:
+    settings = outbound.get("settings")
+    if not isinstance(settings, dict):
+        return False
+    peers = settings.get("peers")
+    if not isinstance(peers, list) or not peers or not isinstance(peers[0], dict):
+        return False
+    peers[0]["endpoint"] = f"{host}:{int(port)}"
+    settings[WARP_PINNED_IP_MARKER] = host
+    return True
+
+
+def find_working_warp_endpoint(
+    candidates: Sequence[tuple[str, int]],
+    probe,
+) -> tuple[str, int] | None:
+    for host, port in candidates:
+        try:
+            if probe(host, int(port)):
+                return host, int(port)
+        except Exception:
+            continue
+    return None
 
 
 def _pin_warp_endpoint_ip(outbound: dict[str, Any]) -> bool:
@@ -109,132 +133,27 @@ def _pin_warp_endpoint_ip(outbound: dict[str, Any]) -> bool:
     if not isinstance(settings, dict):
         return False
     peers = settings.get("peers")
-    if not isinstance(peers, list) or not peers:
+    if not isinstance(peers, list) or not peers or not isinstance(peers[0], dict):
         return False
-    peer = peers[0]
-    if not isinstance(peer, dict):
-        return False
-    endpoint = str(peer.get("endpoint") or "")
-    if not endpoint:
-        return False
-    host_part = endpoint.rsplit(":", 1)[0]
-    is_hostname = DEFAULT_WARP_ENDPOINT_HOST in endpoint
-    # Re-resolve endpoints we previously pinned too, so a stale/blocked
-    # anycast IP can self-heal instead of being stuck forever — the marker
-    # survives on disk across restarts. Endpoints the admin pointed
-    # elsewhere manually (no marker, not our hostname) are left untouched.
-    is_our_pinned_ip = bool(settings.get(WARP_PINNED_IP_MARKER)) and host_part == settings.get(
-        WARP_PINNED_IP_MARKER
-    )
-    if not is_hostname and not is_our_pinned_ip:
+    current = str(peers[0].get("endpoint") or "")
+    pinned = settings.get(WARP_PINNED_IP_MARKER)
+    if pinned and current.startswith(str(pinned) + ":"):
         return False
     ip = resolve_warp_endpoint_ip()
     if not ip:
         return False
-    settings[WARP_PINNED_IP_MARKER] = ip
-    new_endpoint = f"{ip}:{DEFAULT_WARP_ENDPOINT_PORT}"
-    if endpoint == new_endpoint:
-        return False
-    peer["endpoint"] = new_endpoint
-    return True
-
-
-def parse_endpoint(value: str) -> tuple[str, int] | None:
-    """Parse an "ip:port" string. Returns None if malformed."""
-    text = str(value or "").strip()
-    if ":" not in text:
-        return None
-    host, _, port_str = text.rpartition(":")
-    if not host or not port_str.isdigit():
-        return None
-    return host, int(port_str)
-
-
-def build_probe_outbound(outbound: dict[str, Any], host: str, port: int) -> dict[str, Any] | None:
-    """Return a deep-copied outbound with peer[0]'s endpoint swapped to
-    ``host:port``, for testing a candidate without mutating the live config."""
-    candidate = deepcopy(outbound)
-    settings = candidate.get("settings")
-    if not isinstance(settings, dict):
-        return None
-    peers = settings.get("peers")
-    if not isinstance(peers, list) or not peers or not isinstance(peers[0], dict):
-        return None
-    peers[0]["endpoint"] = f"{host}:{port}"
-    return candidate
-
-
-def apply_warp_endpoint(outbound: dict[str, Any], host: str, port: int) -> bool:
-    """Pin ``outbound`` onto ``host:port`` and record it as ours (marker), so
-    later normalize passes / health checks recognize and can keep managing
-    it. Returns True if the endpoint actually changed."""
-    settings = outbound.setdefault("settings", {})
-    if not isinstance(settings, dict):
-        return False
-    peers = settings.get("peers")
-    if not isinstance(peers, list) or not peers or not isinstance(peers[0], dict):
-        return False
-    new_endpoint = f"{host}:{port}"
-    changed = str(peers[0].get("endpoint") or "") != new_endpoint
-    peers[0]["endpoint"] = new_endpoint
-    settings[WARP_PINNED_IP_MARKER] = host
-    return changed
-
-
-def candidate_endpoints() -> list[tuple[str, int]]:
-    """Ordered list of endpoints to try when the current one is confirmed
-    broken: a fresh DNS lookup of the default host first (cheap, and in case
-    Cloudflare's anycast answer legitimately changed), then the configured
-    fallback IP:port candidates (``WARP_CANDIDATE_ENDPOINTS``) — needed
-    because the default hostname normally resolves to the *same* address
-    every time, so re-resolving alone can't route around a blocked IP."""
-    from config import WARP_CANDIDATE_ENDPOINTS
-
-    out: list[tuple[str, int]] = []
-    fresh_ip = resolve_warp_endpoint_ip()
-    if fresh_ip:
-        out.append((fresh_ip, DEFAULT_WARP_ENDPOINT_PORT))
-    for raw in WARP_CANDIDATE_ENDPOINTS:
-        parsed = parse_endpoint(raw)
-        if parsed and parsed not in out:
-            out.append(parsed)
-    return out
-
-
-def find_working_warp_endpoint(
-    outbound: dict[str, Any],
-    prober,
-    candidates: list[tuple[str, int]] | None = None,
-) -> tuple[str, int] | None:
-    """Try each candidate endpoint in order and return the first ``prober``
-    reports as working, or None if all fail.
-
-    ``prober(candidate_outbound) -> bool`` is injected so this stays a pure,
-    fast-to-test function — the real prober (in app/jobs/warp_health.py)
-    spins up a throwaway Xray process per candidate, which is far too slow
-    and side-effecting for unit tests.
-    """
-    for host, port in candidates if candidates is not None else candidate_endpoints():
-        probe = build_probe_outbound(outbound, host, port)
-        if probe is None:
-            continue
-        try:
-            if prober(probe):
-                return host, port
-        except Exception:
-            continue
-    return None
+    return apply_warp_endpoint(outbound, ip, DEFAULT_WARP_ENDPOINT_PORT)
 
 
 def _ensure_warp_outbound_settings(outbound: dict[str, Any]) -> bool:
-    changed = False
     settings = outbound.setdefault("settings", {})
     if not isinstance(settings, dict):
-        return changed
-    if not settings.get("workers"):
-        settings["workers"] = 2
+        return False
+    changed = False
+    if settings.get("mtu") in (None, 0):
+        settings["mtu"] = 1280
         changed = True
-    if settings.get("noKernelTun") is not True:
+    if "noKernelTun" not in settings:
         settings["noKernelTun"] = True
         changed = True
     if _pin_warp_endpoint_ip(outbound):
@@ -242,20 +161,14 @@ def _ensure_warp_outbound_settings(outbound: dict[str, Any]) -> bool:
     return changed
 
 
-def _rule_domains(rule: dict[str, Any]) -> list[str]:
-    dom = rule.get("domain")
-    if isinstance(dom, list):
-        return [str(d) for d in dom]
-    if dom:
-        return [str(dom)]
-    return []
-
-
 def _has_warp_bypass(rules: list[dict[str, Any]]) -> bool:
     for rule in rules:
         if str(rule.get("outboundTag") or "") != "DIRECT":
             continue
-        if any("cloudflareclient" in d for d in _rule_domains(rule)):
+        domains = rule.get("domain") or []
+        if isinstance(domains, list) and any(
+            DEFAULT_WARP_ENDPOINT_HOST in str(d) for d in domains
+        ):
             return True
     return False
 
@@ -269,18 +182,153 @@ def _has_dns_direct_rule(rules: list[dict[str, Any]]) -> bool:
     return False
 
 
-def _has_warp_default_rule(rules: list[dict[str, Any]]) -> bool:
+def _is_catch_all_network_rule(rule: dict[str, Any]) -> bool:
+    net = str(rule.get("network") or "")
+    return (
+        "tcp" in net
+        and "udp" in net
+        and not rule.get("domain")
+        and not rule.get("ip")
+        and not rule.get("source")
+        and not rule.get("sourceIP")
+        and not rule.get("inboundTag")
+        and not rule.get("protocol")
+        and not rule.get("port")
+    )
+
+
+def _has_warp_default_rule(rules: list[dict[str, Any]], tag: str = "warp") -> bool:
     for rule in rules:
-        if str(rule.get("outboundTag") or "") == "warp":
-            net = str(rule.get("network") or "")
-            if "tcp" in net and "udp" in net and not rule.get("domain") and not rule.get("ip"):
-                return True
+        if str(rule.get("outboundTag") or "") == tag and _is_catch_all_network_rule(rule):
+            return True
     return False
 
 
-def apply_warp_safe_routing(payload: dict[str, Any]) -> dict[str, Any]:
-    """Ensure WARP WireGuard can bootstrap when used as the default exit."""
+def _dedupe_rules(rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    out: list[dict[str, Any]] = []
+    for rule in rules:
+        key = json.dumps(rule, sort_keys=True, default=str)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(rule)
+    return out
+
+
+def rewrite_missing_warp_routes(
+    payload: dict[str, Any],
+    *,
+    missing_tags: Optional[Iterable[str]] = None,
+) -> dict[str, Any]:
+    """Point routing that targets missing/removed WARP tags at ``DIRECT``."""
     data = deepcopy(payload)
+    outbounds = list(data.get("outbounds") or [])
+    present = {str(o.get("tag") or "") for o in outbounds if o.get("tag")}
+    if missing_tags is None:
+        targets = {
+            str(r.get("outboundTag") or "")
+            for r in ((data.get("routing") or {}).get("rules") or [])
+            if is_warp_tag(str(r.get("outboundTag") or ""))
+            and str(r.get("outboundTag") or "") not in present
+        }
+    else:
+        targets = {str(t) for t in missing_tags if t}
+
+    routing = data.get("routing")
+    if not isinstance(routing, dict) or not targets:
+        return data
+
+    rules = list(routing.get("rules") or [])
+    fixed: list[dict[str, Any]] = []
+    for rule in rules:
+        r = dict(rule)
+        ot = str(r.get("outboundTag") or "")
+        if ot in targets:
+            r["outboundTag"] = "DIRECT"
+        fixed.append(r)
+    routing["rules"] = _dedupe_rules(fixed)
+    return data
+
+
+def strip_warp_from_config(
+    payload: dict[str, Any],
+    *,
+    tags: Optional[Sequence[str]] = None,
+) -> dict[str, Any]:
+    """Remove WARP outbound(s) and repair routing so traffic uses ``DIRECT``.
+
+    ``tags=None`` removes every WARP-like outbound. Otherwise only those tags.
+    """
+    data = deepcopy(payload)
+    outbounds = list(data.get("outbounds") or [])
+    if tags is None:
+        remove_tags = warp_outbound_tags(outbounds)
+        for rule in ((data.get("routing") or {}).get("rules") or []):
+            ot = str(rule.get("outboundTag") or "")
+            if is_warp_tag(ot):
+                remove_tags.add(ot)
+    else:
+        remove_tags = {str(t) for t in tags if t}
+
+    if not remove_tags:
+        return rewrite_missing_warp_routes(data)
+
+    data["outbounds"] = [o for o in outbounds if str(o.get("tag") or "") not in remove_tags]
+    data = rewrite_missing_warp_routes(data, missing_tags=remove_tags)
+    return data
+
+
+def ensure_warp_exit(
+    payload: dict[str, Any],
+    outbound: dict[str, Any],
+    *,
+    as_default_exit: bool = True,
+) -> dict[str, Any]:
+    """Install/replace a WARP outbound and optionally make it the default exit."""
+    data = deepcopy(payload)
+    tag = str(outbound.get("tag") or "warp")
+    outbound = deepcopy(outbound)
+    outbound["tag"] = tag
+    _ensure_warp_outbound_settings(outbound)
+
+    existing = list(data.get("outbounds") or [])
+    if as_default_exit:
+        drop = warp_outbound_tags(existing) | {tag}
+        outbounds = [o for o in existing if str(o.get("tag") or "") not in drop]
+    else:
+        outbounds = [o for o in existing if str(o.get("tag") or "") != tag]
+    outbounds.append(outbound)
+    data["outbounds"] = outbounds
+    data = apply_warp_safe_routing(data)
+    if as_default_exit:
+        routing = data.setdefault("routing", {"domainStrategy": "IPIfNonMatch", "rules": []})
+        rules = [
+            r
+            for r in list(routing.get("rules") or [])
+            if not (
+                is_warp_tag(str(r.get("outboundTag") or ""))
+                and _is_catch_all_network_rule(r)
+            )
+            and not (
+                str(r.get("outboundTag") or "") == "DIRECT"
+                and _is_catch_all_network_rule(r)
+            )
+        ]
+        rule = dict(WARP_DEFAULT_RULE)
+        rule["outboundTag"] = tag
+        rules.append(rule)
+        routing["rules"] = _dedupe_rules(rules)
+    return data
+
+
+def apply_warp_safe_routing(payload: dict[str, Any]) -> dict[str, Any]:
+    """Ensure WARP WireGuard can bootstrap when used as the default exit.
+
+    Always rewrites routing that targets WARP tags with no matching outbound
+    to ``DIRECT`` (including ``warp-2`` etc.).
+    """
+    data = rewrite_missing_warp_routes(deepcopy(payload))
     outbounds = list(data.get("outbounds") or [])
     warp_obs = _warp_outbounds(outbounds)
     if not warp_obs:
@@ -309,8 +357,11 @@ def apply_warp_safe_routing(payload: dict[str, Any]) -> dict[str, Any]:
         rules.insert(insert_at, dict(WARP_DNS_DIRECT_RULE))
 
     first_tag = str(outbounds[0].get("tag") or "") if outbounds else ""
-    if first_tag == "warp" and not _has_warp_default_rule(rules):
-        rules.append(dict(WARP_DEFAULT_RULE))
+    primary = str(warp_obs[0].get("tag") or "warp")
+    if first_tag == primary and not _has_warp_default_rule(rules, primary):
+        rule = dict(WARP_DEFAULT_RULE)
+        rule["outboundTag"] = primary
+        rules.append(rule)
 
-    routing["rules"] = rules
+    routing["rules"] = _dedupe_rules(rules)
     return data

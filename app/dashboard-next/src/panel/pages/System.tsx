@@ -1,4 +1,4 @@
-import { FC, useEffect, useMemo, useState } from "react";
+import { FC, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
@@ -425,6 +425,7 @@ const BackupTab: FC = () => {
   const canWrite = hasPermission("backup:write");
   const [busy, setBusy] = useState(false);
   const [scheduleHours, setScheduleHours] = useState("");
+  const uploadRef = useRef<HTMLInputElement>(null);
   const { data, loading, reload } = useFetch<string[]>(() => api.get("/backups"), []);
   const schedule = useFetch<{ enabled: boolean; interval_hours: number }>(() => api.get("/backups/schedule"), []);
 
@@ -436,6 +437,35 @@ const BackupTab: FC = () => {
     setBusy(true);
     try { await api.post("/backup"); toast.push(t("system.backupCreated"), "success"); reload(); }
     catch (e: any) { toast.push(e.message, "error"); } finally { setBusy(false); }
+  };
+
+  const download = async (name: string) => {
+    try {
+      await api.download(`/backups/${encodeURIComponent(name)}/download`, name);
+    } catch (e: any) {
+      toast.push(e.message, "error");
+    }
+  };
+
+  const onUploadFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!confirm(t("system.uploadRestoreConfirm"))) return;
+    setBusy(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const up = await api.upload<{ filename: string }>("/backups/upload", form);
+      toast.push(t("system.backupUploaded"), "success");
+      await api.post(`/backups/${encodeURIComponent(up.filename)}/restore`);
+      toast.push(t("system.restoreDone"), "success");
+      reload();
+    } catch (e: any) {
+      toast.push(e.message, "error");
+    } finally {
+      setBusy(false);
+    }
   };
 
   const saveSchedule = async () => {
@@ -457,9 +487,21 @@ const BackupTab: FC = () => {
       <CardHead
         title={t("system.tabBackup")}
         actions={canWrite ? (
-          <Button variant="primary" disabled={busy} onClick={create}>
-            <IcDownload className="nx-ico" /> {t("system.createBackup")}
-          </Button>
+          <>
+            <input
+              ref={uploadRef}
+              type="file"
+              accept=".tar.gz,.tgz,application/gzip"
+              style={{ display: "none" }}
+              onChange={onUploadFile}
+            />
+            <Button variant="ghost" disabled={busy} onClick={() => uploadRef.current?.click()}>
+              {t("system.uploadRestore")}
+            </Button>
+            <Button variant="primary" disabled={busy} onClick={create}>
+              <IcPlus className="nx-ico" /> {t("system.createBackup")}
+            </Button>
+          </>
         ) : undefined}
       />
       {schedule.data && (
@@ -489,15 +531,21 @@ const BackupTab: FC = () => {
             {data.map((b) => (
               <div key={b} className="nx-row" style={{ justifyContent: "space-between", background: "var(--nx-surface-2)", padding: "10px 14px", borderRadius: 8 }}>
                 <span className="nx-mono" style={{ fontSize: 12 }}>{b}</span>
-                {canWrite && (
-                  <Button size="sm" variant="danger" onClick={async () => {
-                    if (!confirm(t("system.restoreConfirm"))) return;
-                    try {
-                      await api.post(`/backups/${encodeURIComponent(b)}/restore`);
-                      toast.push(t("system.restoreDone"), "success");
-                    } catch (e: any) { toast.push(e.message, "error"); }
-                  }}>{t("system.restore")}</Button>
-                )}
+                <div className="nx-row" style={{ gap: 6 }}>
+                  <Button size="sm" variant="ghost" onClick={() => download(b)}>
+                    <IcDownload className="nx-ico" /> {t("system.download")}
+                  </Button>
+                  {canWrite && (
+                    <Button size="sm" variant="danger" disabled={busy} onClick={async () => {
+                      if (!confirm(t("system.restoreConfirm"))) return;
+                      setBusy(true);
+                      try {
+                        await api.post(`/backups/${encodeURIComponent(b)}/restore`);
+                        toast.push(t("system.restoreDone"), "success");
+                      } catch (e: any) { toast.push(e.message, "error"); } finally { setBusy(false); }
+                    }}>{t("system.restore")}</Button>
+                  )}
+                </div>
               </div>
             ))}
           </div>}

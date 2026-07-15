@@ -64,6 +64,50 @@ def filter_xray_config_for_node(config, allowed_tags: Optional[Set[str]]):
     return base
 
 
+def apply_node_warp_policy(cfg, dbnode):
+    """Apply per-node WARP exit policy on top of the filtered master config.
+
+    - ``warp_enabled=False`` (default): strip any inherited WARP outbounds/rules
+      so the node exits via ``DIRECT`` (or whatever non-WARP routing remains).
+    - ``warp_enabled=True``: inject the account outbound for ``warp_tag``, make
+      it the catch-all exit, point Xray-native WG at WARP, and add a dokodemo
+      inbound for kernel WG/AWG TPROXY diversion.
+    """
+    from app.services.warp_tproxy import (
+        inject_warp_tproxy_inbound,
+        retarget_xray_wg_to_warp,
+        strip_warp_tproxy_inbound,
+    )
+    from app.utils import warp as warp_util
+    from app.xray.warp_routing import ensure_warp_exit, strip_warp_from_config
+
+    raw = cfg.copy() if hasattr(cfg, "copy") else deepcopy(dict(cfg))
+    data = dict(raw)
+    node_id = int(getattr(dbnode, "id", 0) or 0)
+    enabled = bool(getattr(dbnode, "warp_enabled", False))
+    if not enabled:
+        cleaned = strip_warp_from_config(data)
+        if node_id:
+            cleaned = strip_warp_tproxy_inbound(cleaned, node_id)
+    else:
+        tag = (getattr(dbnode, "warp_tag", None) or "warp").strip() or "warp"
+        account = warp_util.get_warp(tag)
+        outbound = (account or {}).get("outbound") if account else None
+        if not isinstance(outbound, dict):
+            cleaned = strip_warp_from_config(data)
+            if node_id:
+                cleaned = strip_warp_tproxy_inbound(cleaned, node_id)
+        else:
+            cleaned = ensure_warp_exit(data, outbound, as_default_exit=True)
+            if node_id:
+                cleaned = retarget_xray_wg_to_warp(cleaned, node_id, tag)
+                cleaned = inject_warp_tproxy_inbound(cleaned, node_id, tag)
+
+    raw.clear()
+    raw.update(cleaned)
+    return raw
+
+
 def build_node_xray_config(node_id: int, base_config=None):
     """Master config + users, filtered for this node's Xray services."""
     from app import xray
@@ -93,6 +137,8 @@ def build_node_xray_config(node_id: int, base_config=None):
                     cfg = _merge_node_override(cfg, patch)
             except Exception:
                 pass
+        if dbnode is not None:
+            cfg = apply_node_warp_policy(cfg, dbnode)
 
     return cfg
 

@@ -85,11 +85,15 @@ def build_xray_wireguard_inbound(
     peers: List[WGUserPeer],
     *,
     node_id: int,
+    outbound_tag: str = "DIRECT",
 ) -> Tuple[Optional[Dict], Optional[Dict]]:
     """Build ``(inbound, routing_rule)`` for a node's Xray-native WG+noise listener.
 
     Returns ``(None, None)`` when the feature is disabled or misconfigured
     (missing keys/port) so callers can skip injection safely.
+
+    ``outbound_tag`` is DIRECT by default; pass the node's WARP tag when
+    ``warp_enabled`` so Finalmask clients exit via Cloudflare.
     """
     if not xray_native_wg_enabled(cfg):
         return None, None
@@ -117,7 +121,11 @@ def build_xray_wireguard_inbound(
             }
         },
     }
-    rule = {"type": "field", "inboundTag": [tag], "outboundTag": "DIRECT"}
+    rule = {
+        "type": "field",
+        "inboundTag": [tag],
+        "outboundTag": outbound_tag or "DIRECT",
+    }
     return inbound, rule
 
 

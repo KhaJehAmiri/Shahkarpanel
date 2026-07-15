@@ -386,6 +386,26 @@ class WireGuardManager:
         """Expose UDP ports publicly (used for Xray-native WG + stack ports)."""
         ensure_udp_input_ports(ports, run=self._run)
 
+    def apply_warp_tproxy(
+        self,
+        *,
+        enabled: bool,
+        subnets: Sequence[str],
+        port: int,
+        interfaces: Optional[Sequence[str]] = None,
+    ) -> bool:
+        from warp_tproxy import apply_warp_tproxy
+
+        return bool(
+            apply_warp_tproxy(
+                enabled=enabled,
+                subnets=subnets,
+                port=port,
+                interfaces=interfaces,
+                run=self._run,
+            )
+        )
+
     def _peer_handshakes(self, interface: str) -> dict:
         """Return ``public_key -> unix_timestamp`` from ``awg/wg show … handshakes``."""
         wg = "awg" if self._interface_is_userspace_awg(interface) or shutil.which("awg") else "wg"

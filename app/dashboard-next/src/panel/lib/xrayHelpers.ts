@@ -251,7 +251,10 @@ export const WARP_BYPASS_RULE: Record<string, unknown> = {
 export function usesWarpRouting(cfg: Record<string, unknown>): boolean {
   const routing = (cfg.routing || {}) as Record<string, unknown>;
   const rules = (routing.rules || []) as Record<string, unknown>[];
-  return rules.some((r) => String(r.outboundTag || "") === "warp");
+  return rules.some((r) => {
+    const tag = String(r.outboundTag || "");
+    return tag === "warp" || tag.startsWith("warp-");
+  });
 }
 
 export function applyWarpSafeRouting(cfg: Record<string, unknown>): Record<string, unknown> {

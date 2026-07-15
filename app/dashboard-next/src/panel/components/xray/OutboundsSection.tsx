@@ -367,6 +367,7 @@ export const OutboundsSection: FC<{
           outbounds={outbounds}
           onClose={() => setWarpOpen(false)}
           onAddOutbound={addWarpOutbound}
+          onConfigSynced={(cfg) => onChange(cfg)}
         />
       )}
 

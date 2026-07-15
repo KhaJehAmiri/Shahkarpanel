@@ -64,6 +64,7 @@ class Service(object):
         # spec and reads back per-peer transfer counters for central accounting.
         self.router.add_api_route("/wg/apply", self.wg_apply, methods=["POST"])
         self.router.add_api_route("/wg/apply-specs", self.wg_apply_specs, methods=["POST"])
+        self.router.add_api_route("/wg/warp-tproxy", self.wg_warp_tproxy, methods=["POST"])
         self.router.add_api_route("/wg/open-udp-ports", self.wg_open_udp_ports, methods=["POST"])
         self.router.add_api_route("/wg/transfer", self.wg_transfer, methods=["POST"])
         self.router.add_api_route("/wg/down", self.wg_down, methods=["POST"])
@@ -317,6 +318,28 @@ class Service(object):
             logger.error(f"Failed to apply WireGuard specs: {exc}")
             raise HTTPException(status_code=503, detail=str(exc))
         return {"interfaces": [s.interface for s in wg_specs], "peers": sum(len(s.peers) for s in wg_specs)}
+
+    def wg_warp_tproxy(
+        self,
+        session_id: UUID = Body(embed=True),
+        enabled: bool = Body(embed=True),
+        subnets: list = Body(embed=True),
+        port: int = Body(embed=True),
+        interfaces: list = Body(default=[], embed=True),
+    ):
+        """Divert kernel WG client traffic into Xray dokodemo (WARP exit)."""
+        self.match_session_id(session_id)
+        try:
+            ok = self.wg.apply_warp_tproxy(
+                enabled=bool(enabled),
+                subnets=[str(s) for s in (subnets or [])],
+                port=int(port),
+                interfaces=[str(i) for i in (interfaces or [])],
+            )
+        except Exception as exc:
+            logger.error(f"Failed to apply WARP TPROXY: {exc}")
+            raise HTTPException(status_code=503, detail=str(exc))
+        return {"ok": bool(ok)}
 
     def wg_open_udp_ports(self, session_id: UUID = Body(embed=True), ports: list = Body(embed=True)):
         self.match_session_id(session_id)

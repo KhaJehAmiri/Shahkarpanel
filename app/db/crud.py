@@ -2044,6 +2044,13 @@ def update_node(db: Session, dbnode: Node, modify: NodeModify) -> Node:
     if modify.core_kind is not None:
         dbnode.core_kind = modify.core_kind.value
 
+    if modify.warp_enabled is not None:
+        dbnode.warp_enabled = bool(modify.warp_enabled)
+
+    if modify.warp_tag is not None:
+        tag = str(modify.warp_tag).strip() or None
+        dbnode.warp_tag = tag
+
     db.commit()
     db.refresh(dbnode)
     return dbnode

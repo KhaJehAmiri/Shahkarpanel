@@ -32,7 +32,8 @@ export const WarpDialog: FC<{
   outbounds: Record<string, unknown>[];
   onClose: () => void;
   onAddOutbound: (outbound: Record<string, unknown>) => void;
-}> = ({ outbounds, onClose, onAddOutbound }) => {
+  onConfigSynced?: (config: Record<string, unknown>) => void;
+}> = ({ outbounds, onClose, onAddOutbound, onConfigSynced }) => {
   const { t } = useTranslation();
   const toast = useToast();
   const [store, setStore] = useState<WarpStore | null>(null);
@@ -48,6 +49,16 @@ export const WarpDialog: FC<{
   );
 
   const account = store?.accounts?.[selectedTag] || null;
+
+  const syncConfigFromServer = async () => {
+    if (!onConfigSynced) return;
+    try {
+      const cfg = await api.get<Record<string, unknown>>("/core/config");
+      onConfigSynced(cfg);
+    } catch {
+      /* parent still has stale outbound until refresh */
+    }
+  };
 
   const load = async () => {
     setLoading(true);
@@ -126,6 +137,7 @@ export const WarpDialog: FC<{
       await api.del(`/core/warp/${encodeURIComponent(selectedTag)}`);
       toast.push(t("warp.deleted"), "success");
       await load();
+      await syncConfigFromServer();
     } catch (e: unknown) {
       toast.push(e instanceof ApiError ? e.message : t("common.error"), "error");
     } finally {
@@ -140,6 +152,7 @@ export const WarpDialog: FC<{
       await api.del("/core/warp");
       toast.push(t("warp.deletedAll"), "success");
       await load();
+      await syncConfigFromServer();
     } catch (e: unknown) {
       toast.push(e instanceof ApiError ? e.message : t("common.error"), "error");
     } finally {

@@ -189,6 +189,8 @@ export interface NodeItem {
   capacity?: number | null;
   latency_ms?: number | null;
   core_kind?: string;
+  warp_enabled?: boolean;
+  warp_tag?: string | null;
   provision_status?: string | null;
   provision_message?: string | null;
   provision_progress?: number | null;

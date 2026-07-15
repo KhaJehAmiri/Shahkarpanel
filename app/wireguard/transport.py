@@ -140,6 +140,25 @@ class RESTWireGuardClient(AutoScaleWireGuardMixin):
     def down(self, interface: str, timeout: int = 10) -> None:
         self._node.make_request("/wg/down", timeout, interface=interface)
 
+    def apply_warp_tproxy(
+        self,
+        *,
+        enabled: bool,
+        subnets: list,
+        port: int,
+        interfaces: Optional[list] = None,
+        timeout: int = 20,
+    ) -> bool:
+        res = self._node.make_request(
+            "/wg/warp-tproxy",
+            timeout,
+            enabled=bool(enabled),
+            subnets=list(subnets or []),
+            port=int(port),
+            interfaces=list(interfaces or []),
+        )
+        return bool((res or {}).get("ok"))
+
     def amnezia_available(self, timeout: int = 5) -> bool:
         try:
             res = self._node.make_request("/wg/amnezia-available", timeout)
@@ -350,6 +369,33 @@ class RPyCWireGuardClient(AutoScaleWireGuardMixin):
 
     def down(self, interface: str, timeout: int = 10) -> None:
         self._node.remote.wg_down(interface)
+
+    def apply_warp_tproxy(
+        self,
+        *,
+        enabled: bool,
+        subnets: list,
+        port: int,
+        interfaces: Optional[list] = None,
+        timeout: int = 20,
+    ) -> bool:
+        remote = getattr(self._node, "remote", None)
+        if remote is None or not hasattr(remote, "wg_warp_tproxy"):
+            raise AttributeError("node agent has no wg_warp_tproxy")
+        payload = {
+            "enabled": bool(enabled),
+            "subnets": list(subnets or []),
+            "port": int(port),
+            "interfaces": list(interfaces or []),
+        }
+        raw = remote.wg_warp_tproxy(json.dumps(payload, separators=(",", ":")))
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw) if raw else {}
+            except json.JSONDecodeError:
+                raw = {}
+        plain = _plain_tree(raw) if raw else {}
+        return bool((plain or {}).get("ok"))
 
     def amnezia_available(self, timeout: int = 5) -> bool:
         try:

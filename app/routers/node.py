@@ -28,6 +28,7 @@ from app.models.node import (
     NodeResponse,
     NodeSettings,
     NodeStatus,
+    NodeWarpSettings,
     NodesUsageResponse,
 )
 from app.models.proxy import ProxyHost
@@ -934,6 +935,59 @@ def set_node_xray_config_override(
     db.commit()
     bg.add_task(xray.operations.restart_node, dbnode.id)
     return {"saved": True}
+
+
+@router.put("/node/{node_id}/warp", response_model=NodeResponse)
+def set_node_warp(
+    body: NodeWarpSettings,
+    bg: BackgroundTasks,
+    dbnode=Depends(get_scoped_node),
+    db: Session = Depends(get_db),
+    _: Admin = Depends(require_permission("nodes:provision")),
+):
+    """Enable/disable Cloudflare WARP as this node's default Xray exit.
+
+    Requires a registered WARP account (Outbounds → WARP) for the chosen tag.
+    """
+    from app.utils import warp as warp_util
+
+    tag = (body.tag or "warp").strip() or "warp"
+    if body.enabled:
+        account = warp_util.get_warp(tag)
+        if not account or not account.get("outbound"):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"No WARP account for tag '{tag}'. "
+                    "Register one under Core → Outbounds → WARP first."
+                ),
+            )
+    dbnode.warp_enabled = bool(body.enabled)
+    dbnode.warp_tag = tag
+    db.commit()
+    db.refresh(dbnode)
+
+    def _apply_warp_runtime(node_id: int) -> None:
+        from app.db import GetDB, crud
+        from app.services.panel_warp_egress import sync_panel_warp_egress
+        from app.services.warp_node_sync import sync_node_warp_tproxy
+
+        xray.operations.restart_node(node_id)
+        with GetDB() as db:
+            node = crud.get_node_by_id(db, node_id)
+            if node is not None:
+                sync_node_warp_tproxy(node)
+            sync_panel_warp_egress(db)
+
+    if dbnode.status != NodeStatus.disabled:
+        bg.add_task(_apply_warp_runtime, dbnode.id)
+    logger.info(
+        'Node "%s" WARP %s (tag=%s)',
+        dbnode.name,
+        "enabled" if dbnode.warp_enabled else "disabled",
+        dbnode.warp_tag or "warp",
+    )
+    return NodeResponse.model_validate(dbnode)
 
 
 @router.post("/node/{node_id}/reconnect")

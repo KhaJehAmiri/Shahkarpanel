@@ -15,8 +15,10 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+import threading
 from datetime import datetime
 from typing import List, Optional
+from uuid import uuid4
 
 from config import (
     BACKUP_DIR,
@@ -56,12 +58,197 @@ def _compose_pg_dump_cmd(url) -> Optional[List[str]]:
     cmd = [
         "docker", "compose", "-p", project, "-f", compose_file,
         "exec", "-T", "postgres",
-        "pg_dump", "--no-owner", "--no-privileges",
+        "pg_dump", "--no-owner", "--no-privileges", "--clean", "--if-exists",
     ]
     if url.username:
         cmd += ["-U", str(url.username)]
     cmd += ["-d", url.database]
     return cmd
+
+
+def _compose_psql_cmd(username: str) -> Optional[List[str]]:
+    """psql through the compose postgres service (local socket, no password).
+
+    In compose deployments the bootstrap role (``POSTGRES_USER``, same as the
+    app user) is the superuser, which lets restore terminate the panel's own DB
+    sessions and temporarily block new connections — without that, live
+    sessions hold locks that deadlock the dump's DROP/CREATE statements.
+    """
+    if not shutil.which("docker"):
+        return None
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    compose_file = None
+    for name in ("docker-compose.postgres.yml", "docker-compose.yml"):
+        if os.path.isfile(os.path.join(root, name)):
+            compose_file = name
+            break
+    if not compose_file:
+        return None
+    project = os.environ.get("COMPOSE_PROJECT_NAME", "nexuspanel").strip() or "nexuspanel"
+    return [
+        "docker", "compose", "-p", project, "-f", compose_file,
+        "exec", "-T", "postgres",
+        "psql", "-U", username,
+    ]
+
+
+# Session parameters emitted by newer pg_dump clients that older servers
+# reject (e.g. pg_dump 17 emits transaction_timeout, unknown to PG 16). With
+# ON_ERROR_STOP they would abort the whole import, so strip them.
+_PG_DUMP_SET_SKIP = (b"SET transaction_timeout",)
+
+
+def _sanitize_pg_dump(path: str) -> None:
+    tmp = path + ".sanitized"
+    with open(path, "rb") as src, open(tmp, "wb") as out:
+        for line in src:
+            if line.startswith(_PG_DUMP_SET_SKIP):
+                continue
+            out.write(line)
+    os.replace(tmp, path)
+
+
+def _restore_postgres_dump(sql_src: str) -> None:
+    from app.db.base import engine
+
+    url = engine.url
+    dbname = str(url.database)
+    appuser = str(url.username or "postgres")
+
+    _sanitize_pg_dump(sql_src)
+
+    app_name = "nexuspanel-restore"
+    # Block new connections from non-superuser roles and kick everyone else
+    # off. When the app role IS the superuser (compose bootstrap role) the
+    # limit doesn't apply to it, so a watchdog below keeps terminating any
+    # session that reconnects while the import runs.
+    quiesce = (
+        f'ALTER DATABASE "{dbname}" CONNECTION LIMIT 0; '
+        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+        f"WHERE datname = '{dbname}' AND pid <> pg_backend_pid();"
+    )
+    # Recreating the schema makes restore deterministic: everything is rebuilt
+    # from the dump, and legacy dumps taken without --clean import fine too.
+    reset_schema = "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;"
+    release = f'ALTER DATABASE "{dbname}" CONNECTION LIMIT -1;'
+    terminate_others = (
+        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+        f"WHERE datname = '{dbname}' AND application_name <> '{app_name}';"
+    )
+
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    compose_cmd = _compose_psql_cmd(appuser)
+
+    env = os.environ.copy()
+    env["PGAPPNAME"] = app_name
+    if url.password:
+        env["PGPASSWORD"] = str(url.password)
+
+    def _psql(*args: str, dbname_override: Optional[str] = None, **kwargs):
+        target = dbname_override or dbname
+        if compose_cmd:
+            # compose exec needs -e to forward the app-name marker into the
+            # postgres container.
+            base = compose_cmd[:]
+            base.insert(base.index("exec") + 1, "-e")
+            base.insert(base.index("exec") + 2, f"PGAPPNAME={app_name}")
+            cmd = base + ["-d", target, *args]
+            return subprocess.run(cmd, cwd=root, env=env, **kwargs)
+        cmd = [
+            "psql",
+            "-h", str(url.host or "localhost"),
+            "-p", str(url.port or 5432),
+            "-U", appuser,
+            "-d", target,
+            *args,
+        ]
+        return subprocess.run(cmd, env=env, **kwargs)
+
+    if not compose_cmd and not shutil.which("psql"):
+        raise RuntimeError(
+            "PostgreSQL restore requires either docker compose access to the "
+            "postgres service or a local psql CLI."
+        )
+
+    # Drop pooled connections so the panel's own sessions can't block the DDL.
+    engine.dispose()
+
+    # Long-lived app sessions (SSE streams, jobs) hold locks that would stall
+    # DROP SCHEMA forever; keep terminating them until the import finishes. The
+    # watchdog talks to the maintenance DB so it is never blocked itself.
+    stop = threading.Event()
+
+    def _watchdog() -> None:
+        while not stop.wait(2.0):
+            _psql(
+                "-c", terminate_others, dbname_override="postgres",
+                check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+
+    watchdog = threading.Thread(target=_watchdog, name="pg-restore-watchdog", daemon=True)
+    watchdog.start()
+    try:
+        if compose_cmd:
+            with open(sql_src, "rb") as sql_file:
+                proc = _psql(
+                    "-v", "ON_ERROR_STOP=1",
+                    "-c", quiesce,
+                    "-c", reset_schema,
+                    "-f", "/dev/stdin",
+                    "-c", release,
+                    input=sql_file.read(),
+                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                )
+        else:
+            proc = _psql(
+                "-v", "ON_ERROR_STOP=1",
+                "-c", quiesce,
+                "-c", reset_schema,
+                "-f", sql_src,
+                "-c", release,
+                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+            )
+        if proc.returncode != 0:
+            tail = (proc.stderr or b"").decode(errors="replace")[-800:]
+            raise RuntimeError(f"PostgreSQL restore failed: {tail.strip()}")
+    finally:
+        stop.set()
+        watchdog.join(timeout=10)
+        # Always lift the connection limit, even when the import failed.
+        _psql(
+            "-c", release, dbname_override="postgres",
+            check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        engine.dispose()
+
+
+def _schedule_panel_restart() -> None:
+    """Restart the panel (best-effort, detached) so it reloads the restored DB
+    state and Xray config instead of serving stale in-memory caches.
+
+    Must be a single atomic ``docker restart``: it runs inside the very
+    container being restarted, so a ``stop && start`` sequence dies after the
+    stop and the panel would stay down.
+    """
+    try:
+        from app.system.update_jobs import _own_container_id, _restart_panel
+
+        cid = _own_container_id() if shutil.which("docker") else None
+        if cid:
+            subprocess.Popen(
+                ["sh", "-c", f"sleep 1; docker restart -t 3 {cid}"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        else:
+            _restart_panel(None)
+        logger.info("Restore: panel restart scheduled")
+    except Exception:
+        logger.warning(
+            "Restore: could not schedule a panel restart; restart it manually "
+            "to fully apply the restored backup."
+        )
 
 
 def _dump_database(workdir: str) -> None:
@@ -82,7 +269,9 @@ def _dump_database(workdir: str) -> None:
             env["PGPASSWORD"] = str(url.password)
         out_path = os.path.join(workdir, "db.sql")
         if shutil.which("pg_dump"):
-            cmd = ["pg_dump", "--no-owner", "--no-privileges"]
+            # --clean --if-exists lets the dump be re-imported over an existing
+            # database (drops objects first), which is what makes restore work.
+            cmd = ["pg_dump", "--no-owner", "--no-privileges", "--clean", "--if-exists"]
             if url.host:
                 cmd += ["-h", str(url.host)]
             if url.port:
@@ -175,6 +364,53 @@ def create_backup() -> str:
     return archive_path
 
 
+def _is_valid_archive(path: str) -> bool:
+    """A NexusPanel backup is a gzip tar that contains a DB dump (and, for
+    older archives, at least the Xray config). Reject anything else early so a
+    bad upload can't be "restored"."""
+    try:
+        with tarfile.open(path, "r:gz") as tar:
+            names = tar.getnames()
+    except (tarfile.TarError, OSError, EOFError):
+        return False
+    known = {"db.sqlite3", "db.sql", "xray_config.json"}
+    return any(os.path.basename(n) in known for n in names)
+
+
+def save_uploaded_backup(content: bytes, original_name: str = "") -> str:
+    """Persist an uploaded backup archive into ``BACKUP_DIR`` under a managed
+    name so it shows up in :func:`list_backups` and can be restored. Returns the
+    stored filename.
+
+    Raises ``ValueError`` when the upload is not a valid NexusPanel archive.
+    """
+    _ensure_dir()
+    # uuid suffix: second-resolution timestamps collide when uploads arrive in
+    # the same second, letting a bad upload overwrite (and on failed validation
+    # delete) a valid one.
+    timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    filename = f"{ARCHIVE_PREFIX}upload-{timestamp}-{uuid4().hex[:8]}.tar.gz"
+    dest = os.path.join(BACKUP_DIR, filename)
+    with open(dest, "wb") as f:
+        f.write(content)
+    try:
+        os.chmod(dest, 0o600)
+    except OSError:
+        pass
+    if not _is_valid_archive(dest):
+        try:
+            os.remove(dest)
+        except OSError:
+            pass
+        raise ValueError(
+            "Uploaded file is not a valid NexusPanel backup archive "
+            "(expected a .tar.gz containing db.sqlite3 or db.sql)."
+        )
+    logger.info("Backup uploaded: %s", dest)
+    prune_backups()
+    return filename
+
+
 def list_backups() -> List[str]:
     if not os.path.isdir(BACKUP_DIR):
         return []
@@ -200,13 +436,14 @@ def prune_backups(keep: Optional[int] = None) -> int:
     return len(to_delete)
 
 
-def restore_backup(archive_path: str) -> None:
-    """Restore a backup archive.
+def restore_backup(archive_path: str, restart_panel: bool = True) -> None:
+    """Restore a backup archive. This operation is destructive.
 
-    For SQLite this replaces the live database file, the Xray config and TLS
-    files. For PostgreSQL/MySQL the SQL dump is extracted next to the archive
-    and must be imported manually (psql / mysql), since restoring a live server
-    requires operator confirmation. This operation is destructive.
+    SQLite: the live database file and Xray config are replaced. PostgreSQL:
+    other connections are terminated, the schema is recreated and the dump
+    imported. MySQL: the dump is piped into the mysql CLI. Afterwards a panel
+    restart is scheduled (unless ``restart_panel`` is False) so no stale
+    in-memory state survives the restore.
     """
     from app.db.base import engine
 
@@ -225,7 +462,10 @@ def restore_backup(archive_path: str) -> None:
         name = engine.dialect.name
         if name == "sqlite":
             src = os.path.join(workdir, "db.sqlite3")
-            if os.path.isfile(src) and engine.url.database:
+            if not os.path.isfile(src):
+                raise RuntimeError("Backup archive contains no db.sqlite3")
+            if engine.url.database:
+                engine.dispose()
                 shutil.copy2(src, engine.url.database)
 
             xray_src = os.path.join(workdir, "xray_config.json")
@@ -233,83 +473,51 @@ def restore_backup(archive_path: str) -> None:
                 shutil.copy2(xray_src, XRAY_JSON)
 
             logger.info("SQLite backup restored from %s", archive_path)
-        else:
-            sql_src = os.path.join(workdir, "db.sql")
-            dest = os.path.join(BACKUP_DIR, "restore-db.sql")
-            if os.path.isfile(sql_src):
-                shutil.copy2(sql_src, dest)
+            if restart_panel:
+                _schedule_panel_restart()
+            return
 
-            xray_src = os.path.join(workdir, "xray_config.json")
-            if os.path.isfile(xray_src) and XRAY_JSON:
-                shutil.copy2(xray_src, XRAY_JSON)
+        sql_src = os.path.join(workdir, "db.sql")
+        if not os.path.isfile(sql_src):
+            raise RuntimeError("Backup archive contains no db.sql dump")
 
-            if name == "postgresql":
-                cmd = None
-                if shutil.which("psql"):
-                    url = engine.url
-                    cmd = [
-                        "psql",
-                        "-h",
-                        url.host or "localhost",
-                        "-p",
-                        str(url.port or 5432),
-                        "-U",
-                        str(url.username or "postgres"),
-                        "-d",
-                        str(url.database),
-                        "-f",
-                        sql_src if os.path.isfile(sql_src) else dest,
-                    ]
-                elif _compose_pg_dump_cmd(engine.url):
-                    project = os.environ.get("COMPOSE_PROJECT_NAME", "nexuspanel").strip() or "nexuspanel"
-                    root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-                    compose_file = "docker-compose.postgres.yml"
-                    if not os.path.isfile(os.path.join(root, compose_file)):
-                        compose_file = "docker-compose.yml"
-                    dump_path = sql_src if os.path.isfile(sql_src) else dest
-                    cmd = [
-                        "docker", "compose", "-p", project, "-f", compose_file,
-                        "exec", "-T", "postgres",
-                        "psql", "-U", str(engine.url.username or "postgres"),
-                        "-d", str(engine.url.database),
-                        "-f", "/dev/stdin",
-                    ]
-                    if cmd and os.path.isfile(dump_path):
-                        env = os.environ.copy()
-                        with open(dump_path, "rb") as sql_file:
-                            subprocess.run(cmd, input=sql_file.read(), check=True, env=env)
-                        logger.info("PostgreSQL backup restored from %s", archive_path)
-                        return
+        xray_src = os.path.join(workdir, "xray_config.json")
+        if os.path.isfile(xray_src) and XRAY_JSON:
+            shutil.copy2(xray_src, XRAY_JSON)
 
-                if cmd and os.path.isfile(sql_src):
-                    env = os.environ.copy()
-                    if engine.url.password:
-                        env["PGPASSWORD"] = str(engine.url.password)
-                    subprocess.run(cmd, check=True, env=env)
-                    logger.info("PostgreSQL backup restored from %s", archive_path)
-                    return
+        if name == "postgresql":
+            _restore_postgres_dump(sql_src)
+            logger.info("PostgreSQL backup restored from %s", archive_path)
+            if restart_panel:
+                _schedule_panel_restart()
+            return
 
-            if name == "mysql" and shutil.which("mysql") and os.path.isfile(sql_src):
-                url = engine.url
-                cmd = [
-                    "mysql",
-                    "-h",
-                    url.host or "localhost",
-                    "-P",
-                    str(url.port or 3306),
-                    "-u",
-                    str(url.username or "root"),
-                    str(url.database),
-                ]
-                env = os.environ.copy()
-                if url.password:
-                    env["MYSQL_PWD"] = str(url.password)
-                with open(sql_src, "rb") as sql_file:
-                    subprocess.run(cmd, input=sql_file.read(), check=True, env=env)
-                logger.info("MySQL backup restored from %s", archive_path)
-                return
+        if name == "mysql" and shutil.which("mysql"):
+            url = engine.url
+            cmd = [
+                "mysql",
+                "-h",
+                url.host or "localhost",
+                "-P",
+                str(url.port or 3306),
+                "-u",
+                str(url.username or "root"),
+                str(url.database),
+            ]
+            env = os.environ.copy()
+            if url.password:
+                env["MYSQL_PWD"] = str(url.password)
+            engine.dispose()
+            with open(sql_src, "rb") as sql_file:
+                subprocess.run(cmd, input=sql_file.read(), check=True, env=env)
+            logger.info("MySQL backup restored from %s", archive_path)
+            if restart_panel:
+                _schedule_panel_restart()
+            return
 
-            raise RuntimeError(
-                f"Automatic restore for {name} requires psql/mysql CLI. The SQL dump "
-                f"has been extracted to {dest}; import it manually."
-            )
+        dest = os.path.join(BACKUP_DIR, "restore-db.sql")
+        shutil.copy2(sql_src, dest)
+        raise RuntimeError(
+            f"Automatic restore for {name} requires the mysql CLI. The SQL dump "
+            f"has been extracted to {dest}; import it manually."
+        )

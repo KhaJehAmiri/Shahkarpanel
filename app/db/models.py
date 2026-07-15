@@ -421,6 +421,12 @@ class Node(Base):
     # Optional JSON merge-patch applied to this node's effective Xray config
     # (outbounds/routing/inbounds fragments) after master filter + tunnels.
     xray_config_override = Column(Text, nullable=True, default=None)
+    # Per-node Cloudflare WARP exit (independent of master routing).
+    # When enabled, build_node_xray_config injects the WARP outbound for
+    # ``warp_tag`` (default ``warp``) and sets catch-all routing to it.
+    # When disabled, inherited master WARP outbounds/rules are stripped to DIRECT.
+    warp_enabled = Column(Boolean, nullable=False, server_default=text("false"), default=False)
+    warp_tag = Column(String(64), nullable=True, default=None)
     status = Column(Enum(NodeStatus), nullable=False, default=NodeStatus.connecting)
     last_status_change = Column(DateTime, default=datetime.utcnow)
     message = Column(String(1024), nullable=True)

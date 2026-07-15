@@ -469,16 +469,44 @@ def set_warp_license(
 
 
 @router.delete("/core/warp", responses={403: responses._403})
-def delete_warp_account(admin: Admin = _core_write) -> dict:
-    """Forget all locally stored WARP credentials."""
+def delete_warp_account(
+    bg: BackgroundTasks,
+    db: Session = Depends(get_db),
+    admin: Admin = _core_write,
+) -> dict:
+    """Forget all WARP credentials and reset master routing to DIRECT."""
+    from app.services.warp_core import clear_node_warp_refs
+    from app.xray.warp_routing import strip_warp_from_config
+
+    store = warp.list_warp_accounts()
+    tags = list((store.get("accounts") or {}).keys())
     warp.delete_warp_data()
-    return {"registered": False}
+    affected = clear_node_warp_refs(db, tags=None)
+    cfg = strip_warp_from_config(_current_config_dict())
+    modify_core_config(payload=cfg, db=db, admin=admin)
+    for node_id in affected:
+        bg.add_task(xray.operations.restart_node, node_id)
+    return {"registered": False, "routing_reset": True, "cleared_tags": tags}
 
 
 @router.delete("/core/warp/{tag}", responses={403: responses._403})
-def delete_warp_account_tag(tag: str, admin: Admin = _core_write) -> dict:
+def delete_warp_account_tag(
+    tag: str,
+    bg: BackgroundTasks,
+    db: Session = Depends(get_db),
+    admin: Admin = _core_write,
+) -> dict:
+    """Forget one WARP account and remove its outbound/routing from master config."""
+    from app.services.warp_core import clear_node_warp_refs
+    from app.xray.warp_routing import strip_warp_from_config
+
     warp.delete_warp_data(tag=tag)
-    return {"deleted": tag}
+    affected = clear_node_warp_refs(db, tags=[tag])
+    cfg = strip_warp_from_config(_current_config_dict(), tags=[tag])
+    modify_core_config(payload=cfg, db=db, admin=admin)
+    for node_id in affected:
+        bg.add_task(xray.operations.restart_node, node_id)
+    return {"deleted": tag, "routing_reset": True}
 
 
 def _current_config_dict() -> dict:
@@ -563,13 +591,18 @@ def delete_core_outbound(
     db: Session = Depends(get_db),
     admin: Admin = _core_write,
 ) -> dict:
-    """Remove the outbound with ``tag``."""
+    """Remove the outbound with ``tag`` (WARP tags also reset routing to DIRECT)."""
+    from app.xray.warp_routing import is_warp_tag, strip_warp_from_config
+
     cfg = _current_config_dict()
     outbounds = list(cfg.get("outbounds") or [])
     kept = [o for o in outbounds if _tag_of(o) != tag]
     if len(kept) == len(outbounds):
         raise HTTPException(status_code=404, detail=f"Outbound '{tag}' not found")
-    cfg["outbounds"] = kept
+    if is_warp_tag(tag):
+        cfg = strip_warp_from_config(cfg, tags=[tag])
+    else:
+        cfg["outbounds"] = kept
     return modify_core_config(payload=cfg, db=db, admin=admin)
 
 

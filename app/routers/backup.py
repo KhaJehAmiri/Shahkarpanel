@@ -1,13 +1,28 @@
 import os
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from app import backup as backup_module
 from app.models.admin import Admin
 from app.rbac import require_permission
 from app.utils import responses
+
+MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024  # 2 GiB
+
+
+def _resolve_backup(filename: str) -> str:
+    if not filename or "/" in filename or ".." in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid backup filename")
+    match = next(
+        (p for p in backup_module.list_backups() if os.path.basename(p) == filename),
+        None,
+    )
+    if match is None:
+        raise HTTPException(status_code=404, detail="Backup not found")
+    return match
 
 router = APIRouter(
     tags=["Backup"],
@@ -36,18 +51,50 @@ def list_backups(_: Admin = _backup_read):
     return [os.path.basename(p) for p in backup_module.list_backups()]
 
 
+@router.get("/backups/{filename}/download")
+def download_backup_archive(
+    filename: str,
+    _: Admin = _backup_read,
+):
+    """Download a backup archive so it can be stored off-server."""
+    match = _resolve_backup(filename)
+    return FileResponse(
+        match,
+        media_type="application/gzip",
+        filename=os.path.basename(match),
+    )
+
+
+@router.post("/backups/upload")
+async def upload_backup_archive(
+    file: UploadFile = File(...),
+    _: Admin = _backup_write,
+):
+    """Upload a previously downloaded ``.tar.gz`` backup so it can be restored."""
+    name = (file.filename or "backup.tar.gz").strip()
+    if not name.lower().endswith((".tar.gz", ".tgz")):
+        raise HTTPException(status_code=400, detail="Backup must be a .tar.gz archive")
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Empty backup file")
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=400, detail="Backup file too large")
+    try:
+        stored = backup_module.save_uploaded_backup(content, name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Cannot save backup: {exc}") from exc
+    return {"filename": stored}
+
+
 @router.post("/backups/{filename}/restore")
 def restore_backup_archive(
     filename: str,
     _: Admin = _backup_write,
 ):
     """Restore a named backup archive (SQLite: automatic; PG: extracts SQL dump)."""
-    if not filename or "/" in filename or ".." in filename or "\\" in filename:
-        raise HTTPException(status_code=400, detail="Invalid backup filename")
-    backups = backup_module.list_backups()
-    match = next((p for p in backups if os.path.basename(p) == filename), None)
-    if match is None:
-        raise HTTPException(status_code=404, detail="Backup not found")
+    match = _resolve_backup(filename)
     try:
         backup_module.restore_backup(match)
     except FileNotFoundError:

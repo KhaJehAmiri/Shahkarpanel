@@ -169,6 +169,46 @@ export const api = {
   del: <T = any>(path: string, body?: any) => request<T>("DELETE", path, body),
   postForm: <T = any>(path: string, body: Record<string, string>) =>
     request<T>("POST", path, body, { form: true }),
+  download: async (path: string, fallbackName = "download"): Promise<void> => {
+    const headers: Record<string, string> = {};
+    const token = getToken();
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    let res: Response;
+    try {
+      res = await fetch(joinUrl(path), { headers });
+    } catch {
+      throw new ApiError(i18n.t("errors.network"), 0);
+    }
+    if (res.status === 401) {
+      const refreshed = await refreshAccessToken();
+      if (refreshed) {
+        headers["Authorization"] = `Bearer ${refreshed}`;
+        res = await fetch(joinUrl(path), { headers });
+      }
+    }
+    if (res.status === 401) {
+      if (onUnauthorized) onUnauthorized();
+      throw new ApiError(i18n.t("errors.unauthorized"), 401);
+    }
+    if (!res.ok) {
+      const text = await res.text();
+      let data: any = null;
+      try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+      throw new ApiError(errorMessage(res.status, data), res.status);
+    }
+    const disposition = res.headers.get("Content-Disposition") || "";
+    const match = disposition.match(/filename="?([^"]+)"?/i);
+    const name = match?.[1] || fallbackName;
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  },
   upload: async <T = any>(path: string, form: FormData): Promise<T> => {
     const headers: Record<string, string> = {};
     const token = getToken();

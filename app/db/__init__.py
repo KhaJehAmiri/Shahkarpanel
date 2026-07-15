@@ -15,7 +15,12 @@ class GetDB:  # Context Manager
         if isinstance(exc_value, SQLAlchemyError):
             self.db.rollback()  # rollback on exception
 
-        self.db.close()
+        try:
+            self.db.close()
+        except SQLAlchemyError:
+            # Closing a session whose connection died (e.g. terminated by a
+            # backup restore) must not shadow the request's actual outcome.
+            pass
 
 
 def get_db():  # Dependency

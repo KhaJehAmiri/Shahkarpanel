@@ -243,8 +243,101 @@ def apply_endpoint_tunnels(config, node_id: Optional[int]):
                     )
                     continue
                 _add_inbound(tunnel_svc.build_exit_inbound(t))
+
+            # Panel exit (node_id is None): if the relay has WARP enabled, send
+            # tunnel-exit traffic through Cloudflare WARP so every protocol that
+            # arrived via the tunnel (Xray / sing-box bridge / …) uses WARP —
+            # not only native WireGuard client subnets.
+            if node_id is None and exit_tunnels:
+                result = _apply_panel_exit_warp(result, db, exit_tunnels)
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("Failed to inject tunnels for endpoint node_id=%s: %s", node_id, exc)
         return config
+
+    return result
+
+
+def _apply_panel_exit_warp(config, db, exit_tunnels: List) -> dict:
+    """Route panel ``tunnel-*-exit`` inbounds to WARP when the relay opted in."""
+    from app.db.models import Node
+    from app.utils import warp as warp_util
+    from app.xray.warp_routing import ensure_warp_exit, is_warp_tag
+
+    result = config if isinstance(config, dict) else dict(config)
+    exit_tags = {f"tunnel-{t.id}-exit" for t in exit_tunnels}
+
+    def _is_exit_route(rule: dict) -> bool:
+        if not isinstance(rule, dict):
+            return False
+        inn = rule.get("inboundTag") or []
+        if not isinstance(inn, list) or len(inn) != 1:
+            return False
+        return str(inn[0]) in exit_tags
+
+    routing = result.setdefault("routing", {})
+    rules = [r for r in list(routing.get("rules") or []) if not _is_exit_route(r)]
+
+    warp_by_tag: dict[str, dict] = {}
+    pins: list[dict] = []
+    for t in exit_tunnels:
+        relay_id = t.relay_node_id
+        if not relay_id:
+            continue
+        relay = db.query(Node).filter(Node.id == int(relay_id)).first()
+        if relay is None or not bool(getattr(relay, "warp_enabled", False)):
+            continue
+        tag = (getattr(relay, "warp_tag", None) or "warp").strip() or "warp"
+        if tag not in warp_by_tag:
+            account = warp_util.get_warp(tag)
+            outbound = (account or {}).get("outbound") if account else None
+            if not isinstance(outbound, dict):
+                logger.warning(
+                    "Tunnel %s: relay %s wants WARP tag %s but account missing; exit stays DIRECT",
+                    t.id,
+                    relay_id,
+                    tag,
+                )
+                continue
+            warp_by_tag[tag] = outbound
+
+        pins.append(
+            {
+                "type": "field",
+                "inboundTag": [f"tunnel-{t.id}-exit"],
+                "outboundTag": tag,
+            }
+        )
+        logger.info(
+            "Panel tunnel exit tunnel-%s-exit → WARP outbound %s (relay node %s)",
+            t.id,
+            tag,
+            relay_id,
+        )
+
+    if not warp_by_tag:
+        routing["rules"] = rules
+        result["routing"] = routing
+        return result
+
+    for tag, outbound in warp_by_tag.items():
+        result = ensure_warp_exit(result, outbound, as_default_exit=False)
+
+    routing = result.setdefault("routing", {})
+    merged = [r for r in list(routing.get("rules") or []) if not _is_exit_route(r)]
+    # Drop any accidental warp catch-all from ensure_warp_exit if master should
+    # keep DIRECT for local panel inbounds — only pin tunnel exits.
+    # (ensure_warp_exit with as_default_exit=False should not add catch-all.)
+    routing["rules"] = pins + merged
+    result["routing"] = routing
+
+    # Ensure warp outbounds exist even if ensure_warp_exit renamed tags oddly
+    present = {str(o.get("tag") or "") for o in (result.get("outbounds") or [])}
+    for tag, outbound in warp_by_tag.items():
+        if tag not in present and is_warp_tag(tag):
+            result = ensure_warp_exit(result, outbound, as_default_exit=False)
+            routing = result.setdefault("routing", {})
+            merged = [r for r in list(routing.get("rules") or []) if not _is_exit_route(r)]
+            routing["rules"] = pins + merged
+            result["routing"] = routing
 
     return result

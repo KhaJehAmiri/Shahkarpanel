@@ -278,8 +278,8 @@ def _apply_native_wireguard_inbound(config, node_id: int):
     """Fold this WG node's Xray-native WireGuard+noise inbound into its config.
 
     Best-effort and independent of the tunnel injection above: this is a
-    self-contained inbound (terminates locally, dispatches to ``DIRECT``),
-    not a relay/transit/exit tunnel fragment.
+    self-contained inbound (terminates locally, dispatches to ``DIRECT`` or
+    WARP when enabled), not a relay/transit/exit tunnel fragment.
 
     Always replaces an existing ``node-{id}-xray-wg-in`` entry so peer IP
     expansions (thousands of users) are reflected on the next Xray restart —
@@ -304,7 +304,12 @@ def _apply_native_wireguard_inbound(config, node_id: int):
 
             ensure_plain_addresses_for_finalmask(db)
             peers = collect_wg_peers(db)
-            inbound, rule = build_xray_wireguard_inbound(cfg, peers, node_id=node_id)
+            outbound_tag = "DIRECT"
+            if dbnode and bool(getattr(dbnode, "warp_enabled", False)):
+                outbound_tag = (getattr(dbnode, "warp_tag", None) or "warp").strip() or "warp"
+            inbound, rule = build_xray_wireguard_inbound(
+                cfg, peers, node_id=node_id, outbound_tag=outbound_tag,
+            )
         if inbound is None:
             return config
 
@@ -329,6 +334,22 @@ def _apply_native_wireguard_inbound(config, node_id: int):
         return result
     except Exception as exc:
         logger.warning("Failed to inject native WireGuard inbound for node %s: %s", node_id, exc)
+        return config
+
+
+def _apply_node_warp_exit(config, node_id: int):
+    """Re-apply per-node WARP after native WG injection (keeps dokodemo + retarget)."""
+    try:
+        from app.db import GetDB, crud
+        from app.services.xray_node import apply_node_warp_policy
+
+        with GetDB() as db:
+            dbnode = crud.get_node_by_id(db, node_id)
+            if dbnode is None:
+                return config
+            return apply_node_warp_policy(config, dbnode)
+    except Exception as exc:
+        logger.warning("Failed to apply WARP exit for node %s: %s", node_id, exc)
         return config
 
 
@@ -500,6 +521,7 @@ def push_connected_nodes_config_sync() -> int:
             config = filter_xray_config_for_node(config, allowed)
             config = _apply_node_tunnels(config, node_id)
             config = _apply_native_wireguard_inbound(config, node_id)
+            config = _apply_node_warp_exit(config, node_id)
 
             is_wg_node = dbnode.core_kind == CoreKind.wireguard.value
             if is_wg_node:
@@ -563,6 +585,7 @@ def push_all_node_configs_sync() -> int:
             config = filter_xray_config_for_node(config, allowed)
             config = _apply_node_tunnels(config, node_id)
             config = _apply_native_wireguard_inbound(config, node_id)
+            config = _apply_node_warp_exit(config, node_id)
 
             is_wg_node = dbnode.core_kind == CoreKind.wireguard.value
             if is_wg_node:
@@ -638,6 +661,7 @@ def connect_node(node_id, config=None):
             config = filter_xray_config_for_node(config, allowed)
             config = _apply_node_tunnels(config, node_id)
             config = _apply_native_wireguard_inbound(config, node_id)
+            config = _apply_node_warp_exit(config, node_id)
 
         from app.models.node import CoreKind
 
@@ -811,6 +835,7 @@ def restart_node(node_id, config=None):
             config = filter_xray_config_for_node(config, allowed)
             config = _apply_node_tunnels(config, node_id)
             config = _apply_native_wireguard_inbound(config, node_id)
+            config = _apply_node_warp_exit(config, node_id)
 
         if is_wg_node:
             with GetDB() as db:

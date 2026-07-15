@@ -549,6 +549,12 @@ def sync_node(db, dbnode, *, peers: Optional[List[WGUserPeer]] = None, node_obje
             return False
         client.apply_specs(specs)
         open_node_listen_ports(dbnode, node_object=node_object, client=client)
+        try:
+            from app.services.warp_node_sync import sync_node_warp_tproxy
+
+            sync_node_warp_tproxy(dbnode, node_object=node_object)
+        except Exception:
+            logger.warning("WARP TPROXY sync after WG apply failed for node %s", dbnode.id, exc_info=True)
         return True
     except Exception as exc:  # best-effort: log and move on
         logger.warning("WireGuard sync to node %s failed: %s", dbnode.id, exc)

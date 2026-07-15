@@ -226,6 +226,20 @@ class XrayService(rpyc.Service):
         self.wg.teardown(interface)
 
     @rpyc.exposed
+    def wg_warp_tproxy(self, payload_json: str) -> str:
+        """Divert kernel WG clients into Xray dokodemo for WARP egress."""
+        import json
+
+        payload = json.loads(payload_json or "{}")
+        ok = self.wg.apply_warp_tproxy(
+            enabled=bool(payload.get("enabled")),
+            subnets=[str(s) for s in (payload.get("subnets") or [])],
+            port=int(payload.get("port") or 0),
+            interfaces=[str(i) for i in (payload.get("interfaces") or [])],
+        )
+        return json.dumps({"ok": bool(ok)})
+
+    @rpyc.exposed
     def wg_amnezia_available(self) -> bool:
         return self.wg.amnezia_available()
 

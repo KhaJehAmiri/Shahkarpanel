@@ -270,4 +270,10 @@ def sync_panel_exit_wireguard(db, *, peers: Optional[list] = None) -> bool:
             cfg.interface,
             cfg.listen_port,
         )
+        try:
+            from app.services.panel_warp_egress import sync_panel_warp_egress
+
+            sync_panel_warp_egress(db)
+        except Exception:
+            logger.exception("Panel WARP egress re-sync after host WG apply failed")
     return ok

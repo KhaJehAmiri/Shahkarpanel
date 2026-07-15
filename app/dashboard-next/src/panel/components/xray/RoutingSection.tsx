@@ -16,6 +16,7 @@ import {
 } from "../../lib/xrayHelpers";
 import { GeoAssetsSection } from "./GeoAssetsSection";
 import { ObservatorySection } from "./ObservatorySection";
+import { NodeWarpSection } from "./NodeWarpSection";
 import {
   addRoutingRule,
   deleteRoutingRule,
@@ -34,7 +35,7 @@ export const RoutingSection: FC<{
 }> = ({ config, onChange, onSave, saving }) => {
   const { t } = useTranslation();
   const toast = useToast();
-  const [tab, setTab] = useState<"rules" | "balancers" | "observatory" | "geo">("rules");
+  const [tab, setTab] = useState<"rules" | "balancers" | "observatory" | "geo" | "nodeWarp">("rules");
   const [probing, setProbing] = useState(false);
   const [persisting, setPersisting] = useState(false);
   const presets = useFetch<{ presets: Record<string, { label: string; rules?: Record<string, unknown>[] }> }>(
@@ -156,12 +157,17 @@ export const RoutingSection: FC<{
         <Button size="sm" variant={tab === "geo" ? "primary" : "ghost"} onClick={() => setTab("geo")}>
           {t("xray.geoAssetsTab", { defaultValue: "Geo assets" })}
         </Button>
+        <Button size="sm" variant={tab === "nodeWarp" ? "primary" : "ghost"} onClick={() => setTab("nodeWarp")}>
+          {t("warp.nodeTab")}
+        </Button>
         <Button size="sm" disabled={probing} onClick={() => void probeLatency()}>
           {probing ? t("common.loading") : t("xray.probeLatency", { defaultValue: "Probe node latency" })}
         </Button>
       </div>
       {tab === "geo" ? (
         <GeoAssetsSection />
+      ) : tab === "nodeWarp" ? (
+        <NodeWarpSection />
       ) : tab === "observatory" ? (
         <ObservatorySection config={config} onChange={onChange} />
       ) : tab === "balancers" ? (

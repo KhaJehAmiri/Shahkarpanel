@@ -1,4 +1,3 @@
-import threading
 import time
 import traceback
 
@@ -405,79 +404,73 @@ def core_health_check():
 
 @app.on_event("startup")
 def start_core():
-    """Boot Xray in a background thread so HTTP accepts connections immediately.
+    """Start main Xray (with users) then connect nodes — must finish before relying on traffic.
 
-    Generating the core config + restarting the main core + connecting every
-    node used to block uvicorn's startup (often 30–60s+). During that window
-    nginx saw nothing on :8000 and returned 502. Listen first; bring the core
-    online right after.
+    A previous experiment deferred this to a background thread so HTTP listened
+    sooner; that raced with orphan processes and left the core unmarked
+    (``core.started=False``) while an empty-config Xray kept the ports —
+    every client timed out. Keep boot synchronous; nginx already shows a
+    restarting page during the brief downtime.
     """
-    # jobs/__init__ may exec this file more than once into distinct module
-    # objects — use app.state so the boot only runs once per process.
     if getattr(app.state, "_xray_core_boot_started", False):
         return
     app.state._xray_core_boot_started = True
 
-    def _boot() -> None:
-        logger.info("Generating Xray core config")
-        start_time = time.time()
-        try:
-            config = xray.config.include_db_users()
-        except Exception:
-            logger.exception("Failed to generate Xray core config")
-            return
-        logger.info(
-            "Xray core config generated in %.2f seconds",
-            time.time() - start_time,
-        )
+    logger.info("Generating Xray core config")
+    start_time = time.time()
+    config = xray.config.include_db_users()
+    logger.info(
+        "Xray core config generated in %.2f seconds",
+        time.time() - start_time,
+    )
 
-        logger.info("Starting main Xray core")
-        try:
-            xray.core.restart(config, force=True)
-        except Exception:
-            logger.exception("Failed to start main Xray core")
+    logger.info("Starting main Xray core")
+    try:
+        xray.core.restart(config, force=True)
+    except Exception:
+        logger.exception("Failed to start main Xray core")
 
-        logger.info("Starting nodes Xray core")
-        try:
-            with GetDB() as db:
-                dbnodes = crud.get_nodes(db=db, enabled=True)
-                node_ids = [dbnode.id for dbnode in dbnodes]
-                for dbnode in dbnodes:
-                    crud.update_node_status(db, dbnode, NodeStatus.connecting)
-        except Exception:
-            logger.exception("Failed to list nodes for core start")
-            node_ids = []
+    try:
+        from app.services.panel_warp_egress import sync_panel_warp_egress
 
-        for node_id in node_ids:
-            try:
-                xray.operations.connect_node(node_id, config)
-            except Exception:
-                logger.exception("Failed to connect node %s on startup", node_id)
+        with GetDB() as db:
+            sync_panel_warp_egress(db)
+    except Exception:
+        logger.exception("Panel WARP egress sync on startup failed")
 
-        from app.ha import run_if_leader
-        from app.xray.serving import reconcile_core_users
+    logger.info("Starting nodes Xray core")
+    with GetDB() as db:
+        dbnodes = crud.get_nodes(db=db, enabled=True)
+        node_ids = [dbnode.id for dbnode in dbnodes]
+        for dbnode in dbnodes:
+            crud.update_node_status(db, dbnode, NodeStatus.connecting)
 
-        scheduler.add_job(
-            run_if_leader(core_health_check),
-            "interval",
-            seconds=JOB_CORE_HEALTH_CHECK_INTERVAL,
-            coalesce=True,
-            max_instances=1,
-            id="core_health_check",
-            replace_existing=True,
-        )
-        scheduler.add_job(
-            run_if_leader(reconcile_core_users),
-            "interval",
-            seconds=JOB_CORE_USER_RECONCILE_INTERVAL,
-            coalesce=True,
-            max_instances=1,
-            id="core_user_reconcile",
-            replace_existing=True,
-        )
-        logger.info("Xray core boot finished")
+    for node_id in node_ids:
+        xray.operations.connect_node(node_id, config)
 
-    threading.Thread(target=_boot, name="xray-core-boot", daemon=True).start()
+    from app.ha import run_if_leader
+
+    scheduler.add_job(
+        run_if_leader(core_health_check),
+        "interval",
+        seconds=JOB_CORE_HEALTH_CHECK_INTERVAL,
+        coalesce=True,
+        max_instances=1,
+        id="core_health_check",
+        replace_existing=True,
+    )
+
+    from app.xray.serving import reconcile_core_users
+
+    scheduler.add_job(
+        run_if_leader(reconcile_core_users),
+        "interval",
+        seconds=JOB_CORE_USER_RECONCILE_INTERVAL,
+        coalesce=True,
+        max_instances=1,
+        id="core_user_reconcile",
+        replace_existing=True,
+    )
 
 
 @app.on_event("shutdown")

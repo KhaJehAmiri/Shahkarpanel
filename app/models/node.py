@@ -106,6 +106,9 @@ class Node(BaseModel):
     capacity: Optional[int] = None
     group_id: Optional[int] = None
     core_kind: CoreKind = CoreKind.xray
+    # Per-node Cloudflare WARP exit (Xray nodes).
+    warp_enabled: bool = False
+    warp_tag: Optional[str] = None
 
 
 class NodeCreate(Node):
@@ -130,6 +133,8 @@ class NodeModify(Node):
     status: Optional[NodeStatus] = Field(None, nullable=True)
     usage_coefficient: Optional[float] = Field(None, nullable=True)
     core_kind: Optional[CoreKind] = Field(None, nullable=True)
+    warp_enabled: Optional[bool] = Field(None, nullable=True)
+    warp_tag: Optional[str] = Field(None, nullable=True)
     model_config = ConfigDict(json_schema_extra={
         "example": {
             "name": "DE node",
@@ -140,6 +145,13 @@ class NodeModify(Node):
             "usage_coefficient": 1.0
         }
     })
+
+
+class NodeWarpSettings(BaseModel):
+    """Toggle Cloudflare WARP as this node's default Xray exit."""
+
+    enabled: bool = False
+    tag: Optional[str] = Field(default="warp", max_length=64)
 
 
 class NodeResponse(Node):

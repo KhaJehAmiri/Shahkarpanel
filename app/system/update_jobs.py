@@ -506,14 +506,19 @@ def _schedule_compose_action(mode: UpdateMode) -> None:
             # Best effort if we can't resolve the image/socket: recreate inline.
             cmd = _compose_cmd(*up_args)
     elif cid:
-        cmd = ["docker", "restart", cid]
+        # Prefer a short SIGTERM grace over plain ``docker restart`` (10s default)
+        # so :8000 comes back sooner after in-dashboard updates.
+        cmd = [
+            "sh", "-c",
+            f"docker stop -t 3 {shlex.quote(cid)} && docker start {shlex.quote(cid)}",
+        ]
     else:
         # No container id — fall back to compose recreate (best effort).
         cmd = _compose_cmd("up", "-d", "--force-recreate", "--no-deps", "nexuspanel")
         label = "recreate"
 
     # A short delay lets the update-job status flush before we go down.
-    inner = "sleep 2; " + " ".join(shlex.quote(c) for c in cmd)
+    inner = "sleep 1; " + " ".join(shlex.quote(c) for c in cmd)
     # Logging is best-effort and MUST NOT prevent the restart (see
     # _open_update_log): if the log dir isn't writable we still spawn the
     # restart with output discarded, otherwise the update would silently never

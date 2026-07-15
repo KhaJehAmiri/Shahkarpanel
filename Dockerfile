@@ -75,5 +75,6 @@ RUN ln -sf /code/nexuspanel-cli.py /usr/bin/nexuspanel-cli \
     && chown -R nexuspanel:nexuspanel /code
 
 USER root
-ENTRYPOINT ["/docker-entrypoint.sh"]
+# Prefer the bind-mounted script at /code so entrypoint fixes ship without image rebuild.
+ENTRYPOINT ["/bin/bash", "-c", "exec /bin/bash /code/docker-entrypoint.sh \"${@}\"", "--"]
 CMD ["panel"]

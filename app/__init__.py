@@ -116,43 +116,51 @@ def on_startup():
         ha_start()
     except Exception:
         logger.exception("Failed to start HA leader election")
-    try:
-        from app.db import GetDB
-        from app.tenant import ensure_reseller_tenants
-        with GetDB() as db:
-            n = ensure_reseller_tenants(db)
-            if n:
-                logger.info("Backfilled tenant_id for %s legacy reseller/support admin(s)", n)
-    except Exception:
-        logger.exception("Failed to backfill reseller tenants")
-    try:
-        from app.system.update_jobs import _git_head_sha, _local_version, _write_install_meta
 
-        _write_install_meta(_local_version(), _git_head_sha())
-    except Exception:
-        logger.exception("Failed to sync install-meta.json")
-    try:
-        from app.db import GetDB
-        from app.services.edge_proxy import cdn_origin_nginx_enabled, sync_edge_nginx, sync_subscription_legacy_nginx
+    # Non-critical work: do not block uvicorn from accepting HTTP (otherwise
+    # nginx sits on connection-refused for up to proxy_connect_timeout).
+    def _deferred() -> None:
+        try:
+            from app.db import GetDB
+            from app.tenant import ensure_reseller_tenants
+            with GetDB() as db:
+                n = ensure_reseller_tenants(db)
+                if n:
+                    logger.info("Backfilled tenant_id for %s legacy reseller/support admin(s)", n)
+        except Exception:
+            logger.exception("Failed to backfill reseller tenants")
+        try:
+            from app.system.update_jobs import _git_head_sha, _local_version, _write_install_meta
 
-        with GetDB() as db:
-            sync_edge_nginx(db)
-            sync_subscription_legacy_nginx(db)
-    except Exception:
-        logger.exception("cdn origin nginx sync on startup failed")
-    try:
-        from app.xray.network_defaults import apply_host_network_tuning
+            _write_install_meta(_local_version(), _git_head_sha())
+        except Exception:
+            logger.exception("Failed to sync install-meta.json")
+        try:
+            from app.db import GetDB
+            from app.services.edge_proxy import sync_edge_nginx, sync_subscription_legacy_nginx
 
-        apply_host_network_tuning()
-    except Exception:
-        logger.debug("host network tuning skipped", exc_info=True)
-    try:
-        from app.routers import api_router
-        from app.subscription.route_registry import register_extra_subscription_routes
+            with GetDB() as db:
+                sync_edge_nginx(db)
+                sync_subscription_legacy_nginx(db)
+        except Exception:
+            logger.exception("cdn origin nginx sync on startup failed")
+        try:
+            from app.xray.network_defaults import apply_host_network_tuning
 
-        register_extra_subscription_routes(app, api_router)
-    except Exception:
-        logger.exception("Failed to register extra subscription routes")
+            apply_host_network_tuning()
+        except Exception:
+            logger.debug("host network tuning skipped", exc_info=True)
+        try:
+            from app.routers import api_router
+            from app.subscription.route_registry import register_extra_subscription_routes
+
+            register_extra_subscription_routes(app, api_router)
+        except Exception:
+            logger.exception("Failed to register extra subscription routes")
+
+    import threading
+
+    threading.Thread(target=_deferred, name="panel-deferred-startup", daemon=True).start()
     scheduler.start()
 
 

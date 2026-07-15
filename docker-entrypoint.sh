@@ -28,6 +28,8 @@ fix_runtime_permissions() {
   mkdir -p /var/lib/nexuspanel/edge/nginx/sites
   chown -R nexuspanel:nexuspanel /var/lib/nexuspanel/edge 2>/dev/null || true
   chmod -R u+rwX,g+rwX /var/lib/nexuspanel/edge 2>/dev/null || true
+  mkdir -p /var/lib/nexuspanel/nginx/html
+  chmod -R a+rX /var/lib/nexuspanel/nginx 2>/dev/null || true
   if [ -d /code/.git ]; then
     chown -R nexuspanel:nexuspanel /code 2>/dev/null || true
   elif [ -f /code/.env ]; then
@@ -36,8 +38,62 @@ fix_runtime_permissions() {
   fi
 }
 
-run_panel() {
-  exec runuser -u nexuspanel -- bash -c 'cd /code && alembic upgrade head && exec python main.py'
+# Skip full ``alembic upgrade`` when already at head — cold upgrade takes ~6s+
+# even as a no-op and delays :8000 coming back after docker restart.
+# Compare DB stamp to ``ALEMBIC_HEAD`` (no Alembic ScriptDirectory import).
+run_migrations_if_needed() {
+  cd /code
+  if python - <<'PY'
+import os
+import sys
+from pathlib import Path
+
+def db_url() -> str:
+    url = os.environ.get("SQLALCHEMY_DATABASE_URL") or os.environ.get("DATABASE_URL") or ""
+    if url:
+        return url
+    for path in (Path("/var/lib/nexuspanel/.env"), Path("/code/.env")):
+        if not path.is_file():
+            continue
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            if k.strip() in ("SQLALCHEMY_DATABASE_URL", "DATABASE_URL"):
+                return v.strip().strip("'").strip('"')
+    return ""
+
+try:
+    head = Path("/code/ALEMBIC_HEAD").read_text(encoding="utf-8").strip().splitlines()[0].strip()
+    url = db_url()
+    if not head or not url:
+        sys.exit(1)
+    from sqlalchemy import create_engine, text
+    eng = create_engine(url)
+    with eng.connect() as conn:
+        row = conn.execute(text("SELECT version_num FROM alembic_version LIMIT 1")).fetchone()
+    if row and row[0] == head:
+        sys.exit(0)
+except Exception:
+    sys.exit(1)
+sys.exit(2)
+PY
+  then
+    echo "alembic: already at head — skip upgrade"
+    return 0
+  fi
+  echo "alembic: applying migrations…"
+  alembic upgrade head
+  # Keep ALEMBIC_HEAD in sync after a successful upgrade (best-effort).
+  python - <<'PY' >/dev/null 2>&1 || true
+from pathlib import Path
+from alembic.config import Config
+from alembic.script import ScriptDirectory
+head = ScriptDirectory.from_config(Config("alembic.ini")).get_current_head()
+if head:
+    Path("/code/ALEMBIC_HEAD").write_text(head + "\n", encoding="utf-8")
+PY
 }
 
 # ``runuser`` drops all supplementary groups and rebuilds the group list purely
@@ -66,6 +122,12 @@ fix_docker_socket_group() {
   return 0
 }
 
+start_panel_process() {
+  cd /code
+  run_migrations_if_needed
+  exec python main.py
+}
+
 if [ "$(id -u)" -eq 0 ]; then
   fix_runtime_permissions
   fix_docker_socket_group || true
@@ -75,13 +137,13 @@ if [ "$(id -u)" -eq 0 ]; then
       >/dev/null 2>&1 || true
   fi
   if [ "${1:-panel}" = "panel" ]; then
-    run_panel
+    # Re-enter this script as nexuspanel so migrate+main share one code path.
+    exec runuser -u nexuspanel -- bash /code/docker-entrypoint.sh panel
   fi
   exec runuser -u nexuspanel -- "$@"
 fi
 
 if [ "${1:-panel}" = "panel" ]; then
-  cd /code
-  exec bash -c 'alembic upgrade head && exec python main.py'
+  start_panel_process
 fi
 exec "$@"

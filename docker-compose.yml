@@ -4,6 +4,7 @@ services:
   nexuspanel:
     build: .
     restart: always
+    stop_grace_period: 5s
     env_file:
       - .env
       - /var/lib/nexuspanel/.env

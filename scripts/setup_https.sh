@@ -177,6 +177,18 @@ server {
 
     client_max_body_size 200m;
 
+    # Panel down during docker restart: fail connect fast (default 60s) + friendly page.
+    error_page 502 503 504 = @panel_restarting;
+
+    location @panel_restarting {
+        default_type text/html;
+        charset utf-8;
+        add_header Cache-Control "no-store" always;
+        add_header Retry-After "2" always;
+        root /var/lib/nexuspanel/nginx/html;
+        rewrite ^ /restarting.html break;
+    }
+
     location / {
         proxy_pass http://127.0.0.1:${PANEL_PORT};
         proxy_http_version 1.1;
@@ -186,11 +198,30 @@ server {
         proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection \$connection_upgrade;
+        proxy_connect_timeout 1s;
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
+        proxy_next_upstream off;
     }
 }
 EOF
+  mkdir -p /var/lib/nexuspanel/nginx/html
+  if [ ! -f /var/lib/nexuspanel/nginx/html/restarting.html ]; then
+    cat > /var/lib/nexuspanel/nginx/html/restarting.html <<'HTML'
+<!DOCTYPE html>
+<html lang="fa" dir="rtl"><head>
+<meta charset="utf-8"/><meta http-equiv="refresh" content="2"/>
+<title>NexusPanel — starting</title>
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;font-family:Tahoma,sans-serif;background:#0f1419;color:#e8eef4}
+.card{max-width:420px;padding:2rem;background:#1a222c;border-radius:16px;text-align:center}
+.spinner{width:40px;height:40px;margin:1.2rem auto;border:3px solid rgba(61,156,240,.2);border-top-color:#3d9cf0;border-radius:50%;animation:s .8s linear infinite}
+@keyframes s{to{transform:rotate(360deg)}}p{color:#8b9aab}</style>
+</head><body><div class="card"><h1>پنل در حال راه‌اندازی است</h1>
+<p>Panel is starting — refreshing automatically.</p><div class="spinner"></div></div>
+<script>setTimeout(function(){location.reload()},2000)</script></body></html>
+HTML
+  fi
+  chmod -R a+rX /var/lib/nexuspanel/nginx 2>/dev/null || true
   ln -sf "${NGINX_SITE}" /etc/nginx/sites-enabled/nexuspanel
   rm -f /etc/nginx/sites-enabled/default
   nginx -t >/dev/null 2>&1 || die "nginx config test failed (see: nginx -t)."

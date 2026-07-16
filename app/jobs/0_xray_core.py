@@ -131,10 +131,10 @@ def _probe_wireguard_node(
     probe_start = time.time()
     with GetDB() as db:
         delegates_tunnel = node_delegates_wireguard_to_tunnel(db, node_id)
-    if delegates_tunnel:
-        if not relay_tunnel_xray_ready(node):
-            raise ConnectionError("tunnel relay Xray is not ready")
-        return (time.time() - probe_start) * 1000
+        if delegates_tunnel:
+            if not relay_tunnel_xray_ready(node, db=db, node_id=node_id):
+                raise ConnectionError("tunnel relay Xray is not ready")
+            return (time.time() - probe_start) * 1000
     if not node.connected:
         raise ConnectionError("node RPyC channel is down")
     if iface:
@@ -373,7 +373,10 @@ def core_health_check():
                         delegates_tunnel = node_delegates_wireguard_to_tunnel(
                             db, node_id
                         )
-                    if delegates_tunnel and relay_tunnel_xray_ready(node):
+                        tunnel_ready = delegates_tunnel and relay_tunnel_xray_ready(
+                            node, db=db, node_id=node_id
+                        )
+                    if tunnel_ready:
                         _record_node_health(node_id, 0.0)
                         continue
                 _node_restart_after[node_id] = now + _NODE_RESTART_COOLDOWN_SEC
@@ -394,7 +397,10 @@ def core_health_check():
 
                 with GetDB() as db:
                     delegates_tunnel = node_delegates_wireguard_to_tunnel(db, node_id)
-                if delegates_tunnel and relay_tunnel_xray_ready(node):
+                    tunnel_ready = delegates_tunnel and relay_tunnel_xray_ready(
+                        node, db=db, node_id=node_id
+                    )
+                if tunnel_ready:
                     _record_node_health(node_id, 0.0)
                     continue
             try:

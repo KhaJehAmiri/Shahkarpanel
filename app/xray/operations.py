@@ -831,10 +831,18 @@ def connect_node(node_id, config=None):
                         )
                         if attempt < 2:
                             time.sleep(1)
-                            try:
-                                node.disconnect()
-                            except Exception:
-                                pass
+                        try:
+                            node.disconnect()
+                        except Exception:
+                            pass
+            if delegates_tunnel:
+                from app.tunnel.relay import record_tunnel_health
+
+                # Feeds the automatic delegation breaker: repeated capture
+                # failures here suspend delegation so the restore below (and
+                # every future check) actually brings native WG back — no
+                # one has to disable the tunnel by hand.
+                record_tunnel_health(node_id, healthy=xray_exc is None)
             if xray_exc is not None:
                 logger.warning(
                     "WireGuard node \"%s\" connected but Xray start failed (%s); "
@@ -934,8 +942,12 @@ def restart_node(node_id, config=None):
 
         if is_wg_node:
             with GetDB() as db:
-                from app.tunnel.relay import prepare_relay_wireguard_tunnel
+                from app.tunnel.relay import (
+                    node_delegates_wireguard_to_tunnel,
+                    prepare_relay_wireguard_tunnel,
+                )
 
+                delegates_tunnel = node_delegates_wireguard_to_tunnel(db, node_id)
                 prepare_relay_wireguard_tunnel(db, node_id, node)
             # Xray on a WireGuard node is best-effort (stats/API). Never drop
             # the RPyC channel when Xray restart fails — AWG/WG peers must stay up.
@@ -969,6 +981,10 @@ def restart_node(node_id, config=None):
                             node.disconnect()
                         except Exception:
                             pass
+            if delegates_tunnel:
+                from app.tunnel.relay import record_tunnel_health
+
+                record_tunnel_health(node_id, healthy=xray_exc is None)
             if xray_exc is not None:
                 logger.warning(
                     "WireGuard node \"%s\" Xray restart failed (%s); restoring native WireGuard",

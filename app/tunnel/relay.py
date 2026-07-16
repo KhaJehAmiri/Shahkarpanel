@@ -100,8 +100,62 @@ def relay_wireguard_tunnel_port(db, node_id: int) -> Optional[int]:
     return int(port) if port is not None else None
 
 
+# Automatic circuit breaker: a relay whose tunnel repeatedly fails to actually
+# capture the WG port must not stay silently dead forever waiting for a human
+# to disable the tunnel. After enough consecutive failures, delegation is
+# suspended so native WireGuard takes the port back over automatically; it is
+# retried (and, once healthy, resumed) on its own after the cooldown — no
+# manual step, and never both sides fighting for the same UDP port at once.
+_DELEGATION_FAIL_THRESHOLD = 3
+_DELEGATION_SUSPEND_SEC = 180.0
+_delegation_fail_count: Dict[int, int] = {}
+_delegation_suspended_until: Dict[int, float] = {}
+
+
+def record_tunnel_health(node_id: int, healthy: bool) -> None:
+    """Feed a tunnel-capture health observation into the delegation breaker."""
+    node_id = int(node_id)
+    if healthy:
+        had_state = bool(_delegation_fail_count.pop(node_id, None)) or (
+            time.monotonic() < _delegation_suspended_until.pop(node_id, 0.0)
+        )
+        if had_state:
+            logger.info(
+                "Tunnel relay capture on node %s is healthy again; WireGuard "
+                "delegation to the tunnel resumes",
+                node_id,
+            )
+        return
+    count = _delegation_fail_count.get(node_id, 0) + 1
+    _delegation_fail_count[node_id] = count
+    if count >= _DELEGATION_FAIL_THRESHOLD:
+        already_suspended = time.monotonic() < _delegation_suspended_until.get(node_id, 0.0)
+        _delegation_suspended_until[node_id] = time.monotonic() + _DELEGATION_SUSPEND_SEC
+        if not already_suspended:
+            logger.warning(
+                "Tunnel relay capture on node %s failed %d times in a row; "
+                "falling back to native WireGuard automatically for %.0fs "
+                "(will retry the tunnel again after that)",
+                node_id,
+                count,
+                _DELEGATION_SUSPEND_SEC,
+            )
+
+
+def delegation_suspended(node_id: int) -> bool:
+    return time.monotonic() < _delegation_suspended_until.get(int(node_id), 0.0)
+
+
 def node_delegates_wireguard_to_tunnel(db, node_id: int) -> bool:
-    """True when native WG on the relay must yield the listen port to Xray."""
+    """True when native WG on the relay must yield the listen port to Xray.
+
+    Returns False while the automatic breaker has this node suspended, even
+    if the tunnel row is still enabled in the DB — that is what lets native
+    WireGuard come back up on its own when the tunnel is broken, with no one
+    having to flip a switch by hand.
+    """
+    if delegation_suspended(node_id):
+        return False
     return relay_wireguard_tunnel_port(db, node_id) is not None
 
 
@@ -199,19 +253,93 @@ def canonical_panel_exit_wireguard(db):
     return None
 
 
-def relay_tunnel_xray_ready(node_object) -> bool:
-    """True when a relay node's Xray core is up and can capture WG UDP."""
+def panel_exit_ready_for_node(db, node_id: int) -> bool:
+    """For a relay whose tunnel terminates on the panel, also require the
+    panel's own Xray core to actually have that tunnel's exit inbound bound.
+
+    A relay's Xray core can answer ``fetch_xray_version`` (proving *some*
+    process is alive) while the panel-exit half of the pipeline never came up
+    — e.g. the panel core hadn't been restarted since the tunnel was created,
+    or the exit inbound failed to bind. That leaves WireGuard silently dead
+    with no automatic recovery (the exact "works on the node but no traffic
+    ever arrives" failure mode). Checking the *actual* injected/booted config
+    instead of merely probing liveness closes that gap.
+
+    Tunnels that exit on a dedicated node (not the panel) return True here —
+    their health is verified independently via that node's own connection.
+    """
+    from app.db.models import Tunnel
+
+    port = relay_wireguard_tunnel_port(db, node_id)
+    if port is None:
+        return True  # this relay does not delegate WG to any tunnel
+
+    panel_exit_tunnels = [
+        t
+        for t in db.query(Tunnel)
+        .filter(Tunnel.enabled.is_(True), Tunnel.relay_node_id == node_id)
+        .all()
+        if t.exit_node_id is None and (t.params or {}).get("wireguard_port")
+    ]
+    if not panel_exit_tunnels:
+        return True  # exits on a dedicated node, not the panel
+
+    from app import xray
+
+    if not xray.core.started:
+        return False
+    last_config = getattr(xray.core, "last_config", None)
+    if last_config is None:
+        return False
+    try:
+        tags = set(last_config.inbounds_by_tag.keys())
+    except Exception:
+        try:
+            tags = {
+                ib.get("tag")
+                for ib in (last_config.get("inbounds") or [])
+                if isinstance(ib, dict)
+            }
+        except Exception:
+            return False
+    return all(f"tunnel-{t.id}-exit" in tags for t in panel_exit_tunnels)
+
+
+def relay_tunnel_xray_ready(
+    node_object, *, db=None, node_id: Optional[int] = None
+) -> bool:
+    """True when a relay node's Xray core is up and can capture WG UDP.
+
+    When ``db``/``node_id`` are supplied, this also verifies the panel-exit
+    side of the tunnel (see ``panel_exit_ready_for_node``) so a relay that
+    merely answers version checks — while its traffic has nowhere to go — is
+    correctly reported as *not* ready, letting the caller's existing
+    self-heal (fall back to native WireGuard) actually fire automatically.
+    """
     if not node_object:
         return False
-    if getattr(node_object, "started", False):
-        return True
-    # ``connected`` only means the RPyC control channel is up — not that Xray
-    # is listening. Always probe the remote core so health-check does not skip
-    # reconnect while UDP is down, or reconnect while UDP is already up.
-    try:
-        return bool(node_object.get_version())
-    except Exception:
-        return False
+    node_alive = bool(getattr(node_object, "started", False))
+    if not node_alive:
+        # ``connected`` only means the RPyC control channel is up — not that
+        # Xray is listening. Always probe the remote core so health-check
+        # does not skip reconnect while UDP is down, or reconnect while UDP
+        # is already up.
+        try:
+            node_alive = bool(node_object.get_version())
+        except Exception:
+            node_alive = False
+    ready = node_alive
+    if ready and db is not None and node_id is not None:
+        try:
+            ready = panel_exit_ready_for_node(db, node_id)
+        except Exception:
+            logger.debug(
+                "panel_exit_ready_for_node check failed for node %s", node_id, exc_info=True
+            )
+            ready = False
+    if node_id is not None:
+        record_tunnel_health(node_id, ready)
+    return ready
 
 
 def relay_wireguard_server_public_key(

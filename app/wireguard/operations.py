@@ -520,7 +520,9 @@ def sync_node(db, dbnode, *, peers: Optional[List[WGUserPeer]] = None, node_obje
                         client.down(cfg.interface)
                 except Exception:
                     pass
-            xray_ready = bool(relay_tunnel_xray_ready(node_object))
+            xray_ready = bool(
+                relay_tunnel_xray_ready(node_object, db=db, node_id=dbnode.id)
+            )
             if xray_ready:
                 logger.info(
                     "Plain WireGuard on relay node %s delegated to tunnel; "

@@ -206,15 +206,33 @@ def apply_endpoint_tunnels(config, node_id: Optional[int]):
                 relay_tags = list(user_tags)
                 wg_port = (t.params or {}).get("wireguard_port")
                 if wg_port:
-                    from app.tunnel.relay import wireguard_target_port
-
-                    wg_inbound, _ = tunnel_svc.build_wireguard_relay_inbound(
-                        t,
-                        int(wg_port),
-                        wg_target_port=wireguard_target_port(db, t),
+                    from app.tunnel.relay import (
+                        node_delegates_wireguard_to_tunnel,
+                        wireguard_target_port,
                     )
-                    if _add_inbound(wg_inbound):
-                        relay_tags.append(wg_inbound["tag"])
+
+                    # The automatic delegation breaker (app.tunnel.relay) may have
+                    # suspended this relay after repeated capture failures, so
+                    # native WireGuard now owns this UDP port in the kernel. Never
+                    # inject the dokodemo capture in that state — Xray would fail
+                    # to bind the same port and take the whole relay's core down
+                    # (tunnel vs. WireGuard interference the panel must prevent).
+                    if node_id is not None and not node_delegates_wireguard_to_tunnel(db, node_id):
+                        logger.info(
+                            "Tunnel %s: WireGuard delegation on node %s is "
+                            "suspended (native WireGuard owns the port); "
+                            "skipping wg-in capture inbound this restart",
+                            t.id,
+                            node_id,
+                        )
+                    else:
+                        wg_inbound, _ = tunnel_svc.build_wireguard_relay_inbound(
+                            t,
+                            int(wg_port),
+                            wg_target_port=wireguard_target_port(db, t),
+                        )
+                        if _add_inbound(wg_inbound):
+                            relay_tags.append(wg_inbound["tag"])
 
                 rules.insert(1, tunnel_svc.build_relay_routing_rule(t, relay_tags or None))
 

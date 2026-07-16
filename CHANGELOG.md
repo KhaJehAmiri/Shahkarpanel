@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.21.17 — 2026-07-16
+
+- Fixed the actual reason tunnel-delegated WireGuard could stay silently dead forever: the relay health probe treated "Xray answers a version" as proof the tunnel worked, even when the panel-exit side of the pipeline never came up. It now also checks that the panel's *live, booted* Xray config actually has the tunnel's exit inbound bound.
+- Added an automatic delegation circuit breaker (`app/tunnel/relay.py`): after 3 consecutive tunnel-capture failures on a relay, WireGuard delegation is suspended for that node and native WireGuard is brought back up automatically — no manual DB edit, no disabling the tunnel by hand. It retries the tunnel again on its own afterwards and resumes delegation once healthy.
+- Fixed a conflict the breaker would otherwise have caused: the relay's Xray config injection for the WireGuard capture (dokodemo) is now skipped whenever delegation is suspended, so Xray never again tries to bind the same UDP port native WireGuard just took back — tunnel and WireGuard can no longer fight over the same port.
+- Subscription links already resolved the correct server public key from delegation state; this now also stays correct automatically while the breaker is tripped (falls back to the relay's own key/port, not the panel's canonical delegated key).
+
 ## 0.21.16 — 2026-07-16
 
 - WireGuard autoscale sync now actually applies kernel interfaces/peers on the node (previously only opened firewall ports).

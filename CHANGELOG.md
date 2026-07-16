@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.21.21 — 2026-07-16
+
+- Found why the breaker kept tripping even in the same beat a real tunnel-capture restart just succeeded: `relay_tunnel_xray_ready()` fed the circuit breaker itself on every call — and it's called from several purely observational spots (the periodic WG sync, the health-check probe, and the health-check's own pre-restart re-check) on top of the real attempt's own recording inside `connect_node`/`restart_node`. A single genuine failure was being counted 2-3x per cycle across these call sites, which could trip/extend the suspension even right after a real push attempt succeeded. `relay_tunnel_xray_ready()` is now purely observational (no breaker side effect) — only an actual push attempt has ground truth and is the sole source that records outcomes. It also now checks the same "is the live core actually the tunnel-capturing one" flag added in 0.21.20, instead of liveness alone.
+
 ## 0.21.20 — 2026-07-16
 
 - Fixed a second false-positive that defeated the 0.21.19 self-heal: `connect_node`'s "keep the live Xray core, don't restart" shortcut (added to avoid OOMing small relays on a redundant Finalmask restart) only checked that *some* Xray was alive and answering `get_version()` — not that the live core was actually the tunnel-capturing one. So the proactive restart kicked off by the sync fix would immediately no-op ("keeping live Xray") against a stale native-fallback core instead of pushing the real tunnel config. The node session now tracks whether its last successful push actually included the tunnel capture (`wg_tunnel_capture_active`) and only takes the reuse shortcut when that's true.

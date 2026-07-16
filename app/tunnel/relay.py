@@ -310,11 +310,17 @@ def relay_tunnel_xray_ready(
 ) -> bool:
     """True when a relay node's Xray core is up and can capture WG UDP.
 
-    When ``db``/``node_id`` are supplied, this also verifies the panel-exit
-    side of the tunnel (see ``panel_exit_ready_for_node``) so a relay that
-    merely answers version checks — while its traffic has nowhere to go — is
-    correctly reported as *not* ready, letting the caller's existing
-    self-heal (fall back to native WireGuard) actually fire automatically.
+    This is purely observational — it does *not* feed the delegation circuit
+    breaker (``record_tunnel_health``). Only an actual push attempt
+    (``connect_node``/``restart_node``) has ground truth about whether the
+    tunnel capture really works; recording health here too meant every
+    caller that merely *checks* readiness (health-check probes, the periodic
+    WG sync, ...) also voted on the breaker on its own cadence, so the same
+    single underlying failure got counted 2-3x per tick and could trip the
+    breaker even in the same beat a real restart attempt just succeeded.
+    Callers that find this False are expected to trigger a real attempt
+    (which records its own outcome) rather than relying on this call to do
+    it for them.
     """
     if not node_object:
         return False
@@ -328,7 +334,11 @@ def relay_tunnel_xray_ready(
             node_alive = bool(node_object.get_version())
         except Exception:
             node_alive = False
-    ready = node_alive
+    # Liveness alone proves *some* Xray core answers — not that the live one
+    # is the tunnel-capturing config (it can be a stale native-fallback core
+    # left over from before delegation was (re)granted). Mirrors the same
+    # check connect_node uses before taking its "keep live core" shortcut.
+    ready = node_alive and bool(getattr(node_object, "wg_tunnel_capture_active", False))
     if ready and db is not None and node_id is not None:
         try:
             ready = panel_exit_ready_for_node(db, node_id)
@@ -337,8 +347,6 @@ def relay_tunnel_xray_ready(
                 "panel_exit_ready_for_node check failed for node %s", node_id, exc_info=True
             )
             ready = False
-    if node_id is not None:
-        record_tunnel_health(node_id, ready)
     return ready
 
 

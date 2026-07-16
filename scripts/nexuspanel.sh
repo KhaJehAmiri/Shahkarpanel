@@ -1091,6 +1091,33 @@ cmd_https() {
   DOMAIN="${DOMAIN}" EMAIL="${EMAIL}" PANEL_PORT="${PANEL_PORT}" bash "$script" "${args[@]}"
 }
 
+sync_agent_mirror_if_configured() {
+  # Optional: push cached node-agent tarball to domestic (Iran) HTTP mirror.
+  _load_env_file "${APP_DIR}/.env" 2>/dev/null || true
+  _load_env_file "${DATA_DIR}/.env" 2>/dev/null || true
+  if [ -z "${NODE_AGENT_MIRROR_SSH:-}" ] && [ -z "${NODE_AGENT_MIRROR_URL:-}" ]; then
+    return 0
+  fi
+  if [ -z "${NODE_AGENT_MIRROR_SSH:-}" ]; then
+    return 0
+  fi
+  local script="${APP_DIR}/scripts/sync_agent_mirror.sh"
+  if [ ! -f "$script" ]; then
+    warn "Agent mirror sync skipped (missing ${script})"
+    return 0
+  fi
+  log "Syncing node agent image to Iran mirror (${NODE_AGENT_MIRROR_SSH})…"
+  if NODE_AGENT_MIRROR_SSH="${NODE_AGENT_MIRROR_SSH}" \
+     NODE_AGENT_MIRROR_SSH_PASS="${NODE_AGENT_MIRROR_SSH_PASS:-}" \
+     NODE_AGENT_IMAGE="${NODE_AGENT_IMAGE:-nexuspanel/node:latest}" \
+     APP_DIR="${APP_DIR}" \
+     bash "$script"; then
+    ok "Iran agent mirror synced."
+  else
+    warn "Iran agent mirror sync failed (provision for IR nodes may be slow until fixed)."
+  fi
+}
+
 cmd_update()  {
   need_root
   fetch_repo
@@ -1106,6 +1133,7 @@ cmd_update()  {
   compose up -d --build
   wait_for_panel
   write_install_meta
+  sync_agent_mirror_if_configured
   ok "Updated."
   print_access
 }

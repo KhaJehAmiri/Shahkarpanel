@@ -140,6 +140,8 @@ def build_install_command(
     force_image_rebuild: bool = False,
     client_cert_pem: Optional[str] = None,
     include_awg: bool = False,
+    agent_image_url: Optional[str] = None,
+    agent_image_from_mirror: bool = False,
 ) -> str:
     """Build the self-contained bash command that provisions a fresh server.
 
@@ -206,7 +208,9 @@ def build_install_command(
             f"chmod 600 {q(client_cert_path)}; "
         )
 
-    image_url = f"{panel_url.rstrip('/')}/api/nodes/agent-image?token={bootstrap_token}"
+    panel_image_url = f"{panel_url.rstrip('/')}/api/nodes/agent-image?token={bootstrap_token}"
+    image_url = (agent_image_url or panel_image_url).strip() or panel_image_url
+    from_mirror = bool(agent_image_from_mirror)
 
     wg_host_egress = ""
     if core_kind == "wireguard":
@@ -232,20 +236,31 @@ def build_install_command(
             "done; "
         )
 
-    # Prefer the image already on the node (SSH job uploads it first). Only
-    # fall back to HTTP from the panel when the tag is missing — never force a
-    # full re-download on every re-provision (that made retries 15–30+ minutes
-    # and brittle on flaky links). ``force_image_rebuild`` is handled by the
-    # panel-side SSH upload with force=True, not by curling again here.
-    _ = force_image_rebuild  # kept for API compatibility; SSH push honors it
+    # Prefer the image already on the node. Missing tag → HTTP fetch.
+    # Iran nodes use NODE_AGENT_MIRROR_URL (domestic); others use the panel URL
+    # (SSH job usually pre-seeded the image). ``force_image_rebuild`` is handled
+    # by panel-side SSH upload with force=True for foreign nodes.
+    _ = force_image_rebuild  # kept for API compatibility
+    load_msg = (
+        "Loading node image from Iran mirror…"
+        if from_mirror
+        else "Loading node image from panel…"
+    )
+    load_fail = (
+        "fatal: could not load node agent image from Iran mirror "
+        f"({image_url}). Check NODE_AGENT_MIRROR_URL and that the mirror "
+        "has the latest tarball synced from the panel."
+        if from_mirror
+        else "fatal: could not load node agent image from panel "
+        "(SSH provision uploads it over SSH; for manual install check "
+        "PANEL_PUBLIC_ADDRESS and that /api/nodes/agent-image works)"
+    )
     ensure_image = (
         f"NP_IMG={q(image)}; "
         "if ! docker image inspect \"$NP_IMG\" >/dev/null 2>&1; then "
-        "echo 'Loading node image from panel…'; "
+        f"echo {q(load_msg)}; "
         f"if ! curl -fskSL --connect-timeout 30 --max-time 1800 {q(image_url)} | docker load; then "
-        "echo 'fatal: could not load node agent image from panel "
-        "(SSH provision uploads it over SSH; for manual install check "
-        "PANEL_PUBLIC_ADDRESS and that /api/nodes/agent-image works)' >&2; "
+        f"echo {q(load_fail)} >&2; "
         "exit 1; "
         "fi; "
         "fi; "

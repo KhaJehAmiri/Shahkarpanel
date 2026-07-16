@@ -44,6 +44,23 @@ def _require_enabled():
         raise HTTPException(status_code=404, detail="Node provisioning is disabled")
 
 
+def _agent_image_url_for_node(
+    *,
+    panel_url: str,
+    region: Optional[str],
+    host: Optional[str],
+) -> tuple[str, bool]:
+    """Panel agent-image URL, or Iran mirror when the node is domestic."""
+    from app.provisioning.iran_mirror import agent_image_fetch_url
+
+    panel_agent = f"{panel_url.rstrip('/')}/api/nodes/agent-image?token={NODE_BOOTSTRAP_TOKEN}"
+    return agent_image_fetch_url(
+        panel_agent_url=panel_agent,
+        region=region,
+        host=host,
+    )
+
+
 def _panel_url() -> str:
     try:
         return provisioning.resolve_panel_public_url()
@@ -137,6 +154,10 @@ def _queue_ssh_provision(
 
     tenant_id = dbnode.tenant_id
     panel_url = _panel_url()
+    host = (dbnode.provision_host or dbnode.address or creds.host).strip()
+    image_url, use_mirror = _agent_image_url_for_node(
+        panel_url=panel_url, region=dbnode.region, host=host,
+    )
     try:
         cmd = provisioning.build_install_command(
             panel_url,
@@ -153,11 +174,12 @@ def _queue_ssh_provision(
             force_image_rebuild=refresh_agent,
             client_cert_pem=_client_cert_pem(db),
             include_awg=include_awg,
+            agent_image_url=image_url,
+            agent_image_from_mirror=use_mirror,
         )
     except provisioning.ProvisioningError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    host = (dbnode.provision_host or dbnode.address or creds.host).strip()
     dbnode.address = host
     dbnode.provision_host = host
     dbnode.provision_status = "provisioning"
@@ -176,7 +198,8 @@ def _queue_ssh_provision(
         ssh_timeout=NODE_PROVISION_SSH_TIMEOUT,
         exec_timeout=NODE_PROVISION_EXEC_TIMEOUT,
         extras=extras,
-        force_image=refresh_agent,
+        force_image=refresh_agent and not use_mirror,
+        use_iran_mirror=use_mirror,
     )
 
 
@@ -374,6 +397,10 @@ def provision_node(
 
     tenant_id = tenant_svc.admin_tenant_id(db, admin)
     panel_url = _panel_url()
+    host = body.host.strip()
+    image_url, use_mirror = _agent_image_url_for_node(
+        panel_url=panel_url, region=body.region, host=host,
+    )
     try:
         cmd = provisioning.build_install_command(
             panel_url, NODE_BOOTSTRAP_TOKEN, body.name,
@@ -384,6 +411,8 @@ def provision_node(
             force_image_rebuild=body.refresh_agent,
             client_cert_pem=_client_cert_pem(db),
             include_awg=include_awg,
+            agent_image_url=image_url,
+            agent_image_from_mirror=use_mirror,
         )
     except provisioning.ProvisioningError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
@@ -397,7 +426,7 @@ def provision_node(
         or body.refresh_agent
     ):
         dbnode = existing
-        dbnode.address = body.host.strip()
+        dbnode.address = host
         dbnode.port = NODE_DEFAULT_PORT
         dbnode.api_port = NODE_DEFAULT_API_PORT
         dbnode.region = body.region
@@ -502,7 +531,8 @@ def provision_node(
         ssh_timeout=NODE_PROVISION_SSH_TIMEOUT,
         exec_timeout=NODE_PROVISION_EXEC_TIMEOUT,
         extras=extras,
-        force_image=body.refresh_agent,
+        force_image=body.refresh_agent and not use_mirror,
+        use_iran_mirror=use_mirror,
     )
 
     return ProvisionResponse(

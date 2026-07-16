@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.21.11 — 2026-07-16
+
+- Iran agent-image mirror: when a node is in Iran (`region=ir` or GeoIP), provision downloads the node package from `NODE_AGENT_MIRROR_URL` (domestic) instead of SSH-uploading ~135MB from an abroad panel.
+- `nexuspanel update` can sync the cached tarball to the mirror host via `NODE_AGENT_MIRROR_SSH`.
+
 ## 0.21.10 — 2026-07-16
 
 - Node provision: skip re-uploading the ~135MB agent image when the node already has the same image ID (re-add / retry is seconds, not half an hour).

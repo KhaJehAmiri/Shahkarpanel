@@ -152,6 +152,7 @@ def _run_job(
     ssh_timeout: int,
     exec_timeout: int,
     force_image: bool = False,
+    use_iran_mirror: bool = False,
 ) -> None:
     with _lock:
         job = _jobs.get(job_id)
@@ -184,25 +185,35 @@ def _run_job(
         with _lock:
             job.progress = 28
             job.step = "image"
-            job.message = (
-                "Refreshing node agent image over SSH…"
-                if force_image
-                else "Checking / uploading node agent image…"
-            )
+            if use_iran_mirror:
+                job.message = "Node will fetch agent image from Iran mirror…"
+            elif force_image:
+                job.message = "Refreshing node agent image over SSH…"
+            else:
+                job.message = "Checking / uploading node agent image…"
         _set_node_provision(job.node_id, status="provisioning", message=job.message)
-        from config import NODE_AGENT_IMAGE
 
-        push_out = provisioning.push_agent_image_via_ssh(
-            creds,
-            NODE_AGENT_IMAGE,
-            timeout=ssh_timeout,
-            transfer_timeout=max(exec_timeout, 1800),
-            force=force_image,
-        )
-        if isinstance(push_out, str) and push_out.startswith("skipped:"):
-            with _lock:
-                job.message = "Reusing agent image already on the node…"
-            _set_node_provision(job.node_id, status="provisioning", message=job.message)
+        if use_iran_mirror:
+            # Domestic mirror is much faster than SSH upload from an abroad panel.
+            # The install script curls NODE_AGENT_MIRROR_URL when the tag is missing.
+            logger.info(
+                "Skipping SSH agent-image upload for node %s (Iran mirror)",
+                job.node_id,
+            )
+        else:
+            from config import NODE_AGENT_IMAGE
+
+            push_out = provisioning.push_agent_image_via_ssh(
+                creds,
+                NODE_AGENT_IMAGE,
+                timeout=ssh_timeout,
+                transfer_timeout=max(exec_timeout, 1800),
+                force=force_image,
+            )
+            if isinstance(push_out, str) and push_out.startswith("skipped:"):
+                with _lock:
+                    job.message = "Reusing agent image already on the node…"
+                _set_node_provision(job.node_id, status="provisioning", message=job.message)
 
         with _lock:
             job.progress = 55
@@ -316,6 +327,7 @@ def start_job(
     exec_timeout: int,
     extras: Optional[ProvisionExtras] = None,
     force_image: bool = False,
+    use_iran_mirror: bool = False,
 ) -> str:
     job_id = uuid.uuid4().hex
     job = ProvisionJob(id=job_id, node_id=node_id, node_name=node_name)
@@ -326,7 +338,7 @@ def start_job(
             _extras[job_id] = extras
     threading.Thread(
         target=_run_job,
-        args=(job_id, creds, command, ssh_timeout, exec_timeout, force_image),
+        args=(job_id, creds, command, ssh_timeout, exec_timeout, force_image, use_iran_mirror),
         daemon=True,
     ).start()
     return job_id

@@ -142,6 +142,10 @@ PANEL_PUBLIC_ADDRESS = config("PANEL_PUBLIC_ADDRESS", default="")
 # Must be a node-agent image reachable by the target server's Docker. Override
 # with your own published image (see scripts/ for building a node image).
 NODE_AGENT_IMAGE = config("NODE_AGENT_IMAGE", default="nexuspanel/node:latest")
+# Domestic (Iran) HTTP mirror for the gzipped ``docker save`` of NODE_AGENT_IMAGE.
+# When set, Iran nodes curl this URL instead of the panel / SSH upload from abroad.
+# Example: http://37.32.40.55/nexuspanel/node-agent-image.tar.gz
+NODE_AGENT_MIRROR_URL = config("NODE_AGENT_MIRROR_URL", default="")
 # SSH connect timeout (seconds) when auto-provisioning a node.
 NODE_PROVISION_SSH_TIMEOUT = config("NODE_PROVISION_SSH_TIMEOUT", cast=int, default=30)
 # Max seconds to wait for the remote install script (Docker build + agent start).

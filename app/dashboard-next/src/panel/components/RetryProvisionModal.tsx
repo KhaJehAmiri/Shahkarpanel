@@ -38,7 +38,7 @@ export const RetryProvisionModal: FC<{
         username: f.username.trim() || "root",
         ssh_port: parseInt(f.ssh_port, 10) || 22,
         password: f.password,
-        refresh_agent: true,
+        refresh_agent: false,
       });
       if (res.status === "started") {
         toast.push(t("infra.provisionRetryQueued"), "success");

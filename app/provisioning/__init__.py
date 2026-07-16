@@ -14,12 +14,15 @@ API falls back to returning the one-line install command so the user can paste
 it into their server manually. The command builder is a pure, tested function.
 """
 import json
+import logging
 import os
 import shlex
 from dataclasses import dataclass
 from typing import Optional
 
 from app.xray.network_defaults import host_network_tuning_shell
+
+logger = logging.getLogger("uvicorn.error")
 
 __all__ = [
     "ProvisioningError",
@@ -229,38 +232,28 @@ def build_install_command(
             "done; "
         )
 
-    # Prefer a prebuilt image from the panel (HTTP) or SSH upload from the panel
-    # job. Never `docker build` on the node: restricted DCs get HTTP 403 from
-    # Docker Hub / CloudFront and the CloudFront blob URL becomes the only
-    # visible error after a successful agent-bundle download.
-    if force_image_rebuild:
-        ensure_image = (
-            f"NP_IMG={q(image)}; "
-            "echo 'Refreshing node image from panel…'; "
-            f"if ! curl -fskSL --connect-timeout 30 --max-time 1800 {q(image_url)} | docker load; then "
-            "echo 'fatal: could not download node agent image from panel "
-            "(this network cannot pull Docker Hub / CloudFront either — "
-            "retry SSH provision so the panel can upload the image)' >&2; "
-            "exit 1; "
-            "fi; "
-        )
-    else:
-        ensure_image = (
-            f"NP_IMG={q(image)}; "
-            "if ! docker image inspect \"$NP_IMG\" >/dev/null 2>&1; then "
-            "echo 'Loading node image from panel…'; "
-            f"if ! curl -fskSL --connect-timeout 30 --max-time 1800 {q(image_url)} | docker load; then "
-            "echo 'fatal: could not load node agent image from panel "
-            "(SSH provision uploads it over SSH; for manual install check "
-            "PANEL_PUBLIC_ADDRESS and that /api/nodes/agent-image works)' >&2; "
-            "exit 1; "
-            "fi; "
-            "fi; "
-            "if ! docker image inspect \"$NP_IMG\" >/dev/null 2>&1; then "
-            "echo 'fatal: node agent image not tagged as '\"$NP_IMG\"' after docker load' >&2; "
-            "exit 1; "
-            "fi; "
-        )
+    # Prefer the image already on the node (SSH job uploads it first). Only
+    # fall back to HTTP from the panel when the tag is missing — never force a
+    # full re-download on every re-provision (that made retries 15–30+ minutes
+    # and brittle on flaky links). ``force_image_rebuild`` is handled by the
+    # panel-side SSH upload with force=True, not by curling again here.
+    _ = force_image_rebuild  # kept for API compatibility; SSH push honors it
+    ensure_image = (
+        f"NP_IMG={q(image)}; "
+        "if ! docker image inspect \"$NP_IMG\" >/dev/null 2>&1; then "
+        "echo 'Loading node image from panel…'; "
+        f"if ! curl -fskSL --connect-timeout 30 --max-time 1800 {q(image_url)} | docker load; then "
+        "echo 'fatal: could not load node agent image from panel "
+        "(SSH provision uploads it over SSH; for manual install check "
+        "PANEL_PUBLIC_ADDRESS and that /api/nodes/agent-image works)' >&2; "
+        "exit 1; "
+        "fi; "
+        "fi; "
+        "if ! docker image inspect \"$NP_IMG\" >/dev/null 2>&1; then "
+        "echo 'fatal: node agent image not tagged as '\"$NP_IMG\"' after docker load' >&2; "
+        "exit 1; "
+        "fi; "
+    )
 
     return (
         "set -e; "
@@ -417,17 +410,26 @@ def push_agent_image_via_ssh(
     *,
     timeout: int = 30,
     transfer_timeout: int = 1800,
+    force: bool = False,
 ) -> str:
     """Upload the panel's ``docker save`` of the node agent and ``docker load`` it.
 
     Bypasses Docker Hub and any need for the node to download from the panel's
     public HTTPS URL — critical when the node DC returns CloudFront 403.
+
+    When ``force`` is False and the node already has the same image ID as the
+    panel, the upload is skipped (re-provision / retry in seconds, not half an hour).
     """
-    from app.provisioning.agent_image import AgentImageUnavailable, cached_image_path
+    from app.provisioning.agent_image import (
+        AgentImageUnavailable,
+        cached_image_path,
+        image_id,
+    )
     from config import NODE_AGENT_IMAGE
 
     ref = (image or NODE_AGENT_IMAGE).strip() or "nexuspanel/node:latest"
     try:
+        local_id = image_id(ref)
         local = cached_image_path(ref)
     except AgentImageUnavailable as exc:
         raise ProvisioningError(str(exc)) from exc
@@ -435,6 +437,21 @@ def push_agent_image_via_ssh(
     remote = f"/tmp/nexuspanel-node-agent-{os.getpid()}.tar.gz"
     client = _connect_ssh(creds, timeout=timeout)
     try:
+        if not force:
+            check = (
+                f"docker image inspect --format '{{{{.Id}}}}' {shlex.quote(ref)} 2>/dev/null || true"
+            )
+            stdin, stdout, stderr = client.exec_command(check, timeout=timeout)
+            stdout.channel.recv_exit_status()
+            remote_id = (stdout.read().decode("utf-8", "replace") or "").strip()
+            if remote_id and remote_id == local_id:
+                logger.info(
+                    "Node %s already has agent image %s — skipping SSH upload",
+                    creds.host,
+                    local_id[:19],
+                )
+                return f"skipped: image already present ({local_id[:19]})"
+
         sftp = client.open_sftp()
         try:
             sftp.put(str(local), remote)

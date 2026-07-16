@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.21.10 — 2026-07-16
+
+- Node provision: skip re-uploading the ~135MB agent image when the node already has the same image ID (re-add / retry is seconds, not half an hour).
+- Stop forcing a full HTTP `curl|docker load` refresh on every provision; image refresh is SSH-only when explicitly requested.
+- Retry provision defaults to reusing the on-node image instead of `refresh_agent=true`.
+
 ## 0.21.9 — 2026-07-16
 
 - SSH control-tunnel fallback: when direct panel→node control paths drop (common on some Iran↔abroad routes), the panel opens `ssh -L` to the node's loopback ports and dials locally instead.

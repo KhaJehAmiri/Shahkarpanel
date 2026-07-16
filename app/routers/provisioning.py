@@ -63,7 +63,8 @@ class ProvisionRetryRequest(BaseModel):
     username: str = "root"
     password: Optional[str] = None
     private_key: Optional[str] = None
-    refresh_agent: bool = True
+    # Default False: re-use the agent image already on the node (fast retry).
+    refresh_agent: bool = False
 
 
 def _resolve_ssh_credentials(
@@ -175,6 +176,7 @@ def _queue_ssh_provision(
         ssh_timeout=NODE_PROVISION_SSH_TIMEOUT,
         exec_timeout=NODE_PROVISION_EXEC_TIMEOUT,
         extras=extras,
+        force_image=refresh_agent,
     )
 
 
@@ -500,6 +502,7 @@ def provision_node(
         ssh_timeout=NODE_PROVISION_SSH_TIMEOUT,
         exec_timeout=NODE_PROVISION_EXEC_TIMEOUT,
         extras=extras,
+        force_image=body.refresh_agent,
     )
 
     return ProvisionResponse(

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.21.19 — 2026-07-16
+
+- Fixed the last gap keeping tunnel-delegated WireGuard from ever actually re-establishing after a failure: the periodic WireGuard sync only *observed* whether the relay's Xray had the tunnel capture bound (`relay_tunnel_xray_ready`) and logged "Xray tunnel relay not running" — it never triggered an actual config push to fix it. Nothing else was reliably doing that either, so the circuit breaker kept tripping on stale observation instead of a real failed attempt, and native WireGuard never got replaced by the tunnel again even once the network path (see 0.21.18) was healthy. The sync now kicks a real (throttled, background) restart on that relay so the fix is actually attempted automatically.
+
 ## 0.21.18 — 2026-07-16
 
 - Found the real reason a relay's tunnel-captured WireGuard kept failing to actually establish (not just the false-positive health check fixed in 0.21.17): pushing the relay's tunnel/Finalmask Xray config (which can be 100+ KB with many peers) over the direct panel→node RPyC socket reliably dropped mid-write (`EOFError: stream has been closed`) on this Iran↔abroad route, even though the socket connected fine and the config itself was valid. `connect_node`/`restart_node` now automatically fail over to the SSH control tunnel for the retry after the first such failure, instead of endlessly retrying the same unreliable direct path.

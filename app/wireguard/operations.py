@@ -31,6 +31,38 @@ logger = logging.getLogger("nexus-wg")
 # node drops the peer and traffic stops immediately.
 SERVED_STATUSES = (UserStatus.active,)
 
+# Throttle for _maybe_kick_tunnel_restart: sync_node can be called often (WG
+# resync loop, tunnel apply, health check, ...); restart_node rebuilds and
+# pushes a full node config, so re-triggering it on every single call while
+# the relay is stuck "not ready" would hammer the node instead of giving each
+# attempt (and its own SSH-control-tunnel fallback) time to land.
+_TUNNEL_RESTART_KICK_COOLDOWN_SEC = 30.0
+_tunnel_restart_kicked_at: Dict[int, float] = {}
+_tunnel_restart_kick_lock = threading.Lock()
+
+
+def _maybe_kick_tunnel_restart(node_id: int) -> None:
+    now = time.monotonic()
+    with _tunnel_restart_kick_lock:
+        last = _tunnel_restart_kicked_at.get(node_id, 0.0)
+        if now - last < _TUNNEL_RESTART_KICK_COOLDOWN_SEC:
+            return
+        _tunnel_restart_kicked_at[node_id] = now
+    try:
+        from app import xray
+
+        node = xray.nodes.get(node_id)
+        if node is not None and getattr(node, "connected", False):
+            xray.operations.restart_node(node_id)
+        else:
+            xray.operations.connect_node(node_id)
+    except Exception:
+        logger.warning(
+            "Tunnel capture self-heal restart for node %s failed to schedule",
+            node_id,
+            exc_info=True,
+        )
+
 
 def _all_wg_proxies(db) -> List[Proxy]:
     return db.query(Proxy).filter(Proxy.type == ProxyTypes.WireGuard).all()
@@ -538,6 +570,16 @@ def sync_node(db, dbnode, *, peers: Optional[List[WGUserPeer]] = None, node_obje
                     "(native plain WG kept down so dokodemo can bind; AWG still applied below)",
                     dbnode.id,
                 )
+                # relay_tunnel_xray_ready only *observes* — it never pushes the
+                # dokodemo capture inbound itself. Without an active retry here,
+                # a relay that lost the capture (agent restart, prior breaker
+                # trip, panel redeploy, ...) stays "not ready" forever: nothing
+                # else re-attempts the config push, so the circuit breaker trips
+                # on stale observation instead of a genuine failed attempt, and
+                # native WireGuard never gets a chance to be replaced by the
+                # tunnel again. Kick a real (background) restart so this is
+                # self-healing instead of report-only.
+                _maybe_kick_tunnel_restart(dbnode.id)
             # When only plain is enabled, panel-exit sync is the whole job.
             if not amneziawg_enabled(cfg):
                 open_node_listen_ports(dbnode, node_object=node_object, client=client)

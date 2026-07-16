@@ -821,7 +821,17 @@ def connect_node(node_id, config=None):
                             prepare_relay_wireguard_tunnel(db, node_id, node)
                         try:
                             version = node.get_version()
-                            if version and getattr(node, "started", False):
+                            # get_version alone only proves *some* Xray core is
+                            # alive — the live one could be a stale native-
+                            # fallback push from before delegation was granted
+                            # (or regranted after a breaker suspension). Only
+                            # skip the restart when we know the live core is
+                            # the one that actually captured the tunnel port.
+                            if (
+                                version
+                                and getattr(node, "started", False)
+                                and getattr(node, "wg_tunnel_capture_active", False)
+                            ):
                                 xray_exc = None
                                 logger.info(
                                     "WireGuard node \"%s\" keeping live Xray (%s)",
@@ -836,6 +846,7 @@ def connect_node(node_id, config=None):
                         except Exception:
                             node.restart(config)
                         version = node.get_version()
+                        node.wg_tunnel_capture_active = True
                         xray_exc = None
                         break
                     except Exception as exc:
@@ -867,6 +878,7 @@ def connect_node(node_id, config=None):
                             node.connect()
                         node.start(config)
                         version = node.get_version()
+                        node.wg_tunnel_capture_active = False
                         xray_exc = None
                         break
                     except Exception as exc:
@@ -903,6 +915,7 @@ def connect_node(node_id, config=None):
                         node.connect()
                     except Exception:
                         pass
+                node.wg_tunnel_capture_active = False
                 with GetDB() as db:
                     from app.wireguard.operations import restore_relay_native_wireguard
 
@@ -1041,6 +1054,14 @@ def restart_node(node_id, config=None):
                             forced = _force_control_tunnel_session(dbnode, node)
                             if forced is not None:
                                 node = forced
+            # ``config`` already reflects the desired inbound set for the
+            # current delegation state (tunnel capture included/excluded via
+            # _apply_node_tunnels/_apply_native_wireguard_inbound), so a
+            # successful restart here means the live core now matches
+            # ``delegates_tunnel`` — record that so a later connect_node
+            # doesn't have to guess from liveness alone (see the
+            # wg_tunnel_capture_active check there).
+            node.wg_tunnel_capture_active = bool(delegates_tunnel and xray_exc is None)
             if delegates_tunnel:
                 from app.tunnel.relay import record_tunnel_health
 

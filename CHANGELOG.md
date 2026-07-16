@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.21.20 — 2026-07-16
+
+- Fixed a second false-positive that defeated the 0.21.19 self-heal: `connect_node`'s "keep the live Xray core, don't restart" shortcut (added to avoid OOMing small relays on a redundant Finalmask restart) only checked that *some* Xray was alive and answering `get_version()` — not that the live core was actually the tunnel-capturing one. So the proactive restart kicked off by the sync fix would immediately no-op ("keeping live Xray") against a stale native-fallback core instead of pushing the real tunnel config. The node session now tracks whether its last successful push actually included the tunnel capture (`wg_tunnel_capture_active`) and only takes the reuse shortcut when that's true.
+
 ## 0.21.19 — 2026-07-16
 
 - Fixed the last gap keeping tunnel-delegated WireGuard from ever actually re-establishing after a failure: the periodic WireGuard sync only *observed* whether the relay's Xray had the tunnel capture bound (`relay_tunnel_xray_ready`) and logged "Xray tunnel relay not running" — it never triggered an actual config push to fix it. Nothing else was reliably doing that either, so the circuit breaker kept tripping on stale observation instead of a real failed attempt, and native WireGuard never got replaced by the tunnel again even once the network path (see 0.21.18) was healthy. The sync now kicks a real (throttled, background) restart on that relay so the fix is actually attempted automatically.

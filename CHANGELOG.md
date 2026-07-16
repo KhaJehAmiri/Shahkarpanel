@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.21.13 — 2026-07-16
+
+- Provision: download packages online first (SSH upload + HTTP) with 3 retries; only if that fails fall back to the Iran agent-image mirror. Docker installer also retries online 3 times before distro packages.
+
 ## 0.21.12 — 2026-07-16
 
 - Iran agent mirror: detect domestic nodes by GeoIP of the SSH/server IP only — UI region is ignored for package download routing.

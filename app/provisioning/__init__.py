@@ -96,13 +96,23 @@ def install_docker_shell() -> str:
     # get.docker.com is often HTTP-403 from some DCs/countries; fall back to the
     # distro package so provisioning doesn't die with a misleading
     # "curl: (22) ... 403" + exit 127 (docker: command not found).
+    # Online install is tried up to 3 times before falling back to apt/dnf/yum.
     return (
         "if ! command -v docker >/dev/null 2>&1; then "
         "echo 'Installing Docker…'; "
-        "(curl -fsSL https://get.docker.com -o /tmp/np-get-docker.sh "
-        "&& sh /tmp/np-get-docker.sh) || true; "
+        "_np_docker_ok=0; "
+        "for _np_dtry in 1 2 3; do "
+        "echo \"Downloading Docker installer (attempt $_np_dtry/3)…\"; "
+        "if curl -fsSL https://get.docker.com -o /tmp/np-get-docker.sh "
+        "&& sh /tmp/np-get-docker.sh; then "
+        "_np_docker_ok=1; break; "
+        "fi; "
         "rm -f /tmp/np-get-docker.sh; "
-        "if ! command -v docker >/dev/null 2>&1; then "
+        "sleep 3; "
+        "done; "
+        "rm -f /tmp/np-get-docker.sh; "
+        "if [ \"$_np_docker_ok\" != 1 ] || ! command -v docker >/dev/null 2>&1; then "
+        "echo 'Online Docker install failed — trying distro packages…'; "
         "if command -v apt-get >/dev/null 2>&1; then "
         "export DEBIAN_FRONTEND=noninteractive; "
         "apt-get update -y >/dev/null "
@@ -141,7 +151,8 @@ def build_install_command(
     client_cert_pem: Optional[str] = None,
     include_awg: bool = False,
     agent_image_url: Optional[str] = None,
-    agent_image_from_mirror: bool = False,
+    agent_image_mirror_url: Optional[str] = None,
+    agent_image_from_mirror: bool = False,  # deprecated; ignored (online-first + mirror fallback)
 ) -> str:
     """Build the self-contained bash command that provisions a fresh server.
 
@@ -209,8 +220,9 @@ def build_install_command(
         )
 
     panel_image_url = f"{panel_url.rstrip('/')}/api/nodes/agent-image?token={bootstrap_token}"
-    image_url = (agent_image_url or panel_image_url).strip() or panel_image_url
-    from_mirror = bool(agent_image_from_mirror)
+    primary_url = (agent_image_url or panel_image_url).strip() or panel_image_url
+    mirror_url = (agent_image_mirror_url or "").strip()
+    _ = agent_image_from_mirror  # deprecated
 
     wg_host_egress = ""
     if core_kind == "wireguard":
@@ -236,32 +248,38 @@ def build_install_command(
             "done; "
         )
 
-    # Prefer the image already on the node. Missing tag → HTTP fetch.
-    # Iran nodes use NODE_AGENT_MIRROR_URL (domestic); others use the panel URL
-    # (SSH job usually pre-seeded the image). ``force_image_rebuild`` is handled
-    # by panel-side SSH upload with force=True for foreign nodes.
-    _ = force_image_rebuild  # kept for API compatibility
-    load_msg = (
-        "Loading node image from Iran mirror…"
-        if from_mirror
-        else "Loading node image from panel…"
-    )
-    load_fail = (
-        "fatal: could not load node agent image from Iran mirror "
-        f"({image_url}). Check NODE_AGENT_MIRROR_URL and that the mirror "
-        "has the latest tarball synced from the panel."
-        if from_mirror
-        else "fatal: could not load node agent image from panel "
-        "(SSH provision uploads it over SSH; for manual install check "
-        "PANEL_PUBLIC_ADDRESS and that /api/nodes/agent-image works)"
-    )
+    # Prefer image already on the node. Otherwise: try the online/panel URL up to
+    # 3 times, then fall back to the Iran HTTP mirror when configured.
+    _ = force_image_rebuild  # SSH push on the panel job honors force separately
+    mirror_branch = ""
+    if mirror_url and mirror_url != primary_url:
+        mirror_branch = (
+            "echo 'Online image fetch failed after 3 attempts — trying Iran mirror…'; "
+            f"if curl -fskSL --connect-timeout 30 --max-time 1800 {q(mirror_url)} | docker load; then "
+            ":; "
+            "else "
+            "echo 'fatal: could not load node agent image from panel or Iran mirror' >&2; "
+            "exit 1; "
+            "fi; "
+        )
+    else:
+        mirror_branch = (
+            "echo 'fatal: could not load node agent image online after 3 attempts' >&2; "
+            "exit 1; "
+        )
     ensure_image = (
         f"NP_IMG={q(image)}; "
         "if ! docker image inspect \"$NP_IMG\" >/dev/null 2>&1; then "
-        f"echo {q(load_msg)}; "
-        f"if ! curl -fskSL --connect-timeout 30 --max-time 1800 {q(image_url)} | docker load; then "
-        f"echo {q(load_fail)} >&2; "
-        "exit 1; "
+        "_np_ok=0; "
+        "for _np_try in 1 2 3; do "
+        "echo \"Loading node image online (attempt $_np_try/3)…\"; "
+        f"if curl -fskSL --connect-timeout 30 --max-time 1800 {q(primary_url)} | docker load; then "
+        "_np_ok=1; break; "
+        "fi; "
+        "sleep 3; "
+        "done; "
+        "if [ \"$_np_ok\" != 1 ]; then "
+        f"{mirror_branch}"
         "fi; "
         "fi; "
         "if ! docker image inspect \"$NP_IMG\" >/dev/null 2>&1; then "

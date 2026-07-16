@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.21.23 — 2026-07-16
+
+- `panel_exit_ready_for_node()` now logs exactly which tunnel-exit tags it expected vs. what it actually found on the panel's live Xray config when not ready, instead of a bare True/False — needed to pin down why this still reported "not ready" immediately after a fresh, correctly-injected tunnel apply.
+
 ## 0.21.22 — 2026-07-16
 
 - Found the actual root cause of the panel-exit side intermittently losing its `tunnel-*-exit` inbound (which is what `panel_exit_ready_for_node` was correctly detecting all along): `sync_panel_exit_wireguard()` unconditionally calls `sync_panel_warp_egress()` on every WireGuard relay sync, which itself unconditionally restarted the panel's *entire* local Xray core every single time — even with WARP completely disabled and nothing to "re-pin" (observed live: `Panel WARP egress: enabled=False ...` followed by a full core restart, every ~15-20s on a busy panel). Re-running `apply_endpoint_tunnels` on every one of these avoidable restarts was the real source of the "Xray tunnel relay not running" flapping, not a genuinely broken relay↔panel path. `sync_panel_warp_egress()` now only restarts the core when the WARP routing state (enabled/subnets/account) actually changed since the last call.

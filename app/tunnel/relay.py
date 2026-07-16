@@ -301,8 +301,25 @@ def panel_exit_ready_for_node(db, node_id: int) -> bool:
                 if isinstance(ib, dict)
             }
         except Exception:
+            logger.warning(
+                "panel_exit_ready_for_node: could not read inbound tags from "
+                "the live panel config for node %s (last_config type %s)",
+                node_id,
+                type(last_config).__name__,
+            )
             return False
-    return all(f"tunnel-{t.id}-exit" in tags for t in panel_exit_tunnels)
+    expected = {f"tunnel-{t.id}-exit" for t in panel_exit_tunnels}
+    ready = expected.issubset(tags)
+    if not ready:
+        logger.warning(
+            "panel_exit_ready_for_node: node %s expects %s on the panel's live "
+            "config but only found %s tunnel-tagged inbound(s): %s",
+            node_id,
+            sorted(expected),
+            len(tags),
+            sorted(t for t in tags if t and "tunnel" in str(t)),
+        )
+    return ready
 
 
 def relay_tunnel_xray_ready(

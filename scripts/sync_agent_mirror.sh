@@ -21,19 +21,9 @@ if [ -z "$REMOTE" ]; then
   exit 0
 fi
 
-# Ensure a fresh cache exists on the panel.
-if [ -f "${APP_DIR}/app/provisioning/agent_image.py" ]; then
-  python3 - <<PY
-import sys
-sys.path.insert(0, "${APP_DIR}")
-from app.provisioning.agent_image import cached_image_path
-print(cached_image_path("${IMAGE}"))
-PY
-fi
-
 SRC="$(ls -t "${CACHE_DIR}"/*.tar.gz 2>/dev/null | head -1 || true)"
 if [ -z "$SRC" ] || [ ! -f "$SRC" ]; then
-  echo "No agent-image tarball in ${CACHE_DIR}; building via docker save…"
+  echo "No agent-image tarball in ${CACHE_DIR}; building via docker save..."
   mkdir -p "${CACHE_DIR}"
   SRC="${CACHE_DIR}/manual-sync.tar.gz"
   docker save "${IMAGE}" | gzip -c > "${SRC}"

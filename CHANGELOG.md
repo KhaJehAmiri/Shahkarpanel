@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.21.22 — 2026-07-16
+
+- Found the actual root cause of the panel-exit side intermittently losing its `tunnel-*-exit` inbound (which is what `panel_exit_ready_for_node` was correctly detecting all along): `sync_panel_exit_wireguard()` unconditionally calls `sync_panel_warp_egress()` on every WireGuard relay sync, which itself unconditionally restarted the panel's *entire* local Xray core every single time — even with WARP completely disabled and nothing to "re-pin" (observed live: `Panel WARP egress: enabled=False ...` followed by a full core restart, every ~15-20s on a busy panel). Re-running `apply_endpoint_tunnels` on every one of these avoidable restarts was the real source of the "Xray tunnel relay not running" flapping, not a genuinely broken relay↔panel path. `sync_panel_warp_egress()` now only restarts the core when the WARP routing state (enabled/subnets/account) actually changed since the last call.
+
 ## 0.21.21 — 2026-07-16
 
 - Found why the breaker kept tripping even in the same beat a real tunnel-capture restart just succeeded: `relay_tunnel_xray_ready()` fed the circuit breaker itself on every call — and it's called from several purely observational spots (the periodic WG sync, the health-check probe, and the health-check's own pre-restart re-check) on top of the real attempt's own recording inside `connect_node`/`restart_node`. A single genuine failure was being counted 2-3x per cycle across these call sites, which could trip/extend the suspension even right after a real push attempt succeeded. `relay_tunnel_xray_ready()` is now purely observational (no breaker side effect) — only an actual push attempt has ground truth and is the sole source that records outcomes. It also now checks the same "is the live core actually the tunnel-capturing one" flag added in 0.21.20, instead of liveness alone.

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.21.24 — 2026-07-16
+
+- Found it: `panel_exit_ready_for_node()` checked `xray.core.last_config.inbounds_by_tag` for the tunnel's exit inbound tag — but that attribute is a *curated* view built only from recognized product/proxy protocols (see `XRayConfig._resolve_inbounds`), not the raw inbound list, so an infrastructure inbound like a tunnel exit is never in it. The diagnostic added in 0.21.23 confirmed this: the live panel config had only 1 inbound in that view (its real product inbound) and the check always reported "not ready" no matter how healthy the actual tunnel was — this alone accounts for every "Xray tunnel relay not running" seen in this investigation, independent of anything else fixed in 0.21.18-0.21.22 (all real fixes, but none of them could have mattered while this check could never pass). Now reads the raw `last_config["inbounds"]` list directly, which does include the tunnel exit tag once actually booted.
+
 ## 0.21.23 — 2026-07-16
 
 - `panel_exit_ready_for_node()` now logs exactly which tunnel-exit tags it expected vs. what it actually found on the panel's live Xray config when not ready, instead of a bare True/False — needed to pin down why this still reported "not ready" immediately after a fresh, correctly-injected tunnel apply.

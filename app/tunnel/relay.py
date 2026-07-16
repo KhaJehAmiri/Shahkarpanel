@@ -292,28 +292,31 @@ def panel_exit_ready_for_node(db, node_id: int) -> bool:
     if last_config is None:
         return False
     try:
-        tags = set(last_config.inbounds_by_tag.keys())
+        # ``XRayConfig`` subclasses ``dict`` and keeps the *raw*, complete
+        # inbound list under the ``"inbounds"`` key — ``.inbounds_by_tag`` is
+        # a separate, curated view built only from recognized product
+        # protocols (see ``_resolve_inbounds``) and does not include
+        # infrastructure inbounds like a tunnel exit, so checking it here
+        # always reported "not ready" regardless of the real live config.
+        tags = {
+            ib.get("tag")
+            for ib in (last_config.get("inbounds") or [])
+            if isinstance(ib, dict)
+        }
     except Exception:
-        try:
-            tags = {
-                ib.get("tag")
-                for ib in (last_config.get("inbounds") or [])
-                if isinstance(ib, dict)
-            }
-        except Exception:
-            logger.warning(
-                "panel_exit_ready_for_node: could not read inbound tags from "
-                "the live panel config for node %s (last_config type %s)",
-                node_id,
-                type(last_config).__name__,
-            )
-            return False
+        logger.warning(
+            "panel_exit_ready_for_node: could not read inbound tags from "
+            "the live panel config for node %s (last_config type %s)",
+            node_id,
+            type(last_config).__name__,
+        )
+        return False
     expected = {f"tunnel-{t.id}-exit" for t in panel_exit_tunnels}
     ready = expected.issubset(tags)
     if not ready:
         logger.warning(
             "panel_exit_ready_for_node: node %s expects %s on the panel's live "
-            "config but only found %s tunnel-tagged inbound(s): %s",
+            "config (%s total inbounds); tunnel-tagged inbounds present: %s",
             node_id,
             sorted(expected),
             len(tags),

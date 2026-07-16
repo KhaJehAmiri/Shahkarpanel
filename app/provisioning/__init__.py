@@ -103,7 +103,7 @@ def install_docker_shell() -> str:
         "_np_docker_ok=0; "
         "for _np_dtry in 1 2 3; do "
         "echo \"Downloading Docker installer (attempt $_np_dtry/3)…\"; "
-        "if curl -fsSL https://get.docker.com -o /tmp/np-get-docker.sh "
+        "if curl -fsSL --connect-timeout 10 --max-time 60 https://get.docker.com -o /tmp/np-get-docker.sh "
         "&& sh /tmp/np-get-docker.sh; then "
         "_np_docker_ok=1; break; "
         "fi; "
@@ -188,10 +188,11 @@ def build_install_command(
     q = shlex.quote
     # Single-line JSON for SSH: -d "..." breaks on inner quotes; heredocs break in sh -c.
     # -k: panel often presents a self-signed / IP cert that nodes do not trust.
-    bootstrap_curl = (
-        f"curl -fskSL --connect-timeout 15 --max-time 60 -X POST {q(panel_url + '/api/node/bootstrap')} "
-        "-H 'Content-Type: application/json' -d "
-        f"'{{\"token\":{json.dumps(bootstrap_token)},"
+    # Bootstrap is best-effort: node→panel HTTPS is often blackholed on Iran↔abroad
+    # routes. The panel finishes registration over SSH after the agent is up.
+    bootstrap_url = panel_url.rstrip("/") + "/api/node/bootstrap"
+    bootstrap_body = (
+        f"{{\"token\":{json.dumps(bootstrap_token)},"
         f"\"name\":{json.dumps(node_name)},"
         f"\"address\":\"'\"$PUBLIC_IP\"'\","
         f"\"port\":{int(node_port)},"
@@ -200,10 +201,25 @@ def build_install_command(
         f"\"core_kind\":{json.dumps(core_kind)}"
     )
     if tenant_id is not None:
-        bootstrap_curl += f',\"tenant_id\":{int(tenant_id)}'
+        bootstrap_body += f',\"tenant_id\":{int(tenant_id)}'
     if region:
-        bootstrap_curl += f',\"region\":{json.dumps(region)}'
-    bootstrap_curl += "}'"
+        bootstrap_body += f',\"region\":{json.dumps(region)}'
+    bootstrap_body += "}"
+    bootstrap_curl = (
+        "_np_boot_ok=0; "
+        "for _np_btry in 1 2; do "
+        "echo \"Registering with panel (attempt $_np_btry/2)…\"; "
+        f"if curl -fskSL --connect-timeout 8 --max-time 20 -X POST {q(bootstrap_url)} "
+        "-H 'Content-Type: application/json' "
+        f"-d '{bootstrap_body}'; then "
+        "_np_boot_ok=1; break; "
+        "fi; "
+        "sleep 1; "
+        "done; "
+        "if [ \"$_np_boot_ok\" != 1 ]; then "
+        "echo 'warning: node→panel bootstrap timed out; panel will finish registration'; "
+        "fi; "
+    )
 
     secret_env = (
         f"-e NODE_CONTROL_SECRET={q(control_secret)} " if control_secret else ""
@@ -252,13 +268,13 @@ def build_install_command(
             "done; "
         )
 
-    # Prefer image already on the node. Otherwise: GitHub URL up to 3 times,
-    # then Iran HTTP mirror. The panel is never used as an image CDN.
+    # Prefer image already on the node. Otherwise: GitHub URL up to 3 times
+    # (short timeouts so blocked routes fail fast), then Iran HTTP mirror.
     _ = force_image_rebuild
     if mirror_url and mirror_url != primary_url:
         mirror_branch = (
             "echo 'GitHub image fetch failed after 3 attempts — trying Iran mirror…'; "
-            f"if curl -fskSL --connect-timeout 30 --max-time 1800 {q(mirror_url)} | docker load; then "
+            f"if curl -fskSL --connect-timeout 15 --max-time 1800 {q(mirror_url)} | docker load; then "
             ":; "
             "else "
             "echo 'fatal: could not load node agent image from GitHub or Iran mirror' >&2; "
@@ -276,10 +292,11 @@ def build_install_command(
         "_np_ok=0; "
         "for _np_try in 1 2 3; do "
         "echo \"Downloading node image from GitHub (attempt $_np_try/3)…\"; "
-        f"if curl -fskSL --connect-timeout 30 --max-time 1800 {q(primary_url)} | docker load; then "
+        # Short max-time: Iran/abroad blackholes often accept TCP then stall.
+        f"if curl -fskSL --connect-timeout 10 --max-time 90 {q(primary_url)} | docker load; then "
         "_np_ok=1; break; "
         "fi; "
-        "sleep 3; "
+        "sleep 2; "
         "done; "
         "if [ \"$_np_ok\" != 1 ]; then "
         f"{mirror_branch}"
@@ -316,8 +333,10 @@ def build_install_command(
         f"{cert_env}"
         "\"$NP_IMG\"; "
         f"{wg_host_egress}"
-        "PUBLIC_IP=$(curl -fsSL https://api.ipify.org || hostname -I | awk '{print $1}'); "
+        "PUBLIC_IP=$(curl -fsSL --connect-timeout 5 --max-time 15 https://api.ipify.org "
+        "|| hostname -I | awk '{print $1}'); "
         f"{bootstrap_curl}"
+        "echo 'Node agent started.'; "
     )
 
 

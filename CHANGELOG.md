@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.21.15 — 2026-07-16
+
+- Provision: node→panel bootstrap HTTP is best-effort with short retries — a curl timeout no longer fails the whole install; the panel finishes registration over SSH after the agent starts.
+- GitHub image download attempts use a short timeout so blocked routes fail over to the Iran mirror quickly.
+
 ## 0.21.14 — 2026-07-16
 
 - Node packages live on GitHub Releases (`NODE_AGENT_PACKAGE_URL`); provision downloads from GitHub first (3 attempts), then the Iran HTTP mirror. The panel is no longer used as an image CDN and no longer SSH-uploads the ~135MB agent image.

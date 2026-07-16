@@ -397,6 +397,12 @@ def core_health_check():
                 if delegates_tunnel and relay_tunnel_xray_ready(node):
                     _record_node_health(node_id, 0.0)
                     continue
+            try:
+                from app.control_tunnel import heal_tunnels
+
+                heal_tunnels()
+            except Exception:
+                pass
             if not config:
                 config = _health_check_config()
             xray.operations.connect_node(node_id, config)

@@ -317,7 +317,13 @@ def restore_relay_native_wireguard(
     peers: Optional[List[WGUserPeer]] = None,
     node_object=None,
 ) -> bool:
-    """Re-enable native WG on a relay when the Xray tunnel capture is down."""
+    """Re-enable native WG on a relay when the Xray tunnel capture is down.
+
+    When the tunnel still owns ``wireguard_port``, plain WG is never restored —
+    that would steal the UDP port from dokodemo and permanently block Xray
+    restart. AWG (separate port) may still be restored.
+    """
+    from app.tunnel.relay import node_delegates_wireguard_to_tunnel
     from app.wireguard.wg_manager import autoscale_enabled
 
     cfg = dbnode.wireguard
@@ -327,8 +333,9 @@ def restore_relay_native_wireguard(
     client = client_for_node(node_object)
     if client is None:
         return False
+    tunnel_owns_plain = node_delegates_wireguard_to_tunnel(db, dbnode.id)
     if peers is None:
-        if plain_wg_enabled(cfg) and not autoscale_enabled():
+        if plain_wg_enabled(cfg) and not tunnel_owns_plain and not autoscale_enabled():
             ensure_addresses_for_subnet(db, cfg.subnet, cfg=cfg)
         if amneziawg_enabled(cfg):
             ensure_addresses_for_subnet(db, cfg.awg_subnet, cfg=cfg)
@@ -337,6 +344,12 @@ def restore_relay_native_wireguard(
         peers = collect_wg_peers(db)
     try:
         specs = build_node_specs(cfg, peers)
+        if tunnel_owns_plain and cfg.interface:
+            specs = [s for s in specs if s.get("interface") != cfg.interface]
+            try:
+                client.down(cfg.interface)
+            except Exception:
+                pass
         if not specs:
             return False
         last_exc: Exception | None = None
@@ -473,43 +486,68 @@ def sync_node(db, dbnode, *, peers: Optional[List[WGUserPeer]] = None, node_obje
         except Exception:
             pass
 
+    # Tear down kernel interfaces that are no longer enabled (partial or full
+    # disable). apply_specs only brings up listed interfaces and will not
+    # remove a sibling that was turned off.
+    if not plain_wg_enabled(cfg):
+        try:
+            if cfg.interface:
+                client.down(cfg.interface)
+        except Exception:
+            pass
+    if not amneziawg_enabled(cfg):
+        try:
+            if cfg.awg_interface:
+                client.down(cfg.awg_interface)
+        except Exception:
+            pass
+
     try:
         from app.tunnel.relay import (
             node_delegates_wireguard_to_tunnel,
             relay_tunnel_xray_ready,
         )
 
+        tunnel_plain_delegated = False
         if node_delegates_wireguard_to_tunnel(db, dbnode.id):
-            if relay_tunnel_xray_ready(node_object):
-                if plain_wg_enabled(cfg):
-                    client.down(cfg.interface)
-                if amneziawg_enabled(cfg):
-                    client.down(cfg.awg_interface)
+            # Tunnel owns the plain WG UDP port on this relay. Never bring
+            # kernel plain WG back up here — even when Xray is temporarily
+            # down — or dokodemo cannot bind and Xray stays dead (timeout).
+            tunnel_plain_delegated = True
+            if plain_wg_enabled(cfg):
+                try:
+                    if cfg.interface:
+                        client.down(cfg.interface)
+                except Exception:
+                    pass
+            xray_ready = bool(relay_tunnel_xray_ready(node_object))
+            if xray_ready:
                 logger.info(
-                    "WireGuard on relay node %s delegated to tunnel; native interface stopped",
+                    "Plain WireGuard on relay node %s delegated to tunnel; "
+                    "native plain interface stopped (AWG stays local)",
                     dbnode.id,
                 )
-                from app.wireguard.host_sync import sync_panel_exit_wireguard
-
-                sync_panel_exit_wireguard(db, peers=peers)
-                open_node_listen_ports(dbnode, node_object=node_object, client=client)
-                return True
             from app.wireguard.host_sync import sync_panel_exit_wireguard
 
             sync_panel_exit_wireguard(db, peers=peers)
-            logger.warning(
-                "Relay node %s: Xray tunnel relay not running; panel exit synced "
-                "(native WG left down until Xray starts or explicit restore)",
-                dbnode.id,
-            )
-            open_node_listen_ports(dbnode, node_object=node_object, client=client)
-            return True
+            if not xray_ready:
+                logger.warning(
+                    "Relay node %s: Xray tunnel relay not running; panel exit synced "
+                    "(native plain WG kept down so dokodemo can bind; AWG still applied below)",
+                    dbnode.id,
+                )
+            # When only plain is enabled, panel-exit sync is the whole job.
+            if not amneziawg_enabled(cfg):
+                open_node_listen_ports(dbnode, node_object=node_object, client=client)
+                return True
+            # else fall through and apply AWG (and any non-plain) specs on the relay
     except Exception as exc:
         logger.warning(
             "WireGuard tunnel delegation on node %s failed: %s",
             dbnode.id,
             exc,
         )
+        tunnel_plain_delegated = False
 
     try:
         if autoscale_enabled() and plain_wg_enabled(cfg) and amneziawg_enabled(cfg):
@@ -543,10 +581,14 @@ def sync_node(db, dbnode, *, peers: Optional[List[WGUserPeer]] = None, node_obje
             return True
         else:
             specs = build_node_specs(cfg, peers)
+            if tunnel_plain_delegated and cfg.interface:
+                # Never re-up plain on the relay while the tunnel owns that port.
+                specs = [s for s in specs if s.get("interface") != cfg.interface]
         if not specs:
-            # Still open firewall for Xray-native-only stacks.
+            # Xray-native-only or fully disabled: kernel ifaces already torn
+            # down above; still refresh firewall for any remaining UDP ports.
             open_node_listen_ports(dbnode, node_object=node_object, client=client)
-            return False
+            return True
         client.apply_specs(specs)
         open_node_listen_ports(dbnode, node_object=node_object, client=client)
         try:

@@ -195,6 +195,7 @@ export interface NodeItem {
   provision_message?: string | null;
   provision_progress?: number | null;
   provision_step?: string | null;
+  control_tunneled?: boolean;
   wireguard?: ({
     public_key?: string | null;
     endpoint?: string | null;

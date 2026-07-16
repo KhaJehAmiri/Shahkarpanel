@@ -57,8 +57,11 @@ COPY --from=build /usr/local/share/xray /usr/local/share/xray
 # daemon. Shipping the client in the image (instead of bind-mounting the
 # host's /usr/bin/docker + cli-plugins, as before) removes a host-binary
 # trust dependency from docker-compose.yml (see AUDIT_FINDINGS.md C5).
+# postgresql-client tracks Debian's default (17 on trixie) and must match
+# docker-compose.postgres.yml (postgres:17-alpine) so pg_dump/pg_restore
+# archive formats stay compatible with the live server.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git docker-cli docker-compose docker-buildx util-linux procps iproute2 iptables wireguard-tools postgresql-client \
+    && apt-get install -y --no-install-recommends git docker-cli docker-compose docker-buildx util-linux procps iproute2 iptables wireguard-tools postgresql-client openssh-client sshpass \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 1000 nexuspanel 2>/dev/null || true \
     && useradd --uid 1000 --gid 1000 --create-home --home-dir /home/nexuspanel nexuspanel 2>/dev/null || true

@@ -104,6 +104,28 @@ def _panel_finish_registration(node_id: int) -> bool:
         node_id = dbnode.id
 
     logger.info("Finished provisioning registration for node %s from panel", node_id)
+    # Prefer an SSH control tunnel right after provision — some routes drop
+    # direct RPyC application data even when TLS handshakes succeed.
+    try:
+        from app.control_tunnel import ensure_node_tunnel, has_ssh_for_host
+
+        with GetDB() as db:
+            dbnode = crud.get_node_by_id(db, node_id)
+            host = (
+                (getattr(dbnode, "provision_host", None) or dbnode.address or "").strip()
+                if dbnode
+                else ""
+            )
+            port = dbnode.port if dbnode else 62050
+            api_port = dbnode.api_port if dbnode else 62051
+        if host and has_ssh_for_host(host):
+            ensure_node_tunnel(
+                node_id, host, remote_port=port, remote_api_port=api_port
+            )
+    except Exception as exc:
+        logger.warning(
+            "Could not pre-start control tunnel for node %s: %s", node_id, exc
+        )
     xray_ops.connect_node(node_id)
     return True
 
@@ -219,6 +241,29 @@ def _run_job(job_id: str, creds: provisioning.SSHCredentials, command: str,
             job.finished_at = time.time()
             _extras.pop(job_id, None)
         _set_node_provision(job.node_id, status="registered", message=None)
+        try:
+            from app.control_tunnel import ensure_node_tunnel
+            from app.xray import operations as xray_ops
+
+            with GetDB() as db:
+                dbnode = crud.get_node_by_id(db, job.node_id)
+                remote_port = dbnode.port if dbnode else 62050
+                remote_api = dbnode.api_port if dbnode else 62051
+            ensure_node_tunnel(
+                job.node_id,
+                creds.host,
+                remote_port=remote_port,
+                remote_api_port=remote_api,
+                ssh_port=getattr(creds, "port", 22) or 22,
+                username=getattr(creds, "username", "root") or "root",
+            )
+            xray_ops.connect_node(job.node_id)
+        except Exception as exc:
+            logger.warning(
+                "Post-provision control tunnel/reconnect for node %s: %s",
+                job.node_id,
+                exc,
+            )
     except Exception as exc:
         stop.set()
         err = _clip_provision_message(str(exc)) or str(exc)

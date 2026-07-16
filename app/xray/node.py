@@ -696,7 +696,19 @@ class RPyCXRayNode:
     def start(self, config: XRayConfig):
         config = self._prepare_config(config)
         json_config = config.to_json()
-        self.remote.start(json_config)
+        # Large WG/Finalmask configs (thousands of peers) routinely exceed the
+        # default 15s RPyC sync timeout and surface as "result expired", leaving
+        # the node without Xray (UDP 51820/51901 timeout for clients).
+        prev = None
+        conn = getattr(self, "connection", None)
+        try:
+            if conn is not None:
+                prev = conn._config.get("sync_request_timeout")
+                conn._config["sync_request_timeout"] = max(int(prev or 15), 180)
+            self.remote.start(json_config)
+        finally:
+            if conn is not None and prev is not None:
+                conn._config["sync_request_timeout"] = prev
         self.started = True
 
         # connect to API

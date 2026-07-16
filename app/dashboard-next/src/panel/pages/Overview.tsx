@@ -14,7 +14,8 @@ import { SystemVitals } from "../components/viz/SystemVitals";
 import { LiveValue } from "../components/viz/LiveValue";
 import { Card, SkeletonRows, Callout, Button, EmptyState, useToast } from "../components/ui";
 import { RankBars, Sparkline } from "../components/charts";
-import { IcUsers, IcServer, IcBolt, IcRefresh, IcMonitor } from "../components/icons";
+import { IcUsers, IcServer, IcBolt, IcRefresh, IcMonitor, IcDownload } from "../components/icons";
+import { BackupRestoreModal } from "../components/BackupRestoreModal";
 
 type NodeUsageRow = { node_id: number | null; node_name: string; uplink: number; downlink: number };
 type ProtocolUsageRow = { protocol: string; used_traffic: number };
@@ -211,8 +212,10 @@ const LiveHero: FC<{
 
 export const Overview: FC = () => {
   const { t, i18n } = useTranslation();
-  const { admin, isEnabled } = useApp();
+  const { admin, isEnabled, hasPermission } = useApp();
   const { setOpen } = useCopilot();
+  const [backupOpen, setBackupOpen] = useState(false);
+  const canBackup = hasPermission("backup:read");
   const sys = useFetch<SystemStats>(() => api.get("/system"), []);
   const top = useFetch<TopUser[]>(() => api.get("/analytics/top-users?limit=8"), []);
   const protoUsage = useFetch<ProtocolUsageRow[]>(() => api.get("/analytics/usage-by-protocol"), []);
@@ -320,10 +323,23 @@ export const Overview: FC = () => {
       <PageHeader
         title={t("overview.title")}
         subtitle={t("overview.subtitle")}
-        actions={admin?.is_sudo ? (
-          <Button variant="ghost" onClick={() => setOpen(true)}>{t("overview.openGuide")}</Button>
-        ) : undefined}
+        actions={(
+          <div className="nx-row" style={{ gap: 8, flexWrap: "wrap" }}>
+            {canBackup && (
+              <Button variant="primary" onClick={() => setBackupOpen(true)}>
+                <IcDownload className="nx-ico" /> {t("overview.backupRestore")}
+              </Button>
+            )}
+            {admin?.is_sudo && (
+              <Button variant="ghost" onClick={() => setOpen(true)}>{t("overview.openGuide")}</Button>
+            )}
+          </div>
+        )}
       />
+
+      {canBackup && (
+        <BackupRestoreModal open={backupOpen} onClose={() => setBackupOpen(false)} />
+      )}
 
       {hasUpdate && check && (
         <Callout tone="info" className="compact nx-mb-16">

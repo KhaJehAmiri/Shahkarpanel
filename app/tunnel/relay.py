@@ -113,7 +113,7 @@ def prepare_relay_wireguard_tunnel(db, node_id: int, node_object) -> bool:
     cfg = dbnode.wireguard if dbnode else None
     if cfg is None:
         return False
-    from app.wireguard.sync import amneziawg_enabled, plain_wg_enabled
+    from app.wireguard.sync import plain_wg_enabled
     from app.wireguard.transport import client_for_node
 
     client = client_for_node(node_object)
@@ -122,8 +122,8 @@ def prepare_relay_wireguard_tunnel(db, node_id: int, node_object) -> bool:
     try:
         if plain_wg_enabled(cfg):
             client.down(cfg.interface)
-        if amneziawg_enabled(cfg):
-            client.down(cfg.awg_interface)
+        # AmneziaWG uses a separate UDP port from the tunnel's dokodemo
+        # capture (plain listen_port) — leave AWG running on the relay.
         return True
     except Exception:
         return False

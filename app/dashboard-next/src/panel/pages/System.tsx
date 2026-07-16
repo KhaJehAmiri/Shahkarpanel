@@ -433,13 +433,20 @@ const BackupTab: FC = () => {
     if (schedule.data) setScheduleHours(String(schedule.data.interval_hours || 0));
   }, [schedule.data]);
 
-  const create = async () => {
+  const downloadNow = async () => {
     setBusy(true);
-    try { await api.post("/backup"); toast.push(t("system.backupCreated"), "success"); reload(); }
-    catch (e: any) { toast.push(e.message, "error"); } finally { setBusy(false); }
+    try {
+      await api.download("/backup/download", "nexuspanel-backup.dump");
+      toast.push(t("system.backupDownloaded"), "success");
+      reload();
+    } catch (e: any) {
+      toast.push(e.message, "error");
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const download = async (name: string) => {
+  const downloadStored = async (name: string) => {
     try {
       await api.download(`/backups/${encodeURIComponent(name)}/download`, name);
     } catch (e: any) {
@@ -447,7 +454,7 @@ const BackupTab: FC = () => {
     }
   };
 
-  const onUploadFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const onRestoreFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
@@ -456,11 +463,10 @@ const BackupTab: FC = () => {
     try {
       const form = new FormData();
       form.append("file", file);
-      const up = await api.upload<{ filename: string }>("/backups/upload", form);
-      toast.push(t("system.backupUploaded"), "success");
-      await api.post(`/backups/${encodeURIComponent(up.filename)}/restore`);
-      toast.push(t("system.restoreDone"), "success");
-      reload();
+      await api.upload<{ filename: string; restarting?: boolean }>("/backup/restore", form);
+      toast.push(t("system.restoreDoneRestarting"), "success");
+      // Panel restarts shortly — give the toast a moment, then reload list if still up.
+      setTimeout(() => { try { reload(); } catch { /* panel may be restarting */ } }, 2500);
     } catch (e: any) {
       toast.push(e.message, "error");
     } finally {
@@ -484,28 +490,31 @@ const BackupTab: FC = () => {
 
   return (
     <Card>
-      <CardHead
-        title={t("system.tabBackup")}
-        actions={canWrite ? (
+      <CardHead title={t("system.tabBackup")} />
+      <p className="nx-card-desc" style={{ marginBottom: 16 }}>
+        {t("system.backupIntro")}
+      </p>
+      <div className="nx-row" style={{ gap: 10, flexWrap: "wrap", marginBottom: 18 }}>
+        <Button variant="primary" disabled={busy} onClick={downloadNow}>
+          <IcDownload className="nx-ico" /> {t("system.downloadBackup")}
+        </Button>
+        {canWrite && (
           <>
             <input
               ref={uploadRef}
               type="file"
-              accept=".tar.gz,.tgz,application/gzip"
+              accept=".dump,.db,.sql,.tar.gz,.tgz,application/gzip,application/octet-stream"
               style={{ display: "none" }}
-              onChange={onUploadFile}
+              onChange={onRestoreFile}
             />
-            <Button variant="ghost" disabled={busy} onClick={() => uploadRef.current?.click()}>
-              {t("system.uploadRestore")}
-            </Button>
-            <Button variant="primary" disabled={busy} onClick={create}>
-              <IcPlus className="nx-ico" /> {t("system.createBackup")}
+            <Button variant="danger" disabled={busy} onClick={() => uploadRef.current?.click()}>
+              {t("system.restoreBackup")}
             </Button>
           </>
-        ) : undefined}
-      />
+        )}
+      </div>
       {schedule.data && (
-        <div className="nx-stack" style={{ gap: 10, marginBottom: 14 }}>
+        <div className="nx-stack" style={{ gap: 10, marginBottom: 18 }}>
           <Callout tone={schedule.data.enabled ? "ok" : "info"}>
             {schedule.data.enabled
               ? t("system.backupScheduleOn", {
@@ -532,7 +541,7 @@ const BackupTab: FC = () => {
               <div key={b} className="nx-row" style={{ justifyContent: "space-between", background: "var(--nx-surface-2)", padding: "10px 14px", borderRadius: 8 }}>
                 <span className="nx-mono" style={{ fontSize: 12 }}>{b}</span>
                 <div className="nx-row" style={{ gap: 6 }}>
-                  <Button size="sm" variant="ghost" onClick={() => download(b)}>
+                  <Button size="sm" variant="ghost" onClick={() => downloadStored(b)}>
                     <IcDownload className="nx-ico" /> {t("system.download")}
                   </Button>
                   {canWrite && (
@@ -541,7 +550,7 @@ const BackupTab: FC = () => {
                       setBusy(true);
                       try {
                         await api.post(`/backups/${encodeURIComponent(b)}/restore`);
-                        toast.push(t("system.restoreDone"), "success");
+                        toast.push(t("system.restoreDoneRestarting"), "success");
                       } catch (e: any) { toast.push(e.message, "error"); } finally { setBusy(false); }
                     }}>{t("system.restore")}</Button>
                   )}

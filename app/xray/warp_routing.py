@@ -29,11 +29,28 @@ WARP_DNS_DIRECT_RULE: dict[str, Any] = {
     "outboundTag": "DIRECT",
 }
 
+# Keep LAN / RFC1918 off WARP — otherwise captive portals and local APIs hang.
+WARP_PRIVATE_DIRECT_RULE: dict[str, Any] = {
+    "type": "field",
+    "ip": ["geoip:private"],
+    "outboundTag": "DIRECT",
+}
+
 WARP_DEFAULT_RULE: dict[str, Any] = {
     "type": "field",
     "network": "tcp,udp",
     "outboundTag": "warp",
 }
+
+# Client WG MTU when the node exits via WARP (outer tunnel is 1280).
+WARP_NESTED_CLIENT_MTU = 1280
+WARP_OUTBOUND_MTU = 1280
+WARP_OUTBOUND_WORKERS = 4
+
+# Plain UDP resolvers — DoH through WARP causes recursive latency (apps hang
+# while small Cloudflare IP checks still succeed).
+WARP_PLAIN_DNS_SERVERS = ["1.1.1.1", "8.8.8.8", "1.0.0.1"]
+
 
 DEFAULT_WARP_ENDPOINT_HOST = "engage.cloudflareclient.com"
 DEFAULT_WARP_ENDPOINT_PORT = 2408
@@ -150,10 +167,14 @@ def _ensure_warp_outbound_settings(outbound: dict[str, Any]) -> bool:
     if not isinstance(settings, dict):
         return False
     changed = False
-    if settings.get("mtu") in (None, 0):
-        settings["mtu"] = 1280
+    # Always pin WARP MTU — a higher value black-holes large HTTPS packets.
+    if settings.get("mtu") != WARP_OUTBOUND_MTU:
+        settings["mtu"] = WARP_OUTBOUND_MTU
         changed = True
-    if "noKernelTun" not in settings:
+    if settings.get("workers") != WARP_OUTBOUND_WORKERS:
+        settings["workers"] = WARP_OUTBOUND_WORKERS
+        changed = True
+    if settings.get("noKernelTun") is not True:
         settings["noKernelTun"] = True
         changed = True
     if _pin_warp_endpoint_ip(outbound):
@@ -279,6 +300,45 @@ def strip_warp_from_config(
     return data
 
 
+def apply_warp_dns_for_exit(payload: dict[str, Any]) -> dict[str, Any]:
+    """Replace DoH DNS with plain UDP resolvers when WARP is the default exit.
+
+    ``https://1.1.1.1/dns-query`` would otherwise be routed through the WARP
+    catch-all (TCP/443), so every name lookup waits on the tunnel — apps never
+    open even though Cloudflare IP detection works.
+    """
+    data = deepcopy(payload)
+    dns = data.get("dns")
+    if not isinstance(dns, dict):
+        dns = {}
+    servers_in = list(dns.get("servers") or [])
+    servers_out: list[Any] = []
+    for s in servers_in:
+        if isinstance(s, str):
+            if s.startswith("https://") or s.startswith("h3://") or s.startswith("quic://"):
+                continue
+            servers_out.append(s)
+            continue
+        if isinstance(s, dict):
+            addr = str(s.get("address") or "")
+            if addr.startswith("https://") or addr.startswith("h3://") or addr.startswith("quic://"):
+                continue
+            servers_out.append(s)
+            continue
+        servers_out.append(s)
+    have = {s for s in servers_out if isinstance(s, str)}
+    for plain in WARP_PLAIN_DNS_SERVERS:
+        if plain not in have:
+            servers_out.append(plain)
+            have.add(plain)
+    if not servers_out:
+        servers_out = list(WARP_PLAIN_DNS_SERVERS)
+    dns["servers"] = servers_out
+    dns.setdefault("queryStrategy", "UseIPv4")
+    data["dns"] = dns
+    return data
+
+
 def ensure_warp_exit(
     payload: dict[str, Any],
     outbound: dict[str, Any],
@@ -302,6 +362,7 @@ def ensure_warp_exit(
     data["outbounds"] = outbounds
     data = apply_warp_safe_routing(data)
     if as_default_exit:
+        data = apply_warp_dns_for_exit(data)
         routing = data.setdefault("routing", {"domainStrategy": "IPIfNonMatch", "rules": []})
         rules = [
             r
@@ -315,11 +376,46 @@ def ensure_warp_exit(
                 and _is_catch_all_network_rule(r)
             )
         ]
+        # Prefer bootstrap rules at the front so inbound→tunnel rules cannot
+        # shadow Cloudflare/DNS/private DIRECT escapes for general traffic.
+        front: list[dict[str, Any]] = []
+        if not _has_warp_bypass(rules):
+            front.append(dict(WARP_BYPASS_RULE))
+        if not _has_private_direct_rule(rules):
+            front.append(dict(WARP_PRIVATE_DIRECT_RULE))
+        if not _has_dns_direct_rule(rules):
+            front.append(dict(WARP_DNS_DIRECT_RULE))
+        # Move existing bootstrap rules to the front too.
+        bootstrap: list[dict[str, Any]] = []
+        rest: list[dict[str, Any]] = []
+        for r in rules:
+            ot = str(r.get("outboundTag") or "")
+            if ot == "DIRECT" and (
+                (isinstance(r.get("domain"), list) and any(
+                    DEFAULT_WARP_ENDPOINT_HOST in str(d) for d in (r.get("domain") or [])
+                ))
+                or (isinstance(r.get("ip"), list) and any(
+                    "geoip:private" in str(i) for i in (r.get("ip") or [])
+                ))
+                or (str(r.get("port") or "") == "53")
+            ):
+                bootstrap.append(r)
+            else:
+                rest.append(r)
         rule = dict(WARP_DEFAULT_RULE)
         rule["outboundTag"] = tag
-        rules.append(rule)
-        routing["rules"] = _dedupe_rules(rules)
+        routing["rules"] = _dedupe_rules(front + bootstrap + rest + [rule])
     return data
+
+
+def _has_private_direct_rule(rules: list[dict[str, Any]]) -> bool:
+    for rule in rules:
+        if str(rule.get("outboundTag") or "") != "DIRECT":
+            continue
+        ips = rule.get("ip") or []
+        if isinstance(ips, list) and any("geoip:private" in str(i) for i in ips):
+            return True
+    return False
 
 
 def apply_warp_safe_routing(payload: dict[str, Any]) -> dict[str, Any]:
@@ -351,6 +447,10 @@ def apply_warp_safe_routing(payload: dict[str, Any]) -> dict[str, Any]:
 
     if not _has_warp_bypass(rules):
         rules.insert(insert_at, dict(WARP_BYPASS_RULE))
+        insert_at += 1
+
+    if not _has_private_direct_rule(rules):
+        rules.insert(insert_at, dict(WARP_PRIVATE_DIRECT_RULE))
         insert_at += 1
 
     if not _has_dns_direct_rule(rules):

@@ -118,6 +118,11 @@ export const NodesTab: FC<{ resellerMode?: boolean }> = ({ resellerMode }) => {
                         ) : (
                           <>
                             <Pill tone={statusTone(n.status)} dot>{t(`users.status.${n.status}`, n.status)}</Pill>
+                            {n.control_tunneled ? (
+                              <div className="nx-faint" style={{ fontSize: 11, marginTop: 4 }}>
+                                {t("infra.controlTunneled")}
+                              </div>
+                            ) : null}
                             {n.message ? <div className="nx-faint" style={{ fontSize: 11 }}>{n.message}</div> : null}
                           </>
                         )}

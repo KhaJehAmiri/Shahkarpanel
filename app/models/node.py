@@ -171,6 +171,8 @@ class NodeResponse(Node):
     provision_message: Optional[str] = None
     provision_progress: Optional[int] = None
     provision_step: Optional[str] = None
+    # True when panel↔node control is going through the auto SSH tunnel.
+    control_tunneled: bool = False
     model_config = ConfigDict(from_attributes=True)
 
 

@@ -115,7 +115,12 @@ def _clash_wireguard_proxy(
     return proxy
 
 
-def _collect_wireguard_exports(user: "UserResponse", wg_nodes: list) -> list[tuple[str, str, object, dict, str, int, str, Optional[dict]]]:
+def _collect_wireguard_exports(
+    user: "UserResponse",
+    wg_nodes: list,
+    *,
+    prefer_xray_native: bool = False,
+) -> list[tuple[str, str, object, dict, str, int, str, Optional[dict]]]:
     """Return (variant, tag, wg_node, settings, host, port, local_addr, noise) tuples.
 
     ``variant`` is one of ``"plain"``, ``"awg"``, or ``"xray_native"``. The
@@ -124,6 +129,10 @@ def _collect_wireguard_exports(user: "UserResponse", wg_nodes: list) -> list[tup
     only Xray-core outbound consumers (the v2ray-json export) should honour
     it; sing-box/clash-meta have no Finalmask support and must skip it, since
     dialing that port without the matching noise wrapper simply fails.
+
+    When ``prefer_xray_native`` is True (v2ray-json / Xray app imports) and the
+    node has Finalmask enabled, plain/awg exports for that node are omitted so
+    clients do not try to import stock WireGuard that Xray apps cannot use.
     """
     from app.wireguard.xray_native import DEFAULT_NOISE_SETTINGS, xray_native_wg_enabled
 
@@ -136,24 +145,30 @@ def _collect_wireguard_exports(user: "UserResponse", wg_nodes: list) -> list[tup
     for wg in wg_nodes:
         if not wg.wireguard:
             continue
-        for variant in ("plain", "awg"):
-            try:
-                if not user_config(settings, wg, variant=variant):
+        native_ok = bool(
+            xray_native_wg_enabled(wg.wireguard) and settings.get("private_key")
+        )
+        # Xray apps import Finalmask JSON, not wireguard:// / plain WG.
+        emit_direct = not (prefer_xray_native and native_ok)
+        if emit_direct:
+            for variant in ("plain", "awg"):
+                try:
+                    if not user_config(settings, wg, variant=variant):
+                        continue
+                    endpoints = node_host_endpoints(wg, variant=variant)
+                except Exception:
                     continue
-                endpoints = node_host_endpoints(wg, variant=variant)
-            except Exception:
-                continue
-            if not endpoints:
-                continue
-            addr = settings.get("awg_address" if variant == "awg" else "address") or ""
-            for i, ep in enumerate(endpoints):
-                host, port_str = ep.rsplit(":", 1)
-                # Strip IPv6 brackets from host for outbound JSON fields.
-                host_clean = host[1:-1] if host.startswith("[") and host.endswith("]") else host
-                suffix = "" if i == 0 else f"-h{i + 1}"
-                tag = f"wg-{wg.name}" + ("-awg" if variant == "awg" else "") + suffix
-                exports.append((variant, tag, wg, settings, host_clean, int(port_str), addr, None))
-        if xray_native_wg_enabled(wg.wireguard) and settings.get("private_key"):
+                if not endpoints:
+                    continue
+                addr = settings.get("awg_address" if variant == "awg" else "address") or ""
+                for i, ep in enumerate(endpoints):
+                    host, port_str = ep.rsplit(":", 1)
+                    # Strip IPv6 brackets from host for outbound JSON fields.
+                    host_clean = host[1:-1] if host.startswith("[") and host.endswith("]") else host
+                    suffix = "" if i == 0 else f"-h{i + 1}"
+                    tag = f"wg-{wg.name}" + ("-awg" if variant == "awg" else "") + suffix
+                    exports.append((variant, tag, wg, settings, host_clean, int(port_str), addr, None))
+        if native_ok:
             # Prefer Hosts / plain endpoint host, swap in the noise inbound port.
             # Always emit even when plain/awg .conf can't be built so Finalmask
             # reaches the v2ray-json subscription.
@@ -180,6 +195,9 @@ def _collect_wireguard_exports(user: "UserResponse", wg_nodes: list) -> list[tup
                     addr,
                     wg.wireguard.xray_wg_noise or DEFAULT_NOISE_SETTINGS,
                 ))
+            elif prefer_xray_native and emit_direct is False:
+                # Finalmask preferred but no client address yet — nothing to emit.
+                pass
     return exports
 
 
@@ -557,7 +575,7 @@ def _append_v2ray_json(user: "UserResponse", config_text: str) -> str:
     with GetDB() as db:
         nodes = [n for n in crud.get_nodes(db) if n.status == NodeStatus.connected]
         wg_nodes = [n for n in nodes if n.core_kind == "wireguard" or getattr(n, "wireguard", None)]
-        exports = _collect_wireguard_exports(user, wg_nodes)
+        exports = _collect_wireguard_exports(user, wg_nodes, prefer_xray_native=True)
         if not exports:
             return config_text
 
@@ -672,8 +690,21 @@ def collect_unified_share_links(user: "UserResponse") -> list[str]:
 
         settings = _client_settings(user, ProxyTypes.WireGuard)
         if settings:
+            from app.wireguard.xray_native import xray_native_wg_enabled
+
             for wg in wg_nodes:
                 if not wg.wireguard:
+                    continue
+                # 3x-ui style: when Finalmask (Xray-native WG) is on, base64
+                # share links must target that inbound — not kernel plain WG.
+                # Xray apps importing wireguard:// otherwise dial the wrong port.
+                if xray_native_wg_enabled(wg.wireguard):
+                    remark = f"{user.username}-{wg.name}-xray"
+                    uri = user_share_link(
+                        settings, wg, variant="xray_native", remark=remark, db=db,
+                    )
+                    if uri:
+                        links.append(uri)
                     continue
                 for variant in ("plain", "awg"):
                     remark = f"{user.username}-{wg.name}" + ("-awg" if variant == "awg" else "")

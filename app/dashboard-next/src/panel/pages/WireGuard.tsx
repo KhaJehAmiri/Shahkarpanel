@@ -131,10 +131,6 @@ const AmneziaNodeCard: FC<{
   };
 
   const saveStack = async () => {
-    if (!plainOn && !awgOn && !xrayOn) {
-      toast.push(t("wireguard.stackRequired"), "error");
-      return;
-    }
     setBusy(true);
     try {
       const directRaw = directPort.trim();

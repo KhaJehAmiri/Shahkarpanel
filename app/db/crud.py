@@ -2166,8 +2166,11 @@ def set_node_wg_stack(
     if awg_enabled is not None:
         cfg.awg_enabled = awg_enabled
         if awg_enabled:
+            # ensure_awg_server_keys may commit when minting keys; do NOT
+            # refresh here — a refresh would discard other dirty fields on
+            # ``cfg`` (notably ``plain_enabled``) that have not been committed
+            # yet, so "enable plain + awg" silently dropped plain.
             ensure_awg_server_keys(db, dbnode)
-            db.refresh(cfg)
             if cfg.awg_jc is None:
                 from app.wireguard.awg import random_awg_preset
                 for field, value in random_awg_preset().items():
@@ -2182,8 +2185,8 @@ def set_node_wg_stack(
         cfg.awg_endpoint = _normalize_wg_client_endpoint(
             awg_endpoint, int(cfg.awg_listen_port or 51821),
         )
-    if not cfg.plain_enabled and not cfg.awg_enabled:
-        raise ValueError("At least one of plain WireGuard or AmneziaWG must stay enabled")
+    # All modes may be off (Xray-native-only, or fully disabled). Sync tears
+    # down kernel interfaces when plain/AWG are disabled.
     db.commit()
     db.refresh(cfg)
     return cfg

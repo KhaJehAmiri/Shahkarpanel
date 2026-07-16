@@ -114,11 +114,16 @@ def wireguard_share_link(
     keepalive: Optional[int] = None,
     dns: Optional[str] = None,
     remark: str = "",
+    finalmask: Optional[dict] = None,
 ) -> str:
     """Build a v2rayNG / 3x-ui compatible ``wireguard://`` subscription link.
 
     Format mirrors 3x-ui ``genWireguardLink``:
     ``wireguard://<privateKey>@host:port?publickey=...&address=<client-ip>&mtu=...#remark``
+
+    When ``finalmask`` is set (Xray-native / Finalmask inbound), it is embedded
+    as the compact ``fm=<json>`` query field used by v2rayN-compatible clients
+    (same field 3x-ui uses on VLESS/other share links).
     """
     from urllib.parse import quote, urlencode
 
@@ -137,6 +142,11 @@ def wireguard_share_link(
         params["keepalive"] = str(keepalive)
     if dns:
         params["dns"] = dns
+    if finalmask:
+        import json
+
+        # Compact JSON — clients parse ``fm`` then apply streamSettings.finalmask.
+        params["fm"] = json.dumps(finalmask, separators=(",", ":"), ensure_ascii=False)
 
     uri = f"{link}?{urlencode(params, quote_via=lambda s, *_a, **_kw: quote(s, safe=''))}"
     if remark:
@@ -263,6 +273,44 @@ def user_share_link(
 ) -> Optional[str]:
     """Build a subscription share link for one user on one WG node."""
     cfg = dbnode.wireguard
+    if cfg is None:
+        return None
+
+    # Xray-native WireGuard + Finalmask (3x-ui style): point at the noise
+    # inbound port and embed ``fm=`` so Xray apps do not dial kernel plain WG.
+    if variant == "xray_native":
+        from app.wireguard.xray_native import DEFAULT_NOISE_SETTINGS, xray_native_wg_enabled
+
+        if not xray_native_wg_enabled(cfg):
+            return None
+        private_key = user_settings.get("private_key")
+        local_address = user_settings.get("address") or user_settings.get("awg_address") or ""
+        server_public_key = str(getattr(cfg, "public_key", "") or "")
+        if not private_key or not local_address or not server_public_key:
+            return None
+        try:
+            host = node_endpoint(dbnode, variant="plain", db=db).rsplit(":", 1)[0]
+        except Exception:
+            host = public_dial_host(dbnode)
+        if host.startswith("[") and host.endswith("]"):
+            host = host[1:-1]
+        if not host:
+            return None
+        noise = getattr(cfg, "xray_wg_noise", None) or DEFAULT_NOISE_SETTINGS
+        return wireguard_share_link(
+            private_key=private_key,
+            server=host,
+            port=int(cfg.xray_wg_listen_port),
+            server_public_key=server_public_key,
+            local_address=local_address,
+            mtu=int(getattr(cfg, "xray_wg_mtu", None) or cfg.mtu or 1420),
+            preshared_key=user_settings.get("preshared_key"),
+            keepalive=DEFAULT_KEEPALIVE,
+            dns=getattr(cfg, "dns", None),
+            remark=remark,
+            finalmask={"udp": [{"type": "noise", "settings": noise}]},
+        )
+
     if variant == "awg" and _awg_requires_conf_download(cfg):
         # Amnezia / AWG clients must import ``/sub/{token}/wireguard?variant=awg``.
         return None

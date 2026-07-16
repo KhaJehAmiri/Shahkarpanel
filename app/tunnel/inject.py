@@ -300,16 +300,28 @@ def _apply_panel_exit_warp(config, db, exit_tunnels: List) -> dict:
                 continue
             warp_by_tag[tag] = outbound
 
+        exit_tag = f"tunnel-{t.id}-exit"
+        # WireGuard-over-tunnel dokodemo dials 127.0.0.1:<wg_port> on the panel.
+        # That must stay on DIRECT/freedom — sending it through WARP blackholes
+        # handshakes while VLESS/user traffic can still use WARP.
         pins.append(
             {
                 "type": "field",
-                "inboundTag": [f"tunnel-{t.id}-exit"],
+                "inboundTag": [exit_tag],
+                "ip": ["127.0.0.1", "::1"],
+                "outboundTag": "DIRECT",
+            }
+        )
+        pins.append(
+            {
+                "type": "field",
+                "inboundTag": [exit_tag],
                 "outboundTag": tag,
             }
         )
         logger.info(
-            "Panel tunnel exit tunnel-%s-exit → WARP outbound %s (relay node %s)",
-            t.id,
+            "Panel tunnel exit %s → WARP %s (relay %s; localhost WG kept DIRECT)",
+            exit_tag,
             tag,
             relay_id,
         )

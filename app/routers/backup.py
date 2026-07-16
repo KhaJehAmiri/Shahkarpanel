@@ -24,6 +24,7 @@ def _resolve_backup(filename: str) -> str:
         raise HTTPException(status_code=404, detail="Backup not found")
     return match
 
+
 router = APIRouter(
     tags=["Backup"],
     prefix="/api",
@@ -36,74 +37,66 @@ _backup_write = Depends(require_permission("backup:write"))
 
 class BackupResponse(BaseModel):
     path: str
+    filename: str = ""
 
 
-@router.post("/backup", response_model=BackupResponse)
-def create_backup(_: Admin = _backup_write):
-    """Create a backup archive now."""
-    path = backup_module.create_backup()
-    return BackupResponse(path=path)
+@router.get("/backup/download")
+def download_backup_now(_: Admin = _backup_read):
+    """Create a fresh DB backup and download it immediately (3x-ui style)."""
+    try:
+        path, name = backup_module.create_downloadable_backup()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    media = "application/octet-stream"
+    lower = name.lower()
+    if lower.endswith(".dump"):
+        media = "application/vnd.postgresql.dump"
+    elif lower.endswith(".tar.gz") or lower.endswith(".tgz"):
+        media = "application/gzip"
+    return FileResponse(path, media_type=media, filename=name)
 
 
-@router.get("/backups", response_model=List[str])
-def list_backups(_: Admin = _backup_read):
-    """List available backup archives."""
-    return [os.path.basename(p) for p in backup_module.list_backups()]
-
-
-@router.get("/backups/{filename}/download")
-def download_backup_archive(
-    filename: str,
-    _: Admin = _backup_read,
-):
-    """Download a backup archive so it can be stored off-server."""
-    match = _resolve_backup(filename)
-    return FileResponse(
-        match,
-        media_type="application/gzip",
-        filename=os.path.basename(match),
-    )
-
-
-@router.post("/backups/upload")
-async def upload_backup_archive(
+@router.post("/backup/restore")
+async def restore_backup_upload(
     file: UploadFile = File(...),
     _: Admin = _backup_write,
 ):
-    """Upload a previously downloaded ``.tar.gz`` backup so it can be restored."""
-    name = (file.filename or "backup.tar.gz").strip()
-    if not name.lower().endswith((".tar.gz", ".tgz")):
-        raise HTTPException(status_code=400, detail="Backup must be a .tar.gz archive")
+    """Upload a backup and restore it in one step (3x-ui style). Panel restarts after."""
+    name = (file.filename or "backup").strip()
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Empty backup file")
     if len(content) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=400, detail="Backup file too large")
     try:
-        stored = backup_module.save_uploaded_backup(content, name)
+        stored = backup_module.restore_from_bytes(content, name)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except OSError as exc:
-        raise HTTPException(status_code=500, detail=f"Cannot save backup: {exc}") from exc
-    return {"filename": stored}
-
-
-@router.post("/backups/{filename}/restore")
-def restore_backup_archive(
-    filename: str,
-    _: Admin = _backup_write,
-):
-    """Restore a named backup archive (SQLite: automatic; PG: extracts SQL dump)."""
-    match = _resolve_backup(filename)
-    try:
-        backup_module.restore_backup(match)
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Backup not found")
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    return {"detail": "Backup restored"}
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Restore failed: {exc}") from exc
+    return {
+        "detail": "Backup restored",
+        "filename": stored,
+        "restarting": True,
+    }
+
+
+@router.post("/backup", response_model=BackupResponse)
+def create_backup(_: Admin = _backup_write):
+    """Create a backup archive on the server (kept under BACKUP_DIR)."""
+    try:
+        path = backup_module.create_backup()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return BackupResponse(path=path, filename=os.path.basename(path))
+
+
+@router.get("/backups", response_model=List[str])
+def list_backups(_: Admin = _backup_read):
+    """List available backup archives on the server."""
+    return [os.path.basename(p) for p in backup_module.list_backups()]
 
 
 @router.get("/backups/schedule")
@@ -133,3 +126,69 @@ def update_backup_schedule(
     set_value("backup_interval_hours", hours)
     reschedule_backup_job()
     return {"enabled": hours > 0, "interval_hours": hours}
+
+
+@router.post("/backups/upload")
+async def upload_backup_archive(
+    file: UploadFile = File(...),
+    _: Admin = _backup_write,
+):
+    """Upload a backup file to the server without restoring it yet."""
+    name = (file.filename or "backup").strip()
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Empty backup file")
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=400, detail="Backup file too large")
+    try:
+        stored = backup_module.save_uploaded_backup(content, name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Cannot save backup: {exc}") from exc
+    return {"filename": stored}
+
+
+@router.get("/backups/{filename}/download")
+def download_backup_archive(
+    filename: str,
+    _: Admin = _backup_read,
+):
+    """Download a previously stored backup from the server."""
+    match = _resolve_backup(filename)
+    return FileResponse(
+        match,
+        media_type="application/octet-stream",
+        filename=os.path.basename(match),
+    )
+
+
+@router.post("/backups/{filename}/restore")
+def restore_backup_archive(
+    filename: str,
+    _: Admin = _backup_write,
+):
+    """Restore a named backup already stored on the server."""
+    match = _resolve_backup(filename)
+    try:
+        backup_module.restore_backup(match)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Backup not found")
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"detail": "Backup restored", "restarting": True}
+
+
+@router.delete("/backups/{filename}")
+def delete_backup_archive(
+    filename: str,
+    _: Admin = _backup_write,
+):
+    """Delete a stored backup file."""
+    try:
+        backup_module.delete_backup(filename)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Backup not found")
+    return {"detail": "Backup deleted"}

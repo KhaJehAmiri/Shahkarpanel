@@ -339,6 +339,16 @@ def get_nodes(
     out: List[NodeResponse] = []
     for dbnode in list_scoped_nodes(db, admin):
         row = NodeResponse.model_validate(dbnode)
+        try:
+            from app.control_tunnel import is_active as control_tunnel_active
+
+            row.control_tunneled = bool(control_tunnel_active(dbnode.id))
+        except Exception:
+            row.control_tunneled = False
+        if not row.control_tunneled:
+            live = xray.nodes.get(dbnode.id)
+            if live is not None and getattr(live, "control_tunneled", False):
+                row.control_tunneled = True
         job = provision_jobs.progress_for_node(dbnode.id)
         if job:
             row.provision_progress = job.progress
@@ -950,6 +960,7 @@ def set_node_warp(
     Requires a registered WARP account (Outbounds → WARP) for the chosen tag.
     """
     from app.utils import warp as warp_util
+    from app.xray.warp_routing import WARP_NESTED_CLIENT_MTU
 
     tag = (body.tag or "warp").strip() or "warp"
     if body.enabled:
@@ -964,6 +975,15 @@ def set_node_warp(
             )
     dbnode.warp_enabled = bool(body.enabled)
     dbnode.warp_tag = tag
+
+    # Nested WG inside WARP cannot keep MTU 1420 — large HTTPS packets black-hole
+    # while Cloudflare IP checks (small) still succeed. Cap when enabling.
+    cfg = getattr(dbnode, "wireguard", None)
+    if body.enabled and cfg is not None:
+        if int(getattr(cfg, "mtu", 0) or 0) > WARP_NESTED_CLIENT_MTU:
+            cfg.mtu = WARP_NESTED_CLIENT_MTU
+        if int(getattr(cfg, "xray_wg_mtu", 0) or 0) > WARP_NESTED_CLIENT_MTU:
+            cfg.xray_wg_mtu = WARP_NESTED_CLIENT_MTU
     db.commit()
     db.refresh(dbnode)
 
@@ -971,7 +991,15 @@ def set_node_warp(
         from app.db import GetDB, crud
         from app.services.panel_warp_egress import sync_panel_warp_egress
         from app.services.warp_node_sync import sync_node_warp_tproxy
+        from app.wireguard.operations import sync_node as sync_wg_node
 
+        with GetDB() as db:
+            node = crud.get_node_by_id(db, node_id)
+            if node is not None and getattr(node, "wireguard", None) is not None:
+                try:
+                    sync_wg_node(db, node)
+                except Exception:
+                    logger.exception("WARP enable: WG sync failed for node %s", node_id)
         xray.operations.restart_node(node_id)
         with GetDB() as db:
             node = crud.get_node_by_id(db, node_id)

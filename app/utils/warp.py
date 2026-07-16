@@ -118,7 +118,7 @@ def _build_outbound(account: dict, tag: str = "warp") -> dict:
             ],
             "reserved": reserved,
             "mtu": 1280,
-            "workers": 2,
+            "workers": 4,
             "noKernelTun": True,
         },
     }

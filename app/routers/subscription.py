@@ -473,12 +473,9 @@ def user_subscription(
         return _v2ray_json_response(user, response_headers, inbound_filter=inbound_filter)
 
     elif re.match(r'^[Vv]2[Bb]ox', user_agent):
-        # V2Box imports the base64 link list (vless://, vmess://, ss://,
-        # wireguard://) reliably; feeding it the v2ray-json config list — which
-        # is required to carry the Xray-native WireGuard+noise (Finalmask)
-        # outbound — broke normal import in the app, so keep the base64 form.
-        # Users who specifically want the noise-obfuscated WireGuard can fetch
-        # /sub/<token>/v2ray-json explicitly.
+        # V2Box imports the base64 share-link list (vless://, vmess://, …).
+        # Serving v2ray-json broke subscription import in the app.
+        # Finalmask / Xray-native WG: use /sub/<token>/v2ray-json explicitly.
         return _v2ray_base64_response(user, response_headers, inbound_filter=inbound_filter)
 
     elif re.match(r'^v2rayN/(\d+\.\d+)', user_agent):

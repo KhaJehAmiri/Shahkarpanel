@@ -366,27 +366,103 @@ def remove_node(node_id: int):
                 pass
 
 
-def add_node(dbnode: "DBNode"):
+def add_node(
+    dbnode: "DBNode",
+    *,
+    dial_host: str | None = None,
+    dial_port: int | None = None,
+    dial_api_port: int | None = None,
+):
     remove_node(dbnode.id)
 
     tls = get_tls()
-    node = XRayNode(address=dbnode.address,
-                    port=dbnode.port,
-                    api_port=dbnode.api_port,
-                    ssl_key=tls['key'],
-                    ssl_cert=tls['certificate'],
-                    usage_coefficient=dbnode.usage_coefficient,
-                    pinned_cert_sha256=getattr(dbnode, "server_cert_sha256", None))
+    host = (dial_host or dbnode.address or "").strip()
+    port = int(dial_port if dial_port is not None else dbnode.port)
+    api_port = int(dial_api_port if dial_api_port is not None else dbnode.api_port)
+    node = XRayNode(
+        address=host,
+        port=port,
+        api_port=api_port,
+        ssl_key=tls["key"],
+        ssl_cert=tls["certificate"],
+        usage_coefficient=dbnode.usage_coefficient,
+        pinned_cert_sha256=getattr(dbnode, "server_cert_sha256", None),
+    )
     # Tag the live node object with its DB id so callers can recover it from the
     # ``xray.nodes`` values alone (e.g. host-visibility filtering in share.py).
     try:
         node.id = dbnode.id
     except Exception:  # pragma: no cover - defensive
         pass
+    try:
+        node.control_tunneled = bool(
+            dial_host and dial_host.strip() in ("127.0.0.1", "localhost", "::1")
+        )
+    except Exception:
+        pass
     xray.nodes[dbnode.id] = node
 
     return xray.nodes[dbnode.id]
 
+
+def _ssh_host_for_node(dbnode) -> str:
+    return (getattr(dbnode, "provision_host", None) or dbnode.address or "").strip()
+
+
+def _connect_node_session(dbnode, node):
+    """Connect ``node``, falling back to an SSH control tunnel when needed."""
+    try:
+        node.connect()
+        return node
+    except Exception as direct_exc:
+        from app.control_tunnel import (
+            TunnelError,
+            ensure_node_tunnel,
+            has_ssh_for_host,
+        )
+
+        host = _ssh_host_for_node(dbnode)
+        if not has_ssh_for_host(host):
+            raise ConnectionError(
+                f"{direct_exc}. Direct control path failed; re-provision this "
+                "node from the panel over SSH so a control tunnel can be set up."
+            ) from direct_exc
+        try:
+            local_control, local_api = ensure_node_tunnel(
+                dbnode.id,
+                host,
+                remote_port=dbnode.port,
+                remote_api_port=dbnode.api_port,
+            )
+        except TunnelError as tunnel_exc:
+            raise ConnectionError(
+                f"{direct_exc}. Control tunnel failed: {tunnel_exc}"
+            ) from direct_exc
+        logger.info(
+            "Node %s: using SSH control tunnel 127.0.0.1:%s (host %s)",
+            dbnode.id,
+            local_control,
+            host,
+        )
+        tunneled = add_node(
+            dbnode,
+            dial_host="127.0.0.1",
+            dial_port=local_control,
+            dial_api_port=local_api,
+        )
+        tunneled.connect()
+        return tunneled
+
+
+def _prefer_control_tunnel(dbnode) -> object | None:
+    """Rebuild dial target when an SSH control tunnel is already live."""
+    from app.control_tunnel import dial_endpoints
+
+    endpoints = dial_endpoints(dbnode.id)
+    if not endpoints:
+        return None
+    host, lc, la = endpoints
+    return add_node(dbnode, dial_host=host, dial_port=lc, dial_api_port=la)
 
 def _wg_xray_degraded_message(exc: BaseException) -> str:
     return f"WireGuard active; Xray core not running: {exc}"
@@ -630,7 +706,8 @@ def connect_node(node_id, config=None):
             if not node.connected:
                 raise KeyError
         except KeyError:
-            node = xray.operations.add_node(dbnode)
+            preferred = _prefer_control_tunnel(dbnode)
+            node = preferred if preferred is not None else xray.operations.add_node(dbnode)
 
         _change_node_status(node_id, NodeStatus.connecting)
 
@@ -644,10 +721,10 @@ def connect_node(node_id, config=None):
         if need_connect:
             logger.info(f"Connecting to \"{dbnode.name}\" node")
             try:
-                node.connect()
+                node = _connect_node_session(dbnode, node)
             except Exception:
                 node = xray.operations.add_node(dbnode)
-                node.connect()
+                node = _connect_node_session(dbnode, node)
         else:
             logger.debug("Reusing live RPyC session for \"%s\"", dbnode.name)
 
@@ -677,51 +754,69 @@ def connect_node(node_id, config=None):
 
                 delegates_tunnel = node_delegates_wireguard_to_tunnel(db, node_id)
             if delegates_tunnel:
+                # Do not early-return on get_version alone: the agent can still
+                # report a version while UDP capture (51820/51901) is down, which
+                # left clients timing out. Always fall through to start/restart
+                # (with prepare_relay freeing the plain WG port first).
                 try:
-                    version = node.get_version()
-                    if version:
-                        node.started = True
-                        # Confirmed alive without a start()/restart() round-trip
-                        # (which normally wires up the gRPC stats client) — attach
-                        # it now so per-user usage stats keep flowing for this node.
-                        try:
-                            node.ensure_api()
-                        except Exception:
-                            pass
-                        _change_node_status(
-                            node_id, NodeStatus.connected, message=None, version=version
-                        )
-                        _persist_pinned_cert(
-                            node_id, getattr(node, "observed_cert_sha256", None)
-                        )
-                        _sync_wireguard_node(node_id, node)
-                        return
+                    if not node.connected:
+                        node.connect()
+                    with GetDB() as db:
+                        prepare_relay_wireguard_tunnel(db, node_id, node)
                 except Exception:
-                    version = None
+                    pass
             # WireGuard nodes need the RPyC channel for wg_apply; Xray on the
             # node is best-effort (stats/API) and must not block AWG sync.
             xray_exc = None
             version = None
             if delegates_tunnel:
-                try:
-                    if not node.connected:
-                        node.connect()
-                    version = node.get_version()
-                    if version:
-                        node.started = True
-                except Exception:
-                    version = None
-                if not version:
-                    with GetDB() as db:
-                        prepare_relay_wireguard_tunnel(db, node_id, node)
-            if not version:
+                # Prefer reuse when the agent already has a live core. Blind
+                # restart of a ~2MB Finalmask config OOMs small relay VMs
+                # (second Xray during stop/start) and leaves UDP dead.
                 for attempt in range(3):
                     try:
                         if not node.connected:
                             node.connect()
-                        # Avoid stop()+start() on reconnect — the agent already
-                        # restarts in-place when a core exists; double-stop
-                        # widens the UDP capture outage on tunnel relays.
+                        with GetDB() as db:
+                            prepare_relay_wireguard_tunnel(db, node_id, node)
+                        try:
+                            version = node.get_version()
+                            if version and getattr(node, "started", False):
+                                xray_exc = None
+                                logger.info(
+                                    "WireGuard node \"%s\" keeping live Xray (%s)",
+                                    dbnode.name,
+                                    version,
+                                )
+                                break
+                        except Exception:
+                            version = None
+                        try:
+                            node.start(config)
+                        except Exception:
+                            node.restart(config)
+                        version = node.get_version()
+                        xray_exc = None
+                        break
+                    except Exception as exc:
+                        xray_exc = exc
+                        logger.warning(
+                            "WireGuard node \"%s\" Xray start attempt %d failed (%s)",
+                            dbnode.name,
+                            attempt + 1,
+                            exc,
+                        )
+                        if attempt < 2:
+                            time.sleep(1)
+                            try:
+                                node.disconnect()
+                            except Exception:
+                                pass
+            else:
+                for attempt in range(3):
+                    try:
+                        if not node.connected:
+                            node.connect()
                         node.start(config)
                         version = node.get_version()
                         xray_exc = None

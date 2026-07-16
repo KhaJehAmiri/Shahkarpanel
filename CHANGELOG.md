@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.21.12 — 2026-07-16
+
+- Iran agent mirror: detect domestic nodes by GeoIP of the SSH/server IP only — UI region is ignored for package download routing.
+
 ## 0.21.11 — 2026-07-16
 
 - Iran agent-image mirror: when a node is in Iran (`region=ir` or GeoIP), provision downloads the node package from `NODE_AGENT_MIRROR_URL` (domestic) instead of SSH-uploading ~135MB from an abroad panel.

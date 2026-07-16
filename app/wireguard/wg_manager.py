@@ -409,26 +409,64 @@ def create_peer(
     proxy.settings = settings
     db.flush()
 
-    client = _node_client(dbnode)
-    if client is None or not hasattr(client, "autoscale_hot_add_peer"):
-        db.rollback()
-        raise WireGuardAutoScaleError(f"node {dbnode.id} is not connected")
-
-    allowed = _normalize_allowed(address) if active else "0.0.0.0/32"
+    delegates_tunnel = False
     try:
-        client.autoscale_hot_add_peer(
-            iface.name,
-            peer.public_key,
-            allowed,
-            preshared_key=peer.preshared_key,
-        )
-    except Exception as exc:
-        db.rollback()
-        raise WireGuardAutoScaleError(f"hot-add failed on {iface.name}: {exc}") from exc
+        from app.tunnel.relay import node_delegates_wireguard_to_tunnel
 
-    db.commit()
-    db.refresh(peer)
-    db.refresh(iface)
+        delegates_tunnel = node_delegates_wireguard_to_tunnel(db, dbnode.id)
+    except Exception:
+        delegates_tunnel = False
+
+    if delegates_tunnel:
+        # This relay's kernel wg0 is intentionally down — Xray/the tunnel owns
+        # the UDP port, and the peer actually terminates on whichever node
+        # really serves the tunnel exit (the panel's own wg0 for a panel-exit
+        # tunnel), never on this relay's torn-down kernel interface. Hot-adding
+        # here always failed with "no such device" and rolled the whole peer
+        # creation back — new users assigned to a delegated relay could never
+        # get a working WireGuard config at all. Commit the peer and let the
+        # existing full-sync paths (panel-exit sync now, periodic node sync
+        # for any dedicated exit node) push it to the real termination point.
+        db.commit()
+        db.refresh(peer)
+        db.refresh(iface)
+        try:
+            from app.wireguard.host_sync import sync_panel_exit_wireguard
+
+            sync_panel_exit_wireguard(db)
+        except Exception as exc:
+            logger.warning(
+                "Panel-exit WireGuard sync after creating peer for user %s failed: %s",
+                user_id,
+                exc,
+            )
+        try:
+            from app.wireguard.operations import sync_user_change
+
+            sync_user_change()
+        except Exception:
+            pass
+    else:
+        client = _node_client(dbnode)
+        if client is None or not hasattr(client, "autoscale_hot_add_peer"):
+            db.rollback()
+            raise WireGuardAutoScaleError(f"node {dbnode.id} is not connected")
+
+        allowed = _normalize_allowed(address) if active else "0.0.0.0/32"
+        try:
+            client.autoscale_hot_add_peer(
+                iface.name,
+                peer.public_key,
+                allowed,
+                preshared_key=peer.preshared_key,
+            )
+        except Exception as exc:
+            db.rollback()
+            raise WireGuardAutoScaleError(f"hot-add failed on {iface.name}: {exc}") from exc
+
+        db.commit()
+        db.refresh(peer)
+        db.refresh(iface)
 
     return {
         "conf": render_client_conf(dbnode, iface, peer),
@@ -451,12 +489,32 @@ def toggle_peer(db: Session, user_id: int, *, active: bool) -> bool:
     if dbnode is None:
         return False
 
+    peer.active = active
+    db.commit()
+
+    try:
+        from app.tunnel.relay import node_delegates_wireguard_to_tunnel
+
+        if node_delegates_wireguard_to_tunnel(db, dbnode.id):
+            # Kernel wg0 is intentionally down on a delegated relay; the peer
+            # is served from wherever the tunnel really exits (panel wg0 for
+            # a panel-exit tunnel). The next full sync (sync_panel_exit_wireguard
+            # / sync_node) picks up the persisted ``peer.active`` above — no
+            # point attempting (and failing) a hot toggle against a device
+            # that does not exist here.
+            try:
+                from app.wireguard.host_sync import sync_panel_exit_wireguard
+
+                sync_panel_exit_wireguard(db)
+            except Exception:
+                pass
+            return True
+    except Exception:
+        pass
+
     client = _node_client(dbnode)
     if client is None or not hasattr(client, "autoscale_toggle_peer"):
         return False
-
-    peer.active = active
-    db.commit()
 
     try:
         client.autoscale_toggle_peer(

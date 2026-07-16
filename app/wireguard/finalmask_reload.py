@@ -10,9 +10,10 @@ bursts (bulk enable, mass disable) coalesce into one restart per node.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import threading
-from typing import Optional
+from typing import Dict, Optional
 
 logger = logging.getLogger("nexus-wg")
 
@@ -23,6 +24,29 @@ DEFAULT_DEBOUNCE_SEC = 5.0
 _lock = threading.Lock()
 _timer: Optional[threading.Timer] = None
 _reload_in_flight = False
+
+# ``schedule_finalmask_xray_reload`` is invoked from the generic
+# ``sync_user_change()`` hook, which fires on *any* user lifecycle event
+# system-wide (usage recording, quota checks, admin edits, ...) — most of
+# which never touch a Finalmask peer at all. Restarting a relay's full Xray
+# core (a multi-MB config, 10-20s) on every single one of those turned a
+# handful of real membership changes into a near-constant restart loop that
+# made WireGuard/Finalmask look permanently broken to clients (their
+# handshake kept landing on a core that was mid-restart). Only actually
+# restart a node when the peer set that gets baked into *its* config changed
+# since the last reload.
+_last_membership_fingerprint: Dict[int, str] = {}
+
+
+def _membership_fingerprint(db) -> str:
+    from app.wireguard.operations import collect_wg_peers
+
+    peers = collect_wg_peers(db)
+    parts = sorted(
+        f"{p.user_id}:{p.public_key}:{p.address}:{p.preshared_key or ''}:{int(bool(p.active))}"
+        for p in peers
+    )
+    return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
 
 
 def schedule_finalmask_xray_reload(*, delay: float = DEFAULT_DEBOUNCE_SEC) -> None:
@@ -78,8 +102,22 @@ def _run_finalmask_xray_reload() -> None:
         from app.xray.operations import restart_node
 
         with GetDB() as db:
-            node_ids = _finalmask_node_ids(db)
+            candidate_ids = _finalmask_node_ids(db)
+            if not candidate_ids:
+                return
+            fingerprint = _membership_fingerprint(db)
+            node_ids = [
+                node_id
+                for node_id in candidate_ids
+                if _last_membership_fingerprint.get(node_id) != fingerprint
+            ]
+            for node_id in node_ids:
+                _last_membership_fingerprint[node_id] = fingerprint
         if not node_ids:
+            logger.debug(
+                "Finalmask reload skipped: peer membership unchanged on %s node(s)",
+                len(candidate_ids),
+            )
             return
 
         logger.info(

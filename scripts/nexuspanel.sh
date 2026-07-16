@@ -1091,6 +1091,30 @@ cmd_https() {
   DOMAIN="${DOMAIN}" EMAIL="${EMAIL}" PANEL_PORT="${PANEL_PORT}" bash "$script" "${args[@]}"
 }
 
+sync_agent_github_if_configured() {
+  # Push cached node-agent tarball to GitHub Releases (NODE_AGENT_PACKAGE_URL).
+  _load_env_file "${APP_DIR}/.env" 2>/dev/null || true
+  _load_env_file "${DATA_DIR}/.env" 2>/dev/null || true
+  if [ "${NODE_AGENT_GITHUB_SYNC:-1}" = "0" ] || [ "${NODE_AGENT_GITHUB_SYNC:-1}" = "false" ]; then
+    return 0
+  fi
+  local script="${APP_DIR}/scripts/sync_agent_github.sh"
+  if [ ! -f "$script" ]; then
+    warn "GitHub agent package sync skipped (missing ${script})"
+    return 0
+  fi
+  log "Syncing node agent image to GitHub Releases..."
+  if NODE_AGENT_IMAGE="${NODE_AGENT_IMAGE:-nexuspanel/node:latest}" \
+     NODE_AGENT_GITHUB_REPO="${NODE_AGENT_GITHUB_REPO:-}" \
+     NODE_AGENT_GITHUB_TAG="${NODE_AGENT_GITHUB_TAG:-node-agent}" \
+     APP_DIR="${APP_DIR}" \
+     bash "$script"; then
+    ok "GitHub agent package synced."
+  else
+    warn "GitHub agent package sync failed (nodes may fall back to Iran mirror)."
+  fi
+}
+
 sync_agent_mirror_if_configured() {
   # Optional: push cached node-agent tarball to domestic (Iran) HTTP mirror.
   _load_env_file "${APP_DIR}/.env" 2>/dev/null || true
@@ -1133,6 +1157,7 @@ cmd_update()  {
   compose up -d --build
   wait_for_panel
   write_install_meta
+  sync_agent_github_if_configured
   sync_agent_mirror_if_configured
   ok "Updated."
   print_access

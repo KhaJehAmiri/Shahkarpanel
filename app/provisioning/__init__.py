@@ -219,8 +219,12 @@ def build_install_command(
             f"chmod 600 {q(client_cert_path)}; "
         )
 
-    panel_image_url = f"{panel_url.rstrip('/')}/api/nodes/agent-image?token={bootstrap_token}"
-    primary_url = (agent_image_url or panel_image_url).strip() or panel_image_url
+    from config import NODE_AGENT_PACKAGE_URL as _DEFAULT_PKG_URL
+
+    # Online package = GitHub Releases (not the panel). Panel is only for bootstrap API.
+    primary_url = (agent_image_url or _DEFAULT_PKG_URL or "").strip()
+    if not primary_url:
+        raise ProvisioningError("NODE_AGENT_PACKAGE_URL is not configured")
     mirror_url = (agent_image_mirror_url or "").strip()
     _ = agent_image_from_mirror  # deprecated
 
@@ -248,23 +252,22 @@ def build_install_command(
             "done; "
         )
 
-    # Prefer image already on the node. Otherwise: try the online/panel URL up to
-    # 3 times, then fall back to the Iran HTTP mirror when configured.
-    _ = force_image_rebuild  # SSH push on the panel job honors force separately
-    mirror_branch = ""
+    # Prefer image already on the node. Otherwise: GitHub URL up to 3 times,
+    # then Iran HTTP mirror. The panel is never used as an image CDN.
+    _ = force_image_rebuild
     if mirror_url and mirror_url != primary_url:
         mirror_branch = (
-            "echo 'Online image fetch failed after 3 attempts — trying Iran mirror…'; "
+            "echo 'GitHub image fetch failed after 3 attempts — trying Iran mirror…'; "
             f"if curl -fskSL --connect-timeout 30 --max-time 1800 {q(mirror_url)} | docker load; then "
             ":; "
             "else "
-            "echo 'fatal: could not load node agent image from panel or Iran mirror' >&2; "
+            "echo 'fatal: could not load node agent image from GitHub or Iran mirror' >&2; "
             "exit 1; "
             "fi; "
         )
     else:
         mirror_branch = (
-            "echo 'fatal: could not load node agent image online after 3 attempts' >&2; "
+            "echo 'fatal: could not load node agent image from GitHub after 3 attempts' >&2; "
             "exit 1; "
         )
     ensure_image = (
@@ -272,7 +275,7 @@ def build_install_command(
         "if ! docker image inspect \"$NP_IMG\" >/dev/null 2>&1; then "
         "_np_ok=0; "
         "for _np_try in 1 2 3; do "
-        "echo \"Loading node image online (attempt $_np_try/3)…\"; "
+        "echo \"Downloading node image from GitHub (attempt $_np_try/3)…\"; "
         f"if curl -fskSL --connect-timeout 30 --max-time 1800 {q(primary_url)} | docker load; then "
         "_np_ok=1; break; "
         "fi; "

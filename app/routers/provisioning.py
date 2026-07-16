@@ -48,12 +48,14 @@ def _agent_image_urls(
     *,
     panel_url: str,
 ) -> tuple[str, Optional[str]]:
-    """Primary (panel) agent-image URL and optional Iran mirror fallback URL."""
+    """GitHub package URL (primary) and optional Iran mirror fallback."""
     from app.provisioning.iran_mirror import mirror_url_configured
+    from config import NODE_AGENT_PACKAGE_URL
 
-    panel_agent = f"{panel_url.rstrip('/')}/api/nodes/agent-image?token={NODE_BOOTSTRAP_TOKEN}"
+    _ = panel_url  # panel is not an image CDN
+    primary = (NODE_AGENT_PACKAGE_URL or "").strip()
     mirror = mirror_url_configured()
-    return panel_agent, mirror
+    return primary, mirror
 
 
 def _panel_url() -> str:

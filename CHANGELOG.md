@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.21.14 — 2026-07-16
+
+- Node packages live on GitHub Releases (`NODE_AGENT_PACKAGE_URL`); provision downloads from GitHub first (3 attempts), then the Iran HTTP mirror. The panel is no longer used as an image CDN and no longer SSH-uploads the ~135MB agent image.
+- `nexuspanel update` can refresh the GitHub Release asset via `scripts/sync_agent_github.sh`.
+
 ## 0.21.13 — 2026-07-16
 
 - Provision: download packages online first (SSH upload + HTTP) with 3 retries; only if that fails fall back to the Iran agent-image mirror. Docker installer also retries online 3 times before distro packages.

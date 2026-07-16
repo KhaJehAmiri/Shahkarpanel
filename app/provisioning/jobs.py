@@ -185,59 +185,15 @@ def _run_job(
         with _lock:
             job.progress = 28
             job.step = "image"
-            job.message = (
-                "Refreshing node agent image over SSH…"
-                if force_image
-                else "Uploading node agent image online…"
-            )
+            job.message = "Node will download agent image from GitHub…"
         _set_node_provision(job.node_id, status="provisioning", message=job.message)
 
-        # Online-first: try SSH upload up to 3 times. On failure the install
-        # script still curls the panel URL (3x) then the Iran mirror.
-        from config import NODE_AGENT_IMAGE
-
-        _ = use_iran_mirror  # kept for API compat; mirror is HTTP fallback only
-        push_ok = False
-        last_push_exc: Exception | None = None
-        for attempt in range(1, 4):
-            try:
-                with _lock:
-                    job.message = f"Uploading node agent image online ({attempt}/3)…"
-                _set_node_provision(job.node_id, status="provisioning", message=job.message)
-                push_out = provisioning.push_agent_image_via_ssh(
-                    creds,
-                    NODE_AGENT_IMAGE,
-                    timeout=ssh_timeout,
-                    transfer_timeout=max(exec_timeout, 1800),
-                    force=force_image,
-                )
-                if isinstance(push_out, str) and push_out.startswith("skipped:"):
-                    with _lock:
-                        job.message = "Reusing agent image already on the node…"
-                    _set_node_provision(
-                        job.node_id, status="provisioning", message=job.message
-                    )
-                push_ok = True
-                break
-            except Exception as exc:
-                last_push_exc = exc
-                logger.warning(
-                    "SSH agent-image upload attempt %s/3 failed for node %s: %s",
-                    attempt,
-                    job.node_id,
-                    exc,
-                )
-                time.sleep(3)
-        if not push_ok:
-            logger.warning(
-                "SSH agent-image upload exhausted for node %s (%s); "
-                "install script will try HTTP then Iran mirror",
-                job.node_id,
-                last_push_exc,
-            )
-            with _lock:
-                job.message = "Online SSH upload failed — node will try HTTP / Iran mirror…"
-            _set_node_provision(job.node_id, status="provisioning", message=job.message)
+        # Heavy image comes from GitHub (then Iran mirror) — not SSH from the panel.
+        _ = (force_image, use_iran_mirror)
+        logger.info(
+            "Skipping SSH agent-image upload for node %s (GitHub package URL)",
+            job.node_id,
+        )
 
         with _lock:
             job.progress = 55

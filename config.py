@@ -142,8 +142,16 @@ PANEL_PUBLIC_ADDRESS = config("PANEL_PUBLIC_ADDRESS", default="")
 # Must be a node-agent image reachable by the target server's Docker. Override
 # with your own published image (see scripts/ for building a node image).
 NODE_AGENT_IMAGE = config("NODE_AGENT_IMAGE", default="nexuspanel/node:latest")
-# Domestic (Iran) HTTP mirror for the gzipped ``docker save`` of NODE_AGENT_IMAGE.
-# When set, Iran nodes curl this URL instead of the panel / SSH upload from abroad.
+# Primary online URL for the gzipped ``docker save`` of NODE_AGENT_IMAGE
+# (GitHub Releases). Nodes curl this first (3 attempts), then Iran mirror.
+NODE_AGENT_PACKAGE_URL = config(
+    "NODE_AGENT_PACKAGE_URL",
+    default=(
+        "https://github.com/KhaJehAmiri/nexuspanel/releases/download/"
+        "node-agent/nexuspanel-node-agent-image.tar.gz"
+    ),
+)
+# Domestic (Iran) HTTP mirror — used only after online/GitHub fetch fails 3x.
 # Example: http://37.32.40.55/nexuspanel/node-agent-image.tar.gz
 NODE_AGENT_MIRROR_URL = config("NODE_AGENT_MIRROR_URL", default="")
 # SSH connect timeout (seconds) when auto-provisioning a node.

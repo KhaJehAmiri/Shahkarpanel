@@ -464,6 +464,46 @@ def _prefer_control_tunnel(dbnode) -> object | None:
     host, lc, la = endpoints
     return add_node(dbnode, dial_host=host, dial_port=lc, dial_api_port=la)
 
+
+def _force_control_tunnel_session(dbnode, node):
+    """Rebuild the node session over the SSH control tunnel.
+
+    Fallback for routes where the direct TLS/RPyC socket connects fine (so
+    ``node.connect()`` never raises) but drops mid-write on a large payload —
+    seen on some Iran↔abroad paths as ``EOFError: stream has been closed``
+    while pushing a big WireGuard/Finalmask config. Plain reconnect-and-retry
+    on the same direct path reproduces the same failure every time; routing
+    the bulk transfer through SSH (which handles its own retransmission)
+    is what actually gets a large config through automatically.
+    """
+    from app.control_tunnel import TunnelError, ensure_node_tunnel, has_ssh_for_host
+
+    host = _ssh_host_for_node(dbnode)
+    if not has_ssh_for_host(host):
+        return None
+    try:
+        local_control, local_api = ensure_node_tunnel(
+            dbnode.id,
+            host,
+            remote_port=dbnode.port,
+            remote_api_port=dbnode.api_port,
+        )
+    except TunnelError as exc:
+        logger.debug("Control tunnel unavailable for node %s: %s", dbnode.id, exc)
+        return None
+    tunneled = add_node(dbnode, dial_host="127.0.0.1", dial_port=local_control, dial_api_port=local_api)
+    try:
+        tunneled.connect()
+    except Exception as exc:
+        logger.debug("Control tunnel connect failed for node %s: %s", dbnode.id, exc)
+        return None
+    logger.info(
+        "Node %s: switched to SSH control tunnel after a direct large-config "
+        "transfer failure",
+        dbnode.id,
+    )
+    return tunneled
+
 def _wg_xray_degraded_message(exc: BaseException) -> str:
     return f"WireGuard active; Xray core not running: {exc}"
 
@@ -812,6 +852,14 @@ def connect_node(node_id, config=None):
                                 node.disconnect()
                             except Exception:
                                 pass
+                            if attempt == 0 and not getattr(node, "control_tunneled", False):
+                                # A direct socket that connects but drops mid-write on
+                                # a large tunnel/Finalmask config retries into the exact
+                                # same failure every time. Route through SSH instead of
+                                # blindly reconnecting on the same unreliable path.
+                                forced = _force_control_tunnel_session(dbnode, node)
+                                if forced is not None:
+                                    node = forced
             else:
                 for attempt in range(3):
                     try:
@@ -981,6 +1029,18 @@ def restart_node(node_id, config=None):
                             node.disconnect()
                         except Exception:
                             pass
+                        if (
+                            delegates_tunnel
+                            and attempt == 0
+                            and not getattr(node, "control_tunneled", False)
+                        ):
+                            # Same rationale as connect_node: a direct socket that
+                            # connects fine but drops mid-write on a large tunnel
+                            # config just retries into the same failure. Fail over
+                            # to SSH for the retry instead.
+                            forced = _force_control_tunnel_session(dbnode, node)
+                            if forced is not None:
+                                node = forced
             if delegates_tunnel:
                 from app.tunnel.relay import record_tunnel_health
 

@@ -74,12 +74,98 @@ def has_ssh_for_host(host: str) -> bool:
     if not host or host in ("127.0.0.1", "localhost", "::1"):
         return False
     try:
-        from app.provisioning.node_ssh import resolve_node_ssh
+        from app.provisioning.node_ssh import resolve_node_ssh_candidates
 
-        resolve_node_ssh(host)
-        return True
+        return bool(resolve_node_ssh_candidates(host))
     except Exception:
         return False
+
+
+def _spawn_ssh_tunnel(
+    creds,
+    host: str,
+    lc: int,
+    la: int,
+    remote_port: int,
+    remote_api_port: int,
+    ssh_port: int,
+) -> Tuple[subprocess.Popen, Optional[str]]:
+    """Start one ``ssh -L`` attempt with a single credential; raise on failure."""
+    key_path = None
+    env = os.environ.copy()
+    cmd = [
+        "ssh",
+        "-N",
+        "-o", "BatchMode=yes",
+        "-o", "StrictHostKeyChecking=accept-new",
+        "-o", "ExitOnForwardFailure=yes",
+        "-o", "ServerAliveInterval=20",
+        "-o", "ServerAliveCountMax=3",
+        "-o", "ConnectTimeout=15",
+        "-p", str(creds.port or ssh_port),
+        "-L", f"127.0.0.1:{lc}:127.0.0.1:{int(remote_port)}",
+        "-L", f"127.0.0.1:{la}:127.0.0.1:{int(remote_api_port)}",
+    ]
+    if creds.private_key:
+        fd, key_path = tempfile.mkstemp(prefix="np-node-ssh-", suffix=".key")
+        os.close(fd)
+        with open(key_path, "w") as f:
+            f.write(creds.private_key if creds.private_key.endswith("\n") else creds.private_key + "\n")
+        os.chmod(key_path, 0o600)
+        cmd.extend(["-i", key_path, "-o", "IdentitiesOnly=yes"])
+    elif creds.password:
+        if not shutil.which("sshpass"):
+            raise TunnelError(
+                "Node SSH uses a password but sshpass is not installed; "
+                "configure a panel node SSH key instead"
+            )
+        env["SSHPASS"] = creds.password
+        cmd = ["sshpass", "-e"] + cmd
+    else:
+        raise TunnelError("No SSH key or password for control tunnel")
+
+    cmd.append(f"{creds.username}@{host}")
+
+    def _cleanup_key() -> None:
+        if key_path:
+            try:
+                os.unlink(key_path)
+            except OSError:
+                pass
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+    except OSError as exc:
+        _cleanup_key()
+        raise TunnelError(f"Failed to start SSH tunnel: {exc}") from exc
+
+    # Wait until the local listen port is up (or the process dies).
+    deadline = time.time() + 20.0
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            err = ""
+            try:
+                err = (proc.stderr.read() or b"").decode("utf-8", "replace")[:400]
+            except Exception:
+                pass
+            _cleanup_key()
+            raise TunnelError(
+                f"SSH control tunnel exited early ({'key' if creds.private_key else 'password'} auth)"
+                + (f": {err.strip()}" if err.strip() else "")
+            )
+        if _port_open(lc):
+            return proc, key_path
+        time.sleep(0.2)
+
+    _kill_proc(proc)
+    _cleanup_key()
+    raise TunnelError(f"SSH control tunnel did not open local port {lc}")
 
 
 def ensure_node_tunnel(
@@ -116,98 +202,35 @@ def ensure_node_tunnel(
         if not shutil.which("ssh"):
             raise TunnelError("ssh client not available in the panel container")
 
-        from app.provisioning.node_ssh import resolve_node_ssh
+        from app.provisioning.node_ssh import resolve_node_ssh_candidates
 
         try:
-            creds = resolve_node_ssh(host, port=ssh_port, username=username)
+            candidates = resolve_node_ssh_candidates(host, port=ssh_port, username=username)
         except FileNotFoundError as exc:
             raise TunnelError(str(exc)) from exc
 
+        # A stored key file doesn't guarantee its pubkey was ever installed on
+        # *this* node's authorized_keys (e.g. added before the key existed).
+        # Try every configured credential (key, then password) instead of
+        # failing permanently on the first one that doesn't authenticate —
+        # this is what lets the control-tunnel fallback work automatically
+        # without a human re-running the SSH bootstrap script per node.
+        proc = None
         key_path = None
-        env = os.environ.copy()
-        cmd = [
-            "ssh",
-            "-N",
-            "-o", "BatchMode=yes",
-            "-o", "StrictHostKeyChecking=accept-new",
-            "-o", "ExitOnForwardFailure=yes",
-            "-o", "ServerAliveInterval=20",
-            "-o", "ServerAliveCountMax=3",
-            "-o", "ConnectTimeout=15",
-            "-p", str(creds.port or ssh_port),
-            "-L", f"127.0.0.1:{lc}:127.0.0.1:{int(remote_port)}",
-            "-L", f"127.0.0.1:{la}:127.0.0.1:{int(remote_api_port)}",
-        ]
-        if creds.private_key:
-            fd, key_path = tempfile.mkstemp(prefix="np-node-ssh-", suffix=".key")
-            os.close(fd)
-            with open(key_path, "w") as f:
-                f.write(creds.private_key if creds.private_key.endswith("\n") else creds.private_key + "\n")
-            os.chmod(key_path, 0o600)
-            cmd.extend(["-i", key_path, "-o", "IdentitiesOnly=yes"])
-        elif creds.password:
-            if not shutil.which("sshpass"):
-                if key_path:
-                    try:
-                        os.unlink(key_path)
-                    except OSError:
-                        pass
-                raise TunnelError(
-                    "Node SSH uses a password but sshpass is not installed; "
-                    "configure a panel node SSH key instead"
+        last_err: Optional[TunnelError] = None
+        for creds in candidates:
+            try:
+                proc, key_path = _spawn_ssh_tunnel(
+                    creds, host, lc, la, remote_port, remote_api_port, ssh_port
                 )
-            env["SSHPASS"] = creds.password
-            cmd = ["sshpass", "-e"] + cmd
-        else:
-            raise TunnelError("No SSH key or password for control tunnel")
-
-        cmd.append(f"{creds.username}@{host}")
-
-        try:
-            proc = subprocess.Popen(
-                cmd,
-                env=env,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-            )
-        except OSError as exc:
-            if key_path:
-                try:
-                    os.unlink(key_path)
-                except OSError:
-                    pass
-            raise TunnelError(f"Failed to start SSH tunnel: {exc}") from exc
-
-        # Wait until the local listen port is up (or the process dies).
-        deadline = time.time() + 20.0
-        while time.time() < deadline:
-            if proc.poll() is not None:
-                err = ""
-                try:
-                    err = (proc.stderr.read() or b"").decode("utf-8", "replace")[:400]
-                except Exception:
-                    pass
-                if key_path:
-                    try:
-                        os.unlink(key_path)
-                    except OSError:
-                        pass
-                raise TunnelError(
-                    f"SSH control tunnel exited early for node {node_id}"
-                    + (f": {err.strip()}" if err.strip() else "")
-                )
-            if _port_open(lc):
                 break
-            time.sleep(0.2)
-        else:
-            _kill_proc(proc)
-            if key_path:
-                try:
-                    os.unlink(key_path)
-                except OSError:
-                    pass
-            raise TunnelError(f"SSH control tunnel did not open local port {lc}")
+            except TunnelError as exc:
+                last_err = exc
+                proc = None
+                key_path = None
+                continue
+        if proc is None:
+            raise last_err or TunnelError("No SSH key or password for control tunnel")
 
         _tunnels[node_id] = TunnelProc(
             node_id=node_id,

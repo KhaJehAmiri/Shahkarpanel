@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.21.18 — 2026-07-16
+
+- Found the real reason a relay's tunnel-captured WireGuard kept failing to actually establish (not just the false-positive health check fixed in 0.21.17): pushing the relay's tunnel/Finalmask Xray config (which can be 100+ KB with many peers) over the direct panel→node RPyC socket reliably dropped mid-write (`EOFError: stream has been closed`) on this Iran↔abroad route, even though the socket connected fine and the config itself was valid. `connect_node`/`restart_node` now automatically fail over to the SSH control tunnel for the retry after the first such failure, instead of endlessly retrying the same unreliable direct path.
+- Fixed the SSH control-tunnel fallback being silently unusable in the first place: its key/password secret files under `/var/lib/nexuspanel/secrets/` were root-owned while the panel process runs as the unprivileged `nexuspanel` user, so every read failed with a permission error that was swallowed and reported as "no SSH access". `docker-entrypoint.sh` now reclaims ownership of that directory on every boot, so this can't silently regress again.
+- SSH control-tunnel connection now tries every configured credential (key, then password) instead of only the key — a stored key file no longer permanently blocks the password fallback just because its pubkey was never installed on a particular node's `authorized_keys`.
+
 ## 0.21.17 — 2026-07-16
 
 - Fixed the actual reason tunnel-delegated WireGuard could stay silently dead forever: the relay health probe treated "Xray answers a version" as proof the tunnel worked, even when the panel-exit side of the pipeline never came up. It now also checks that the panel's *live, booted* Xray config actually has the tunnel's exit inbound bound.

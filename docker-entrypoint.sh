@@ -30,6 +30,18 @@ fix_runtime_permissions() {
   chmod -R u+rwX,g+rwX /var/lib/nexuspanel/edge 2>/dev/null || true
   mkdir -p /var/lib/nexuspanel/nginx/html
   chmod -R a+rX /var/lib/nexuspanel/nginx 2>/dev/null || true
+  # Node SSH secrets (control-tunnel key/password fallback, app/provisioning/node_ssh.py).
+  # These are frequently created/rotated by root (host SSH sessions, setup scripts run
+  # as root) while the panel process itself runs as nexuspanel (runuser below) — an
+  # owner mismatch here silently disables the SSH control-tunnel fallback (permission
+  # denied is swallowed by a broad except-Exception in has_ssh_for_host), which then
+  # looks like a flaky node connection instead of a config problem. Reclaim ownership
+  # on every boot so this never depends on which user created the files.
+  if [ -d /var/lib/nexuspanel/secrets ]; then
+    chown -R nexuspanel:nexuspanel /var/lib/nexuspanel/secrets 2>/dev/null || true
+    chmod 700 /var/lib/nexuspanel/secrets 2>/dev/null || true
+    find /var/lib/nexuspanel/secrets -maxdepth 1 -type f -exec chmod 600 {} + 2>/dev/null || true
+  fi
   if [ -d /code/.git ]; then
     chown -R nexuspanel:nexuspanel /code 2>/dev/null || true
   elif [ -f /code/.env ]; then

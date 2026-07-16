@@ -31,33 +31,63 @@ def resolve_node_ssh(
     port: int = 22,
     username: str = "root",
 ):
-    """Build :class:`SSHCredentials` for ``host`` using key or password file."""
+    """Build :class:`SSHCredentials` for ``host`` using key or password file.
+
+    Returns the *first* candidate from :func:`resolve_node_ssh_candidates` for
+    callers that only ever try one credential (e.g. maintenance scripts).
+    """
+    candidates = resolve_node_ssh_candidates(host, port=port, username=username)
+    return candidates[0]
+
+
+def resolve_node_ssh_candidates(
+    host: str,
+    *,
+    port: int = 22,
+    username: str = "root",
+):
+    """All usable :class:`SSHCredentials` for ``host``, key first then password.
+
+    A stored key file only proves a keypair was *generated* at some point —
+    not that its public half was ever actually installed in this specific
+    node's ``authorized_keys`` (e.g. a node added before the key existed, or
+    added by a different flow). Returning every candidate lets callers that
+    actually attempt the connection (``control_tunnel.ensure_node_tunnel``)
+    fall back to the password automatically instead of getting permanently
+    stuck retrying a key that will never authenticate — no manual
+    ``setup_node_ssh_access.py`` run required.
+    """
     from app.provisioning import SSHCredentials
 
+    candidates = []
     key_path = key_file_path()
     if key_path.is_file():
-        return SSHCredentials(
-            host=host,
-            port=port,
-            username=username,
-            private_key=key_path.read_text(),
-        )
+        try:
+            private_key = key_path.read_text()
+        except OSError:
+            private_key = ""
+        if private_key:
+            candidates.append(
+                SSHCredentials(host=host, port=port, username=username, private_key=private_key)
+            )
+
+    password = ""
     pwd_path = password_file_path()
     if pwd_path.is_file():
-        password = pwd_path.read_text().strip()
-        if password:
-            return SSHCredentials(
-                host=host,
-                port=port,
-                username=username,
-                password=password,
-            )
-    env_pwd = os.environ.get("WG_NODE_SSH_PASSWORD", "").strip()
-    if env_pwd:
-        return SSHCredentials(host=host, port=port, username=username, password=env_pwd)
-    raise FileNotFoundError(
-        f"No SSH key ({key_path}) or password file ({pwd_path}) for node access"
-    )
+        try:
+            password = pwd_path.read_text().strip()
+        except OSError:
+            password = ""
+    if not password:
+        password = os.environ.get("WG_NODE_SSH_PASSWORD", "").strip()
+    if password:
+        candidates.append(SSHCredentials(host=host, port=port, username=username, password=password))
+
+    if not candidates:
+        raise FileNotFoundError(
+            f"No SSH key ({key_path}) or password file ({pwd_path}) for node access"
+        )
+    return candidates
 
 
 def has_node_ssh_access() -> bool:

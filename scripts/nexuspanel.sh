@@ -1106,7 +1106,7 @@ sync_agent_mirror_if_configured() {
     warn "Agent mirror sync skipped (missing ${script})"
     return 0
   fi
-  log "Syncing node agent image to Iran mirror (${NODE_AGENT_MIRROR_SSH})…"
+  log "Syncing node agent image to Iran mirror (${NODE_AGENT_MIRROR_SSH})..."
   if NODE_AGENT_MIRROR_SSH="${NODE_AGENT_MIRROR_SSH}" \
      NODE_AGENT_MIRROR_SSH_PASS="${NODE_AGENT_MIRROR_SSH_PASS:-}" \
      NODE_AGENT_IMAGE="${NODE_AGENT_IMAGE:-nexuspanel/node:latest}" \
@@ -1114,7 +1114,7 @@ sync_agent_mirror_if_configured() {
      bash "$script"; then
     ok "Iran agent mirror synced."
   else
-    warn "Iran agent mirror sync failed (provision for IR nodes may be slow until fixed)."
+    warn "Iran agent mirror sync failed (IR node provision may stay slow until fixed)."
   fi
 }
 

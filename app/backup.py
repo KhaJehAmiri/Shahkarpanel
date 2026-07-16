@@ -21,7 +21,6 @@ import socket
 import subprocess
 import tarfile
 import tempfile
-import threading
 from datetime import datetime
 from typing import List, Optional, Tuple
 from uuid import uuid4

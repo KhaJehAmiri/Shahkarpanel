@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.21.9 — 2026-07-16
+
+- SSH control-tunnel fallback: when direct panel→node control paths drop (common on some Iran↔abroad routes), the panel opens `ssh -L` to the node's loopback ports and dials locally instead.
+- Backup/restore hardened for migrations: download bundles include DB + TLS + node control secrets; restore merges secrets, clears cert pins, and restarts the panel.
+- WARP routing / WireGuard subscription export improvements; Postgres client and compose image aligned on 17.
+
 ## 0.21.8 — 2026-07-15
 
 - WireGuard: when stack / Finalmask ports change, the panel syncs the node and opens UDP INPUT (iptables / ufw / firewalld) automatically — no manual firewall steps.

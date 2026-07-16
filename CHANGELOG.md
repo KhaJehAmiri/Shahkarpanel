@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.21.16 — 2026-07-16
+
+- WireGuard autoscale sync now actually applies kernel interfaces/peers on the node (previously only opened firewall ports).
+- Legacy WG interface bootstrap also creates the interface on a connected node.
+- Disabled broken panel-exit tunnel stealing UDP 51820 when native WG should run on the node.
+
 ## 0.21.15 — 2026-07-16
 
 - Provision: node→panel bootstrap HTTP is best-effort with short retries — a curl timeout no longer fails the whole install; the panel finishes registration over SSH after the agent starts.

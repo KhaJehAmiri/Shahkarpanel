@@ -577,7 +577,59 @@ def sync_node(db, dbnode, *, peers: Optional[List[WGUserPeer]] = None, node_obje
             )
             specs = [awg_spec]
         elif autoscale_enabled() and plain_wg_enabled(cfg):
+            # Autoscale still needs the kernel interface(s) brought up on the
+            # node. bootstrap_legacy_interfaces only writes DB rows; without an
+            # apply here a fresh node stays silent on listen_port.
+            from app.db.models import WgInterface, WgPeer
+            from app.wireguard.sync import build_node_spec
+
+            specs = []
+            for iface in (
+                db.query(WgInterface)
+                .filter(WgInterface.node_id == dbnode.id)
+                .order_by(WgInterface.slot_index)
+                .all()
+            ):
+                iface_peers = [
+                    WGUserPeer(
+                        user_id=p.user_id,
+                        public_key=p.public_key,
+                        address=p.address or "",
+                        preshared_key=p.preshared_key,
+                        active=bool(p.active),
+                    )
+                    for p in db.query(WgPeer).filter(WgPeer.interface_id == iface.id).all()
+                ]
+                specs.append(
+                    build_node_spec(
+                        interface=iface.name,
+                        listen_port=iface.listen_port,
+                        private_key=iface.private_key,
+                        subnet=iface.subnet,
+                        peers=iface_peers,
+                        mtu=cfg.mtu or 1420,
+                    )
+                )
+            if not specs:
+                # Fall back to the node config row when autoscale tables are empty.
+                specs = build_node_specs(cfg, peers)
+            if tunnel_plain_delegated and cfg.interface:
+                specs = [s for s in specs if s.get("interface") != cfg.interface]
+            if not specs:
+                open_node_listen_ports(dbnode, node_object=node_object, client=client)
+                return True
+            client.apply_specs(specs)
             open_node_listen_ports(dbnode, node_object=node_object, client=client)
+            try:
+                from app.services.warp_node_sync import sync_node_warp_tproxy
+
+                sync_node_warp_tproxy(dbnode, node_object=node_object)
+            except Exception:
+                logger.warning(
+                    "WARP TPROXY sync after WG apply failed for node %s",
+                    dbnode.id,
+                    exc_info=True,
+                )
             return True
         else:
             specs = build_node_specs(cfg, peers)

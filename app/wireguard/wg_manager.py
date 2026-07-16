@@ -187,6 +187,15 @@ def bootstrap_legacy_interfaces(db: Session, dbnode: Node) -> None:
     )
     db.add(iface)
     db.flush()
+    try:
+        _create_interface_on_node(db, dbnode, iface)
+    except Exception as exc:
+        logger.warning(
+            "bootstrap_legacy_interfaces: could not create %s on node %s: %s",
+            iface.name,
+            dbnode.id,
+            exc,
+        )
 
     from app.wireguard.operations import _all_wg_proxies
 

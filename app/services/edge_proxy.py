@@ -3,8 +3,8 @@
 Hosts override what clients see in subscription links (domain:443 + TLS) while
 Xray may listen on a different port/security on the origin.
 
-* ``XRAY_CDN_RUNTIME_ENABLED`` — runtime-only loopback + plain transport for
-  grpc/ws/xhttp CDN hosts so an origin bridge (nginx or manual) can terminate TLS.
+* ``XRAY_CDN_RUNTIME_ENABLED`` — when True, runtime-only loopback + plain
+  transport for grpc/ws/xhttp CDN hosts (default False keeps listen ``0.0.0.0``).
 * ``XRAY_CDN_ORIGIN_NGINX`` — auto-generate **proxy-domain-only** nginx vhosts
   (``nexuspanel-cdn-*``). Panel HTTPS (``setup_https.sh``) is never touched.
 

@@ -82,9 +82,9 @@ OIDC_REDIRECT_URI = config("OIDC_REDIRECT_URI", default="")
 OIDC_USERNAME_CLAIM = config("OIDC_USERNAME_CLAIM", default="preferred_username")
 # Optional Content-Security-Policy header value (empty = omit header).
 SECURITY_CSP = config("SECURITY_CSP", default="")
-# True = verify SSH host keys on node provisioning (secure default). Set False only
-# for lab/staging one-click install where servers are ephemeral (AUDIT M15).
-PROVISIONING_SSH_STRICT_HOST_KEY = config("PROVISIONING_SSH_STRICT_HOST_KEY", cast=bool, default=True)
+# False = AutoAddPolicy for new node SSH (one-click provision). Set True to require
+# known_hosts / strict host-key checks (AUDIT M15).
+PROVISIONING_SSH_STRICT_HOST_KEY = config("PROVISIONING_SSH_STRICT_HOST_KEY", cast=bool, default=False)
 # Interval (seconds) for the cluster failover detector. 0 disables it.
 CLUSTER_FAILOVER_CHECK_INTERVAL = config("CLUSTER_FAILOVER_CHECK_INTERVAL", cast=int, default=0)
 
@@ -225,8 +225,9 @@ XRAY_EXCLUDE_INBOUND_TAGS = config("XRAY_EXCLUDE_INBOUND_TAGS", default='').spli
 XRAY_SUBSCRIPTION_URL_PREFIX = config("XRAY_SUBSCRIPTION_URL_PREFIX", default="").strip("/")
 XRAY_SUBSCRIPTION_PATH = config("XRAY_SUBSCRIPTION_PATH", default="sub").strip("/")
 # 3x-ui style CDN: hosts override subscription address/port/TLS; Xray bind is separate.
-# Runtime loopback+strip TLS for ws/grpc CDN hosts (when origin nginx or manual bridge exists).
-XRAY_CDN_RUNTIME_ENABLED = config("XRAY_CDN_RUNTIME_ENABLED", cast=bool, default=True)
+# When True, CDN ws/grpc inbounds are rebound to 127.0.0.1 at runtime. Default False
+# keeps inbound listen on 0.0.0.0 (public bind).
+XRAY_CDN_RUNTIME_ENABLED = config("XRAY_CDN_RUNTIME_ENABLED", cast=bool, default=False)
 # Optional origin nginx vhosts for proxy domains only (never the panel web vhost).
 _cdn_origin_raw = config("XRAY_CDN_ORIGIN_NGINX", default="")
 if _cdn_origin_raw == "":

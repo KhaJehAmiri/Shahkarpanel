@@ -690,9 +690,13 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
   const hasHy2Node = (nodes.data || []).some((n) => n.singbox?.hysteria2_enabled);
   const hasTuicNode = (nodes.data || []).some((n) => n.singbox?.tuic_enabled);
   const hasAnytlsNode = (nodes.data || []).some((n) => n.singbox?.anytls_enabled);
-  const hasPlainWgNode = (nodes.data || []).some(
-    (n) => n.core_kind === "wireguard" && n.wireguard?.plain_enabled !== false,
-  );
+  const hasPlainWgNode = (nodes.data || []).some((n) => {
+    const wg = n.wireguard;
+    if (!wg) return false;
+    if (wg.xray_wg_enabled) return true;
+    if (wg.plain_enabled === false) return false;
+    return n.core_kind === "wireguard";
+  });
   const hasAwgNode = (nodes.data || []).some(
     (n) => n.core_kind === "wireguard" && !!n.wireguard?.awg_enabled,
   );

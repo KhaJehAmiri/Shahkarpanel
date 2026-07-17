@@ -131,10 +131,17 @@ def _ensure_protocol_enabled(proxy_type, db: Session) -> None:
     WireGuard (which is not an Xray inbound), at least one configured WG node."""
     if proxy_type == ProxyTypes.WireGuard:
         from app.wireguard.sync import amneziawg_enabled, plain_wg_enabled
+        from app.wireguard.xray_native import xray_native_wg_enabled
 
         wg_nodes = crud.get_wireguard_nodes(db)
+        # Finalmask (xray-native WG) alone is enough — kernel plain/AWG are optional.
         if any(
-            n.wireguard and (plain_wg_enabled(n.wireguard) or amneziawg_enabled(n.wireguard))
+            n.wireguard
+            and (
+                plain_wg_enabled(n.wireguard)
+                or amneziawg_enabled(n.wireguard)
+                or xray_native_wg_enabled(n.wireguard)
+            )
             for n in wg_nodes
         ):
             return
@@ -142,7 +149,7 @@ def _ensure_protocol_enabled(proxy_type, db: Session) -> None:
             return
         raise HTTPException(
             status_code=400,
-            detail="WireGuard / AmneziaWG has no configured node on your server",
+            detail="WireGuard / AmneziaWG / Finalmask has no configured node on your server",
         )
     if proxy_type == ProxyTypes.Hysteria2:
         nodes = crud.get_singbox_nodes(db)

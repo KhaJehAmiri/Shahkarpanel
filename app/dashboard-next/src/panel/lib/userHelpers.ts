@@ -61,8 +61,15 @@ export function protocolAssignable(
   const nodeList = nodes || [];
   switch (proto) {
     case "wireguard":
+      // Finalmask (xray_wg) alone is enough — plain 51820 is not required.
       return (inbounds?.wireguard?.length || 0) > 0
-        || nodeList.some((n) => n.core_kind === "wireguard" && n.wireguard?.plain_enabled !== false);
+        || nodeList.some((n) => {
+          const wg = n.wireguard;
+          if (!wg) return false;
+          if (wg.xray_wg_enabled) return true;
+          if (wg.plain_enabled === false) return false;
+          return n.core_kind === "wireguard";
+        });
     case "amneziawg":
       return (inbounds?.amneziawg?.length || 0) > 0
         || nodeList.some((n) => n.core_kind === "wireguard" && !!n.wireguard?.awg_enabled);

@@ -224,6 +224,8 @@ def collect_v2ray_share_link_items(
     for raw in collect_unified_share_links(user):
         remark = parse_link_remark(raw)
         flag, title = split_remark_flag(remark)
+        # "Iran · Hysteria2" → region_name "Iran" (portal/apps show protocol separately)
+        region_name = title.split("·", 1)[0].strip() if title else remark
         proto = raw.split("://", 1)[0] if "://" in raw else "link"
         items.append(
             {
@@ -231,7 +233,7 @@ def collect_v2ray_share_link_items(
                 "protocol": proto,
                 "remark": title or remark,
                 "region_flag": flag,
-                "region_name": title or remark,
+                "region_name": region_name or title or remark,
                 "address_hint": "",
             }
         )

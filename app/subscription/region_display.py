@@ -170,3 +170,30 @@ def enrich_subscription_remark(remark: str, local_vars: dict) -> str:
         return remark
     return f"{prefix} · {remark}" if remark else prefix
 
+
+def node_config_remark(
+    node,
+    protocol: str,
+    *,
+    host_index: int = 0,
+    include_node_name: bool = False,
+) -> str:
+    """Client-visible remark for node-hosted protocols (match inbound Host style).
+
+    Example: ``🇮🇷 Iran · Hysteria2`` — same shape as Host
+    ``{REGION_FLAG} {REGION_NAME} · {PROTOCOL}``.
+    """
+    local_vars = region_format_vars(
+        getattr(node, "region", None),
+        node_name=getattr(node, "name", None),
+    )
+    body = (protocol or "").strip() or "Server"
+    if include_node_name:
+        nname = (getattr(node, "name", None) or "").strip()
+        if nname:
+            body = f"{body} · {nname}"
+    remark = enrich_subscription_remark(body, local_vars)
+    if host_index > 0:
+        remark = f"{remark} #{host_index + 1}"
+    return remark
+

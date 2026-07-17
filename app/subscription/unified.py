@@ -16,6 +16,7 @@ from app.subscription.quic import (
     user_hysteria2_link,
     user_tuic_link,
 )
+from app.subscription.region_display import node_config_remark
 from app.subscription.wireguard import node_endpoint, user_config
 
 if TYPE_CHECKING:
@@ -174,8 +175,10 @@ def _collect_wireguard_exports(
                     host, port_str = ep.rsplit(":", 1)
                     # Strip IPv6 brackets from host for outbound JSON fields.
                     host_clean = host[1:-1] if host.startswith("[") and host.endswith("]") else host
-                    suffix = "" if i == 0 else f"-h{i + 1}"
-                    tag = f"wg-{wg.name}" + ("-awg" if variant == "awg" else "") + suffix
+                    proto = "AmneziaWG" if variant == "awg" else "WireGuard"
+                    tag = node_config_remark(
+                        wg, proto, host_index=i, include_node_name=True,
+                    )
                     exports.append((variant, tag, wg, settings, host_clean, int(port_str), addr, None))
         if native_ok:
             # Prefer Hosts / plain endpoint host; dial the user's sticky shard port.
@@ -197,7 +200,7 @@ def _collect_wireguard_exports(
             if addr:
                 exports.append((
                     "xray_native",
-                    f"wg-{wg.name}-xray",
+                    node_config_remark(wg, "Finalmask", include_node_name=True),
                     wg,
                     settings,
                     host_clean,
@@ -310,7 +313,9 @@ def _append_singbox(user: "UserResponse", config_text: str) -> str:
                     default_port=hy2_port,
                 )
                 for i, (host, port) in enumerate(dials):
-                    tag = f"hy2-{node.name}" + ("" if i == 0 else f"-h{i + 1}")
+                    tag = node_config_remark(
+                        node, "Hysteria2", host_index=i, include_node_name=True,
+                    )
                     if tag in tags:
                         continue
                     outbounds.append({
@@ -348,7 +353,9 @@ def _append_singbox(user: "UserResponse", config_text: str) -> str:
                     default_port=tuic_port,
                 )
                 for i, (host, port) in enumerate(dials):
-                    tag = f"tuic-{node.name}" + ("" if i == 0 else f"-h{i + 1}")
+                    tag = node_config_remark(
+                        node, "TUIC", host_index=i, include_node_name=True,
+                    )
                     if tag in tags:
                         continue
                     outbounds.append({
@@ -371,7 +378,7 @@ def _append_singbox(user: "UserResponse", config_text: str) -> str:
                 if not (node.singbox and node.singbox.anytls_enabled):
                     continue
                 host = node.singbox.sni or node.address
-                tag = f"anytls-{node.name}"
+                tag = node_config_remark(node, "AnyTLS", include_node_name=True)
                 if tag in tags:
                     continue
                 from app.singbox.sync import anytls_port_for_user
@@ -444,7 +451,9 @@ def _append_clash_meta(user: "UserResponse", config_text: str) -> str:
                     default_port=hy2_port,
                 )
                 for i, (host, port) in enumerate(dials):
-                    tag = f"hy2-{node.name}" + ("" if i == 0 else f"-h{i + 1}")
+                    tag = node_config_remark(
+                        node, "Hysteria2", host_index=i, include_node_name=True,
+                    )
                     link = user_hysteria2_link(
                         settings, node, remark=tag,
                         speed_limit_up=user.speed_limit_up,
@@ -473,7 +482,9 @@ def _append_clash_meta(user: "UserResponse", config_text: str) -> str:
                     default_port=tuic_port,
                 )
                 for i, (host, port) in enumerate(dials):
-                    tag = f"tuic-{node.name}" + ("" if i == 0 else f"-h{i + 1}")
+                    tag = node_config_remark(
+                        node, "TUIC", host_index=i, include_node_name=True,
+                    )
                     link = user_tuic_link(
                         settings, node, remark=tag,
                         speed_limit_up=user.speed_limit_up,
@@ -490,7 +501,7 @@ def _append_clash_meta(user: "UserResponse", config_text: str) -> str:
             for node in sb_nodes:
                 if not (node.singbox and node.singbox.anytls_enabled):
                     continue
-                tag = f"anytls-{node.name}"
+                tag = node_config_remark(node, "AnyTLS", include_node_name=True)
                 link = user_anytls_link(
                     settings, node, remark=tag,
                     speed_limit_up=user.speed_limit_up,
@@ -672,7 +683,7 @@ def collect_unified_share_links(user: "UserResponse") -> list[str]:
                 if not (node.singbox and node.singbox.hysteria2_enabled):
                     continue
                 link = user_hysteria2_link(
-                    settings, node, remark=f"{user.username}-{node.name}-hy2",
+                    settings, node, remark=node_config_remark(node, "Hysteria2"),
                     speed_limit_up=user.speed_limit_up,
                     speed_limit_down=user.speed_limit_down,
                 )
@@ -685,7 +696,7 @@ def collect_unified_share_links(user: "UserResponse") -> list[str]:
                 if not (node.singbox and node.singbox.tuic_enabled):
                     continue
                 link = user_tuic_link(
-                    settings, node, remark=f"{user.username}-{node.name}-tuic",
+                    settings, node, remark=node_config_remark(node, "TUIC"),
                     speed_limit_up=user.speed_limit_up,
                     speed_limit_down=user.speed_limit_down,
                 )
@@ -698,7 +709,7 @@ def collect_unified_share_links(user: "UserResponse") -> list[str]:
                 if not (node.singbox and node.singbox.anytls_enabled):
                     continue
                 link = user_anytls_link(
-                    settings, node, remark=f"{user.username}-{node.name}-anytls",
+                    settings, node, remark=node_config_remark(node, "AnyTLS"),
                     speed_limit_up=user.speed_limit_up,
                     speed_limit_down=user.speed_limit_down,
                 )
@@ -716,7 +727,7 @@ def collect_unified_share_links(user: "UserResponse") -> list[str]:
                 # share links must target that inbound — not kernel plain WG.
                 # Xray apps importing wireguard:// otherwise dial the wrong port.
                 if xray_native_wg_enabled(wg.wireguard):
-                    remark = f"{user.username}-{wg.name}-xray"
+                    remark = node_config_remark(wg, "Finalmask")
                     uri = user_share_link(
                         settings, wg, variant="xray_native", remark=remark, db=db,
                     )
@@ -724,7 +735,8 @@ def collect_unified_share_links(user: "UserResponse") -> list[str]:
                         links.append(uri)
                     continue
                 for variant in ("plain", "awg"):
-                    remark = f"{user.username}-{wg.name}" + ("-awg" if variant == "awg" else "")
+                    proto = "AmneziaWG" if variant == "awg" else "WireGuard"
+                    remark = node_config_remark(wg, proto)
                     uri = user_share_link(settings, wg, variant=variant, remark=remark, db=db)
                     if uri:
                         links.append(uri)

@@ -220,7 +220,7 @@ def _attach_subscription_share_links(db: Session, dbuser, payload: dict) -> None
             anytls_nodes = [n for n in sb_nodes if n.singbox.anytls_enabled]
             preferred_anytls = pick_node(anytls_nodes) if anytls_nodes else None
 
-        from app.subscription.region_display import resolve_region_display
+        from app.subscription.region_display import node_config_remark, resolve_region_display
 
         node_items = []
         for n in sb_nodes:
@@ -242,19 +242,19 @@ def _attach_subscription_share_links(db: Session, dbuser, payload: dict) -> None
             }
             if hy2_settings and n.singbox.hysteria2_enabled:
                 item["hysteria2_link"] = user_hysteria2_link(
-                    hy2_settings, n, remark=f"{dbuser.username}-{n.name}",
+                    hy2_settings, n, remark=node_config_remark(n, "Hysteria2"),
                     speed_limit_up=dbuser.speed_limit_up,
                     speed_limit_down=dbuser.speed_limit_down,
                 )
             if tuic_settings and n.singbox.tuic_enabled:
                 item["tuic_link"] = user_tuic_link(
-                    tuic_settings, n, remark=f"{dbuser.username}-{n.name}",
+                    tuic_settings, n, remark=node_config_remark(n, "TUIC"),
                     speed_limit_up=dbuser.speed_limit_up,
                     speed_limit_down=dbuser.speed_limit_down,
                 )
             if anytls_settings and n.singbox.anytls_enabled:
                 item["anytls_link"] = user_anytls_link(
-                    anytls_settings, n, remark=f"{dbuser.username}-{n.name}",
+                    anytls_settings, n, remark=node_config_remark(n, "AnyTLS"),
                     speed_limit_up=dbuser.speed_limit_up,
                     speed_limit_down=dbuser.speed_limit_down,
                 )
@@ -263,19 +263,22 @@ def _attach_subscription_share_links(db: Session, dbuser, payload: dict) -> None
 
         if preferred_hy2 and preferred_hy2.singbox:
             payload["hysteria2_link"] = user_hysteria2_link(
-                hy2_settings, preferred_hy2, remark=f"{dbuser.username}-{preferred_hy2.name}",
+                hy2_settings, preferred_hy2,
+                remark=node_config_remark(preferred_hy2, "Hysteria2"),
                 speed_limit_up=dbuser.speed_limit_up,
                 speed_limit_down=dbuser.speed_limit_down,
             )
         if preferred_tuic and preferred_tuic.singbox:
             payload["tuic_link"] = user_tuic_link(
-                tuic_settings, preferred_tuic, remark=f"{dbuser.username}-{preferred_tuic.name}",
+                tuic_settings, preferred_tuic,
+                remark=node_config_remark(preferred_tuic, "TUIC"),
                 speed_limit_up=dbuser.speed_limit_up,
                 speed_limit_down=dbuser.speed_limit_down,
             )
         if preferred_anytls and preferred_anytls.singbox:
             payload["anytls_link"] = user_anytls_link(
-                anytls_settings, preferred_anytls, remark=f"{dbuser.username}-{preferred_anytls.name}",
+                anytls_settings, preferred_anytls,
+                remark=node_config_remark(preferred_anytls, "AnyTLS"),
                 speed_limit_up=dbuser.speed_limit_up,
                 speed_limit_down=dbuser.speed_limit_down,
             )
@@ -283,7 +286,7 @@ def _attach_subscription_share_links(db: Session, dbuser, payload: dict) -> None
     if wg_settings:
         wg_nodes = [n for n in crud.get_wireguard_nodes(db) if n.wireguard is not None]
         if wg_nodes:
-            from app.subscription.region_display import resolve_region_display
+            from app.subscription.region_display import node_config_remark, resolve_region_display
             from app.subscription.wireguard import user_share_link
 
             from app.subscription.wireguard import user_config as wg_user_config
@@ -295,7 +298,8 @@ def _attach_subscription_share_links(db: Session, dbuser, payload: dict) -> None
             direct_any = False
             for n in wg_nodes:
                 link = user_share_link(
-                    wg_settings, n, variant="plain", remark=f"{dbuser.username}-{n.name}", db=db
+                    wg_settings, n, variant="plain",
+                    remark=node_config_remark(n, "WireGuard"), db=db,
                 )
                 awg_ok = bool(
                     n.wireguard
@@ -305,7 +309,8 @@ def _attach_subscription_share_links(db: Session, dbuser, payload: dict) -> None
                 direct_link = None
                 if n.wireguard and direct_wg_enabled(n.wireguard):
                     direct_link = user_share_link(
-                        wg_settings, n, variant="direct", remark=f"{dbuser.username}-{n.name}-direct", db=db
+                        wg_settings, n, variant="direct",
+                        remark=node_config_remark(n, "WireGuard Direct"), db=db,
                     )
                 awg_any = awg_any or awg_ok
                 direct_any = direct_any or bool(direct_link)
@@ -325,7 +330,8 @@ def _attach_subscription_share_links(db: Session, dbuser, payload: dict) -> None
             payload["wireguard_nodes"] = node_items
             if preferred:
                 link = user_share_link(
-                    wg_settings, preferred, variant="plain", remark=f"{dbuser.username}-{preferred.name}", db=db
+                    wg_settings, preferred, variant="plain",
+                    remark=node_config_remark(preferred, "WireGuard"), db=db,
                 )
                 if link:
                     payload["wireguard_uri"] = link
@@ -335,7 +341,7 @@ def _attach_subscription_share_links(db: Session, dbuser, payload: dict) -> None
                 if preferred.wireguard and direct_wg_enabled(preferred.wireguard):
                     direct_link = user_share_link(
                         wg_settings, preferred, variant="direct",
-                        remark=f"{dbuser.username}-{preferred.name}-direct", db=db,
+                        remark=node_config_remark(preferred, "WireGuard Direct"), db=db,
                     )
                     if direct_link:
                         payload["wireguard_direct_uri"] = direct_link
@@ -764,8 +770,10 @@ def user_subscription_hysteria2(
     if not n:
         raise HTTPException(status_code=404, detail="No Hysteria2 node available")
 
+    from app.subscription.region_display import node_config_remark
+
     link = user_hysteria2_link(
-        settings, n, remark=f"{dbuser.username}-{n.name}",
+        settings, n, remark=node_config_remark(n, "Hysteria2"),
         speed_limit_up=dbuser.speed_limit_up,
         speed_limit_down=dbuser.speed_limit_down,
     )
@@ -802,8 +810,10 @@ def user_subscription_tuic(
     if not n:
         raise HTTPException(status_code=404, detail="No TUIC node available")
 
+    from app.subscription.region_display import node_config_remark
+
     link = user_tuic_link(
-        settings, n, remark=f"{dbuser.username}-{n.name}",
+        settings, n, remark=node_config_remark(n, "TUIC"),
         speed_limit_up=dbuser.speed_limit_up,
         speed_limit_down=dbuser.speed_limit_down,
     )
@@ -840,8 +850,10 @@ def user_subscription_anytls(
     if not n:
         raise HTTPException(status_code=404, detail="No AnyTLS node available")
 
+    from app.subscription.region_display import node_config_remark
+
     link = user_anytls_link(
-        settings, n, remark=f"{dbuser.username}-{n.name}",
+        settings, n, remark=node_config_remark(n, "AnyTLS"),
         speed_limit_up=dbuser.speed_limit_up,
         speed_limit_down=dbuser.speed_limit_down,
     )

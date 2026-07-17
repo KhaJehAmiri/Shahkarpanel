@@ -233,6 +233,23 @@ function SubscribeBody() {
   const configs: ConfigEntry[] = useMemo(() => {
     if (!info) return [];
     const out: ConfigEntry[] = [];
+    const quic = (info.singbox_nodes || []).filter((n) =>
+      (hasHysteria2 && n.hysteria2_available)
+      || (hasTuic && n.tuic_available)
+      || (hasAnytls && n.anytls_available),
+    );
+    // Prefer structured node cards (region/flag). Skip the same protocols from
+    // unified share-link items so we don't show "user-node-hy2" duplicates.
+    const skipFromLinks = new Set<string>();
+    if (quic.length || info.hysteria2_link || info.tuic_link || info.anytls_link) {
+      if (hasHysteria2) skipFromLinks.add("hysteria2");
+      if (hasTuic) skipFromLinks.add("tuic");
+      if (hasAnytls) skipFromLinks.add("anytls");
+    }
+    if (hasWireguard && (wgNodes.length || info.wireguard_uri)) {
+      skipFromLinks.add("wireguard");
+    }
+
     const items = info.link_items?.length
       ? info.link_items
       : (info.links || []).map((link) => ({
@@ -245,6 +262,7 @@ function SubscribeBody() {
 
     items.forEach((item, i) => {
       const protocol = normProto(item.protocol || protoFromLink(item.link));
+      if (skipFromLinks.has(protocol)) return;
       out.push({
         id: `x-${i}`,
         protocol,
@@ -280,11 +298,6 @@ function SubscribeBody() {
       }
     }
 
-    const quic = (info.singbox_nodes || []).filter((n) =>
-      (hasHysteria2 && n.hysteria2_available)
-      || (hasTuic && n.tuic_available)
-      || (hasAnytls && n.anytls_available),
-    );
     if (quic.length) {
       quic.forEach((n) => {
         const title = n.region_name || n.name;

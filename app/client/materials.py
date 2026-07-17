@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Optional
 
 from app.models.proxy import ProxyTypes
 from app.subscription.quic import user_anytls_link, user_hysteria2_link, user_tuic_link
+from app.subscription.region_display import node_config_remark
 from app.subscription.wireguard import user_config as build_wireguard_user_config
 from app.tls.inspect import cert_requires_insecure
 
@@ -154,7 +155,7 @@ def build_materials(
             link = user_hysteria2_link(
                 hy2_settings,
                 sb_node,
-                remark=f"{dbuser.username}-{sb_node.name}",
+                remark=node_config_remark(sb_node, "Hysteria2"),
                 insecure=_singbox_insecure(sb_node.singbox),
                 speed_limit_up=dbuser.speed_limit_up,
                 speed_limit_down=dbuser.speed_limit_down,
@@ -175,7 +176,7 @@ def build_materials(
             link = user_tuic_link(
                 tuic_settings,
                 sb_node,
-                remark=f"{dbuser.username}-{sb_node.name}",
+                remark=node_config_remark(sb_node, "TUIC"),
                 insecure=_singbox_insecure(sb_node.singbox),
                 speed_limit_up=dbuser.speed_limit_up,
                 speed_limit_down=dbuser.speed_limit_down,
@@ -196,7 +197,7 @@ def build_materials(
             link = user_anytls_link(
                 anytls_settings,
                 sb_node,
-                remark=f"{dbuser.username}-{sb_node.name}",
+                remark=node_config_remark(sb_node, "AnyTLS"),
                 insecure=_singbox_insecure(sb_node.singbox),
                 speed_limit_up=dbuser.speed_limit_up,
                 speed_limit_down=dbuser.speed_limit_down,

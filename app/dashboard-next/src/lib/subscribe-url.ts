@@ -60,11 +60,16 @@ export function resolveSingboxSubUrl(subUrl: string): string {
   return stripSubUrlFragment(subUrl).replace(/\/?$/, "/sing-box");
 }
 
-export function resolveWgUrl(subUrl: string, variant: "plain" | "awg" = "plain", nodeId?: number): string {
+export function resolveWgUrl(
+  subUrl: string,
+  variant: "plain" | "awg" | "xray_native" = "plain",
+  nodeId?: number,
+): string {
   if (!subUrl) return "";
   const base = stripSubUrlFragment(subUrl).replace(/\/?$/, "/wireguard");
   const path = nodeId != null ? `${base}/${nodeId}` : base;
-  return variant === "awg" ? `${path}?variant=awg` : path;
+  if (variant === "plain") return path;
+  return `${path}?variant=${variant}`;
 }
 
 export function resolveHysteria2Url(subUrl: string, nodeId?: number): string {

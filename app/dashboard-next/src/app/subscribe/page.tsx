@@ -40,6 +40,7 @@ interface SubInfo {
   tuic_link?: string | null;
   anytls_link?: string | null;
   wireguard_uri?: string | null;
+  wireguard_variant?: "plain" | "awg" | "xray_native" | null;
   wireguard_nodes?: Array<{
     id: number;
     name: string;
@@ -48,6 +49,7 @@ interface SubInfo {
     region_name?: string | null;
     latency_ms?: number | null;
     wireguard_uri?: string | null;
+    wireguard_variant?: "plain" | "awg" | "xray_native" | null;
   }>;
   singbox_nodes?: Array<{
     id: number;
@@ -217,10 +219,16 @@ function SubscribeBody() {
 
   useEffect(() => {
     if (!token || !info || info.config_available === false || !hasWireguard) return;
-    const nodes = wgNodes.length ? wgNodes : [{ id: -1 } as { id: number }];
+    const nodes = wgNodes.length
+      ? wgNodes
+      : [{ id: -1, wireguard_variant: info.wireguard_variant } as (typeof wgNodes)[number]];
     nodes.forEach((n) => {
       const nodePath = n.id > 0 ? `/${n.id}` : "";
-      fetch(`/sub/${token}/wireguard${nodePath}`)
+      const variant = n.wireguard_variant === "xray_native" || n.wireguard_variant === "awg"
+        ? n.wireguard_variant
+        : "plain";
+      const qs = variant === "plain" ? "" : `?variant=${variant}`;
+      fetch(`/sub/${token}/wireguard${nodePath}${qs}`)
         .then(async (r) => (r.ok ? r.text() : ""))
         .then((body) => {
           const t = body.trim();
@@ -276,23 +284,32 @@ function SubscribeBody() {
       if (wgNodes.length) {
         wgNodes.forEach((n) => {
           const conf = wgConfByNode[n.id];
-          const href = resolveWgUrl(subUrl, "plain", n.id);
+          const variant = n.wireguard_variant === "xray_native" || n.wireguard_variant === "awg"
+            ? n.wireguard_variant
+            : "plain";
+          const href = resolveWgUrl(subUrl, variant, n.id);
+          // Prefer wireguard:// share URI for copy/QR (not the HTTP download URL).
+          const uri = (n.wireguard_uri || "").trim();
           out.push({
             id: `wg-${n.id}`,
             protocol: "wireguard",
             title: n.region_name || n.name,
             flag: n.region_flag || undefined,
-            value: conf || (n.wireguard_uri || "").trim() || href,
+            value: uri || conf || href,
             downloadHref: href,
           });
         });
       } else {
-        const href = resolveWgUrl(subUrl, "plain");
+        const variant = info.wireguard_variant === "xray_native" || info.wireguard_variant === "awg"
+          ? info.wireguard_variant
+          : "plain";
+        const href = resolveWgUrl(subUrl, variant);
+        const uri = (info.wireguard_uri || "").trim();
         out.push({
           id: "wg-0",
           protocol: "wireguard",
           title: "WireGuard",
-          value: wgConfByNode[-1] || info.wireguard_uri || href,
+          value: uri || wgConfByNode[-1] || href,
           downloadHref: href,
         });
       }

@@ -200,7 +200,7 @@ def _collect_wireguard_exports(
             if addr:
                 exports.append((
                     "xray_native",
-                    node_config_remark(wg, "Finalmask", include_node_name=True),
+                    node_config_remark(wg, "WireGuard", include_node_name=True),
                     wg,
                     settings,
                     host_clean,
@@ -727,7 +727,8 @@ def collect_unified_share_links(user: "UserResponse") -> list[str]:
                 # share links must target that inbound — not kernel plain WG.
                 # Xray apps importing wireguard:// otherwise dial the wrong port.
                 if xray_native_wg_enabled(wg.wireguard):
-                    remark = node_config_remark(wg, "Finalmask")
+                    # Client-facing name stays "WireGuard" (Finalmask is the transport).
+                    remark = node_config_remark(wg, "WireGuard")
                     uri = user_share_link(
                         settings, wg, variant="xray_native", remark=remark, db=db,
                     )

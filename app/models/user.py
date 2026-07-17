@@ -347,6 +347,8 @@ class WireGuardNodeItem(BaseModel):
     region_name: str | None = None
     latency_ms: float | None = None
     wireguard_uri: str | None = None
+    # Which /wireguard export matches wireguard_uri (plain vs Finalmask/xray_native).
+    wireguard_variant: str | None = None
     wireguard_direct_uri: str | None = None
     awg_available: bool = False
 
@@ -470,6 +472,7 @@ class SubscriptionUserResponse(UserResponse):
     tuic_link: str | None = None
     anytls_link: str | None = None
     wireguard_uri: str | None = None
+    wireguard_variant: str | None = None
     wireguard_awg_available: bool = False
     wireguard_nodes: List[WireGuardNodeItem] = []
     singbox_nodes: List[SingBoxNodeItem] = []

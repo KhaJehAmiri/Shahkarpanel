@@ -291,16 +291,30 @@ def _attach_subscription_share_links(db: Session, dbuser, payload: dict) -> None
 
             from app.subscription.wireguard import user_config as wg_user_config
             from app.wireguard.sync import amneziawg_enabled, direct_wg_enabled
+            from app.wireguard.xray_native import xray_native_wg_enabled
+
+            def _wg_primary_share(n):
+                """Plain WG when available; otherwise Finalmask (xray_native) share URI."""
+                remark = node_config_remark(n, "WireGuard")
+                link = user_share_link(
+                    wg_settings, n, variant="plain", remark=remark, db=db,
+                )
+                if link:
+                    return link, "plain"
+                if n.wireguard and xray_native_wg_enabled(n.wireguard):
+                    link = user_share_link(
+                        wg_settings, n, variant="xray_native", remark=remark, db=db,
+                    )
+                    if link:
+                        return link, "xray_native"
+                return None, "plain"
 
             preferred = pick_node(wg_nodes)
             node_items = []
             awg_any = False
             direct_any = False
             for n in wg_nodes:
-                link = user_share_link(
-                    wg_settings, n, variant="plain",
-                    remark=node_config_remark(n, "WireGuard"), db=db,
-                )
+                link, wg_variant = _wg_primary_share(n)
                 awg_ok = bool(
                     n.wireguard
                     and amneziawg_enabled(n.wireguard)
@@ -324,17 +338,16 @@ def _attach_subscription_share_links(db: Session, dbuser, payload: dict) -> None
                     "region_name": region_name,
                     "latency_ms": n.latency_ms,
                     "wireguard_uri": link,
+                    "wireguard_variant": wg_variant,
                     "awg_available": awg_ok,
                     "wireguard_direct_uri": direct_link,
                 })
             payload["wireguard_nodes"] = node_items
             if preferred:
-                link = user_share_link(
-                    wg_settings, preferred, variant="plain",
-                    remark=node_config_remark(preferred, "WireGuard"), db=db,
-                )
+                link, wg_variant = _wg_primary_share(preferred)
                 if link:
                     payload["wireguard_uri"] = link
+                    payload["wireguard_variant"] = wg_variant
                 if preferred.wireguard and amneziawg_enabled(preferred.wireguard):
                     if wg_user_config(wg_settings, preferred, variant="awg", db=db):
                         payload["wireguard_awg_available"] = True
@@ -661,6 +674,11 @@ def user_subscription_wireguard(
     from app.wireguard.operations import ensure_preshared_key, ensure_user_address
     from app.wireguard.sync import amneziawg_enabled, plain_wg_enabled
     from app.wireguard.wg_manager import autoscale_enabled, create_peer
+    from app.wireguard.xray_native import xray_native_wg_enabled
+
+    # Finalmask-only nodes have plain WG disabled — default download must not 404.
+    if variant == "plain" and not plain_wg_enabled(cfg) and xray_native_wg_enabled(cfg):
+        variant = "xray_native"
 
     if variant == "plain" and plain_wg_enabled(cfg) and autoscale_enabled():
         try:

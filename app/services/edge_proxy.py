@@ -785,6 +785,18 @@ server {{
 
     client_max_body_size 200m;
 
+    # Panel down during docker restart: friendly waiting page (not stock nginx 502).
+    error_page 502 503 504 = @panel_restarting;
+
+    location @panel_restarting {{
+        default_type text/html;
+        charset utf-8;
+        add_header Cache-Control "no-store" always;
+        add_header Retry-After "2" always;
+        root /var/lib/nexuspanel/nginx/html;
+        rewrite ^ /restarting.html break;
+    }}
+
     location / {{
         proxy_pass {SUB_LEGACY_BACKEND};
         proxy_http_version 1.1;
@@ -792,8 +804,10 @@ server {{
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 1s;
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
+        proxy_next_upstream off;
     }}
 }}
 """

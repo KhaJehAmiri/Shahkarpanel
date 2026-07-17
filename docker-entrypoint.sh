@@ -148,6 +148,11 @@ if [ "$(id -u)" -eq 0 ]; then
     eval "$(cd /code && python3 -c 'from app.xray.network_defaults import host_network_tuning_shell; print(host_network_tuning_shell())')" \
       >/dev/null 2>&1 || true
   fi
+  # Host nginx: stock 502 → friendly restarting page (bind-mounted sites-*).
+  # Runs as root before the panel listens; safe no-op if nginx is absent.
+  if [ -x /code/scripts/ensure_nginx_restarting_page.sh ]; then
+    bash /code/scripts/ensure_nginx_restarting_page.sh >/dev/null 2>&1 || true
+  fi
   if [ "${1:-panel}" = "panel" ]; then
     # Re-enter this script as nexuspanel so migrate+main share one code path.
     exec runuser -u nexuspanel -- bash /code/docker-entrypoint.sh panel

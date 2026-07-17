@@ -543,6 +543,30 @@ def _schedule_compose_action(mode: UpdateMode) -> None:
             logf.close()
 
 
+def _ensure_nginx_restarting_page() -> None:
+    """Patch host nginx so brief :8000 downtime shows restarting.html, not stock 502.
+
+    Older HTTPS installs (and subscription vhosts) often lack ``error_page
+    @panel_restarting``. Run after git pull and *before* the container restart
+    so the waiting page is live for this update's downtime.
+    """
+    script = _ROOT / "scripts" / "ensure_nginx_restarting_page.sh"
+    if not script.is_file():
+        return
+    try:
+        subprocess.run(
+            ["bash", str(script)],
+            cwd=str(_ROOT),
+            timeout=30,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except Exception:
+        # Never block an update on nginx cosmetics.
+        pass
+
+
 def _restart_panel(job: UpdateJob) -> None:
     if _docker_available() and _compose_file():
         _schedule_compose_action("restart")
@@ -614,6 +638,9 @@ def _worker(job_id: str) -> None:
         new_ver = _local_version()
         sha = _git_head_sha()
         _write_install_meta(new_ver, sha)
+
+        # Before downtime: make sure host nginx serves the waiting page.
+        _ensure_nginx_restarting_page()
 
         job.step_running("restart")
         if use_docker:

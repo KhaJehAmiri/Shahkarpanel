@@ -1,7 +1,7 @@
 import threading
 import time
 from functools import lru_cache
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -274,16 +274,55 @@ def _apply_node_tunnels(config, node_id: int):
         return config
 
 
+def _finalmask_outbound_tag(db, dbnode, node_id: int, config=None) -> str:
+    """Outbound the Finalmask shards route to (tunnel > WARP > DIRECT)."""
+    from app.tunnel.relay import relay_tunnel_outbound_tag
+
+    # Prefer the tunnel outbound already injected by _apply_node_tunnels. Falling
+    # back to local DIRECT/WARP is what made Finalmask bypass the Reality hop
+    # while every other Xray inbound traversed it.
+    outbound_tag = relay_tunnel_outbound_tag(db, node_id, config) or "DIRECT"
+    if outbound_tag == "DIRECT" and dbnode and bool(getattr(dbnode, "warp_enabled", False)):
+        outbound_tag = (getattr(dbnode, "warp_tag", None) or "warp").strip() or "warp"
+    return outbound_tag
+
+
+def _finalmask_mtu_override(db, dbnode, node_id: int) -> Optional[int]:
+    """Cap Finalmask MTU on the nested tunnel+WARP path to avoid black-holes.
+
+    Live MTU is WARP-clamped to 1280 == the WARP outer MTU, which black-holes
+    large TLS records once WG is nested inside Reality inside WARP. Cap the inner
+    Finalmask MTU at 1200 whenever this node relays through a tunnel and exits
+    via WARP; leave standalone nodes on their configured value.
+    """
+    from app.tunnel.relay import relay_tunnel_outbound_tag
+    from app.wireguard.xray_native import TUNNEL_WARP_FINALMASK_MTU
+
+    if not (dbnode and bool(getattr(dbnode, "warp_enabled", False))):
+        return None
+    is_relay = bool(relay_tunnel_outbound_tag(db, node_id))
+    if not is_relay:
+        return None
+    cfg = dbnode.wireguard
+    configured = int(getattr(cfg, "xray_wg_mtu", None) or 1420)
+    return min(configured, TUNNEL_WARP_FINALMASK_MTU)
+
+
 def _apply_native_wireguard_inbound(config, node_id: int):
-    """Fold this WG node's Xray-native WireGuard+noise inbound into its config.
+    """Fold this WG node's Finalmask (Xray-native WG) shard inbounds into config.
 
-    Best-effort and independent of the tunnel injection above: this is a
-    self-contained inbound (terminates locally, dispatches to ``DIRECT`` or
-    WARP when enabled), not a relay/transit/exit tunnel fragment.
+    Terminates WireGuard in userspace on this node, then dispatches decrypted
+    traffic like any other product inbound:
 
-    Always replaces an existing ``node-{id}-xray-wg-in`` entry so peer IP
-    expansions (thousands of users) are reflected on the next Xray restart —
-    appending only when the tag is missing would leave a stale peer set.
+    * On a tunnel relay → ``tunnel-{id}-out`` (same Reality hop as VLESS/…);
+      WARP stays on the panel/exit side of that tunnel.
+    * Otherwise → ``DIRECT``, or the node's WARP tag when ``warp_enabled``.
+
+    Peers are sharded (``app/wireguard/finalmask_shard.py``) into several small
+    inbounds so a membership change rebuilds only one shard — the reload path
+    can hot-swap that shard on the live core without a full restart. Every
+    existing ``node-{id}-xray-wg-in*`` entry is replaced so peer IP expansions
+    are always reflected.
     """
     try:
         from app.db import GetDB, crud
@@ -291,8 +330,9 @@ def _apply_native_wireguard_inbound(config, node_id: int):
             collect_wg_peers,
             ensure_plain_addresses_for_finalmask,
         )
+        from app.wireguard.finalmask_shard import ensure_finalmask_slots
         from app.wireguard.xray_native import (
-            build_xray_wireguard_inbound,
+            build_xray_wireguard_shards,
             xray_native_wg_enabled,
         )
 
@@ -303,32 +343,46 @@ def _apply_native_wireguard_inbound(config, node_id: int):
                 return config
 
             ensure_plain_addresses_for_finalmask(db)
+            ensure_finalmask_slots(db)
             peers = collect_wg_peers(db)
-            outbound_tag = "DIRECT"
-            if dbnode and bool(getattr(dbnode, "warp_enabled", False)):
-                outbound_tag = (getattr(dbnode, "warp_tag", None) or "warp").strip() or "warp"
-            inbound, rule = build_xray_wireguard_inbound(
-                cfg, peers, node_id=node_id, outbound_tag=outbound_tag,
+            outbound_tag = _finalmask_outbound_tag(db, dbnode, node_id, config)
+            mtu_override = _finalmask_mtu_override(db, dbnode, node_id)
+            inbounds, rule = build_xray_wireguard_shards(
+                cfg, peers, node_id=node_id,
+                outbound_tag=outbound_tag, mtu_override=mtu_override,
             )
-        if inbound is None:
+        if not inbounds:
             return config
 
+        shard_tags = {ib["tag"] for ib in inbounds}
         result = config.copy()
-        inbounds = list(result.get("inbounds") or [])
-        tag = inbound["tag"]
-        inbounds = [ib for ib in inbounds if not (isinstance(ib, dict) and ib.get("tag") == tag)]
-        inbounds.append(inbound)
-        result["inbounds"] = inbounds
-
-        routing = result.setdefault("routing", {})
-        rules = list(routing.get("rules") or [])
-        rules = [
-            r for r in rules
+        existing = list(result.get("inbounds") or [])
+        # Drop any prior Finalmask shard inbounds (tag == base or base-*) so a
+        # shrunk shard set never leaves stale listeners behind.
+        base_tag = f"node-{node_id}-xray-wg-in"
+        existing = [
+            ib for ib in existing
             if not (
-                isinstance(r, dict)
-                and tag in (r.get("inboundTag") or [])
+                isinstance(ib, dict)
+                and isinstance(ib.get("tag"), str)
+                and (ib["tag"] == base_tag or ib["tag"].startswith(base_tag + "-"))
             )
         ]
+        existing.extend(inbounds)
+        result["inbounds"] = existing
+
+        def _references_finalmask(r) -> bool:
+            if not isinstance(r, dict):
+                return False
+            for t in r.get("inboundTag") or []:
+                if t in shard_tags:
+                    return True
+                if isinstance(t, str) and (t == base_tag or t.startswith(base_tag + "-")):
+                    return True
+            return False
+
+        routing = result.setdefault("routing", {})
+        rules = [r for r in (routing.get("rules") or []) if not _references_finalmask(r)]
         rules.insert(0, rule)
         routing["rules"] = rules
         return result

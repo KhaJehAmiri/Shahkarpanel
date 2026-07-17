@@ -163,6 +163,28 @@ class XrayService(rpyc.Service):
         self.core.restart(config)
 
     @rpyc.exposed
+    def xray_hot_replace_inbounds_json(self, payload_json: str) -> str:
+        """Hot-swap inbounds on the live core (Finalmask shard reload).
+
+        ``payload_json``: ``{"remove_tags": [...], "inbounds": [...]}``. Runs
+        ``xray api rmi/adi`` against the loopback plaintext API so only the
+        touched shard blips — no full core restart, tunnel stays up.
+        """
+        import json
+
+        from xray import hot_replace_inbounds
+
+        if self.core is None or not self.core.started:
+            return json.dumps({"ok": False, "detail": "xray core is not running"})
+        data = json.loads(payload_json or "{}")
+        result = hot_replace_inbounds(
+            XRAY_EXECUTABLE_PATH,
+            list(data.get("remove_tags") or []),
+            list(data.get("inbounds") or []),
+        )
+        return json.dumps(result)
+
+    @rpyc.exposed
     def wg_apply(self, spec):
         import json
 

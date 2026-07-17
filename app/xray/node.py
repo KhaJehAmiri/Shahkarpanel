@@ -292,6 +292,24 @@ class ReSTXRayNode:
         self._started = False
         self._started_at = None
 
+    def hot_replace_inbounds(
+        self,
+        remove_tags: list,
+        inbounds: list,
+        *,
+        timeout: int = 60,
+    ) -> dict:
+        """Hot-swap inbounds on the live core (Finalmask shard reload)."""
+        if not self.connected:
+            self.connect()
+        res = self.make_request(
+            "/xray/hot-replace-inbounds",
+            timeout=timeout,
+            remove_tags=list(remove_tags or []),
+            inbounds=list(inbounds or []),
+        )
+        return res if isinstance(res, dict) else {"ok": True}
+
     def restart(self, config: XRayConfig):
         if not self.connected:
             self.connect()
@@ -742,6 +760,45 @@ class RPyCXRayNode:
         self.remote.stop()
         self.started = False
         self._api = None
+
+    def hot_replace_inbounds(
+        self,
+        remove_tags: list,
+        inbounds: list,
+        *,
+        timeout: int = 60,
+    ) -> dict:
+        """Hot-swap inbounds on the live core (Finalmask shard reload).
+
+        Calls the node agent's ``xray_hot_replace_inbounds_json`` which runs
+        ``xray api rmi/adi`` locally. Older agents without that method raise
+        AttributeError so the caller can fall back to a full restart.
+        """
+        import json
+
+        remote = self.remote
+        if not hasattr(remote, "xray_hot_replace_inbounds_json"):
+            raise AttributeError("node agent has no xray_hot_replace_inbounds_json")
+        payload = json.dumps(
+            {"remove_tags": list(remove_tags or []), "inbounds": list(inbounds or [])},
+            separators=(",", ":"),
+        )
+        prev = None
+        conn = getattr(self, "connection", None)
+        try:
+            if conn is not None:
+                prev = conn._config.get("sync_request_timeout")
+                conn._config["sync_request_timeout"] = max(int(prev or 15), int(timeout))
+            raw = remote.xray_hot_replace_inbounds_json(payload)
+        finally:
+            if conn is not None and prev is not None:
+                conn._config["sync_request_timeout"] = prev
+        if isinstance(raw, str):
+            try:
+                return json.loads(raw) if raw else {}
+            except json.JSONDecodeError:
+                return {"ok": False, "detail": raw}
+        return raw if isinstance(raw, dict) else {"ok": bool(raw)}
 
     def restart(self, config: XRayConfig):
         """Restart remote Xray — use stop+start so older node agents with a

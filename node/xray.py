@@ -112,6 +112,12 @@ class XRayConfig(dict):
 
         self.api_host = XRAY_API_HOST
         self.api_port = XRAY_API_PORT
+        # Plaintext, loopback-only HandlerService mirror of the (TLS) panel API.
+        # Lets the local agent run ``xray api adi/rmi`` to hot-swap a single
+        # Finalmask shard inbound without a full core restart (the Reality
+        # tunnel + other inbounds stay up). Never exposed off 127.0.0.1.
+        self.local_api_host = "127.0.0.1"
+        self.local_api_port = int(XRAY_API_PORT) + 1
         self.ssl_cert = SSL_CERT_FILE
         self.ssl_key = SSL_KEY_FILE
         self.peer_ip = peer_ip
@@ -124,9 +130,11 @@ class XRayConfig(dict):
 
     def _apply_api(self):
         for inbound in self.get('inbounds', []).copy():
-            if inbound.get('protocol') == 'dokodemo-door' and inbound.get('tag') == 'API_INBOUND':
+            if inbound.get('protocol') == 'dokodemo-door' and inbound.get('tag') in (
+                'API_INBOUND', 'API_LOCAL_INBOUND'
+            ):
                 self['inbounds'].remove(inbound)
-                
+
             elif INBOUNDS and inbound.get('tag') not in INBOUNDS:
                 self['inbounds'].remove(inbound)
 
@@ -170,6 +178,19 @@ class XRayConfig(dict):
             self["inbounds"] = []
             self["inbounds"].insert(0, inbound)
 
+        # Loopback plaintext mirror for the local ``xray api`` CLI (the TLS
+        # inbound above cannot be dialed by the CLI, which speaks plain gRPC).
+        local_inbound = {
+            "listen": self.local_api_host,
+            "port": self.local_api_port,
+            "protocol": "dokodemo-door",
+            "settings": {
+                "address": "127.0.0.1"
+            },
+            "tag": "API_LOCAL_INBOUND"
+        }
+        self["inbounds"].insert(1, local_inbound)
+
         rule = {
             "inboundTag": [
                 "API_INBOUND"
@@ -181,11 +202,22 @@ class XRayConfig(dict):
             "outboundTag": "API",
             "type": "field"
         }
+        local_rule = {
+            "inboundTag": [
+                "API_LOCAL_INBOUND"
+            ],
+            "source": [
+                "127.0.0.1"
+            ],
+            "outboundTag": "API",
+            "type": "field"
+        }
         try:
             self["routing"]["rules"].insert(0, rule)
         except KeyError:
             self["routing"] = {"rules": []}
             self["routing"]["rules"].insert(0, rule)
+        self["routing"]["rules"].insert(1, local_rule)
 
 
 class XRayCore:
@@ -351,3 +383,78 @@ class XRayCore:
     def on_stop(self, func: callable):
         self._on_stop_funcs.append(func)
         return func
+
+
+def local_api_server() -> str:
+    """Address of the loopback plaintext HandlerService (see XRayConfig)."""
+    return f"127.0.0.1:{int(XRAY_API_PORT) + 1}"
+
+
+def hot_replace_inbounds(
+    executable_path: str,
+    remove_tags: list,
+    inbounds: list,
+    *,
+    timeout: float = 30.0,
+) -> dict:
+    """Swap inbounds on the *live* core via the local ``xray api`` CLI.
+
+    ``xray api rmi``/``adi`` build the full typed config from JSON inside the
+    CLI, which is the only way to hot-add a WireGuard+Finalmask inbound — the
+    gRPC HandlerService needs a serialized ``core.InboundHandlerConfig`` that
+    no Python client can produce for custom stream transports. Routing rules
+    referencing a re-added tag survive in the running core, so a swapped shard
+    keeps its outbound (tunnel/WARP) without touching routing.
+
+    Used by the Finalmask shard reload: only the changed shard's clients blip
+    for the rmi→adi moment; the Reality tunnel and every other inbound stay up.
+    """
+    import tempfile
+
+    server = local_api_server()
+    removed, remove_errors = [], {}
+    for tag in remove_tags or []:
+        try:
+            proc = subprocess.run(
+                [executable_path, "api", "rmi", f"--server={server}", str(tag)],
+                capture_output=True, text=True, timeout=timeout,
+            )
+            if proc.returncode == 0:
+                removed.append(tag)
+            else:
+                # Unknown tag is fine (first add of a shard); record others.
+                remove_errors[tag] = (proc.stderr or proc.stdout or "").strip()
+        except Exception as exc:  # noqa: BLE001 - reported to the panel
+            remove_errors[tag] = str(exc)
+
+    if not inbounds:
+        return {"ok": True, "removed": removed, "remove_errors": remove_errors}
+
+    with tempfile.NamedTemporaryFile(
+        "w", suffix=".json", prefix="finalmask-shard-", delete=False
+    ) as fh:
+        json.dump({"inbounds": list(inbounds)}, fh)
+        conf_path = fh.name
+    try:
+        proc = subprocess.run(
+            [executable_path, "api", "adi", f"--server={server}", conf_path],
+            capture_output=True, text=True, timeout=timeout,
+        )
+        ok = proc.returncode == 0
+        detail = (proc.stderr or proc.stdout or "").strip()
+    except Exception as exc:  # noqa: BLE001 - reported to the panel
+        ok, detail = False, str(exc)
+    finally:
+        try:
+            os.unlink(conf_path)
+        except OSError:
+            pass
+
+    if not ok:
+        logger.warning("Finalmask hot add failed: %s", detail)
+    return {
+        "ok": ok,
+        "removed": removed,
+        "remove_errors": remove_errors,
+        "detail": detail if not ok else "",
+    }

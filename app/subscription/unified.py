@@ -51,6 +51,7 @@ def _xray_wireguard_outbound(
     local_addr: str,
     variant: str,
     noise: Optional[dict] = None,
+    mtu: Optional[int] = None,
 ) -> dict:
     from app.subscription.wireguard import DEFAULT_KEEPALIVE
 
@@ -62,13 +63,20 @@ def _xray_wireguard_outbound(
     }
     if settings.get("preshared_key"):
         peer["preSharedKey"] = settings["preshared_key"]
+    if mtu is None:
+        if noise is not None:
+            from app.wireguard.xray_native import finalmask_client_mtu
+
+            mtu = finalmask_client_mtu(wg_node.wireguard)
+        else:
+            mtu = wg_node.wireguard.mtu or 1420
     outbound = {
         "tag": tag,
         "protocol": "wireguard",
         "settings": {
             "secretKey": settings.get("private_key"),
             "address": [local_addr] if local_addr else [],
-            "mtu": wg_node.wireguard.mtu or 1420,
+            "mtu": int(mtu),
             "peers": [peer],
         },
     }
@@ -134,6 +142,7 @@ def _collect_wireguard_exports(
     node has Finalmask enabled, plain/awg exports for that node are omitted so
     clients do not try to import stock WireGuard that Xray apps cannot use.
     """
+    from app.wireguard.finalmask_shard import finalmask_client_port
     from app.wireguard.xray_native import DEFAULT_NOISE_SETTINGS, xray_native_wg_enabled
 
     settings = _client_settings(user, ProxyTypes.WireGuard)
@@ -169,18 +178,19 @@ def _collect_wireguard_exports(
                     tag = f"wg-{wg.name}" + ("-awg" if variant == "awg" else "") + suffix
                     exports.append((variant, tag, wg, settings, host_clean, int(port_str), addr, None))
         if native_ok:
-            # Prefer Hosts / plain endpoint host, swap in the noise inbound port.
+            # Prefer Hosts / plain endpoint host; dial the user's sticky shard port.
             # Always emit even when plain/awg .conf can't be built so Finalmask
             # reaches the v2ray-json subscription.
             try:
                 plain_eps = node_host_endpoints(wg, variant="plain")
             except Exception:
                 plain_eps = []
+            shard_port = finalmask_client_port(wg.wireguard, settings)
             if not plain_eps:
                 try:
                     plain_eps = [node_endpoint(wg, variant="plain")]
                 except Exception:
-                    plain_eps = [f"{wg.address}:{int(wg.wireguard.xray_wg_listen_port)}"]
+                    plain_eps = [f"{wg.address}:{shard_port}"]
             host = plain_eps[0].rsplit(":", 1)[0]
             host_clean = host[1:-1] if host.startswith("[") and host.endswith("]") else host
             addr = settings.get("address") or settings.get("awg_address") or ""
@@ -191,7 +201,7 @@ def _collect_wireguard_exports(
                     wg,
                     settings,
                     host_clean,
-                    int(wg.wireguard.xray_wg_listen_port),
+                    shard_port,
                     addr,
                     wg.wireguard.xray_wg_noise or DEFAULT_NOISE_SETTINGS,
                 ))
@@ -573,25 +583,32 @@ def _append_v2ray_json(user: "UserResponse", config_text: str) -> str:
         return config_text
 
     with GetDB() as db:
+        from app.wireguard.xray_native import finalmask_client_mtu
+
         nodes = [n for n in crud.get_nodes(db) if n.status == NodeStatus.connected]
         wg_nodes = [n for n in nodes if n.core_kind == "wireguard" or getattr(n, "wireguard", None)]
         exports = _collect_wireguard_exports(user, wg_nodes, prefer_xray_native=True)
         if not exports:
             return config_text
 
-        wg_outbounds = [
-            _xray_wireguard_outbound(
-                tag=tag,
-                settings=wg_settings,
-                wg_node=wg_node,
-                host=host,
-                port=port,
-                local_addr=addr,
-                variant=variant,
-                noise=noise,
+        wg_outbounds = []
+        for variant, tag, wg_node, wg_settings, host, port, addr, noise in exports:
+            mtu = None
+            if variant == "xray_native" and wg_node.wireguard:
+                mtu = finalmask_client_mtu(wg_node.wireguard, dbnode=wg_node, db=db)
+            wg_outbounds.append(
+                _xray_wireguard_outbound(
+                    tag=tag,
+                    settings=wg_settings,
+                    wg_node=wg_node,
+                    host=host,
+                    port=port,
+                    local_addr=addr,
+                    variant=variant,
+                    noise=noise,
+                    mtu=mtu,
+                )
             )
-            for variant, tag, wg_node, wg_settings, host, port, addr, noise in exports
-        ]
 
         for cfg in data:
             if not isinstance(cfg, dict):

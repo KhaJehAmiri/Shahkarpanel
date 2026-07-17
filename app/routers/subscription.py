@@ -686,8 +686,10 @@ def user_subscription_wireguard(
     if variant == "xray_native":
         import json
 
+        from app.wireguard.finalmask_shard import finalmask_client_port
         from app.wireguard.xray_native import (
             build_xray_native_client_config,
+            finalmask_client_mtu,
             xray_native_wg_enabled,
         )
 
@@ -703,9 +705,9 @@ def user_subscription_wireguard(
             local_address=local_address.split("/")[0] + "/32",
             server_public_key=cfg.public_key,
             server_host=public_dial_host(dbnode) or dbnode.address,
-            server_port=cfg.xray_wg_listen_port,
+            server_port=finalmask_client_port(cfg, settings),
             preshared_key=settings.get("preshared_key"),
-            mtu=cfg.xray_wg_mtu,
+            mtu=finalmask_client_mtu(cfg, dbnode=dbnode, db=db),
             noise=cfg.xray_wg_noise,
         )
         filename = f"{dbuser.username}-{dbnode.name}-xray-wg.json"

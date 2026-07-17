@@ -80,37 +80,70 @@ def build_xray_wireguard_peers(peers: List[WGUserPeer]) -> List[Dict]:
     return out
 
 
-def build_xray_wireguard_inbound(
+# gVisor userspace WG benefits from a few workers so one busy peer does not
+# stall the shard's whole netstack (same knob the WARP outbound uses).
+DEFAULT_XRAY_WG_WORKERS = 4
+
+# Nested Finalmask → Reality → WARP black-holes when inner MTU equals WARP's
+# outer 1280. Cap client+server Finalmask MTU on that path.
+TUNNEL_WARP_FINALMASK_MTU = 1200
+
+
+def _resolve_finalmask_mtu(cfg, *, mtu_override: Optional[int]) -> int:
+    if mtu_override:
+        return int(mtu_override)
+    return int(getattr(cfg, "xray_wg_mtu", None) or 1420)
+
+
+def finalmask_client_mtu(cfg, dbnode=None, db=None) -> int:
+    """MTU for client Finalmask export — prefer ``xray_wg_mtu``, cap on tunnel+WARP."""
+    configured = int(getattr(cfg, "xray_wg_mtu", None) or getattr(cfg, "mtu", None) or 1420)
+    if dbnode is None or db is None:
+        return configured
+    if not bool(getattr(dbnode, "warp_enabled", False)):
+        return configured
+    try:
+        from app.tunnel.relay import relay_tunnel_outbound_tag
+
+        if relay_tunnel_outbound_tag(db, dbnode.id):
+            return min(configured, TUNNEL_WARP_FINALMASK_MTU)
+    except Exception:
+        pass
+    return configured
+
+
+def build_xray_wireguard_shard_inbound(
     cfg,
     peers: List[WGUserPeer],
     *,
     node_id: int,
-    outbound_tag: str = "DIRECT",
-) -> Tuple[Optional[Dict], Optional[Dict]]:
-    """Build ``(inbound, routing_rule)`` for a node's Xray-native WG+noise listener.
+    slot: int,
+    mtu_override: Optional[int] = None,
+) -> Optional[Dict]:
+    """Build one Finalmask shard inbound (``node-{id}-xray-wg-in[-slot]``).
 
-    Returns ``(None, None)`` when the feature is disabled or misconfigured
-    (missing keys/port) so callers can skip injection safely.
-
-    ``outbound_tag`` is DIRECT by default; pass the node's WARP tag when
-    ``warp_enabled`` so Finalmask clients exit via Cloudflare.
+    ``slot`` picks the tag/port (``base + slot``); every shard shares the node's
+    server keypair, MTU, workers and Finalmask noise. Returns ``None`` when the
+    feature is disabled / misconfigured so callers can skip safely.
     """
-    if not xray_native_wg_enabled(cfg):
-        return None, None
-    if not cfg.private_key:
-        return None, None
+    from app.wireguard.finalmask_shard import shard_inbound_tag, shard_port
 
-    tag = xray_wg_inbound_tag(node_id)
+    if not xray_native_wg_enabled(cfg):
+        return None
+    if not cfg.private_key:
+        return None
+
     noise_settings = cfg.xray_wg_noise or DEFAULT_NOISE_SETTINGS
-    inbound = {
-        "tag": tag,
+    return {
+        "tag": shard_inbound_tag(node_id, slot),
         "listen": "0.0.0.0",
-        "port": int(cfg.xray_wg_listen_port),
+        "port": shard_port(int(cfg.xray_wg_listen_port), slot),
         "protocol": "wireguard",
         "settings": {
             "secretKey": cfg.private_key,
             "address": [DEFAULT_LOCAL_ADDRESS],
-            "mtu": int(getattr(cfg, "xray_wg_mtu", None) or 1420),
+            "mtu": _resolve_finalmask_mtu(cfg, mtu_override=mtu_override),
+            "workers": DEFAULT_XRAY_WG_WORKERS,
             "peers": build_xray_wireguard_peers(peers),
         },
         "streamSettings": {
@@ -121,9 +154,70 @@ def build_xray_wireguard_inbound(
             }
         },
     }
+
+
+def build_xray_wireguard_shards(
+    cfg,
+    peers: List[WGUserPeer],
+    *,
+    node_id: int,
+    outbound_tag: str = "DIRECT",
+    mtu_override: Optional[int] = None,
+) -> Tuple[List[Dict], Optional[Dict]]:
+    """Build ``(shard_inbounds, routing_rule)`` for a node's Finalmask listeners.
+
+    Peers are bucketed into sticky shards of :data:`FINALMASK_MAX_PEERS_PER_INBOUND`
+    (see ``app/wireguard/finalmask_shard.py``). A single routing rule pins every
+    shard tag to ``outbound_tag`` — on a tunnel relay pass ``tunnel-{id}-out``.
+
+    Returns ``([], None)`` when the feature is disabled / misconfigured.
+    """
+    from app.wireguard.finalmask_shard import group_peers_by_slot
+
+    if not xray_native_wg_enabled(cfg) or not cfg.private_key:
+        return [], None
+
+    shards = group_peers_by_slot(peers)
+    inbounds: List[Dict] = []
+    for slot in sorted(shards):
+        inbound = build_xray_wireguard_shard_inbound(
+            cfg, shards[slot], node_id=node_id, slot=slot, mtu_override=mtu_override,
+        )
+        if inbound is not None:
+            inbounds.append(inbound)
+
+    if not inbounds:
+        return [], None
+
     rule = {
         "type": "field",
-        "inboundTag": [tag],
+        "inboundTag": [ib["tag"] for ib in inbounds],
+        "outboundTag": outbound_tag or "DIRECT",
+    }
+    return inbounds, rule
+
+
+def build_xray_wireguard_inbound(
+    cfg,
+    peers: List[WGUserPeer],
+    *,
+    node_id: int,
+    outbound_tag: str = "DIRECT",
+    mtu_override: Optional[int] = None,
+) -> Tuple[Optional[Dict], Optional[Dict]]:
+    """Backwards-compatible single-inbound builder (slot 0, all peers).
+
+    Prefer :func:`build_xray_wireguard_shards` for the sharded bake. Kept for
+    any caller that still expects one inbound.
+    """
+    inbound = build_xray_wireguard_shard_inbound(
+        cfg, peers, node_id=node_id, slot=0, mtu_override=mtu_override,
+    )
+    if inbound is None:
+        return None, None
+    rule = {
+        "type": "field",
+        "inboundTag": [inbound["tag"]],
         "outboundTag": outbound_tag or "DIRECT",
     }
     return inbound, rule

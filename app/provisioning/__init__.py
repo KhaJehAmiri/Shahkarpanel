@@ -18,6 +18,7 @@ import logging
 import os
 import shlex
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 from app.xray.network_defaults import host_network_tuning_shell
@@ -565,3 +566,48 @@ def run_remote_command(
             client.close()
         except Exception:
             pass
+
+
+def install_control_pubkey(creds: SSHCredentials, timeout: int = 30) -> bool:
+    """Authorize the panel's own control-tunnel keypair on the node.
+
+    ``creds`` (the one-time admin-supplied password/key used for the initial
+    install) is only ever used transiently during provisioning. Every *later*
+    maintenance connection — the SSH local-forward control tunnel used for
+    RPyC, post-install tunnel pushes, TLS renewals, restarts — authenticates
+    with the panel's own persistent keypair (``resolve_node_ssh_candidates``)
+    instead. Without this step that keypair is never actually installed on a
+    node added with a password that differs from the panel's generic
+    fallback secret, so every maintenance connection permanently fails with
+    "Permission denied" and the node silently runs an ever-more-stale config
+    forever — the exact failure mode this closes, with no manual
+    ``setup_node_ssh_access.py`` run required for any newly added node.
+
+    Returns ``True`` if the key was (already, or newly) authorized.
+    """
+    from app.provisioning.node_ssh import key_file_path
+
+    key_path = key_file_path()
+    pub_path = Path(str(key_path) + ".pub")
+    try:
+        pubkey = pub_path.read_text().strip()
+    except OSError:
+        logger.warning("No control-tunnel public key at %s; skipping authorized_keys install", pub_path)
+        return False
+    if not pubkey:
+        return False
+
+    marker = "# nexuspanel-control-tunnel"
+    script = (
+        "set -e; "
+        "mkdir -p ~/.ssh; chmod 700 ~/.ssh; "
+        "touch ~/.ssh/authorized_keys; chmod 600 ~/.ssh/authorized_keys; "
+        f"grep -qF {shlex.quote(pubkey)} ~/.ssh/authorized_keys 2>/dev/null || "
+        f"printf '%s %s\\n' {shlex.quote(pubkey)} {shlex.quote(marker)} >> ~/.ssh/authorized_keys"
+    )
+    try:
+        run_remote_command(creds, script, timeout=timeout, exec_timeout=timeout)
+        return True
+    except Exception as exc:
+        logger.warning("Could not install control-tunnel pubkey on %s: %s", creds.host, exc)
+        return False

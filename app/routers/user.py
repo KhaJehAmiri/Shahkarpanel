@@ -658,9 +658,12 @@ def modify_user(
         dbuser.speed_limit_up != old_speed_up or dbuser.speed_limit_down != old_speed_down
     )
 
+    status_changed = user.status != old_status
     if user.status in [UserStatus.active, UserStatus.on_hold]:
         bg.add_task(xray.operations.sync_core_users_async, full=speed_changed)
-        if speed_changed:
+        # Kernel WG + Finalmask must converge on enable/status flips, not only
+        # when speed limits change (otherwise Finalmask keeps disabled peers).
+        if speed_changed or status_changed:
             from app.singbox.operations import sync_user_change
             from app.wireguard.operations import sync_user_change as wg_sync_user_change
             bg.add_task(sync_user_change)

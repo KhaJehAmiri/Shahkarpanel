@@ -182,6 +182,19 @@ def _run_job(
             exec_timeout=min(exec_timeout, 600),
         )
 
+        # Authorize the panel's own control-tunnel key now, while we still
+        # have a working one-time credential. Every maintenance connection
+        # after this job finishes (control tunnel, restarts, TLS renewals)
+        # uses that persistent key instead of this password/key — no manual
+        # setup_node_ssh_access.py run, ever, for any node added this way.
+        try:
+            provisioning.install_control_pubkey(creds, timeout=ssh_timeout)
+        except Exception:
+            logger.warning(
+                "Could not pre-authorize control-tunnel key for node %s (will retry via password fallback)",
+                job.node_id,
+            )
+
         with _lock:
             job.progress = 28
             job.step = "image"

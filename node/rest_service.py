@@ -91,6 +91,7 @@ class Service(object):
         self.router.add_api_route("/singbox/transfer", self.singbox_transfer, methods=["POST"])
         self.router.add_api_route("/singbox/down", self.singbox_down, methods=["POST"])
         self.router.add_api_route("/singbox/tls/status", self.singbox_tls_status, methods=["POST"])
+        self.router.add_api_route("/xray/hot-replace-inbounds", self.xray_hot_replace_inbounds, methods=["POST"])
         self.router.add_api_route("/xray/upgrade", self.xray_upgrade, methods=["POST"])
         self.router.add_api_route("/outbound/test", self.outbound_test, methods=["POST"])
 
@@ -253,6 +254,34 @@ class Service(object):
             )
 
         return self.response()
+
+    def xray_hot_replace_inbounds(
+        self,
+        session_id: UUID = Body(embed=True),
+        remove_tags: list = Body(embed=True, default=[]),
+        inbounds: list = Body(embed=True, default=[]),
+    ):
+        """Hot-swap inbounds on the live core (Finalmask shard reload).
+
+        Runs ``xray api rmi/adi`` against the loopback plaintext API so only
+        the touched shard blips — no full core restart, tunnel stays up.
+        """
+        self.match_session_id(session_id)
+        from xray import hot_replace_inbounds
+
+        if not self.core.started:
+            raise HTTPException(status_code=503, detail="Xray core is not running")
+        result = hot_replace_inbounds(
+            XRAY_EXECUTABLE_PATH,
+            list(remove_tags or []),
+            list(inbounds or []),
+        )
+        if not result.get("ok"):
+            raise HTTPException(
+                status_code=503,
+                detail=result.get("detail") or "hot inbound replace failed",
+            )
+        return self.response(**result)
 
     def xray_upgrade(self, session_id: UUID = Body(embed=True), tag: str = Body(embed=True)):
         self.match_session_id(session_id)

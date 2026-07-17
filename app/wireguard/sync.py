@@ -28,6 +28,7 @@ class WGUserPeer:
     speed_limit_up: Optional[int] = None
     speed_limit_down: Optional[int] = None
     username: str = ""                # for Xray stats email attribution (see xray_native.py)
+    finalmask_slot: int = 0           # sticky Finalmask shard (app/wireguard/finalmask_shard.py)
 
 
 def server_interface_address(

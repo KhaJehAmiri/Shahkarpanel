@@ -279,7 +279,12 @@ def user_share_link(
     # Xray-native WireGuard + Finalmask (3x-ui style): point at the noise
     # inbound port and embed ``fm=`` so Xray apps do not dial kernel plain WG.
     if variant == "xray_native":
-        from app.wireguard.xray_native import DEFAULT_NOISE_SETTINGS, xray_native_wg_enabled
+        from app.wireguard.finalmask_shard import finalmask_client_port
+        from app.wireguard.xray_native import (
+            DEFAULT_NOISE_SETTINGS,
+            finalmask_client_mtu,
+            xray_native_wg_enabled,
+        )
 
         if not xray_native_wg_enabled(cfg):
             return None
@@ -300,10 +305,10 @@ def user_share_link(
         return wireguard_share_link(
             private_key=private_key,
             server=host,
-            port=int(cfg.xray_wg_listen_port),
+            port=finalmask_client_port(cfg, user_settings),
             server_public_key=server_public_key,
             local_address=local_address,
-            mtu=int(getattr(cfg, "xray_wg_mtu", None) or cfg.mtu or 1420),
+            mtu=finalmask_client_mtu(cfg, dbnode=dbnode, db=db),
             preshared_key=user_settings.get("preshared_key"),
             keepalive=DEFAULT_KEEPALIVE,
             dns=getattr(cfg, "dns", None),

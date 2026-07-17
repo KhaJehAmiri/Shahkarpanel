@@ -95,6 +95,23 @@ def _maybe_create_tunnel(db, dbnode, extras: ProvisionExtras) -> None:
     db.add(tunnel)
     db.commit()
     db.refresh(tunnel)
+
+    # A relay's WireGuard config (created above by set_node_services, when the
+    # caller asked for plain/AWG WireGuard on this xray-core node) and the
+    # tunnel just created here are otherwise two independent DB rows that
+    # nothing ever links — node_delegates_wireguard_to_tunnel() stays False
+    # forever (native WG and the tunnel silently never hand off the port to
+    # each other) unless someone happens to open the tunnel in the UI later.
+    # Seed it immediately so a freshly auto-provisioned relay's WireGuard
+    # captures into the tunnel from the very first config push, no manual
+    # step required.
+    if is_iran:
+        from app.tunnel.relay import ensure_tunnel_wireguard_port
+
+        if ensure_tunnel_wireguard_port(db, tunnel):
+            db.commit()
+            db.refresh(tunnel)
+
     _apply_tunnel(db, tunnel)
     logger.info("Post-provision tunnel %s created and applied for node %s", tunnel.name, dbnode.id)
 

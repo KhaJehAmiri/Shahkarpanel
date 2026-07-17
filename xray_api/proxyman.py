@@ -76,11 +76,33 @@ class Proxyman(XRayBase):
                 )
             ), timeout=timeout)
 
-    def add_inbound(self):
-        raise NotImplementedError
+    def add_inbound(self, inbound, timeout: int = None) -> bool:
+        """Hot-add an inbound handler to the running core.
 
-    def remove_inbound(self):
-        raise NotImplementedError
+        ``inbound`` must be a serialized ``core.InboundHandlerConfig`` protobuf.
+        Only inbounds whose proxy/stream settings have Python protos here can be
+        built this way — custom stream transports (e.g. Finalmask) cannot; for
+        those use the node agent's ``xray api adi`` path
+        (node/xray.py::hot_replace_inbounds), where the CLI builds the typed
+        config from JSON itself.
+        """
+        stub = command_pb2_grpc.HandlerServiceStub(self._channel)
+        try:
+            stub.AddInbound(command_pb2.AddInboundRequest(inbound=inbound), timeout=timeout)
+            return True
+
+        except grpc.RpcError as e:
+            raise RelatedError(e)
+
+    def remove_inbound(self, tag: str, timeout: int = None) -> bool:
+        """Hot-remove an inbound handler (by tag) from the running core."""
+        stub = command_pb2_grpc.HandlerServiceStub(self._channel)
+        try:
+            stub.RemoveInbound(command_pb2.RemoveInboundRequest(tag=tag), timeout=timeout)
+            return True
+
+        except grpc.RpcError as e:
+            raise RelatedError(e)
 
     def add_outbound(self):
         raise NotImplementedError

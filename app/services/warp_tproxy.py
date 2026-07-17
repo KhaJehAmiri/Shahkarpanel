@@ -97,16 +97,39 @@ def strip_warp_tproxy_inbound(payload: dict[str, Any], node_id: int) -> dict[str
     return data
 
 
+def _is_finalmask_inbound_tag(tag: Any, node_id: int) -> bool:
+    """True for ``node-{id}-xray-wg-in`` and any ``node-{id}-xray-wg-in-{slot}``."""
+    if not isinstance(tag, str):
+        return False
+    base = f"node-{int(node_id)}-xray-wg-in"
+    return tag == base or tag.startswith(base + "-")
+
+
+def xray_wg_outbound_tag(payload: dict[str, Any], node_id: int) -> Optional[str]:
+    """Current ``outboundTag`` for Finalmask shard inbounds, if any."""
+    routing = payload.get("routing") if isinstance(payload, dict) else None
+    if not isinstance(routing, dict):
+        return None
+    for rule in routing.get("rules") or []:
+        if not isinstance(rule, dict):
+            continue
+        tags = rule.get("inboundTag") or []
+        if any(_is_finalmask_inbound_tag(t, node_id) for t in tags):
+            out = rule.get("outboundTag")
+            return str(out) if out else None
+    return None
+
+
 def retarget_xray_wg_to_warp(
     payload: dict[str, Any],
     node_id: int,
     outbound_tag: str,
 ) -> dict[str, Any]:
-    """Point ``node-{id}-xray-wg-in`` routing at WARP instead of DIRECT."""
+    """Point every Finalmask shard inbound's routing at WARP instead of DIRECT."""
     from app.wireguard.xray_native import xray_wg_inbound_tag
 
     data = deepcopy(payload)
-    tag = xray_wg_inbound_tag(node_id)
+    base_tag = xray_wg_inbound_tag(node_id)
     routing = data.get("routing")
     if not isinstance(routing, dict):
         return data
@@ -115,13 +138,20 @@ def retarget_xray_wg_to_warp(
     for rule in rules:
         if not isinstance(rule, dict):
             continue
-        if tag in (rule.get("inboundTag") or []):
+        tags = rule.get("inboundTag") or []
+        if any(_is_finalmask_inbound_tag(t, node_id) for t in tags):
             rule["outboundTag"] = outbound_tag
             found = True
     if not found:
+        # Collect live Finalmask inbound tags from config so all shards move.
+        shard_tags = [
+            ib.get("tag")
+            for ib in (data.get("inbounds") or [])
+            if isinstance(ib, dict) and _is_finalmask_inbound_tag(ib.get("tag"), node_id)
+        ] or [base_tag]
         rules.insert(0, {
             "type": "field",
-            "inboundTag": [tag],
+            "inboundTag": shard_tags,
             "outboundTag": outbound_tag,
         })
     routing["rules"] = rules

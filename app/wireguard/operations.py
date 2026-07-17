@@ -295,6 +295,8 @@ def ensure_preshared_key(db, proxy: Proxy) -> dict:
 
 def collect_wg_peers(db) -> List[WGUserPeer]:
     """Build the WireGuard peer list from every user that holds a WG proxy."""
+    from app.wireguard.finalmask_shard import user_finalmask_slot
+
     peers: List[WGUserPeer] = []
     proxies = db.query(Proxy).filter(Proxy.type == ProxyTypes.WireGuard).all()
     for proxy in proxies:
@@ -314,6 +316,7 @@ def collect_wg_peers(db) -> List[WGUserPeer]:
                 speed_limit_up=getattr(user, "speed_limit_up", None) if user else None,
                 speed_limit_down=getattr(user, "speed_limit_down", None) if user else None,
                 username=getattr(user, "username", "") or "",
+                finalmask_slot=user_finalmask_slot(settings),
             )
         )
     return peers
@@ -417,8 +420,12 @@ def restore_relay_native_wireguard(
         return False
 
 
-def listen_udp_ports_for_cfg(cfg) -> list[int]:
-    """UDP ports this WG node should expose on the public firewall."""
+def listen_udp_ports_for_cfg(cfg, db=None) -> list[int]:
+    """UDP ports this WG node should expose on the public firewall.
+
+    When Finalmask is enabled, opens the base port plus a reserved shard span
+    (see ``finalmask_listen_ports``) so clients dialing ``base + slot`` succeed.
+    """
     from app.wireguard.sync import (
         amneziawg_enabled,
         direct_wg_enabled,
@@ -436,7 +443,20 @@ def listen_udp_ports_for_cfg(cfg) -> list[int]:
     if direct_wg_enabled(cfg) and cfg.direct_listen_port:
         ports.append(int(cfg.direct_listen_port))
     if xray_native_wg_enabled(cfg) and cfg.xray_wg_listen_port:
-        ports.append(int(cfg.xray_wg_listen_port))
+        if db is not None:
+            from app.wireguard.finalmask_shard import finalmask_listen_ports
+
+            ports.extend(finalmask_listen_ports(db, cfg))
+        else:
+            # No DB: open the reserved shard span from the base port so a
+            # firewall sync without a session still covers sticky slots.
+            from app.wireguard.finalmask_shard import (
+                FINALMASK_SHARD_PORT_RESERVE,
+                shard_port,
+            )
+
+            base = int(cfg.xray_wg_listen_port)
+            ports.extend(shard_port(base, slot) for slot in range(FINALMASK_SHARD_PORT_RESERVE))
     return sorted({p for p in ports if p > 0})
 
 
@@ -731,6 +751,9 @@ def sync_all_nodes(db=None) -> int:
         # Finalmask needs a tunnel IP per WG user — legacy allocates from
         # cfg.subnet; autoscale mirrors WgPeer (see address_authority).
         ensure_plain_addresses_for_finalmask(session)
+        from app.wireguard.finalmask_shard import ensure_finalmask_slots
+
+        ensure_finalmask_slots(session)
         peers = collect_wg_peers(session)
         count = sum(1 for n in wg_nodes if sync_node(session, n, peers=peers))
         from app.wireguard.host_sync import sync_panel_exit_wireguard
@@ -790,16 +813,18 @@ def sync_user_change() -> None:
     removals and status changes all converge. Cheap no-op when no WG node
     exists. Runs off-thread so it never blocks the Xray path.
 
-    Also schedules a debounced Xray restart on Finalmask-enabled nodes so the
-    baked-in peer list matches kernel membership (enable / disable / bulk).
+    Also schedules a debounced Finalmask shard hot-replace on enabled nodes so
+    the baked-in peer list matches membership (enable / disable / bulk) without
+    restarting the Reality tunnel. Finalmask is scheduled *before* kernel WG
+    sync so a slow/hung ``sync_all_nodes`` cannot starve the hot-replace path.
     """
-    try:
-        sync_all_nodes()
-    except Exception as exc:
-        logger.warning("WireGuard user-change sync failed: %s", exc)
     try:
         from app.wireguard.finalmask_reload import schedule_finalmask_xray_reload
 
         schedule_finalmask_xray_reload()
     except Exception as exc:
         logger.warning("Finalmask reload schedule failed: %s", exc)
+    try:
+        sync_all_nodes()
+    except Exception as exc:
+        logger.warning("WireGuard user-change sync failed: %s", exc)

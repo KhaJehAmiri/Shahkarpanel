@@ -159,6 +159,47 @@ def node_delegates_wireguard_to_tunnel(db, node_id: int) -> bool:
     return relay_wireguard_tunnel_port(db, node_id) is not None
 
 
+def relay_tunnel_outbound_tag(db, node_id: int, config=None) -> Optional[str]:
+    """Outbound tag that carries this relay's user traffic through the tunnel.
+
+    Xray product inbounds are pinned to ``tunnel-{id}-out`` by
+    ``apply_endpoint_tunnels``. Finalmask (Xray-native WG) must use the same
+    tag — otherwise it exits DIRECT/WARP on the Iranian relay and never
+    traverses the Reality hop.
+
+    When ``config`` is provided, only returns a tag that is already present
+    in ``config["outbounds"]`` (so we never point Finalmask at a missing
+    outbound after a skipped tunnel inject).
+    """
+    from app.db.models import Tunnel
+    from app.tunnel import outbound_tag
+
+    if node_id is None:
+        return None
+    tunnels = (
+        db.query(Tunnel)
+        .filter(Tunnel.enabled.is_(True), Tunnel.relay_node_id == int(node_id))
+        .order_by(Tunnel.id)
+        .all()
+    )
+    if not tunnels:
+        return None
+
+    present = None
+    if config is not None:
+        present = {
+            ob.get("tag")
+            for ob in (config.get("outbounds") or [])
+            if isinstance(ob, dict) and ob.get("tag")
+        }
+
+    for tunnel in tunnels:
+        tag = outbound_tag(tunnel)
+        if present is None or tag in present:
+            return tag
+    return None
+
+
 def prepare_relay_wireguard_tunnel(db, node_id: int, node_object) -> bool:
     """Stop native WG listeners on a relay before Xray captures ``wireguard_port``."""
     if not node_delegates_wireguard_to_tunnel(db, node_id):

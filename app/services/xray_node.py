@@ -70,13 +70,15 @@ def apply_node_warp_policy(cfg, dbnode):
     - ``warp_enabled=False`` (default): strip any inherited WARP outbounds/rules
       so the node exits via ``DIRECT`` (or whatever non-WARP routing remains).
     - ``warp_enabled=True``: inject the account outbound for ``warp_tag``, make
-      it the catch-all exit, point Xray-native WG at WARP, and add a dokodemo
-      inbound for kernel WG/AWG TPROXY diversion.
+      it the catch-all exit, point Xray-native WG at WARP (unless that inbound
+      is already pinned to a tunnel outbound — WARP belongs on the exit side),
+      and add a dokodemo inbound for kernel WG/AWG TPROXY diversion.
     """
     from app.services.warp_tproxy import (
         inject_warp_tproxy_inbound,
         retarget_xray_wg_to_warp,
         strip_warp_tproxy_inbound,
+        xray_wg_outbound_tag,
     )
     from app.utils import warp as warp_util
     from app.xray.warp_routing import ensure_warp_exit, strip_warp_from_config
@@ -100,7 +102,11 @@ def apply_node_warp_policy(cfg, dbnode):
         else:
             cleaned = ensure_warp_exit(data, outbound, as_default_exit=True)
             if node_id:
-                cleaned = retarget_xray_wg_to_warp(cleaned, node_id, tag)
+                # Finalmask on a tunnel relay is already routed to
+                # tunnel-{id}-out; do not yank it onto local WARP.
+                wg_out = xray_wg_outbound_tag(cleaned, node_id)
+                if not (isinstance(wg_out, str) and wg_out.startswith("tunnel-")):
+                    cleaned = retarget_xray_wg_to_warp(cleaned, node_id, tag)
                 cleaned = inject_warp_tproxy_inbound(cleaned, node_id, tag)
 
     raw.clear()

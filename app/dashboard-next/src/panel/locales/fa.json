@@ -1548,6 +1548,9 @@
       "restart": "ری‌استارت پنل"
     },
     "updateReloading": "به‌روزرسانی تمام شد — در حال بارگذاری مجدد…",
+    "updateWaitingRestart": "پنل در حال ری‌استارت است…",
+    "updateWaitingRestartHint": "همین صفحه را باز بگذارید. بعد از اتمام به‌روزرسانی، داشبورد خودش بارگذاری می‌شود.",
+    "updateWaitingInstallHint": "لطفاً صبر کنید — این تب را نبندید و رفرش نکنید.",
     "whatsNewKicker": "تغییرات جدید",
     "whatsNewTitle": "NexusPanel نسخه {{version}}",
     "whatsNewGotIt": "متوجه شدم",

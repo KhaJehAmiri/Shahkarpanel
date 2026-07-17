@@ -300,15 +300,43 @@ def _compose_cmd(*args: str) -> List[str]:
     compose = _compose_file()
     if not compose:
         raise RuntimeError("docker_compose_unavailable")
-    return [
+    cmd = [
         "docker",
         "compose",
         "-p",
         _COMPOSE_PROJECT,
         "-f",
-        compose.name,
-        *args,
+        str(compose),
     ]
+    override = compose.parent / "docker-compose.override.yml"
+    if override.is_file():
+        cmd.extend(["-f", str(override)])
+    cmd.extend(args)
+    return cmd
+
+
+def _compose_up_shell(host_code: str, *up_args: str) -> str:
+    """Shell for ``docker compose up …`` using host paths (sidecar-safe)."""
+    compose = _compose_file()
+    if not compose:
+        raise RuntimeError("docker_compose_unavailable")
+    # Always join against the *host* checkout — Path(host_code).is_file() is
+    # often False inside the container (host path is not mounted there).
+    primary = str(Path(host_code) / compose.name)
+    parts = [
+        "docker", "compose",
+        "-p", _COMPOSE_PROJECT,
+        "-f", primary,
+    ]
+    # Override may exist only on the host; include it when we can see it, or
+    # always reference the conventional path (compose ignores a missing -f
+    # only if we skip — so only add when visible OR force host path name).
+    override_host = Path(host_code) / "docker-compose.override.yml"
+    override_local = compose.parent / "docker-compose.override.yml"
+    if override_local.is_file() or override_host.is_file():
+        parts.extend(["-f", str(override_host)])
+    parts.extend(up_args)
+    return " ".join(shlex.quote(p) for p in parts)
 
 
 def _git_head_sha() -> Optional[str]:
@@ -413,7 +441,61 @@ def _own_container_id() -> Optional[str]:
         ).strip().splitlines()
     except (subprocess.SubprocessError, FileNotFoundError, OSError, RuntimeError):
         return None
+    if out and out[0].strip():
+        return out[0].strip()
+    # Fallback: label filter (compose file / project mismatch).
+    try:
+        out = subprocess.check_output(
+            [
+                "docker", "ps", "-aq",
+                "--filter", f"label=com.docker.compose.project={_COMPOSE_PROJECT}",
+                "--filter", "label=com.docker.compose.service=nexuspanel",
+            ],
+            text=True,
+            stderr=subprocess.DEVNULL,
+            timeout=15,
+        ).strip().splitlines()
+    except (subprocess.SubprocessError, FileNotFoundError, OSError):
+        return None
     return out[0].strip() if out and out[0].strip() else None
+
+
+def _host_code_dir() -> str:
+    """Host path of the ``/code`` bind-mount (never the in-container ``/code``).
+
+    ``docker run -v /code:/code`` resolves paths on the *host*. Inside the panel
+    container ``_ROOT`` is ``/code``, which does not exist on the host — that
+    produced ``open /code/docker-compose.postgres.yml: no such file``.
+
+    Do **not** require ``Path(src).is_dir()`` here: the host path often is not
+    visible inside the container (only ``/code`` is mounted).
+    """
+    cid = _own_container_id()
+    if cid:
+        try:
+            out = subprocess.check_output(
+                [
+                    "docker", "inspect", "-f",
+                    '{{range .Mounts}}{{if eq .Destination "/code"}}{{.Source}}{{println}}{{end}}{{end}}',
+                    cid,
+                ],
+                text=True,
+                stderr=subprocess.DEVNULL,
+                timeout=15,
+            ).strip().splitlines()
+            for line in out:
+                src = line.strip()
+                if src and src != "/code":
+                    return src
+        except (subprocess.SubprocessError, FileNotFoundError, OSError):
+            pass
+    root = str(_ROOT)
+    if root not in ("", "/code") and Path(root).is_dir():
+        return root
+    for candidate in ("/opt/nexuspanel", "/opt/marzban"):
+        # Prefer a conventional host path even when not visible in-container.
+        return candidate
+    return root if root else "/opt/nexuspanel"
 
 
 def _open_update_log():
@@ -521,6 +603,7 @@ def _schedule_compose_action(mode: UpdateMode) -> None:
     """
     cid = _own_container_id()
     ensure_nginx = _nginx_ensure_sidecar_shell()
+    host_code = _host_code_dir()
 
     label = mode
     if mode in ("recreate", "rebuild"):
@@ -532,18 +615,16 @@ def _schedule_compose_action(mode: UpdateMode) -> None:
         if image and compose and Path("/var/run/docker.sock").exists():
             # Reliable path: a separate throwaway container does the recreate so
             # tearing down THIS container can't abort the operation midway.
-            # Patch nginx waiting page first so downtime never shows stock 502.
-            inner_compose = " ".join(
-                shlex.quote(c)
-                for c in ["docker", "compose", "-p", _COMPOSE_PROJECT, "-f", compose.name, *up_args]
-            )
+            # Mount the *host* checkout (not in-container /code — that path does
+            # not exist on the Docker host and caused exit 14 / missing compose).
+            inner_compose = _compose_up_shell(host_code, *up_args)
             pre = f"{ensure_nginx}; " if ensure_nginx else ""
             cmd = [
                 "docker", "run", "-d", "--rm",
-                "--network", "none",
+                "--network", "host",
                 "-v", "/var/run/docker.sock:/var/run/docker.sock",
-                "-v", f"{_ROOT}:{_ROOT}",
-                "-w", str(_ROOT),
+                "-v", f"{host_code}:{host_code}",
+                "-w", host_code,
                 "--entrypoint", "sh",
                 image,
                 "-c", f"sleep 2; {pre}{inner_compose}",

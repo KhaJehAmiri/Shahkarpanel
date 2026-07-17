@@ -1724,6 +1724,9 @@
       "restart": "Restart panel"
     },
     "updateReloading": "Update complete — reloading the dashboard…",
+    "updateWaitingRestart": "Panel is restarting…",
+    "updateWaitingRestartHint": "Stay on this page. The dashboard will reload automatically when the update finishes.",
+    "updateWaitingInstallHint": "Please wait — do not close or refresh this tab.",
     "whatsNewKicker": "What’s new",
     "whatsNewTitle": "NexusPanel v{{version}}",
     "whatsNewGotIt": "Got it",

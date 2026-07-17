@@ -8,10 +8,12 @@ import {
   markReleaseSeen, releaseNotesForLang, stashPendingWhatsNew, consumePendingWhatsNew,
 } from "../lib/releaseNotes";
 import { PanelUpdateModal } from "../components/PanelUpdateModal";
+import { PanelUpdateWaitingOverlay } from "../components/PanelUpdateWaitingOverlay";
 import { WhatsNewModal } from "../components/WhatsNewModal";
 
 const UPDATE_STEP_IDS = ["pull", "backup", "migrate", "build", "restart"] as const;
 const VERSION_CACHE_KEY = "nx_panel_version";
+const WAIT_KEY = "nx_panel_update_wait";
 
 interface UpdateState {
   check: UpdateCheck | null;
@@ -40,6 +42,35 @@ async function fetchInstalledVersion(): Promise<string | null> {
   }
 }
 
+function stashWait(targetVer: string, fromVer: string | null) {
+  try {
+    sessionStorage.setItem(WAIT_KEY, JSON.stringify({
+      targetVer, fromVer, at: Date.now(),
+    }));
+  } catch { /* ignore */ }
+}
+
+function clearWait() {
+  try { sessionStorage.removeItem(WAIT_KEY); } catch { /* ignore */ }
+}
+
+function readWait(): { targetVer: string; fromVer: string | null } | null {
+  try {
+    const raw = sessionStorage.getItem(WAIT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { targetVer?: string; fromVer?: string | null; at?: number };
+    if (!parsed?.targetVer) return null;
+    // Abandon stale waits (>30 min).
+    if (parsed.at && Date.now() - parsed.at > 30 * 60 * 1000) {
+      clearWait();
+      return null;
+    }
+    return { targetVer: parsed.targetVer, fromVer: parsed.fromVer ?? null };
+  } catch {
+    return null;
+  }
+}
+
 export const UpdateProvider: FC<{ sudo: boolean; lang: string; children: ReactNode }> = ({
   sudo, lang, children,
 }) => {
@@ -55,6 +86,10 @@ export const UpdateProvider: FC<{ sudo: boolean; lang: string; children: ReactNo
   const [updateModalOpen, setUpdateModalOpen] = useState(false);
   const [job, setJob] = useState<UpdateJobInfo | null>(null);
   const [applying, setApplying] = useState(false);
+  /** After job success: keep blocking the same panel page until API is back. */
+  const [waitingRestart, setWaitingRestart] = useState(false);
+  const [waitTarget, setWaitTarget] = useState<string | null>(null);
+  const [waitFrom, setWaitFrom] = useState<string | null>(null);
   const [whatsNew, setWhatsNew] = useState<{ version: string; notes: string[] } | null>(null);
 
   const refreshDisplayVersion = useCallback(async () => {
@@ -93,6 +128,17 @@ export const UpdateProvider: FC<{ sudo: boolean; lang: string; children: ReactNo
 
   usePolling(() => { refreshCheck(); }, 120000, sudo);
 
+  // Resume in-panel wait after a soft remount (same tab still holds the SPA).
+  useEffect(() => {
+    if (!sudo) return;
+    const pending = readWait();
+    if (!pending) return;
+    setWaitingRestart(true);
+    setWaitTarget(pending.targetVer);
+    setWaitFrom(pending.fromVer);
+    setApplying(true);
+  }, [sudo]);
+
   const hasUpdate = sudo && (
     !!check?.update_available
     || (check?.commits_behind ?? 0) > 0
@@ -105,13 +151,25 @@ export const UpdateProvider: FC<{ sudo: boolean; lang: string; children: ReactNo
   }, [sudo, refreshCheck]);
 
   const closeUpdateModal = useCallback(() => {
-    if (applying) return;
+    if (applying || waitingRestart) return;
     setUpdateModalOpen(false);
-  }, [applying]);
+  }, [applying, waitingRestart]);
+
+  const finishWaitAndReload = useCallback(async (targetVer: string) => {
+    clearWait();
+    setWaitingRestart(false);
+    setApplying(false);
+    setDisplayVersion(targetVer);
+    await refreshCheck();
+    const bust = encodeURIComponent(targetVer);
+    const { pathname, hash } = window.location;
+    window.location.replace(`${pathname}?nxv=${bust}${hash}`);
+  }, [refreshCheck]);
 
   const startApply = useCallback(async () => {
     if (!check || applying) return;
     setApplying(true);
+    setWaitingRestart(false);
     setJob({ id: "…", status: "running", finished: false, steps: UPDATE_STEP_IDS.map((id) => ({ id, status: "pending" })) });
     try {
       const res = await api.post<{ job_id: string }>("/system/updates/apply");
@@ -132,41 +190,64 @@ export const UpdateProvider: FC<{ sudo: boolean; lang: string; children: ReactNo
         setJob(j);
         if (j.finished) {
           clearInterval(id);
-          setApplying(false);
           if (j.status === "success" && check) {
             const notes = releaseNotesForLang(check, lang);
             const targetVer = check.remote_version;
+            const fromVer = check.current_version;
             stashPendingWhatsNew({ version: targetVer, notes });
+            stashWait(targetVer, fromVer);
+            setWaitTarget(targetVer);
+            setWaitFrom(fromVer);
+            setWaitingRestart(true);
+            // Keep the panel UI blocked on *this* page — do not close into a bare 502.
             setUpdateModalOpen(false);
-            const waitForVersion = async () => {
-              for (let n = 0; n < 60; n += 1) {
-                try {
-                  const ver = await fetchInstalledVersion();
-                  if (ver === targetVer) {
-                    setDisplayVersion(ver);
-                    await refreshCheck();
-                    const bust = encodeURIComponent(targetVer);
-                    const { pathname, hash } = window.location;
-                    window.location.replace(`${pathname}?nxv=${bust}${hash}`);
-                    return;
-                  }
-                } catch {
-                  /* panel restarting */
-                }
-                await new Promise((r) => window.setTimeout(r, 2000));
-              }
-              await refreshCheck();
-              window.location.reload();
-            };
-            void waitForVersion();
+          } else {
+            setApplying(false);
+            setWaitingRestart(false);
+            clearWait();
           }
         }
       } catch {
-        /* panel may restart */
+        // API down mid-restart: keep blocking this same panel page.
+        if (check?.remote_version) {
+          stashWait(check.remote_version, check.current_version);
+          setWaitTarget(check.remote_version);
+          setWaitFrom(check.current_version);
+        }
+        setWaitingRestart(true);
       }
     }, 2000);
     return () => clearInterval(id);
-  }, [job?.id, job?.finished, check, lang, refreshCheck]);
+  }, [job?.id, job?.finished, check, lang]);
+
+  // Poll until the panel API is back with the target version.
+  useEffect(() => {
+    if (!waitingRestart || !waitTarget) return;
+    let cancelled = false;
+    const tick = async () => {
+      for (let n = 0; n < 90 && !cancelled; n += 1) {
+        try {
+          const ver = await fetchInstalledVersion();
+          if (ver === waitTarget) {
+            await finishWaitAndReload(waitTarget);
+            return;
+          }
+          // Panel is up but still on old version briefly — keep waiting.
+        } catch {
+          /* still restarting */
+        }
+        await new Promise((r) => window.setTimeout(r, 2000));
+      }
+      if (!cancelled) {
+        clearWait();
+        setWaitingRestart(false);
+        setApplying(false);
+        window.location.reload();
+      }
+    };
+    void tick();
+    return () => { cancelled = true; };
+  }, [waitingRestart, waitTarget, finishWaitAndReload]);
 
   useEffect(() => {
     if (!sudo) return;
@@ -186,22 +267,31 @@ export const UpdateProvider: FC<{ sudo: boolean; lang: string; children: ReactNo
     updateModalOpen,
   }), [check, hasUpdate, checking, displayVersion, refreshCheck, refreshDisplayVersion, openUpdateModal, closeUpdateModal, updateModalOpen]);
 
+  const showWaitOverlay = waitingRestart;
+  const waitPhase = "restarting" as const;
+
   return (
     <Ctx.Provider value={value}>
       {children}
       {sudo && (
         <>
           <PanelUpdateModal
-            open={updateModalOpen}
+            open={updateModalOpen && !waitingRestart}
             check={check}
             checking={checking}
             job={job}
-            applying={applying}
+            applying={applying && !waitingRestart}
             onClose={closeUpdateModal}
             onRefresh={() => refreshCheck(true)}
             onApply={startApply}
           />
-          {whatsNew && (
+          <PanelUpdateWaitingOverlay
+            open={showWaitOverlay}
+            phase={waitPhase}
+            fromVersion={waitFrom || check?.current_version}
+            toVersion={waitTarget || check?.remote_version}
+          />
+          {whatsNew && !showWaitOverlay && (
             <WhatsNewModal
               version={whatsNew.version}
               notes={whatsNew.notes}

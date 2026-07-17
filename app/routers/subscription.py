@@ -287,34 +287,60 @@ def _attach_subscription_share_links(db: Session, dbuser, payload: dict) -> None
         wg_nodes = [n for n in crud.get_wireguard_nodes(db) if n.wireguard is not None]
         if wg_nodes:
             from app.subscription.region_display import node_config_remark, resolve_region_display
-            from app.subscription.wireguard import user_share_link
+            from app.subscription.wireguard import user_share_link, user_xray_wg_conf
 
             from app.subscription.wireguard import user_config as wg_user_config
-            from app.wireguard.sync import amneziawg_enabled, direct_wg_enabled
+            from app.wireguard.sync import amneziawg_enabled, direct_wg_enabled, plain_wg_enabled
             from app.wireguard.xray_native import xray_native_wg_enabled
 
-            def _wg_primary_share(n):
-                """Plain WG when available; otherwise Finalmask (xray_native) share URI."""
-                remark = node_config_remark(n, "WireGuard")
-                link = user_share_link(
-                    wg_settings, n, variant="plain", remark=remark, db=db,
-                )
-                if link:
-                    return link, "plain"
+            def _wg_dual_share(n):
+                """3x-ui dual export from Xray WG (no kernel plain required).
+
+                * conf / ``wireguard_plain_uri`` — ``.conf`` + ``wireguard://`` without ``fm=``
+                * xray — ``wireguard://`` with Finalmask ``fm=`` for Xray apps
+                """
+                conf_uri = None
+                xray_uri = None
+                conf_ok = False
+                remark_wg = node_config_remark(n, "WireGuard")
+                remark_xray = node_config_remark(n, "WireGuard Xray")
                 if n.wireguard and xray_native_wg_enabled(n.wireguard):
-                    link = user_share_link(
-                        wg_settings, n, variant="xray_native", remark=remark, db=db,
+                    conf_ok = bool(user_xray_wg_conf(wg_settings, n, db=db, remark=remark_wg))
+                    conf_uri = user_share_link(
+                        wg_settings, n, variant="wg_conf", remark=remark_wg, db=db,
                     )
-                    if link:
-                        return link, "xray_native"
-                return None, "plain"
+                    xray_uri = user_share_link(
+                        wg_settings, n, variant="xray_native", remark=remark_xray, db=db,
+                    )
+                elif n.wireguard and plain_wg_enabled(n.wireguard):
+                    # Kernel plain only when Finalmask is off.
+                    conf_uri = user_share_link(
+                        wg_settings, n, variant="plain", remark=remark_wg, db=db,
+                    )
+                    conf_ok = bool(conf_uri) or bool(
+                        wg_user_config(wg_settings, n, variant="plain", db=db)
+                    )
+                if conf_uri:
+                    primary, variant = conf_uri, "plain"
+                elif xray_uri:
+                    primary, variant = xray_uri, "xray_native"
+                else:
+                    primary, variant = None, "plain"
+                return {
+                    "wireguard_uri": primary,
+                    "wireguard_variant": variant,
+                    "wireguard_plain_uri": conf_uri,
+                    "wireguard_xray_uri": xray_uri,
+                    "plain_available": conf_ok or bool(conf_uri),
+                    "xray_available": bool(xray_uri),
+                }
 
             preferred = pick_node(wg_nodes)
             node_items = []
             awg_any = False
             direct_any = False
             for n in wg_nodes:
-                link, wg_variant = _wg_primary_share(n)
+                dual = _wg_dual_share(n)
                 awg_ok = bool(
                     n.wireguard
                     and amneziawg_enabled(n.wireguard)
@@ -337,17 +363,20 @@ def _attach_subscription_share_links(db: Session, dbuser, payload: dict) -> None
                     "region_flag": region_flag,
                     "region_name": region_name,
                     "latency_ms": n.latency_ms,
-                    "wireguard_uri": link,
-                    "wireguard_variant": wg_variant,
+                    **dual,
                     "awg_available": awg_ok,
                     "wireguard_direct_uri": direct_link,
                 })
             payload["wireguard_nodes"] = node_items
             if preferred:
-                link, wg_variant = _wg_primary_share(preferred)
-                if link:
-                    payload["wireguard_uri"] = link
-                    payload["wireguard_variant"] = wg_variant
+                dual = _wg_dual_share(preferred)
+                if dual["wireguard_uri"]:
+                    payload["wireguard_uri"] = dual["wireguard_uri"]
+                    payload["wireguard_variant"] = dual["wireguard_variant"]
+                if dual["wireguard_plain_uri"]:
+                    payload["wireguard_plain_uri"] = dual["wireguard_plain_uri"]
+                if dual["wireguard_xray_uri"]:
+                    payload["wireguard_xray_uri"] = dual["wireguard_xray_uri"]
                 if preferred.wireguard and amneziawg_enabled(preferred.wireguard):
                     if wg_user_config(wg_settings, preferred, variant="awg", db=db):
                         payload["wireguard_awg_available"] = True
@@ -668,17 +697,22 @@ def user_subscription_wireguard(
         raise HTTPException(status_code=404, detail="No WireGuard node available")
     cfg = dbnode.wireguard
     variant = (variant or "plain").strip().lower()
-    if variant not in ("plain", "awg", "direct", "xray_native"):
-        raise HTTPException(status_code=422, detail="variant must be plain, awg, direct, or xray_native")
+    if variant not in ("plain", "awg", "direct", "xray_native", "conf", "wg_conf"):
+        raise HTTPException(
+            status_code=422,
+            detail="variant must be plain, awg, direct, xray_native, or conf",
+        )
 
     from app.wireguard.operations import ensure_preshared_key, ensure_user_address
     from app.wireguard.sync import amneziawg_enabled, plain_wg_enabled
     from app.wireguard.wg_manager import autoscale_enabled, create_peer
     from app.wireguard.xray_native import xray_native_wg_enabled
+    from app.subscription.wireguard import user_xray_wg_conf
 
-    # Finalmask-only nodes have plain WG disabled — default download must not 404.
-    if variant == "plain" and not plain_wg_enabled(cfg) and xray_native_wg_enabled(cfg):
-        variant = "xray_native"
+    # 3x-ui: default /wireguard is the .conf (not Xray JSON). Finalmask-only
+    # nodes still serve a wg-quick .conf dialing the Xray WG port — no kernel.
+    if variant in ("conf", "wg_conf"):
+        variant = "plain"
 
     if variant == "plain" and plain_wg_enabled(cfg) and autoscale_enabled():
         try:
@@ -702,10 +736,26 @@ def user_subscription_wireguard(
             if variant == "awg" and amneziawg_enabled(cfg):
                 if not settings.get("awg_address"):
                     ensure_user_address(db, proxy, cfg.awg_subnet, cfg=cfg)
-            elif plain_wg_enabled(cfg) and not settings.get("address"):
+            elif not settings.get("address"):
+                # Finalmask and kernel plain both use the tunnel IP in settings.
                 ensure_user_address(db, proxy, cfg.subnet, cfg=cfg)
             settings = proxy.settings or {}
             break
+
+    if variant == "plain" and not plain_wg_enabled(cfg) and xray_native_wg_enabled(cfg):
+        remark = f"{dbuser.username}-{dbnode.name}"
+        conf = user_xray_wg_conf(settings, dbnode, db=db, remark=remark)
+        if not conf:
+            raise HTTPException(status_code=404, detail="No WireGuard configuration available")
+        filename = f"{dbuser.username}-{dbnode.name}.conf"
+        return Response(
+            content=conf,
+            media_type="text/plain",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                **NO_STORE_HEADERS,
+            },
+        )
 
     if variant == "xray_native":
         import json

@@ -263,6 +263,71 @@ def _server_public_key(dbnode, *, variant: str = "plain", db=None) -> Optional[s
     return str(getattr(cfg, "public_key", "") or "") or None
 
 
+def _xray_native_dial(
+    user_settings: dict,
+    dbnode,
+    *,
+    db=None,
+) -> Optional[dict]:
+    """Resolve Finalmask / Xray-native WG dial params (no kernel listener)."""
+    from app.wireguard.finalmask_shard import finalmask_client_port
+    from app.wireguard.xray_native import finalmask_client_mtu, xray_native_wg_enabled
+
+    cfg = dbnode.wireguard
+    if cfg is None or not xray_native_wg_enabled(cfg):
+        return None
+    private_key = user_settings.get("private_key")
+    local_address = user_settings.get("address") or user_settings.get("awg_address") or ""
+    server_public_key = str(getattr(cfg, "public_key", "") or "")
+    if not private_key or not local_address or not server_public_key:
+        return None
+    try:
+        host = node_endpoint(dbnode, variant="plain", db=db).rsplit(":", 1)[0]
+    except Exception:
+        host = public_dial_host(dbnode)
+    if host and host.startswith("[") and host.endswith("]"):
+        host = host[1:-1]
+    if not host:
+        return None
+    return {
+        "private_key": private_key,
+        "local_address": local_address,
+        "server_public_key": server_public_key,
+        "host": host,
+        "port": int(finalmask_client_port(cfg, user_settings)),
+        "mtu": finalmask_client_mtu(cfg, dbnode=dbnode, db=db),
+        "preshared_key": user_settings.get("preshared_key"),
+        "dns": getattr(cfg, "dns", None) or DEFAULT_DNS,
+        "noise": getattr(cfg, "xray_wg_noise", None),
+    }
+
+
+def user_xray_wg_conf(user_settings: dict, dbnode, *, db=None, remark: str = "") -> Optional[str]:
+    """3x-ui ``genWireguardConfig`` — wg-quick ``.conf`` dialing the Xray WG port.
+
+    Does **not** require kernel plain WG. Same identity/endpoint as Finalmask;
+    stock WireGuard apps import this file / QR (3x-ui parity).
+    """
+    dial = _xray_native_dial(user_settings, dbnode, db=db)
+    if not dial:
+        return None
+    conf = render_wireguard_conf(
+        private_key=dial["private_key"],
+        address=dial["local_address"],
+        server_public_key=dial["server_public_key"],
+        endpoint=_join_host_port(dial["host"], dial["port"]),
+        dns=dial["dns"],
+        preshared_key=dial.get("preshared_key"),
+        mtu=dial.get("mtu"),
+        keepalive=DEFAULT_KEEPALIVE,
+        amnezia=None,
+    )
+    if remark:
+        # Mirror 3x-ui: remark comment between Interface and Peer blocks.
+        conf = conf.replace("\n[Peer]\n", f"\n# {remark}\n[Peer]\n", 1)
+    return conf
+
+
 def user_share_link(
     user_settings: dict,
     dbnode,
@@ -276,40 +341,41 @@ def user_share_link(
     if cfg is None:
         return None
 
-    # Xray-native WireGuard + Finalmask (3x-ui style): point at the noise
-    # inbound port and embed ``fm=`` so Xray apps do not dial kernel plain WG.
-    if variant == "xray_native":
-        from app.wireguard.finalmask_shard import finalmask_client_port
-        from app.wireguard.xray_native import (
-            DEFAULT_NOISE_SETTINGS,
-            finalmask_client_mtu,
-            xray_native_wg_enabled,
+    # 3x-ui wireguard:// without fm= (same Xray WG port as .conf).
+    if variant in ("wg_conf", "xray_link"):
+        dial = _xray_native_dial(user_settings, dbnode, db=db)
+        if not dial:
+            return None
+        return wireguard_share_link(
+            private_key=dial["private_key"],
+            server=dial["host"],
+            port=dial["port"],
+            server_public_key=dial["server_public_key"],
+            local_address=dial["local_address"],
+            mtu=dial.get("mtu"),
+            preshared_key=dial.get("preshared_key"),
+            keepalive=DEFAULT_KEEPALIVE,
+            dns=None,
+            remark=remark,
+            finalmask=None,
         )
 
-        if not xray_native_wg_enabled(cfg):
+    # Xray apps: same dial + Finalmask ``fm=`` noise envelope.
+    if variant == "xray_native":
+        from app.wireguard.xray_native import DEFAULT_NOISE_SETTINGS
+
+        dial = _xray_native_dial(user_settings, dbnode, db=db)
+        if not dial:
             return None
-        private_key = user_settings.get("private_key")
-        local_address = user_settings.get("address") or user_settings.get("awg_address") or ""
-        server_public_key = str(getattr(cfg, "public_key", "") or "")
-        if not private_key or not local_address or not server_public_key:
-            return None
-        try:
-            host = node_endpoint(dbnode, variant="plain", db=db).rsplit(":", 1)[0]
-        except Exception:
-            host = public_dial_host(dbnode)
-        if host.startswith("[") and host.endswith("]"):
-            host = host[1:-1]
-        if not host:
-            return None
-        noise = getattr(cfg, "xray_wg_noise", None) or DEFAULT_NOISE_SETTINGS
+        noise = dial.get("noise") or DEFAULT_NOISE_SETTINGS
         return wireguard_share_link(
-            private_key=private_key,
-            server=host,
-            port=finalmask_client_port(cfg, user_settings),
-            server_public_key=server_public_key,
-            local_address=local_address,
-            mtu=finalmask_client_mtu(cfg, dbnode=dbnode, db=db),
-            preshared_key=user_settings.get("preshared_key"),
+            private_key=dial["private_key"],
+            server=dial["host"],
+            port=dial["port"],
+            server_public_key=dial["server_public_key"],
+            local_address=dial["local_address"],
+            mtu=dial.get("mtu"),
+            preshared_key=dial.get("preshared_key"),
             keepalive=DEFAULT_KEEPALIVE,
             dns=getattr(cfg, "dns", None),
             remark=remark,

@@ -718,27 +718,40 @@ def collect_unified_share_links(user: "UserResponse") -> list[str]:
 
         settings = _client_settings(user, ProxyTypes.WireGuard)
         if settings:
+            from app.wireguard.sync import amneziawg_enabled, plain_wg_enabled
             from app.wireguard.xray_native import xray_native_wg_enabled
 
             for wg in wg_nodes:
                 if not wg.wireguard:
                     continue
-                # 3x-ui style: when Finalmask (Xray-native WG) is on, base64
-                # share links must target that inbound — not kernel plain WG.
-                # Xray apps importing wireguard:// otherwise dial the wrong port.
+                # 3x-ui dual: wireguard:// without fm + with fm (Xray), both on
+                # the Xray WG port when Finalmask is enabled — never requires
+                # kernel plain WG.
                 if xray_native_wg_enabled(wg.wireguard):
-                    # Client-facing name stays "WireGuard" (Finalmask is the transport).
-                    remark = node_config_remark(wg, "WireGuard")
                     uri = user_share_link(
-                        settings, wg, variant="xray_native", remark=remark, db=db,
+                        settings, wg, variant="wg_conf",
+                        remark=node_config_remark(wg, "WireGuard"), db=db,
                     )
                     if uri:
                         links.append(uri)
-                    continue
-                for variant in ("plain", "awg"):
-                    proto = "AmneziaWG" if variant == "awg" else "WireGuard"
-                    remark = node_config_remark(wg, proto)
-                    uri = user_share_link(settings, wg, variant=variant, remark=remark, db=db)
+                    uri = user_share_link(
+                        settings, wg, variant="xray_native",
+                        remark=node_config_remark(wg, "WireGuard Xray"), db=db,
+                    )
+                    if uri:
+                        links.append(uri)
+                elif plain_wg_enabled(wg.wireguard):
+                    uri = user_share_link(
+                        settings, wg, variant="plain",
+                        remark=node_config_remark(wg, "WireGuard"), db=db,
+                    )
+                    if uri:
+                        links.append(uri)
+                if amneziawg_enabled(wg.wireguard):
+                    uri = user_share_link(
+                        settings, wg, variant="awg",
+                        remark=node_config_remark(wg, "AmneziaWG"), db=db,
+                    )
                     if uri:
                         links.append(uri)
 

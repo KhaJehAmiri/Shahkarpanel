@@ -2324,7 +2324,11 @@ def get_wireguard_nodes(db: Session, enabled_only: bool = True) -> List[Node]:
                 Node.id.in_(wg_ids),
                 and_(
                     NodeWireGuard.node_id.isnot(None),
-                    or_(NodeWireGuard.plain_enabled.is_(True), NodeWireGuard.awg_enabled.is_(True)),
+                    or_(
+                        NodeWireGuard.plain_enabled.is_(True),
+                        NodeWireGuard.awg_enabled.is_(True),
+                        NodeWireGuard.xray_wg_enabled.is_(True),
+                    ),
                 ),
             )
         )

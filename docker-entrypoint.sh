@@ -149,9 +149,10 @@ if [ "$(id -u)" -eq 0 ]; then
       >/dev/null 2>&1 || true
   fi
   # Host nginx: stock 502 → friendly restarting page (bind-mounted sites-*).
-  # Runs as root before the panel listens; safe no-op if nginx is absent.
-  if [ -x /code/scripts/ensure_nginx_restarting_page.sh ]; then
-    bash /code/scripts/ensure_nginx_restarting_page.sh >/dev/null 2>&1 || true
+  # Runs as root before the panel listens; safe no-op if nginx dirs/binary absent.
+  # Use `bash` (not -x): git checkouts often lack the executable bit.
+  if [ -f /code/scripts/ensure_nginx_restarting_page.sh ]; then
+    bash /code/scripts/ensure_nginx_restarting_page.sh >>/var/lib/nexuspanel/ensure-nginx-restarting.log 2>&1 || true
   fi
   if [ "${1:-panel}" = "panel" ]; then
     # Re-enter this script as nexuspanel so migrate+main share one code path.

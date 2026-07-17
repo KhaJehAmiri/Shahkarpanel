@@ -157,6 +157,9 @@ cython_debug/
 .env.local
 .env.production
 .env.*.local
+
+# Host-local autostart policy from `nexus` menu (options 15/16)
+docker-compose.override.yml
 .wg_node_ssh
 .ssh/
 secrets/

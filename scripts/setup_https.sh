@@ -205,8 +205,15 @@ server {
     }
 }
 EOF
-  mkdir -p /var/lib/nexuspanel/nginx/html
-  if [ ! -f /var/lib/nexuspanel/nginx/html/restarting.html ]; then
+  # Always refresh the waiting page (and any sibling panel proxy vhosts).
+  local ensure="${SCRIPT_DIR:-}/ensure_nginx_restarting_page.sh"
+  if [ -z "${SCRIPT_DIR:-}" ]; then
+    ensure="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ensure_nginx_restarting_page.sh"
+  fi
+  if [ -f "$ensure" ]; then
+    PANEL_PORT="${PANEL_PORT}" bash "$ensure" >/dev/null 2>&1 || true
+  else
+    mkdir -p /var/lib/nexuspanel/nginx/html
     cat > /var/lib/nexuspanel/nginx/html/restarting.html <<'HTML'
 <!DOCTYPE html>
 <html lang="fa" dir="rtl"><head>
@@ -220,8 +227,8 @@ EOF
 <p>Panel is starting — refreshing automatically.</p><div class="spinner"></div></div>
 <script>setTimeout(function(){location.reload()},2000)</script></body></html>
 HTML
+    chmod -R a+rX /var/lib/nexuspanel/nginx 2>/dev/null || true
   fi
-  chmod -R a+rX /var/lib/nexuspanel/nginx 2>/dev/null || true
   ln -sf "${NGINX_SITE}" /etc/nginx/sites-enabled/nexuspanel
   rm -f /etc/nginx/sites-enabled/default
   nginx -t >/dev/null 2>&1 || die "nginx config test failed (see: nginx -t)."

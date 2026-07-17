@@ -837,6 +837,7 @@ def _render_subscription_legacy_site(
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 1s;
     }}
 """
     # Browser UI belongs on standard HTTPS (443) — legacy sub port lacks /_next assets.
@@ -855,6 +856,7 @@ def _render_subscription_legacy_site(
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 1s;
     }}
 """
     tls = _subscription_tls_cert_paths(host) or (fallback_tls if force_tls else None)
@@ -872,6 +874,18 @@ def _render_subscription_legacy_site(
 server {{
 {listen_directive}
     server_name {server_name};
+
+    # Panel down during docker restart: friendly waiting page (not stock nginx 502).
+    error_page 502 503 504 = @panel_restarting;
+
+    location @panel_restarting {{
+        default_type text/html;
+        charset utf-8;
+        add_header Cache-Control "no-store" always;
+        add_header Retry-After "2" always;
+        root /var/lib/nexuspanel/nginx/html;
+        rewrite ^ /restarting.html break;
+    }}
 {locations}
     location / {{
         return 444;

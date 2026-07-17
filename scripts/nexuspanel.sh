@@ -481,12 +481,17 @@ PY
 
 compose() {
   local -a env_args=()
+  local -a file_args=(-f "${APP_DIR}/${COMPOSE_FILE}")
   [ -f "${APP_DIR}/.env" ] && env_args+=(--env-file "${APP_DIR}/.env")
   [ -f "${RUNTIME_ENV_FILE}" ] && env_args+=(--env-file "${RUNTIME_ENV_FILE}")
+  # Autostart toggle (nexus 15/16) writes this; -f disables automatic merge.
+  if [ -f "${APP_DIR}/docker-compose.override.yml" ]; then
+    file_args+=(-f "${APP_DIR}/docker-compose.override.yml")
+  fi
   if docker compose version >/dev/null 2>&1; then
-    docker compose -p nexuspanel -f "${APP_DIR}/${COMPOSE_FILE}" "${env_args[@]}" "$@"
+    docker compose -p nexuspanel "${file_args[@]}" "${env_args[@]}" "$@"
   else
-    docker-compose -p nexuspanel -f "${APP_DIR}/${COMPOSE_FILE}" "${env_args[@]}" "$@"
+    docker-compose -p nexuspanel "${file_args[@]}" "${env_args[@]}" "$@"
   fi
 }
 
@@ -1079,6 +1084,13 @@ cmd_doctor() {
   echo
 }
 
+ensure_nginx_restarting_page() {
+  # Host nginx: show waiting page instead of stock 502 while the panel restarts.
+  local script="${APP_DIR}/scripts/ensure_nginx_restarting_page.sh"
+  [ -f "$script" ] || return 0
+  PANEL_PORT="${PANEL_PORT:-8000}" bash "$script" >/dev/null 2>&1 || true
+}
+
 cmd_https() {
   need_root
   [ -d "${APP_DIR}" ] || die "NexusPanel not installed in ${APP_DIR}"
@@ -1089,6 +1101,7 @@ cmd_https() {
   [ -n "${DOMAIN}" ] && args+=(--domain "${DOMAIN}")
   [ -n "${EMAIL}" ]  && args+=(--email "${EMAIL}")
   DOMAIN="${DOMAIN}" EMAIL="${EMAIL}" PANEL_PORT="${PANEL_PORT}" bash "$script" "${args[@]}"
+  ensure_nginx_restarting_page
 }
 
 sync_agent_github_if_configured() {
@@ -1154,7 +1167,10 @@ cmd_update()  {
   disable_conflicting_services
   configure_firewall
   install_cli
+  # Before container swap: patch nginx so clients never see stock 502.
+  ensure_nginx_restarting_page
   compose up -d --build
+  ensure_nginx_restarting_page
   wait_for_panel
   write_install_meta
   sync_agent_github_if_configured
@@ -1164,7 +1180,12 @@ cmd_update()  {
 }
 cmd_up()      { need_root; compose up -d; ok "Started."; }
 cmd_down()    { need_root; compose down; ok "Stopped."; }
-cmd_restart() { need_root; compose restart; ok "Restarted."; }
+cmd_restart() {
+  need_root
+  ensure_nginx_restarting_page
+  compose restart
+  ok "Restarted."
+}
 cmd_status()  { compose ps; }
 cmd_logs()    { compose logs -f --tail=200; }
 cmd_cli()     { need_root; compose exec -T ${APP_NAME} nexuspanel-cli "$@"; }

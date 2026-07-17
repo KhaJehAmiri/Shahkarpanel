@@ -157,6 +157,16 @@ EN[m_enable_auto]="Enable Autostart"
 FA[m_enable_auto]="فعال‌سازی اجرای خودکار"
 EN[m_disable_auto]="Disable Autostart"
 FA[m_disable_auto]="غیرفعال‌سازی اجرای خودکار"
+EN[auto_enabled]="Autostart enabled (restart=always)."
+FA[auto_enabled]="اجرای خودکار فعال شد (restart=always)."
+EN[auto_disabled]="Autostart disabled (restart=no)."
+FA[auto_disabled]="اجرای خودکار غیرفعال شد (restart=no)."
+EN[auto_no_container]="Panel container not found — is the panel running? Try: nexus start"
+FA[auto_no_container]="کانتینر پنل پیدا نشد — پنل بالا است؟ اول: nexus start"
+EN[auto_failed]="Could not change restart policy."
+FA[auto_failed]="تغییر سیاست ریستارت ممکن نشد."
+EN[auto_persisted]="Saved in docker-compose.override.yml (survives compose up / update)."
+FA[auto_persisted]="در docker-compose.override.yml ذخیره شد (با compose up / آپدیت باقی می‌ماند)."
 EN[m_ssl]="SSL Certificate (HTTPS)"
 FA[m_ssl]="گواهی SSL (HTTPS)"
 EN[m_firewall]="Firewall Management"
@@ -344,10 +354,45 @@ detect_deploy_mode() {
 
 dc() {
   local cf; cf="$(compose_file)" || { err "No docker-compose file in $APP_DIR"; return 1; }
-  ( cd "$APP_DIR" && docker compose -p "$COMPOSE_PROJECT" -f "$cf" "$@" )
+  local -a files=(-f "$cf")
+  # Explicit -f disables Compose's automatic override merge — re-add it.
+  if [ -f "$APP_DIR/docker-compose.override.yml" ]; then
+    files+=(-f docker-compose.override.yml)
+  fi
+  ( cd "$APP_DIR" && docker compose -p "$COMPOSE_PROJECT" "${files[@]}" "$@" )
 }
 
-panel_container() { dc ps -q "$SERVICE" 2>/dev/null | head -n1; }
+panel_container() {
+  # Prefer compose ps, then label/name fallbacks (older installs / wrong -f file).
+  local cid=""
+  cid="$(dc ps -q "$SERVICE" 2>/dev/null | head -n1 | tr -d '[:space:]')"
+  if [ -z "$cid" ]; then
+    cid="$(docker ps -aq \
+      --filter "label=com.docker.compose.project=${COMPOSE_PROJECT}" \
+      --filter "label=com.docker.compose.service=${SERVICE}" \
+      2>/dev/null | head -n1 | tr -d '[:space:]')"
+  fi
+  if [ -z "$cid" ]; then
+    cid="$(docker ps -aq --filter "name=${COMPOSE_PROJECT}-${SERVICE}" 2>/dev/null | head -n1 | tr -d '[:space:]')"
+  fi
+  if [ -z "$cid" ]; then
+    cid="$(docker ps -aq --filter "name=nexuspanel-nexuspanel" 2>/dev/null | head -n1 | tr -d '[:space:]')"
+  fi
+  printf '%s' "$cid"
+}
+
+# Persist restart policy so the next `compose up` / panel update does not
+# silently restore `restart: always` from the tracked compose file.
+write_autostart_override() { # $1 = always|no
+  local policy="$1"
+  local ov="$APP_DIR/docker-compose.override.yml"
+  cat > "$ov" <<EOF
+# Managed by \`nexus\` Autostart (options 15/16). Safe to delete to reset.
+services:
+  ${SERVICE}:
+    restart: "${policy}"
+EOF
+}
 
 git_branch() {
   local b
@@ -496,6 +541,12 @@ action_install() {
   if command -v nexuspanel >/dev/null 2>&1; then nexuspanel install; else err "$(t not_installed): nexuspanel manager missing"; fi
 }
 
+ensure_nginx_waiting_page() {
+  local script="${APP_DIR}/scripts/ensure_nginx_restarting_page.sh"
+  [ -f "$script" ] || return 0
+  bash "$script" >/dev/null 2>&1 || true
+}
+
 action_update() {
   require_root || return 1
   if command -v nexuspanel >/dev/null 2>&1; then
@@ -504,6 +555,7 @@ action_update() {
   [ -d "$APP_DIR/.git" ] || { err "Not a git checkout."; return 1; }
   local branch; branch="$(git_branch)"
   ( cd "$APP_DIR" && git -c safe.directory="$APP_DIR" fetch origin "$branch" && git -c safe.directory="$APP_DIR" reset --hard "origin/${branch}" ) || return 1
+  ensure_nginx_waiting_page
   if [ "$DEPLOY_MODE" = "docker" ]; then dc up -d --build "$SERVICE"; else systemctl restart "$SERVICE"; fi
   ok "$(t done)"
 }
@@ -522,7 +574,11 @@ action_update_menu() {
 
 action_start()   { require_root || return 1; if [ "$DEPLOY_MODE" = "docker" ]; then dc up -d "$SERVICE"; else systemctl start "$SERVICE"; fi && ok "$(t done)"; }
 action_stop()    { require_root || return 1; if [ "$DEPLOY_MODE" = "docker" ]; then dc stop "$SERVICE"; else systemctl stop "$SERVICE"; fi && ok "$(t done)"; }
-action_restart() { require_root || return 1; if [ "$DEPLOY_MODE" = "docker" ]; then dc restart "$SERVICE"; else systemctl restart "$SERVICE"; fi && ok "$(t done)"; }
+action_restart() {
+  require_root || return 1
+  ensure_nginx_waiting_page
+  if [ "$DEPLOY_MODE" = "docker" ]; then dc restart "$SERVICE"; else systemctl restart "$SERVICE"; fi && ok "$(t done)"
+}
 
 action_restart_xray() {
   require_root || return 1
@@ -568,17 +624,45 @@ action_status() {
 action_enable_auto() {
   require_root || return 1
   if [ "$DEPLOY_MODE" = "docker" ]; then
-    local cid; cid="$(panel_container)"
-    [ -n "$cid" ] && docker update --restart always "$cid" >/dev/null 2>&1 && ok "$(t done)"
-  elif [ "$DEPLOY_MODE" = "systemd" ]; then systemctl enable "$SERVICE" && ok "$(t done)"; fi
+    local cid errf
+    cid="$(panel_container)"
+    if [ -z "$cid" ]; then err "$(t auto_no_container)"; return 1; fi
+    errf="$(mktemp)"
+    if ! docker update --restart always "$cid" >"$errf" 2>&1; then
+      err "$(t auto_failed)"; sed -n '1,5p' "$errf" >&2; rm -f "$errf"; return 1
+    fi
+    rm -f "$errf"
+    write_autostart_override "always"
+    ok "$(t auto_enabled)"
+    msg "$(t auto_persisted)"
+    msg "restart=$(docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' "$cid" 2>/dev/null || echo '?')"
+  elif [ "$DEPLOY_MODE" = "systemd" ]; then
+    systemctl enable "$SERVICE" && ok "$(t auto_enabled)"
+  else
+    err "$(t not_installed)"; return 1
+  fi
 }
 
 action_disable_auto() {
   require_root || return 1
   if [ "$DEPLOY_MODE" = "docker" ]; then
-    local cid; cid="$(panel_container)"
-    [ -n "$cid" ] && docker update --restart no "$cid" >/dev/null 2>&1 && ok "$(t done)"
-  elif [ "$DEPLOY_MODE" = "systemd" ]; then systemctl disable "$SERVICE" && ok "$(t done)"; fi
+    local cid errf
+    cid="$(panel_container)"
+    if [ -z "$cid" ]; then err "$(t auto_no_container)"; return 1; fi
+    errf="$(mktemp)"
+    if ! docker update --restart no "$cid" >"$errf" 2>&1; then
+      err "$(t auto_failed)"; sed -n '1,5p' "$errf" >&2; rm -f "$errf"; return 1
+    fi
+    rm -f "$errf"
+    write_autostart_override "no"
+    ok "$(t auto_disabled)"
+    msg "$(t auto_persisted)"
+    msg "restart=$(docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' "$cid" 2>/dev/null || echo '?')"
+  elif [ "$DEPLOY_MODE" = "systemd" ]; then
+    systemctl disable "$SERVICE" && ok "$(t auto_disabled)"
+  else
+    err "$(t not_installed)"; return 1
+  fi
 }
 
 # DB-admins fallback: only used when the panel has NO env-based owner login
@@ -956,6 +1040,7 @@ Usage:
   nexus status | start | stop | restart | restart-xray
   nexus logs            Follow panel logs
   nexus update          Pull latest + rebuild + restart
+  nexus autostart on|off|status
   nexus password        Reset an admin username/password
   nexus settings        View current settings
   nexus ssl             Set up / refresh HTTPS
@@ -983,6 +1068,18 @@ main() {
       restart-xray)  action_restart_xray ;;
       logs)          action_logs ;;
       update)        action_update ;;
+      autostart|auto)
+        case "${2:-}" in
+          on|enable|1|yes)  action_enable_auto ;;
+          off|disable|0|no) action_disable_auto ;;
+          status|"")
+            printf 'autostart=%s restart=%s\n' \
+              "$(state_autostart)" \
+              "$(docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' "$(panel_container)" 2>/dev/null || echo none)"
+            ;;
+          *) err "Usage: nexus autostart on|off|status"; exit 1 ;;
+        esac
+        ;;
       password|passwd) action_reset_userpass ;;
       settings)      action_view_settings ;;
       ssl|https)     action_ssl ;;
@@ -1002,6 +1099,8 @@ main() {
   while true; do
     menu
     read -r choice || exit 0
+    # Trim spaces / CR so "15" / "15 " / "15\r" all match.
+    choice="$(printf '%s' "$choice" | tr -d '[:space:]\r')"
     printf "\n"
     run_choice "$choice"
     printf "\n"

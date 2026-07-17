@@ -452,6 +452,49 @@ def _own_image() -> Optional[str]:
     return out or None
 
 
+def _nginx_ensure_sidecar_shell() -> str:
+    """Shell snippet: patch host nginx waiting page via a privileged sidecar.
+
+    Older panel containers often lack ``/etc/nginx`` bind mounts, so
+    ``docker exec`` into ourselves cannot touch host nginx. A short-lived
+    ``docker run --privileged --pid=host`` with host mounts can.
+    """
+    script = _ROOT / "scripts" / "ensure_nginx_restarting_page.sh"
+    image = _own_image()
+    if not script.is_file() or not image or not Path("/var/run/docker.sock").exists():
+        return ""
+    port = (
+        os.environ.get("UVICORN_PORT")
+        or os.environ.get("PANEL_PORT")
+        or "8000"
+    ).strip() or "8000"
+    vols = [
+        "-v", "/etc/nginx:/etc/nginx",
+        "-v", "/etc/letsencrypt:/etc/letsencrypt:ro",
+        "-v", "/var/lib/nexuspanel:/var/lib/nexuspanel",
+        "-v", "/var/lib/nginx:/var/lib/nginx",
+        "-v", "/var/log/nginx:/var/log/nginx",
+        "-v", "/run/nginx.pid:/run/nginx.pid",
+        "-v", "/usr/sbin/nginx:/usr/sbin/nginx:ro",
+        "-v", "/lib:/lib:ro",
+        "-v", "/usr/lib:/usr/lib:ro",
+        "-v", f"{script.parent}:/nexus-ensure:ro",
+    ]
+    if Path("/lib64").is_dir():
+        vols.extend(["-v", "/lib64:/lib64:ro"])
+    parts = [
+        "docker", "run", "--rm", "--privileged",
+        "--network", "host", "--pid", "host",
+        *vols,
+        "-e", "PATH=/usr/sbin:/usr/bin:/bin",
+        "-e", f"PANEL_PORT={port}",
+        "--entrypoint", "bash",
+        image,
+        "/nexus-ensure/ensure_nginx_restarting_page.sh",
+    ]
+    return " ".join(shlex.quote(p) for p in parts) + " || true"
+
+
 def _schedule_compose_action(mode: UpdateMode) -> None:
     """Restart/recreate the panel (detached) so Python reloads the pulled code.
 
@@ -477,6 +520,7 @@ def _schedule_compose_action(mode: UpdateMode) -> None:
       --force-recreate`` (``--build`` for rebuild) and outlives the swap.
     """
     cid = _own_container_id()
+    ensure_nginx = _nginx_ensure_sidecar_shell()
 
     label = mode
     if mode in ("recreate", "rebuild"):
@@ -488,10 +532,12 @@ def _schedule_compose_action(mode: UpdateMode) -> None:
         if image and compose and Path("/var/run/docker.sock").exists():
             # Reliable path: a separate throwaway container does the recreate so
             # tearing down THIS container can't abort the operation midway.
+            # Patch nginx waiting page first so downtime never shows stock 502.
             inner_compose = " ".join(
                 shlex.quote(c)
                 for c in ["docker", "compose", "-p", _COMPOSE_PROJECT, "-f", compose.name, *up_args]
             )
+            pre = f"{ensure_nginx}; " if ensure_nginx else ""
             cmd = [
                 "docker", "run", "-d", "--rm",
                 "--network", "none",
@@ -500,7 +546,7 @@ def _schedule_compose_action(mode: UpdateMode) -> None:
                 "-w", str(_ROOT),
                 "--entrypoint", "sh",
                 image,
-                "-c", f"sleep 2; {inner_compose}",
+                "-c", f"sleep 2; {pre}{inner_compose}",
             ]
         else:
             # Best effort if we can't resolve the image/socket: recreate inline.
@@ -508,9 +554,11 @@ def _schedule_compose_action(mode: UpdateMode) -> None:
     elif cid:
         # Prefer a short SIGTERM grace over plain ``docker restart`` (10s default)
         # so :8000 comes back sooner after in-dashboard updates.
+        # Ensure waiting page is live *immediately before* stop.
+        pre = f"{ensure_nginx}; " if ensure_nginx else ""
         cmd = [
             "sh", "-c",
-            f"docker stop -t 3 {shlex.quote(cid)} && docker start {shlex.quote(cid)}",
+            f"{pre}docker stop -t 3 {shlex.quote(cid)} && docker start {shlex.quote(cid)}",
         ]
     else:
         # No container id — fall back to compose recreate (best effort).
@@ -518,7 +566,9 @@ def _schedule_compose_action(mode: UpdateMode) -> None:
         label = "recreate"
 
     # A short delay lets the update-job status flush before we go down.
-    inner = "sleep 1; " + " ".join(shlex.quote(c) for c in cmd)
+    # Also refresh nginx waiting page once more from this shell (docker group).
+    pre_outer = f"{ensure_nginx}; " if ensure_nginx else ""
+    inner = f"sleep 1; {pre_outer}" + " ".join(shlex.quote(c) for c in cmd)
     # Logging is best-effort and MUST NOT prevent the restart (see
     # _open_update_log): if the log dir isn't writable we still spawn the
     # restart with output discarded, otherwise the update would silently never
@@ -546,18 +596,35 @@ def _schedule_compose_action(mode: UpdateMode) -> None:
 def _ensure_nginx_restarting_page() -> None:
     """Patch host nginx so brief :8000 downtime shows restarting.html, not stock 502.
 
-    Older HTTPS installs (and subscription vhosts) often lack ``error_page
-    @panel_restarting``. Run after git pull and *before* the container restart
-    so the waiting page is live for this update's downtime.
+    The panel process is unprivileged and older containers often lack nginx
+    bind mounts, so a plain ``bash ensure_….sh`` here is a no-op. Prefer a
+    privileged host-mounted sidecar (same pattern as recreate). Run after git
+    pull and *before* the container restart so the waiting page is live.
     """
     script = _ROOT / "scripts" / "ensure_nginx_restarting_page.sh"
     if not script.is_file():
         return
     try:
+        # Host/root CLI path (e.g. if somehow invoked with euid 0).
+        if hasattr(os, "geteuid") and os.geteuid() == 0 and (
+            Path("/usr/sbin/nginx").is_file() or Path("/etc/nginx/sites-enabled").is_dir()
+        ):
+            subprocess.run(
+                ["bash", str(script)],
+                cwd=str(_ROOT),
+                timeout=45,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            return
+        shell = _nginx_ensure_sidecar_shell()
+        if not shell:
+            return
         subprocess.run(
-            ["bash", str(script)],
+            ["sh", "-c", shell],
             cwd=str(_ROOT),
-            timeout=30,
+            timeout=90,
             check=False,
             capture_output=True,
             text=True,

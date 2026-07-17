@@ -458,8 +458,11 @@ state_panel() {
 
 state_autostart() {
   if [ "$DEPLOY_MODE" = "docker" ]; then
-    local cid pol; cid="$(panel_container)"
-    [ -n "$cid" ] && pol="$(docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' "$cid" 2>/dev/null)"
+    # Always init pol — with `set -u`, an empty cid skips the assign and
+    # `case "$pol"` would abort with "pol: unbound variable".
+    local cid pol=""
+    cid="$(panel_container)"
+    [ -n "$cid" ] && pol="$(docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' "$cid" 2>/dev/null || true)"
     case "$pol" in always|unless-stopped|on-failure) printf 'yes'; return;; esac
   elif [ "$DEPLOY_MODE" = "systemd" ]; then
     systemctl is-enabled "$SERVICE" >/dev/null 2>&1 && { printf 'yes'; return; }

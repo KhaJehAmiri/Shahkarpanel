@@ -1170,6 +1170,8 @@ cmd_update()  {
   # Before container swap: patch nginx so clients never see stock 502.
   ensure_nginx_restarting_page
   compose up -d --build
+  # Autostart policy does not revive a container left stopped by a failed swap.
+  compose start "${APP_NAME}" >/dev/null 2>&1 || true
   ensure_nginx_restarting_page
   wait_for_panel
   write_install_meta

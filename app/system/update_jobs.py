@@ -604,13 +604,13 @@ def _schedule_compose_action(mode: UpdateMode) -> None:
     cid = _own_container_id()
     ensure_nginx = _nginx_ensure_sidecar_shell()
     host_code = _host_code_dir()
+    image = _own_image()
 
     label = mode
     if mode in ("recreate", "rebuild"):
         up_args = ["up", "-d", "--force-recreate", "--no-deps", "nexuspanel"]
         if mode == "rebuild":
             up_args.insert(2, "--build")
-        image = _own_image()
         compose = _compose_file()
         if image and compose and Path("/var/run/docker.sock").exists():
             # Reliable path: a separate throwaway container does the recreate so
@@ -619,6 +619,12 @@ def _schedule_compose_action(mode: UpdateMode) -> None:
             # not exist on the Docker host and caused exit 14 / missing compose).
             inner_compose = _compose_up_shell(host_code, *up_args)
             pre = f"{ensure_nginx}; " if ensure_nginx else ""
+            # After recreate, force-start in case compose left the service exited.
+            ensure_up = (
+                f"cid=$(docker ps -aq --filter label=com.docker.compose.project={shlex.quote(_COMPOSE_PROJECT)} "
+                f"--filter label=com.docker.compose.service=nexuspanel | head -n1); "
+                f"[ -n \"$cid\" ] && docker start \"$cid\" >/dev/null 2>&1 || true"
+            )
             cmd = [
                 "docker", "run", "-d", "--rm",
                 "--network", "host",
@@ -627,20 +633,36 @@ def _schedule_compose_action(mode: UpdateMode) -> None:
                 "-w", host_code,
                 "--entrypoint", "sh",
                 image,
-                "-c", f"sleep 2; {pre}{inner_compose}",
+                "-c", f"sleep 2; {pre}{inner_compose}; {ensure_up}",
             ]
         else:
             # Best effort if we can't resolve the image/socket: recreate inline.
             cmd = _compose_cmd(*up_args)
     elif cid:
-        # Prefer a short SIGTERM grace over plain ``docker restart`` (10s default)
-        # so :8000 comes back sooner after in-dashboard updates.
-        # Ensure waiting page is live *immediately before* stop.
+        # NEVER run `docker stop && docker start` from inside this container:
+        # stop kills the shell before start runs, leaving the panel Stopped while
+        # RestartPolicy stays "always" (Autostart=Yes). Docker also ignores
+        # restart policies after a manual stop until the daemon reboots.
+        #
+        # Always bounce from a detached sidecar (or a single daemon-side
+        # `docker restart`) so start survives our own teardown.
         pre = f"{ensure_nginx}; " if ensure_nginx else ""
-        cmd = [
-            "sh", "-c",
-            f"{pre}docker stop -t 3 {shlex.quote(cid)} && docker start {shlex.quote(cid)}",
-        ]
+        bounce = (
+            f"docker restart -t 3 {shlex.quote(cid)} "
+            f"|| docker start {shlex.quote(cid)}; "
+            f"sleep 1; docker start {shlex.quote(cid)} >/dev/null 2>&1 || true"
+        )
+        if image and Path("/var/run/docker.sock").exists():
+            cmd = [
+                "docker", "run", "-d", "--rm",
+                "-v", "/var/run/docker.sock:/var/run/docker.sock",
+                "--entrypoint", "sh",
+                image,
+                "-c", f"sleep 2; {pre}{bounce}",
+            ]
+        else:
+            # One daemon RPC — safer than stop&&start if the client dies mid-call.
+            cmd = ["sh", "-c", f"{pre}docker restart -t 3 {shlex.quote(cid)}"]
     else:
         # No container id — fall back to compose recreate (best effort).
         cmd = _compose_cmd("up", "-d", "--force-recreate", "--no-deps", "nexuspanel")

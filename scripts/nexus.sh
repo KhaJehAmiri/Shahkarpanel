@@ -167,6 +167,8 @@ EN[auto_failed]="Could not change restart policy."
 FA[auto_failed]="تغییر سیاست ریستارت ممکن نشد."
 EN[auto_persisted]="Saved in docker-compose.override.yml (survives compose up / update)."
 FA[auto_persisted]="در docker-compose.override.yml ذخیره شد (با compose up / آپدیت باقی می‌ماند)."
+EN[auto_stopped_hint]="Panel is stopped. Autostart=Yes only helps on reboot/crash — not after docker stop/update. Use option 9 (Start)."
+FA[auto_stopped_hint]="پنل خاموش است. Autostart=Yes فقط بعد از ریبوت/کرش کمک می‌کند، نه بعد از docker stop/آپدیت. گزینه ۹ (Start) را بزنید."
 EN[m_ssl]="SSL Certificate (HTTPS)"
 FA[m_ssl]="گواهی SSL (HTTPS)"
 EN[m_firewall]="Firewall Management"
@@ -949,6 +951,9 @@ print_footer() {
   printf "  %b│%b  %-12s %b\n" "$C_BRAND_DIM" "$C_RESET" "$(t f_panel)" "$(colorized_state "$panel")"
   printf "  %b│%b  %-12s %b\n" "$C_BRAND_DIM" "$C_RESET" "$(t f_xray)" "$(colorized_state "$xray")"
   printf "  %b│%b  %-12s %b\n" "$C_BRAND_DIM" "$C_RESET" "$(t f_autostart)" "$(colorized_bool "$auto")"
+  if [ "$panel" = "stop" ] && [ "$auto" = "yes" ]; then
+    printf "  %b│%b  %b%s%b\n" "$C_BRAND_DIM" "$C_RESET" "$C_YELLOW" "$(t auto_stopped_hint)" "$C_RESET"
+  fi
 }
 
 menu() {

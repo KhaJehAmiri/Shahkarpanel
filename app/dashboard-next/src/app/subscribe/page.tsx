@@ -117,6 +117,21 @@ function protoLabel(lang: SubLang, proto: string): string {
   return subT(lang, map[proto] || "protoOther");
 }
 
+/** CSS modifier for per-protocol color badges (e.g. wireguard-xray → wireguard-xray). */
+function protoTone(proto: string): string {
+  const p = (proto || "other").toLowerCase();
+  if (p === "wireguard-xray" || p === "wireguardxray") return "wireguard-xray";
+  return p.replace(/[^a-z0-9-]/g, "") || "other";
+}
+
+function ProtoBadge({ lang, proto, className = "" }: { lang: SubLang; proto: string; className?: string }) {
+  return (
+    <span className={`s-proto s-proto-${protoTone(proto)} ${className}`.trim()}>
+      {protoLabel(lang, proto)}
+    </span>
+  );
+}
+
 function protoFromLink(link: string): string {
   return normProto((link.split("://")[0] || "").toLowerCase());
 }
@@ -641,7 +656,12 @@ function SubscribeBody() {
                 {subT(lang, "allTypes")}
               </button>
               {protocolTabs.map((p) => (
-                <button key={p.id} type="button" className={protoFilter === p.id ? "on" : ""} onClick={() => setProtoFilter(p.id)}>
+                <button
+                  key={p.id}
+                  type="button"
+                  className={`s-type-tab s-proto-${protoTone(p.id)} ${protoFilter === p.id ? "on" : ""}`}
+                  onClick={() => setProtoFilter(p.id)}
+                >
                   {protoLabel(lang, p.id)}
                 </button>
               ))}
@@ -657,11 +677,9 @@ function SubscribeBody() {
                   {selected.flag ? <span className="s-flag">{selected.flag}</span> : null}
                   <span>{selected.title}</span>
                 </div>
-                {showTypeFilter && (
-                  <div className="s-focus-type">
-                    {subT(lang, "typeLabel")}: <b>{protoLabel(lang, selected.protocol)}</b>
-                  </div>
-                )}
+                <div className="s-focus-type">
+                  <ProtoBadge lang={lang} proto={selected.protocol} />
+                </div>
 
                 <button type="button" className="s-qr" onClick={() => setQrModal(true)} aria-label={subT(lang, "tapBigger")}>
                   <div className="s-qr-frame">
@@ -694,7 +712,7 @@ function SubscribeBody() {
                     >
                       {c.flag ? <span className="s-flag">{c.flag}</span> : <span className="s-flag-ph" />}
                       <span className="s-row-title">{c.title}</span>
-                      {showTypeFilter && <span className="s-row-type">{protoLabel(lang, c.protocol)}</span>}
+                      <ProtoBadge lang={lang} proto={c.protocol} className="s-row-type" />
                     </button>
                   ))}
                 </div>

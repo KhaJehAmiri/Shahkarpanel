@@ -973,7 +973,10 @@ def connect_node(node_id, config=None):
                 with GetDB() as db:
                     from app.wireguard.operations import restore_relay_native_wireguard
 
-                    restore_relay_native_wireguard(db, dbnode, node_object=node)
+                    # Re-fetch: ``dbnode`` above is detached (session already closed).
+                    live = crud.get_node_by_id(db, node_id)
+                    if live is not None:
+                        restore_relay_native_wireguard(db, live, node_object=node)
                 degraded_msg = _wg_xray_degraded_message(xray_exc)
             version = _wg_node_version_label(xray_failed=xray_exc is not None, xray_version=version)
         else:
@@ -1134,7 +1137,10 @@ def restart_node(node_id, config=None):
                 with GetDB() as db:
                     from app.wireguard.operations import restore_relay_native_wireguard
 
-                    restore_relay_native_wireguard(db, dbnode, node_object=node)
+                    # Re-fetch: ``dbnode`` above is detached (session already closed).
+                    live = crud.get_node_by_id(db, node_id)
+                    if live is not None:
+                        restore_relay_native_wireguard(db, live, node_object=node)
             _sync_wireguard_node(node_id, node)
             if node.connected:
                 _mark_wg_node_connected(

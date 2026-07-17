@@ -361,6 +361,14 @@ def restore_relay_native_wireguard(
     from app.tunnel.relay import node_delegates_wireguard_to_tunnel
     from app.wireguard.wg_manager import autoscale_enabled
 
+    # ``connect_node``/``restart_node`` often pass a Node loaded in a session
+    # that already closed; lazy-loading ``.wireguard`` then raises
+    # DetachedInstanceError. Always re-bind to ``db``.
+    node_id = int(getattr(dbnode, "id", dbnode))
+    dbnode = crud.get_node_by_id(db, node_id)
+    if dbnode is None:
+        return False
+
     cfg = dbnode.wireguard
     if cfg is None:
         return False

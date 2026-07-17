@@ -264,6 +264,14 @@ def wireguard_target_port(db, tunnel) -> Optional[int]:
         cfg = canonical_panel_exit_wireguard(db)
         if cfg is not None:
             return int(cfg.listen_port)
+    else:
+        # Node→node: dial the exit node's own plain WG port, not the relay's.
+        from app.db.models import Node
+
+        node = db.query(Node).filter(Node.id == int(tunnel.exit_node_id)).first()
+        cfg = node.wireguard if node else None
+        if cfg is not None and plain_wg_enabled(cfg):
+            return int(cfg.listen_port)
     return int(wg_port)
 
 
@@ -369,19 +377,15 @@ def panel_exit_ready_for_node(db, node_id: int) -> bool:
 def relay_tunnel_xray_ready(
     node_object, *, db=None, node_id: Optional[int] = None
 ) -> bool:
-    """True when a relay node's Xray core is up and can capture WG UDP.
+    """True when a relay node's Xray core is up and can carry tunnel traffic.
 
-    This is purely observational — it does *not* feed the delegation circuit
-    breaker (``record_tunnel_health``). Only an actual push attempt
-    (``connect_node``/``restart_node``) has ground truth about whether the
-    tunnel capture really works; recording health here too meant every
-    caller that merely *checks* readiness (health-check probes, the periodic
-    WG sync, ...) also voted on the breaker on its own cadence, so the same
-    single underlying failure got counted 2-3x per tick and could trip the
-    breaker even in the same beat a real restart attempt just succeeded.
-    Callers that find this False are expected to trigger a real attempt
-    (which records its own outcome) rather than relying on this call to do
-    it for them.
+    For relays that **delegate plain WireGuard** into dokodemo, also require
+    ``wg_tunnel_capture_active`` (the capture inbound is what those clients
+    need). For pure Xray hops — e.g. Finalmask-only node→node Reality with no
+    ``wireguard_port`` — dokodemo is not used; Xray liveness (+ panel-exit
+    readiness when applicable) is enough. Requiring capture_active in that
+    case permanently reported "tunnel not running" even when Finalmask was
+    correctly pinned to ``tunnel-*-out``.
     """
     if not node_object:
         return False
@@ -395,11 +399,24 @@ def relay_tunnel_xray_ready(
             node_alive = bool(node_object.get_version())
         except Exception:
             node_alive = False
-    # Liveness alone proves *some* Xray core answers — not that the live one
-    # is the tunnel-capturing config (it can be a stale native-fallback core
-    # left over from before delegation was (re)granted). Mirrors the same
-    # check connect_node uses before taking its "keep live core" shortcut.
-    ready = node_alive and bool(getattr(node_object, "wg_tunnel_capture_active", False))
+    if not node_alive:
+        return False
+
+    delegates = False
+    if db is not None and node_id is not None:
+        try:
+            delegates = node_delegates_wireguard_to_tunnel(db, int(node_id))
+        except Exception:
+            delegates = False
+
+    if delegates:
+        # Liveness alone proves *some* Xray core answers — not that the live one
+        # is the tunnel-capturing config (it can be a stale native-fallback core
+        # left over from before delegation was (re)granted).
+        ready = bool(getattr(node_object, "wg_tunnel_capture_active", False))
+    else:
+        ready = True
+
     if ready and db is not None and node_id is not None:
         try:
             ready = panel_exit_ready_for_node(db, node_id)

@@ -659,19 +659,17 @@ const AddTunnel: FC<{
     setF((s) => {
       const next = { ...s };
       if (spec.transport) next.transport = spec.transport;
+      // Prefer real nodes matching the template regions (true node→node).
+      // Only fall back to "this panel" when no matching node exists.
       if (spec.relay_region) {
-        if (!panelForeign) next.relay = "panel";
-        else {
-          const relayNode = pickNodeByRegion(nodes, spec.relay_region);
-          if (relayNode) next.relay = String(relayNode.id);
-        }
+        const relayNode = pickNodeByRegion(nodes, spec.relay_region);
+        if (relayNode) next.relay = String(relayNode.id);
+        else if (!panelForeign) next.relay = "panel";
       }
       if (spec.exit_region) {
-        if (panelForeign) next.exit = "panel";
-        else {
-          const exitNode = pickNodeByRegion(nodes, spec.exit_region);
-          if (exitNode) next.exit = String(exitNode.id);
-        }
+        const exitNode = pickNodeByRegion(nodes, spec.exit_region);
+        if (exitNode) next.exit = String(exitNode.id);
+        else if (panelForeign) next.exit = "panel";
       }
       if (!s.name.trim() && spec.label) next.name = spec.label;
       return next;

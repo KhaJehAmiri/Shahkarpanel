@@ -258,19 +258,30 @@ def _stream_settings(transport: str, params: Dict, *, server_side: bool) -> Dict
         stream["security"] = "reality"
         sni = params.get("sni", "www.cloudflare.com")
         short_id = params.get("short_id", "")
-        reality = {
-            "show": False,
-            "fingerprint": params.get("fingerprint", "chrome"),
-        }
+        fingerprint = params.get("fingerprint", "chrome")
         if server_side:
-            reality["serverNames"] = [sni]
-            reality["shortIds"] = [short_id]
-            reality["privateKey"] = params.get("private_key", "")
-            reality["target"] = f"{sni}:443"
+            # Match product Reality inbounds: fingerprint/publicKey live under
+            # nested ``settings`` (uTLS when dialing dest). Top-level fingerprint
+            # is a client field and was leaving node→node exits misconfigured.
+            reality = {
+                "show": False,
+                "serverNames": [sni],
+                "shortIds": [short_id],
+                "privateKey": params.get("private_key", ""),
+                "target": f"{sni}:443",
+                "settings": {
+                    "publicKey": params.get("public_key", ""),
+                    "fingerprint": fingerprint,
+                },
+            }
         else:
-            reality["publicKey"] = params.get("public_key", "")
-            reality["serverName"] = sni
-            reality["shortId"] = short_id
+            reality = {
+                "show": False,
+                "fingerprint": fingerprint,
+                "publicKey": params.get("public_key", ""),
+                "serverName": sni,
+                "shortId": short_id,
+            }
         stream["realitySettings"] = reality
     elif transport == "ws":
         stream["wsSettings"] = {

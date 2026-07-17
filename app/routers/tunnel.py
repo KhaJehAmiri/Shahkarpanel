@@ -268,8 +268,8 @@ def _tunnel_health(db: Session, tunnel: Tunnel) -> dict:
     """Verify both ends look alive after an apply.
 
     - node endpoints must be connected in the live xray registry;
-    - the relay must be able to reach the exit's tunnel listen_port
-      (probed from the panel as a proxy for the relay's egress).
+    - the relay must be able to reach the exit's tunnel ``target_port``
+      (the exit inbound binds there — not ``listen_port``).
     """
     checks: dict = {}
 
@@ -304,10 +304,12 @@ def _tunnel_health(db: Session, tunnel: Tunnel) -> dict:
 
     try:
         exit_addr = _exit_address(db, tunnel.exit_node_id)
-        reachable = _tcp_reachable(exit_addr, tunnel.listen_port)
+        # Exit inbound always listens on target_port (see build_exit_inbound).
+        probe_port = int(tunnel.target_port)
+        reachable = _tcp_reachable(exit_addr, probe_port)
         checks["exit_listen"] = {
             "address": exit_addr,
-            "port": tunnel.listen_port,
+            "port": probe_port,
             "reachable": reachable,
         }
     except HTTPException as exc:
@@ -329,7 +331,23 @@ def _apply_tunnel(db: Session, tunnel: Tunnel, health: bool = True) -> dict:
         db.commit()
         db.refresh(tunnel)
     _exit_address(db, tunnel.exit_node_id)  # validate reachability first
-    for node_id in {tunnel.relay_node_id, tunnel.intermediate_node_id, tunnel.exit_node_id}:
+    # Exit (and transit) must be listening before the relay dials them —
+    # especially important for node→node where there is no panel core in between.
+    # ``intermediate_node_id is None`` means "no transit", NOT "panel is transit".
+    ordered_ends: list = []
+    for node_id, panel_end in (
+        (tunnel.exit_node_id, tunnel.exit_node_id is None),
+        (tunnel.intermediate_node_id, False),
+        (tunnel.relay_node_id, tunnel.relay_node_id is None),
+    ):
+        if node_id is None and not panel_end:
+            continue
+        if node_id is None:
+            if None not in ordered_ends:
+                ordered_ends.append(None)
+        elif node_id not in ordered_ends:
+            ordered_ends.append(node_id)
+    for node_id in ordered_ends:
         _restart_endpoint(db, node_id)
 
     if tunnel.exit_node_id is None and (tunnel.params or {}).get("wireguard_port"):
@@ -429,19 +447,28 @@ def create_tunnel(
         spec = get_template(body.template_id)
         relay_r = spec.get("relay_region")
         exit_r = spec.get("exit_region")
+        # Region presets are UI hints. Never reject an explicit node→node
+        # selection — operators often tag foreign boxes as uk/eu/de loosely,
+        # and blocking create made "node to node" look broken.
         if relay_r and body.relay_node_id is not None:
             relay_node = _get_node(db, body.relay_node_id)
             if not region_matches(relay_r, relay_node.region):
-                raise HTTPException(
-                    status_code=422,
-                    detail=f"relay node region must match template preset ({relay_r})",
+                logger.warning(
+                    "Tunnel create: relay node %s region %r does not match "
+                    "template preset %r (allowed for node→node)",
+                    body.relay_node_id,
+                    relay_node.region,
+                    relay_r,
                 )
         if exit_r and body.exit_node_id is not None:
             exit_node = _get_node(db, body.exit_node_id)
             if not region_matches(exit_r, exit_node.region):
-                raise HTTPException(
-                    status_code=422,
-                    detail=f"exit node region must match template preset ({exit_r})",
+                logger.warning(
+                    "Tunnel create: exit node %s region %r does not match "
+                    "template preset %r (allowed for node→node)",
+                    body.exit_node_id,
+                    exit_node.region,
+                    exit_r,
                 )
 
     params = body.params or tunnel_svc.default_params(body.transport)

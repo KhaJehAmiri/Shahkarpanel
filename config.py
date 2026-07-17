@@ -151,8 +151,8 @@ NODE_AGENT_PACKAGE_URL = config(
         "node-agent/nexuspanel-node-agent-image.tar.gz"
     ),
 )
-# Domestic (Iran) HTTP mirror — used only after online/GitHub fetch fails 3x.
-# Example: http://37.32.40.55/nexuspanel/node-agent-image.tar.gz
+# Domestic HTTP mirror — used only after online/GitHub fetch fails 3x.
+# Example: http://mirror.example.com/nexuspanel/node-agent-image.tar.gz
 NODE_AGENT_MIRROR_URL = config("NODE_AGENT_MIRROR_URL", default="")
 # SSH connect timeout (seconds) when auto-provisioning a node.
 NODE_PROVISION_SSH_TIMEOUT = config("NODE_PROVISION_SSH_TIMEOUT", cast=int, default=30)

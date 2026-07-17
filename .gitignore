@@ -176,6 +176,7 @@ xray-core
 # Node / Next.js (dashboard-next)
 node_modules/
 .next/
+app/dashboard-next/out/
 *.tsbuildinfo
 next-env.d.ts
 warp_account.json
@@ -188,16 +189,19 @@ data/
 # Cursor IDE (local agent hooks — not for public repo)
 .cursor/
 
-# Internal handoff / audit docs (local only)
+# Internal handoff / audit / ops docs (local only — never public)
 docs/CENTRAL-HANDOFF.md
 docs/NEXUSPANEL_FULL_REPORT.md
 docs/AUDIT-CLOSURE.md
 docs/PROJECT_STATUS.md
 docs/GIT-COMMITS.md
 docs/accounting-contract.md
+docs/LOCAL_SECRETS.md
+docs/SIGMAGUARD_WIRE.md
 
 # Public release: full test suite stays local (3x-ui style install repo)
 tests/
+pytest.ini
 
 # Dev / e2e / internal ops scripts (install + nexus CLI stay tracked)
 scripts/*_test.py
@@ -216,9 +220,13 @@ scripts/cleanup_*.py
 scripts/enable_*.py
 scripts/ensure_*.py
 scripts/reconnect_*.py
+scripts/sync_agent_mirror.sh
+scripts/setup_grpc_cdn.sh
 scripts/all_protocols_seed.py
 scripts/check_data_limit.py
 scripts/setup_panel_stack.py
 scripts/setup_node_ssh_access.py
 scripts/parity_matrix_test.py
 scripts/all_protocols_connect_smoke.py
+scripts/bisect_*.py
+scripts/ssg_*.py

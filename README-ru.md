@@ -218,7 +218,7 @@ python3 main.py
 
 Секреты, `.env`, дампы БД и приватные ключи **никогда** не коммитить.
 
-Подробнее: [SECURITY.md](SECURITY.md) · [docs/LOCAL_SECRETS.md](docs/LOCAL_SECRETS.md)
+Подробнее: [SECURITY.md](SECURITY.md)
 
 ---
 

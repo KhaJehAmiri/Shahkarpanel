@@ -298,7 +298,7 @@ docker compose -f docker-compose.monitoring.yml up -d
 | آیا رمز یا `.env` در درخت عمومی است؟ | **خیر** |
 | GitHub Actions چه می‌کند؟ | **Lint + مایگریشن Alembic** روی PostgreSQL |
 
-جزئیات: [SECURITY.md](SECURITY.md) · [docs/LOCAL_SECRETS.md](docs/LOCAL_SECRETS.md)
+جزئیات: [SECURITY.md](SECURITY.md)
 
 ---
 

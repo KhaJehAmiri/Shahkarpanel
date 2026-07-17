@@ -218,7 +218,7 @@ python3 main.py
 
 切勿提交真实 `.env`、数据库转储、私钥。
 
-详见：[SECURITY.md](SECURITY.md) · [docs/LOCAL_SECRETS.md](docs/LOCAL_SECRETS.md)
+详见：[SECURITY.md](SECURITY.md)
 
 ---
 

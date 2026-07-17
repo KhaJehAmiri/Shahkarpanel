@@ -296,7 +296,7 @@ See [`.env.example`](.env.example).
 | Public deployment | [`docs/PUBLIC_DEPLOYMENT.md`](docs/PUBLIC_DEPLOYMENT.md) |
 | HTTPS setup | [`docs/HTTPS_SETUP.md`](docs/HTTPS_SETUP.md) |
 | Client API (SigmaGuard) | [`docs/CLIENT_API.md`](docs/CLIENT_API.md) |
-| Local secrets (never commit) | [`docs/LOCAL_SECRETS.md`](docs/LOCAL_SECRETS.md) |
+| Security / secrets layout | [`SECURITY.md`](SECURITY.md) |
 | Changelog | [`CHANGELOG.md`](CHANGELOG.md) |
 
 ---
@@ -313,7 +313,7 @@ The **full pytest suite, e2e scripts, and internal handoff docs stay local** on 
 | Passwords or `.env` in the public tree? | **No** |
 | What runs in GitHub Actions? | **Lint + Alembic migrations** on PostgreSQL |
 
-Details: [SECURITY.md](SECURITY.md) · [docs/LOCAL_SECRETS.md](docs/LOCAL_SECRETS.md)
+Details: [SECURITY.md](SECURITY.md)
 
 **Never commit:** real `.env`, DB dumps, private TLS keys, server IPs/passwords in scripts.
 

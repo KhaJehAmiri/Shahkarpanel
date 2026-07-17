@@ -12,25 +12,38 @@ Contact the repository owner privately (GitHub Security Advisories or direct mes
 | `.env` with real secrets | **Gitignored** — use `.env.example` only |
 | Production database dumps | Not tracked |
 | TLS private keys / JWT secrets | Generated on install, not in git |
-| User passwords | Never in source or tests |
+| SSH passwords / node credentials | Under `/var/lib/nexuspanel/secrets/` on the server only |
+| User passwords | Never in source |
+| Internal handoff / audit / e2e scripts | **Gitignored** — stay on development servers |
 
-## Is the `tests/` folder safe on GitHub?
+## Is the `tests/` folder on this public GitHub repo?
 
-**Yes — it should stay in the repository.** This is standard for open-source and private projects alike.
+**No.** The full pytest suite, smoke/e2e scripts, and internal ops docs are listed in `.gitignore` and are **not** pushed to the public install repository (same approach as Marzban / 3x-ui style release trees).
 
-The `tests/` directory contains **automated unit/integration tests** (pytest), not customer data or production configuration:
+| Question | Answer |
+|----------|--------|
+| Are tests on GitHub? | **No** — run locally or on a private CI clone |
+| What runs in GitHub Actions? | Lint + Alembic migrations on PostgreSQL |
+| Passwords or real IPs in examples? | Placeholders only (`example.com`, RFC 5737 docs IPs) |
 
-- `conftest.py` creates a **temporary** SQLite database under `/tmp` and a **fake** `xray` shell stub so CI does not need real infrastructure.
-- Test files assert billing math, feature flags, tunnels, tenants, etc. — no hard-coded passwords or API keys.
-- Running `pytest` on a server **does not** install or expose the panel to the internet.
+## Runtime secrets layout (on the server)
 
-Keeping `tests/` on GitHub improves security overall: every change is verified before release.
+Keep secrets **outside** the git checkout (`/opt/nexuspanel`):
+
+| Path | Purpose |
+|------|---------|
+| `/opt/nexuspanel/.env` | Non-secret panel config (Uvicorn, CORS, titles) |
+| `/var/lib/nexuspanel/.env` | Runtime secrets (DB URL, JWT, bootstrap/metrics tokens) |
+| `/var/lib/nexuspanel/secrets/` | Panel → node SSH key / optional password file |
+
+Fresh installs split these automatically via `nexuspanel install` / `scripts/setup_env.sh`.
 
 ## Production hardening checklist
 
-- Change default admin password immediately after install.
-- Set strong `NODE_BOOTSTRAP_TOKEN` and `METRICS_TOKEN` in `.env`.
+- Change the default admin password immediately after install.
+- Set strong `NODE_BOOTSTRAP_TOKEN` and `METRICS_TOKEN` in the runtime `.env`.
 - Use PostgreSQL + Redis for production; restrict network access to DB/Redis.
-- Enable HTTPS in front of the panel (reverse proxy).
+- Enable HTTPS in front of the panel (`nexuspanel https` or your reverse proxy).
 - Revoke unused Personal Access Tokens and API keys.
 - Run panel updates via `nexuspanel update` from tagged releases.
+- Never paste real IPs, passwords, or `.env` contents into public issues or commits.

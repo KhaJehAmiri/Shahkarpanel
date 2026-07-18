@@ -63,7 +63,7 @@ __all__ = [
 TunnelEngine = Literal["xray", "singbox"]
 
 TUNNEL_TRANSPORT_META: dict[str, dict] = {
-    "reality": {"label": "VLESS + Reality", "engine": "xray", "description": "XTLS Vision over Reality"},
+    "reality": {"label": "VLESS + Reality", "engine": "xray", "description": "VLESS Reality (no Vision flow — tunnel/UDP safe)"},
     "ws": {"label": "VLESS + WebSocket", "engine": "xray", "description": "WebSocket + TLS hop"},
     "grpc": {"label": "VLESS + gRPC", "engine": "xray", "description": "gRPC transport hop"},
     "tcp": {"label": "VLESS + TCP", "engine": "xray", "description": "Plain TCP hop"},
@@ -207,9 +207,9 @@ def default_params(transport: str) -> Dict:
     validate_transport(transport)
     client_id = str(uuid.uuid4())
     if transport == "reality":
+        # No ``flow``: xtls-rprx-vision breaks dokodemo/UDP (WireGuard-over-tunnel).
         return {
             "id": client_id,
-            "flow": "xtls-rprx-vision",
             "sni": "www.cloudflare.com",
             "fingerprint": "chrome",
             # Filled by ``ensure_reality_keys`` (xray x25519) at creation time;
@@ -531,6 +531,8 @@ def build_wireguard_relay_inbound(
     """
     target_port = int(wg_target_port if wg_target_port is not None else wg_listen_port)
     tag = f"tunnel-{tunnel.id}-wg-in"
+    # No streamSettings: ``network: tcp`` there made some Xray builds treat the
+    # listener as TCP-only and drop WireGuard UDP before it reached the tunnel.
     inbound = {
         "tag": tag,
         "listen": "0.0.0.0",
@@ -542,9 +544,6 @@ def build_wireguard_relay_inbound(
             "network": "udp",
             "followRedirect": False,
         },
-        # dokodemo-door is not a stream transport; keep TCP here so older Xray
-        # builds on relay nodes do not reject ``streamSettings.network: udp``.
-        "streamSettings": {"network": "tcp"},
     }
     routing_rule = build_relay_routing_rule(tunnel, [tag])
     return inbound, routing_rule

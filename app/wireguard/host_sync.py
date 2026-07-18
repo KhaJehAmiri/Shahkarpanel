@@ -247,20 +247,38 @@ def sync_panel_exit_wireguard(db, *, peers: Optional[list] = None) -> bool:
     """Push peers to the panel host WG interface when it terminates tunneled WG."""
     from app.tunnel.relay import canonical_panel_exit_wireguard, panel_tunnel_exit_active
     from app.wireguard.operations import collect_wg_peers
-    from app.wireguard.sync import build_node_specs, plain_wg_enabled
+    from app.wireguard.sync import build_node_spec
 
     if not panel_tunnel_exit_active(db):
         return False
 
     cfg = canonical_panel_exit_wireguard(db)
-    if cfg is None or not plain_wg_enabled(cfg):
+    if cfg is None:
         return False
+    # Panel-exit tunnels need host wg0 even when the relay has plain WG off
+    # (Finalmask-only / dokodemo-delegated). ``plain_wg_enabled`` gates the
+    # *relay* kernel iface, not the panel exit.
 
     if peers is None:
         peers = collect_wg_peers(db)
 
-    specs = build_node_specs(cfg, peers)
-    if not specs:
+    # Always build a plain host spec — do not use build_node_specs(), which
+    # skips plain when the relay's plain_enabled is false.
+    try:
+        specs = [
+            build_node_spec(
+                interface=cfg.interface or "wg0",
+                listen_port=int(cfg.listen_port or 51820),
+                private_key=cfg.private_key,
+                subnet=cfg.subnet,
+                peers=list(peers or []),
+                mtu=int(cfg.mtu or 1420),
+                amnezia=None,
+                interface_host=getattr(cfg, "interface_host", None),
+            )
+        ]
+    except Exception:
+        logger.exception("Failed to build panel-exit WireGuard spec")
         return False
 
     ok = apply_host_wireguard_specs(specs)

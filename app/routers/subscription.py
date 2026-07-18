@@ -58,6 +58,27 @@ router = APIRouter(tags=['Subscription'], prefix=f'/{XRAY_SUBSCRIPTION_PATH}')
 NO_STORE_HEADERS = {"Cache-Control": "private, no-store", "Pragma": "no-cache"}
 
 
+def _attachment_headers(filename: str) -> dict[str, str]:
+    """Content-Disposition that mobile browsers treat as a real download.
+
+    ``text/plain`` + bare ``filename=`` is often rendered inline on iOS/Android
+    Chrome instead of saving. ``application/octet-stream`` + RFC 5987
+    ``filename*`` is more reliable; the subscribe page also Blob-downloads.
+    """
+    from urllib.parse import quote
+
+    ascii_name = "".join(c if 32 <= ord(c) < 127 and c not in '\\"' else "_" for c in filename)
+    if not ascii_name.lower().endswith(".conf") and not ascii_name.lower().endswith(".json"):
+        ascii_name = f"{ascii_name or 'config'}.conf"
+    starred = quote(filename, safe="")
+    return {
+        "Content-Disposition": (
+            f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{starred}'
+        ),
+        **NO_STORE_HEADERS,
+    }
+
+
 def _subscription_response_headers(
     user: UserResponse,
     request: Request,
@@ -723,11 +744,8 @@ def user_subscription_wireguard(
         filename = f"{dbuser.username}-{dbnode.name}{suffix}.conf"
         return Response(
             content=result["conf"],
-            media_type="text/plain",
-            headers={
-                "Content-Disposition": f'attachment; filename="{filename}"',
-                **NO_STORE_HEADERS,
-            },
+            media_type="application/octet-stream",
+            headers=_attachment_headers(filename),
         )
 
     for proxy in dbuser.proxies:
@@ -750,11 +768,8 @@ def user_subscription_wireguard(
         filename = f"{dbuser.username}-{dbnode.name}.conf"
         return Response(
             content=conf,
-            media_type="text/plain",
-            headers={
-                "Content-Disposition": f'attachment; filename="{filename}"',
-                **NO_STORE_HEADERS,
-            },
+            media_type="application/octet-stream",
+            headers=_attachment_headers(filename),
         )
 
     if variant == "xray_native":
@@ -787,11 +802,8 @@ def user_subscription_wireguard(
         filename = f"{dbuser.username}-{dbnode.name}-xray-wg.json"
         return Response(
             content=json.dumps(client_cfg, indent=2),
-            media_type="application/json",
-            headers={
-                "Content-Disposition": f'attachment; filename="{filename}"',
-                **NO_STORE_HEADERS,
-            },
+            media_type="application/octet-stream",
+            headers=_attachment_headers(filename),
         )
 
     conf = build_wireguard_user_config(settings, dbnode, variant=variant)
@@ -802,11 +814,8 @@ def user_subscription_wireguard(
     filename = f"{dbuser.username}-{dbnode.name}{suffix}.conf"
     return Response(
         content=conf,
-        media_type="text/plain",
-        headers={
-            "content-disposition": f'attachment; filename="{filename}"',
-            **NO_STORE_HEADERS,
-        },
+        media_type="application/octet-stream",
+        headers=_attachment_headers(filename),
     )
 
 

@@ -227,6 +227,9 @@ def collect_v2ray_share_link_items(
         # "Iran · Hysteria2" → region_name "Iran" (portal/apps show protocol separately)
         region_name = title.split("·", 1)[0].strip() if title else remark
         proto = raw.split("://", 1)[0] if "://" in raw else "link"
+        # Finalmask share links are still wireguard:// but carry fm= for Xray.
+        if proto == "wireguard" and ("fm=" in raw or "fm%3D" in raw.lower()):
+            proto = "wireguard-xray"
         items.append(
             {
                 "link": raw,

@@ -621,21 +621,33 @@ def _append_v2ray_json(user: "UserResponse", config_text: str) -> str:
                 )
             )
 
-        for cfg in data:
-            if not isinstance(cfg, dict):
+        # Standalone profiles (once each). Cloning into every VLESS config made
+        # Xray apps show N identical WireGuard entries.
+        existing_remarks = {
+            str(cfg.get("remarks") or "")
+            for cfg in data
+            if isinstance(cfg, dict)
+        }
+        base = next((cfg for cfg in data if isinstance(cfg, dict)), None)
+        for ob in wg_outbounds:
+            remark = str(ob.get("tag") or "WireGuard")
+            if remark in existing_remarks:
                 continue
-            outbounds = list(cfg.get("outbounds") or [])
-            tags = {o.get("tag") for o in outbounds if o.get("tag")}
-            for ob in wg_outbounds:
-                if ob["tag"] not in tags:
-                    # Append, never insert at 0: with no "routing" block Xray
-                    # falls back to the *first* outbound as the default route
-                    # for all traffic. Inserting WG here would silently divert
-                    # every client's traffic through WireGuard instead of the
-                    # actual selected proxy (tag "proxy" stays outbound[0]).
-                    outbounds.append(ob)
-                    tags.add(ob["tag"])
-            cfg["outbounds"] = outbounds
+            if base is not None:
+                profile = json.loads(json.dumps(base))
+            else:
+                profile = {"log": {"loglevel": "warning"}, "routing": {"domainStrategy": "AsIs", "rules": []}}
+            profile["remarks"] = remark
+            # Keep template freedom/blackhole after the WG outbound (selected first).
+            rest = [
+                o
+                for o in (profile.get("outbounds") or [])
+                if isinstance(o, dict)
+                and str(o.get("protocol") or "") in ("freedom", "blackhole", "dns")
+            ]
+            profile["outbounds"] = [ob, *rest]
+            data.append(profile)
+            existing_remarks.add(remark)
 
     return json.dumps(data, indent=4)
 
@@ -724,19 +736,13 @@ def collect_unified_share_links(user: "UserResponse") -> list[str]:
             for wg in wg_nodes:
                 if not wg.wireguard:
                     continue
-                # 3x-ui dual: wireguard:// without fm + with fm (Xray), both on
-                # the Xray WG port when Finalmask is enabled — never requires
-                # kernel plain WG.
+                # Finalmask-only for Xray share-link / base64 subs (with fm=).
+                # Stock WireGuard .conf (no fm) stays on GET /sub/.../wireguard —
+                # emitting both URIs made apps import two identical WireGuards.
                 if xray_native_wg_enabled(wg.wireguard):
                     uri = user_share_link(
-                        settings, wg, variant="wg_conf",
-                        remark=node_config_remark(wg, "WireGuard"), db=db,
-                    )
-                    if uri:
-                        links.append(uri)
-                    uri = user_share_link(
                         settings, wg, variant="xray_native",
-                        remark=node_config_remark(wg, "WireGuard Xray"), db=db,
+                        remark=node_config_remark(wg, "WireGuard"), db=db,
                     )
                     if uri:
                         links.append(uri)

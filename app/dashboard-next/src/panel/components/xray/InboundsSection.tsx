@@ -1,7 +1,7 @@
 import { FC, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { isManageableInbound, inboundDisplayProtocol, inboundTransportLabel } from "../../lib/xrayHelpers";
-import { Button, Callout, Card, EmptyState, Pill, useToast } from "../ui";
+import { Button, Callout, Card, EmptyState, Pill, Toggle, useToast } from "../ui";
 import { IcDownload, IcEdit, IcGlobe, IcPlus, IcTrash } from "../icons";
 import { BulkInboundModal } from "../BulkInboundModal";
 import { InboundModal } from "@/components/inbound/AddInboundModal";
@@ -67,13 +67,21 @@ export const InboundsSection: FC<{
   };
 
   const applyInbound = async (built: Record<string, unknown>, originalTag?: string) => {
+    const inbound: Record<string, unknown> = { enable: true, ...built };
     const next = [...manageableInbounds];
     if (originalTag) {
       const idx = next.findIndex((i) => i.tag === originalTag);
-      if (idx >= 0) next[idx] = built;
-      else next.push(built);
+      if (idx >= 0) {
+        // Keep enable/disable state across edits unless the payload sets it.
+        next[idx] = {
+          ...inbound,
+          enable: built.enable !== undefined ? built.enable !== false : next[idx].enable !== false,
+        };
+      } else {
+        next.push(inbound);
+      }
     } else {
-      next.push(built);
+      next.push(inbound);
     }
     const merged = withInbounds(next);
     try {
@@ -84,6 +92,27 @@ export const InboundsSection: FC<{
     }
     onChange(merged);
     await persistConfig(merged);
+  };
+
+  const toggleEnable = async (inbound: Record<string, unknown>) => {
+    const tag = String(inbound.tag);
+    const currentlyOn = inbound.enable !== false;
+    const next = manageableInbounds.map((ib) =>
+      String(ib.tag) === tag ? { ...ib, enable: !currentlyOn } : ib,
+    );
+    const merged = withInbounds(next);
+    try {
+      await api.post("/core/validate-inbounds", { inbounds: merged.inbounds });
+    } catch (e: unknown) {
+      toast.push(e instanceof Error ? e.message : t("common.error"), "error");
+      return;
+    }
+    onChange(merged);
+    try {
+      await persistConfig(merged);
+    } catch {
+      /* toast already shown */
+    }
   };
 
   const remove = async (tag: string) => {
@@ -275,8 +304,9 @@ export const InboundsSection: FC<{
                 {inbounds.map((i) => {
                   const ss = (i.streamSettings || {}) as Record<string, unknown>;
                   const displayProto = inboundDisplayProtocol(i);
+                  const enabled = i.enable !== false;
                   return (
-                    <tr key={String(i.tag)}>
+                    <tr key={String(i.tag)} className={enabled ? undefined : "is-muted"}>
                       <td style={{ fontWeight: 600 }}>{String(i.tag)}</td>
                       <td><Pill tone="accent">{displayProto}</Pill></td>
                       <td className="nx-mono">{String(i.port)}</td>
@@ -286,7 +316,19 @@ export const InboundsSection: FC<{
                           {String(ss.security || "none")}
                         </Pill>
                       </td>
-                      <td><Pill tone="ok">Xray</Pill></td>
+                      <td>
+                        <div className="nx-row" style={{ gap: 8, alignItems: "center" }}>
+                          <Toggle
+                            on={enabled}
+                            disabled={busy || readOnly}
+                            label={enabled ? t("common.disable") : t("common.enable")}
+                            onChange={() => toggleEnable(i)}
+                          />
+                          <Pill tone={enabled ? "ok" : "default"}>
+                            {enabled ? "Xray" : t("common.disabled")}
+                          </Pill>
+                        </div>
+                      </td>
                       <td>
                         <div className="nx-row" style={{ justifyContent: "flex-end", gap: 6 }}>
                           <Button size="sm" onClick={() => exportInbound(String(i.tag))} disabled={saving || persisting} title={t("inbounds.exportInbound")}>

@@ -288,24 +288,28 @@ def _finalmask_outbound_tag(db, dbnode, node_id: int, config=None) -> str:
 
 
 def _finalmask_mtu_override(db, dbnode, node_id: int) -> Optional[int]:
-    """Cap Finalmask MTU on the nested tunnel+WARP path to avoid black-holes.
+    """Cap Finalmask MTU on the nested tunnel (+ optional WARP) path.
 
-    Live MTU is WARP-clamped to 1280 == the WARP outer MTU, which black-holes
-    large TLS records once WG is nested inside Reality inside WARP. Cap the inner
-    Finalmask MTU at 1200 whenever this node relays through a tunnel and exits
-    via WARP; leave standalone nodes on their configured value.
+    Without a cap, clients keep ``xray_wg_mtu``/1420 inside Reality and large
+    TLS records black-hole after handshake — looks like "WG connects but data
+    never goes through the tunnel". WARP nesting needs an even lower ceiling.
     """
     from app.tunnel.relay import relay_tunnel_outbound_tag
-    from app.wireguard.xray_native import TUNNEL_WARP_FINALMASK_MTU
+    from app.wireguard.xray_native import (
+        TUNNEL_FINALMASK_MTU,
+        TUNNEL_WARP_FINALMASK_MTU,
+    )
 
-    if not (dbnode and bool(getattr(dbnode, "warp_enabled", False))):
-        return None
-    is_relay = bool(relay_tunnel_outbound_tag(db, node_id))
-    if not is_relay:
+    if not dbnode or not relay_tunnel_outbound_tag(db, node_id):
         return None
     cfg = dbnode.wireguard
     configured = int(getattr(cfg, "xray_wg_mtu", None) or 1420)
-    return min(configured, TUNNEL_WARP_FINALMASK_MTU)
+    cap = (
+        TUNNEL_WARP_FINALMASK_MTU
+        if bool(getattr(dbnode, "warp_enabled", False))
+        else TUNNEL_FINALMASK_MTU
+    )
+    return min(configured, cap)
 
 
 def _apply_native_wireguard_inbound(config, node_id: int):

@@ -311,8 +311,9 @@
     "reverseProxyUriHint": "The URI of the subscription URL for use behind reverse proxies — this is the full address handed to clients.",
     "pathRequired": "URI Path is required",
     "notSaved": "Not saved — previous settings are still in effect",
-    "duplicatesInherited": "That's exactly what this inbound already inherits from '{{slug}}' — change the URI Path (or Listen Domain) to create a distinct, dedicated configuration.",
-    "duplicatesInheritedHint": "This Listen Domain + URI Path is identical to what this inbound already inherits from subscription endpoint '{{slug}}' — saving would just recreate the same route (not allowed, since domain+path must stay unique) and isn't needed. Change the URI Path to give this inbound a genuinely separate configuration, or turn the toggle off.",
+    "duplicatesInherited": "That's exactly what this inbound already inherits from '{{slug}}'.",
+    "duplicatesInheritedHint": "Listen Domain + URI Path match the shared panel endpoint '{{slug}}' (usually /sub/). Saving keeps that shared route — no per-inbound path like sub-inbound-name is created. Only change the domain or path if you need a truly separate dedicated link.",
+    "usingInherited": "Using shared subscription endpoint '{{slug}}' with path /sub/ — no dedicated override needed",
     "saved": "Subscription settings saved — existing users on other inbounds/endpoints are unaffected",
     "clearOverride": "Remove override (inherit again)",
     "cleared": "Per-inbound override removed"

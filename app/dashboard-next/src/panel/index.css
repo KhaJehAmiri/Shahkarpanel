@@ -363,6 +363,7 @@ input.nx-input[type="date"]:disabled::-webkit-calendar-picker-indicator {
 .nx-table tr:last-child td { border-bottom: none; }
 .nx-table tbody tr { transition: background 0.12s var(--nx-ease); }
 .nx-table tbody tr:hover { background: var(--nx-surface-2); }
+.nx-table tbody tr.is-muted { opacity: 0.65; }
 .nx-code { font-family: var(--nx-font-mono); font-size: 12px; background: var(--nx-surface-3); padding: 2px 6px; border-radius: 5px; }
 
 /* ===================== Empty / Loading ===================== */

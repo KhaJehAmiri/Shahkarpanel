@@ -64,17 +64,30 @@ def _apply_and_restart(new_config: dict) -> bool:
     for an interactive admin request (permission deps, node/edge-nginx
     sync) — this job only ever touches the outbounds list.
     """
+    import commentjson
+
     from app.routers.core import _xray_config_test_error
     from app.xray import XRayConfig
     from app.xray import config_history
+    from app.xray.inbound_normalize import normalize_core_config_payload, runtime_core_config
 
-    test_err = _xray_config_test_error(dict(new_config))
+    # Merge outbound fix into on-disk config so disabled inbounds are kept.
+    try:
+        with open(XRAY_JSON, "r", encoding="utf-8") as f:
+            disk_payload = commentjson.loads(f.read())
+    except OSError:
+        disk_payload = copy.deepcopy(new_config)
+    disk_payload = normalize_core_config_payload(disk_payload)
+    disk_payload["outbounds"] = list(new_config.get("outbounds") or [])
+    runtime_payload = runtime_core_config(disk_payload)
+
+    test_err = _xray_config_test_error(dict(runtime_payload))
     if test_err:
         logger.error("WARP remediation produced an invalid config, aborting: %s", test_err)
         return False
 
     try:
-        new_xray_config = XRayConfig(new_config, api_port=xray.config.api_port)
+        new_xray_config = XRayConfig(runtime_payload, api_port=xray.config.api_port)
     except ValueError:
         logger.exception("WARP remediation: failed to build XRayConfig")
         return False
@@ -97,7 +110,7 @@ def _apply_and_restart(new_config: dict) -> bool:
     prev_config = xray.config
     try:
         with open(XRAY_JSON, "w", encoding="utf-8") as f:
-            f.write(json.dumps(new_config, indent=4))
+            f.write(json.dumps(disk_payload, indent=4))
     except OSError:
         logger.exception("WARP remediation: failed to write %s", XRAY_JSON)
         return False

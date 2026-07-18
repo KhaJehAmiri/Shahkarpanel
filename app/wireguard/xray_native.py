@@ -86,6 +86,9 @@ DEFAULT_XRAY_WG_WORKERS = 4
 
 # Nested Finalmask → Reality → WARP black-holes when inner MTU equals WARP's
 # outer 1280. Cap client+server Finalmask MTU on that path.
+# Nested Finalmask → Reality (+ optional WARP) needs headroom under 1420 or
+# TLS records black-hole after handshake while small keepalives still work.
+TUNNEL_FINALMASK_MTU = 1280
 TUNNEL_WARP_FINALMASK_MTU = 1200
 
 
@@ -96,17 +99,20 @@ def _resolve_finalmask_mtu(cfg, *, mtu_override: Optional[int]) -> int:
 
 
 def finalmask_client_mtu(cfg, dbnode=None, db=None) -> int:
-    """MTU for client Finalmask export — prefer ``xray_wg_mtu``, cap on tunnel+WARP."""
+    """MTU for client Finalmask export — prefer ``xray_wg_mtu``, cap on tunnel."""
     configured = int(getattr(cfg, "xray_wg_mtu", None) or getattr(cfg, "mtu", None) or 1420)
     if dbnode is None or db is None:
-        return configured
-    if not bool(getattr(dbnode, "warp_enabled", False)):
         return configured
     try:
         from app.tunnel.relay import relay_tunnel_outbound_tag
 
         if relay_tunnel_outbound_tag(db, dbnode.id):
-            return min(configured, TUNNEL_WARP_FINALMASK_MTU)
+            cap = (
+                TUNNEL_WARP_FINALMASK_MTU
+                if bool(getattr(dbnode, "warp_enabled", False))
+                else TUNNEL_FINALMASK_MTU
+            )
+            return min(configured, cap)
     except Exception:
         pass
     return configured

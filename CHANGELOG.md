@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.22.2 — 2026-07-18
+
+- Inbounds list: enable/disable toggle per Xray inbound (disabled inbounds stay in config, omitted from the live core).
+- Per-inbound subscription settings: keep URI Path as `sub` after 3x-ui migration instead of inventing `sub-<inboundTag>`; saving the shared panel domain+path succeeds via inheritance.
+- WireGuard / Finalmask tunnel and subscribe export fixes from the recent WG workstream (panel-exit sync, private-geo routing pin, single Finalmask share link, mobile `.conf` download).
+
 ## 0.21.25 — 2026-07-16
 
 - Found the real reason "both WireGuard types" never connected even though the tunnel itself was proven healthy end-to-end (live handshake test from an external client showed 0 bytes ever received back): `schedule_finalmask_xray_reload()` was being called unconditionally from `sync_user_change()`, the generic hook that fires on *any* user lifecycle event system-wide (usage recording, quota checks, admin edits, dashboard-triggered syncs, ...) — not just actual Finalmask peer-membership changes. On a busy panel this fired every few seconds, and each firing restarted the relay's *entire* Xray core (a multi-MB Finalmask config, 10-20s to bind). Live logs confirmed the node's Xray core was restarting every ~20-90s continuously, non-stop, for as long as it had been observed — so every client handshake had a large chance of landing on a core that was mid-restart (port unbound) and no session could ever stabilize. `schedule_finalmask_xray_reload()` now fingerprints the peer set that actually gets baked into each Finalmask node's config and only restarts a node when that fingerprint actually changed since the last reload — real membership changes still reload automatically (no manual step), but the constant no-op restart storm is gone.

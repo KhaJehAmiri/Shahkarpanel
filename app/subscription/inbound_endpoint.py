@@ -32,14 +32,11 @@ class InboundSubscriptionConflict(ValueError):
 
 
 class InboundSubscriptionAlreadyInherited(InboundSubscriptionConflict):
-    """The requested Listen Domain/URI Path exactly matches an existing endpoint
-    that isn't dedicated to any single inbound (``export_mode="full"``, e.g. a
-    panel-wide endpoint a 3x-ui migration created). Subscription serving is
-    keyed purely on (host, path) -> one endpoint -> token/alias lookup, which
-    never discriminates by inbound tag for a non-dedicated endpoint — so that
-    endpoint ALREADY serves every inbound at that domain+path, including this
-    one. Not a real conflict with another inbound, just a redundant no-op the
-    admin doesn't need to (and can't, since host+path must stay unique) create.
+    """The requested Listen Domain/URI Path exactly matches a shared panel
+    endpoint (``export_mode="full"``, e.g. from 3x-ui migration). That route
+    already serves every inbound — including this one. Any dedicated override
+    for this inbound was cleared; the caller should treat this as success with
+    inheritance (path stays ``sub``).
     """
 
 
@@ -90,6 +87,10 @@ def set_inbound_subscription_settings(
     other ``SubscriptionEndpoint`` rows (e.g. the panel-wide endpoint a 3x-ui
     migration created), so existing subscription links keep resolving exactly
     as before.
+
+    If the requested host+path matches a shared panel endpoint, any dedicated
+    override is removed and ``InboundSubscriptionAlreadyInherited`` is raised
+    so the API can return success with inheritance (URI Path stays ``sub``).
     """
     from app.db import crud
 
@@ -114,56 +115,16 @@ def set_inbound_subscription_settings(
     if conflict and (not existing or conflict.id != existing.id):
         host_label = host_norm or "any domain"
 
-        if not conflict.inbound_tag and not existing:
-            # Brand-new override attempt (this inbound has no dedicated row
-            # yet) on a (host, path) already served by a non-dedicated
-            # endpoint (export_mode="full", e.g. a whole migrated 3x-ui
-            # panel) — that endpoint already serves this exact domain+path
-            # for EVERY inbound regardless of tag, since subscription serving
-            # resolves purely by (host, path) and then by the requester's own
-            # token, never by inbound. So this inbound is already served here
-            # too; creating a row for the identical (host, path) is both
-            # unnecessary and impossible (routing requires host+path to stay
-            # unique). This is a real, common, legitimate setup (per 3x-ui:
-            # one panel's domain+path is shared by ALL of its inbounds, with
-            # users differentiated by their own token) — not an error, just a
-            # no-op to explain.
-            suggested_path = f"{prefix}-{tag}"[:64]
+        if not conflict.inbound_tag:
+            # Same domain+path as a shared panel endpoint — keep /sub/ via
+            # inheritance instead of inventing sub-<inboundTag>.
+            if existing:
+                crud.remove_subscription_endpoint(db, existing)
             raise InboundSubscriptionAlreadyInherited(
                 f"Listen Domain '{host_label}' + URI Path '/{prefix}/' is already served by "
-                f"subscription endpoint '{conflict.slug}', which isn't dedicated to a single "
-                "inbound — it already works for every inbound sharing this domain+path "
-                "(including this one), with each user told apart by their own token. No "
-                "override is needed here, and one can't be created for the exact same "
-                "domain+path. To give THIS inbound its own DEDICATED link that only lists "
-                "its own configs, pick a different URI Path "
-                f"(e.g. '{suggested_path}') and/or Listen Domain.",
-                endpoint_slug=conflict.slug,
-                conflict_inbound_tag=conflict.inbound_tag,
-            )
-
-        if not conflict.inbound_tag and existing:
-            # This inbound ALREADY has a dedicated override and the admin is
-            # trying to REPOINT it (e.g. change just the Listen Domain) to a
-            # (host, path) a non-dedicated/shared endpoint already owns.
-            # Unlike the brand-new case above, this is NOT a harmless no-op:
-            # the admin's existing override is scoped to only THIS inbound
-            # (export_mode="inbound_only"), which is meaningfully different
-            # from the shared endpoint (which serves every inbound on that
-            # panel) — silently treating this as "already covered" would
-            # hide the fact that the requested change was rejected and the
-            # OLD override is still the one in effect. Say so plainly.
-            raise InboundSubscriptionConflict(
-                f"Could not update this inbound's subscription settings: Listen Domain "
-                f"'{host_label}' + URI Path '/{prefix}/' is already used by the shared "
-                f"subscription endpoint '{conflict.slug}' (not dedicated to a single "
-                f"inbound). Your existing override for '{tag}' — Listen Domain "
-                f"'{existing.host or 'any domain'}', URI Path '/{existing.path_prefix}/' — "
-                "was NOT changed and is still what's in effect. Pick a different URI Path "
-                f"to keep a dedicated link on '{host_label}', or clear this inbound's "
-                f"override entirely if you're fine switching to the shared "
-                f"'{conflict.slug}' link (which shows every inbound on that domain, not "
-                "just this one).",
+                f"subscription endpoint '{conflict.slug}'. This inbound inherits that shared "
+                "route (no dedicated override). To give THIS inbound its own dedicated link "
+                "that only lists its configs, use a different Listen Domain and/or URI Path.",
                 endpoint_slug=conflict.slug,
                 conflict_inbound_tag=conflict.inbound_tag,
             )

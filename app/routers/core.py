@@ -20,7 +20,11 @@ from app.utils import responses, warp
 from app.utils.outbound_test import test_outbound
 from app.utils.ws_auth import ws_bearer_token
 from app.xray import XRayConfig
-from app.xray.inbound_normalize import normalize_core_config_payload
+from app.xray.inbound_normalize import (
+    inbound_is_enabled,
+    normalize_core_config_payload,
+    runtime_core_config,
+)
 from app.xray.inbound_ports import collect_port_issues, format_port_issues
 from config import XRAY_ASSETS_PATH, XRAY_EXECUTABLE_PATH, XRAY_JSON
 
@@ -130,7 +134,11 @@ def get_core_stats(admin: Admin = _core_read):
 @router.post("/core/validate-inbounds", responses={403: responses._403, 400: responses._400})
 def validate_inbounds(payload: dict, admin: Admin = _core_write) -> dict:
     """Check inbound ports for duplicates and conflicts with panel services."""
-    inbounds = list(payload.get("inbounds") or [])
+    inbounds = [
+        ib
+        for ib in list(payload.get("inbounds") or [])
+        if isinstance(ib, dict) and inbound_is_enabled(ib)
+    ]
     _validate_inbound_ports_or_raise(inbounds)
     return {"ok": True}
 
@@ -186,8 +194,10 @@ def modify_core_config(
 
     payload = normalize_core_config_payload(payload)
     payload["inbounds"] = list(payload.get("inbounds") or [])
+    # Persist full payload (including disabled inbounds); start core from runtime only.
+    runtime_payload = runtime_core_config(payload)
     try:
-        config = XRayConfig(payload, api_port=xray.config.api_port)
+        config = XRayConfig(runtime_payload, api_port=xray.config.api_port)
     except ValueError as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
 

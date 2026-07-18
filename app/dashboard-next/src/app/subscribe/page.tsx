@@ -294,8 +294,9 @@ function SubscribeBody() {
       if (hasTuic) skipFromLinks.add("tuic");
       if (hasAnytls) skipFromLinks.add("anytls");
     }
-    if (hasWireguard && (wgNodes.length || info.wireguard_uri)) {
+    if (hasWireguard && (wgNodes.length || info.wireguard_uri || info.wireguard_xray_uri)) {
       skipFromLinks.add("wireguard");
+      skipFromLinks.add("wireguard-xray");
     }
 
     const items = info.link_items?.length
@@ -342,8 +343,8 @@ function SubscribeBody() {
           const xrayUri = (n.wireguard_xray_uri || "").trim();
           const hasPlain = !!(n.plain_available || plainUri || conf);
           const hasXray = !!(n.xray_available || xrayUri);
-          // WireGuard app: QR/copy .conf (3x-ui genWireguardConfig); download .conf.
-          if (hasPlain || hasXray) {
+          // WireGuard app: QR/copy .conf; download .conf (not imported into Xray subs).
+          if (hasPlain && (conf || plainUri)) {
             pushWg(
               `wg-${n.id}`,
               "wireguard",
@@ -353,15 +354,15 @@ function SubscribeBody() {
               resolveWgUrl(subUrl, "plain", n.id),
             );
           }
-          // Xray apps: wireguard:// + fm= (and JSON download).
-          if (hasXray) {
+          // Xray apps: wireguard:// + fm= only (no JSON download — sub import is enough).
+          if (hasXray && xrayUri) {
             pushWg(
               `wg-xray-${n.id}`,
               "wireguard-xray",
               title,
               flag,
               xrayUri,
-              resolveWgUrl(subUrl, "xray_native", n.id),
+              "",
             );
           }
         });
@@ -369,11 +370,11 @@ function SubscribeBody() {
         const conf = (wgConfByNode[-1] || "").trim();
         const plainUri = (info.wireguard_plain_uri || "").trim();
         const xrayUri = (info.wireguard_xray_uri || "").trim();
-        if (plainUri || conf || xrayUri) {
+        if (plainUri || conf) {
           pushWg("wg-0", "wireguard", "WireGuard", undefined, conf || plainUri, resolveWgUrl(subUrl, "plain"));
         }
         if (xrayUri) {
-          pushWg("wg-xray-0", "wireguard-xray", "WireGuard", undefined, xrayUri, resolveWgUrl(subUrl, "xray_native"));
+          pushWg("wg-xray-0", "wireguard-xray", "WireGuard", undefined, xrayUri, "");
         }
       }
     }
@@ -461,6 +462,67 @@ function SubscribeBody() {
       showToast(subT(lang, "copied"));
       setTimeout(() => setCopied(false), 1500);
     } else showToast(subT(lang, "copyFailed"), "error");
+  }
+
+  /** Mobile Safari ignores ``<a download>`` for navigations; use Blob + Share. */
+  async function downloadConfFile(entry: ConfigEntry) {
+    const safeName = (entry.title || "wireguard")
+      .replace(/[^\w.\-()\u0600-\u06FF\s]+/g, "")
+      .trim()
+      .replace(/\s+/g, "-")
+      .slice(0, 48) || "wireguard";
+    const filename = safeName.endsWith(".conf") ? safeName : `${safeName}.conf`;
+
+    let body = "";
+    if (entry.value.includes("[Interface]") && !entry.value.startsWith("wireguard://")) {
+      body = entry.value;
+    } else if (entry.downloadHref) {
+      try {
+        const r = await fetch(entry.downloadHref, { credentials: "same-origin" });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        body = await r.text();
+      } catch {
+        showToast(subT(lang, "downloadFailed"), "error");
+        return;
+      }
+    }
+    if (!body.trim()) {
+      showToast(subT(lang, "downloadFailed"), "error");
+      return;
+    }
+
+    const file = new File([body], filename, { type: "application/octet-stream" });
+    const nav = navigator as Navigator & {
+      canShare?: (data?: ShareData) => boolean;
+      share?: (data?: ShareData) => Promise<void>;
+    };
+    try {
+      if (typeof nav.canShare === "function" && nav.canShare({ files: [file] }) && nav.share) {
+        await nav.share({ files: [file], title: filename });
+        showToast(subT(lang, "downloaded"));
+        return;
+      }
+    } catch (err) {
+      // User cancelled share sheet — not an error.
+      if (err instanceof DOMException && err.name === "AbortError") return;
+    }
+
+    try {
+      const url = URL.createObjectURL(file);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.rel = "noopener";
+      a.style.display = "none";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      showToast(subT(lang, "downloaded"));
+    } catch {
+      const ok = await copyToClipboard(body);
+      showToast(ok ? subT(lang, "copied") : subT(lang, "downloadFailed"), ok ? "ok" : "error");
+    }
   }
 
   const proxyApps = appsFor(platform);
@@ -693,9 +755,13 @@ function SubscribeBody() {
                 </button>
 
                 {selected.downloadHref && (
-                  <a href={selected.downloadHref} download className="s-btn s-btn-soft">
+                  <button
+                    type="button"
+                    className="s-btn s-btn-soft"
+                    onClick={() => void downloadConfFile(selected)}
+                  >
                     {subT(lang, "downloadFile")}
-                  </a>
+                  </button>
                 )}
 
                 {selected.protocol === "tuic" && <p className="s-warn">{subT(lang, "tuicWarn")}</p>}

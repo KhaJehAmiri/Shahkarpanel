@@ -450,6 +450,23 @@ def start_core():
     except Exception:
         logger.exception("Panel WARP egress sync on startup failed")
 
+    # Panel-exit tunnels terminate native WG on this host. Bring up wg0 even
+    # when the relay is Finalmask-only (plain_enabled=false) so dokodemo has a
+    # UDP target after every container recreate.
+    try:
+        from app.tunnel.relay import clear_tunnel_relay_cache, ensure_tunnel_wireguard_port
+        from app.wireguard.host_sync import sync_panel_exit_wireguard
+        from app.db.models import Tunnel
+
+        clear_tunnel_relay_cache()
+        with GetDB() as db:
+            for t in db.query(Tunnel).filter(Tunnel.enabled.is_(True)).all():
+                if ensure_tunnel_wireguard_port(db, t):
+                    db.commit()
+            sync_panel_exit_wireguard(db)
+    except Exception:
+        logger.exception("Panel-exit WireGuard sync on startup failed")
+
     logger.info("Starting nodes Xray core")
     with GetDB() as db:
         dbnodes = crud.get_nodes(db=db, enabled=True)

@@ -22,7 +22,7 @@ core = XRayCore(XRAY_EXECUTABLE_PATH, XRAY_ASSETS_PATH)
 
 def _load_xray_config(api_port: int) -> XRayConfig:
     """Load panel Xray JSON from disk, normalizing legacy/partial configs."""
-    from app.xray.inbound_normalize import normalize_core_config_payload
+    from app.xray.inbound_normalize import normalize_core_config_payload, runtime_core_config
 
     path = Path(XRAY_JSON)
     if path.is_file():
@@ -41,7 +41,8 @@ def _load_xray_config(api_port: int) -> XRayConfig:
                     f.write(json.dumps(normalized, indent=4))
             except OSError:
                 pass
-        return XRayConfig(normalized, api_port=api_port)
+        # Keep disabled inbounds on disk; only feed enabled ones to the core.
+        return XRayConfig(runtime_core_config(normalized), api_port=api_port)
     return XRayConfig({}, api_port=api_port)
 
 

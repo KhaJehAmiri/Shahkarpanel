@@ -225,25 +225,43 @@ def prepare_relay_wireguard_tunnel(db, node_id: int, node_object) -> bool:
 
 
 def ensure_tunnel_wireguard_port(db, tunnel) -> bool:
-    """Seed ``params.wireguard_port`` from the relay node's plain WG listen port."""
+    """Seed ``params.wireguard_port`` from the relay node's WG listen port.
+
+    Plain kernel WG does not need to be enabled — Finalmask-only relays still
+    need dokodemo capture on this port so peer handshakes terminate on the
+    panel exit ``wg0``. Also strip legacy ``flow: xtls-rprx-vision`` which
+    breaks dokodemo/UDP over the Reality hop.
+    """
     if tunnel.relay_node_id is None:
         return False
     if tunnel_svc.transport_engine(tunnel.transport) == "singbox":
         return False
-    params = dict(tunnel.params or {})
-    if params.get("wireguard_port"):
-        return False
 
     from app.db.models import Node
+    from app.wireguard.xray_native import xray_native_wg_enabled
 
-    node = db.query(Node).filter(Node.id == tunnel.relay_node_id).first()
-    cfg = node.wireguard if node else None
-    if cfg is None or not plain_wg_enabled(cfg):
-        return False
+    params = dict(tunnel.params or {})
+    changed = False
 
-    params["wireguard_port"] = int(cfg.listen_port)
-    tunnel.params = params
-    return True
+    # Vision flow is for client VLESS; tunnel hops must stay flow-less.
+    if params.get("flow"):
+        params.pop("flow", None)
+        changed = True
+
+    if not params.get("wireguard_port"):
+        node = db.query(Node).filter(Node.id == tunnel.relay_node_id).first()
+        cfg = node.wireguard if node else None
+        if cfg is not None and (
+            plain_wg_enabled(cfg)
+            or xray_native_wg_enabled(cfg)
+            or getattr(cfg, "listen_port", None)
+        ):
+            params["wireguard_port"] = int(cfg.listen_port or 51820)
+            changed = True
+
+    if changed:
+        tunnel.params = params
+    return changed
 
 
 def panel_tunnel_exit_active(db) -> bool:
@@ -276,7 +294,13 @@ def wireguard_target_port(db, tunnel) -> Optional[int]:
 
 
 def canonical_panel_exit_wireguard(db):
-    """Return the WG server row used by the panel-hosted tunnel exit."""
+    """Return the WG server row used by the panel-hosted tunnel exit.
+
+    Keys/subnet come from the relay node's WireGuard row (subscription identity),
+    but the kernel interface runs on the *panel* host. Plain kernel WG on the
+    relay may be off (Finalmask-only / dokodemo-delegated) — still return that
+    row so ``sync_panel_exit_wireguard`` can bring up host ``wg0``.
+    """
     from app.db.models import Node, Tunnel
 
     index = _tunnel_relay_index(db)
@@ -295,7 +319,7 @@ def canonical_panel_exit_wireguard(db):
             continue
         node = db.query(Node).filter(Node.id == t.relay_node_id).first()
         cfg = node.wireguard if node else None
-        if cfg is None or not plain_wg_enabled(cfg):
+        if cfg is None or not getattr(cfg, "private_key", None):
             continue
         if str(getattr(cfg, "public_key", "") or "") == (index.canonical_pubkey or ""):
             return cfg

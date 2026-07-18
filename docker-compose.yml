@@ -12,6 +12,9 @@ services:
     pid: host
     cap_add:
       - NET_ADMIN
+    devices:
+      # Required for panel-exit WireGuard (tunneled WG terminates on host wg0).
+      - /dev/net/tun:/dev/net/tun
     group_add:
       - "${DOCKER_GID:-988}"
     volumes:

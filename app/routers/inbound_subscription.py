@@ -80,12 +80,24 @@ def put_inbound_subscription_endpoint(
             public_base_url=body.public_base_url,
             enabled=body.enabled,
         )
+    except InboundSubscriptionAlreadyInherited:
+        # Same domain+path as a shared panel endpoint — inheritance is the
+        # correct outcome (path stays "sub"). Any dedicated override was
+        # already cleared inside set_inbound_subscription_settings.
+        _refresh_routes()
+        settings = get_inbound_subscription_settings(db, tag)
+        return InboundSubscriptionSettingsResponse(
+            inbound_tag=settings.inbound_tag,
+            inherited=settings.inherited,
+            override=settings.override,
+            effective=settings.effective,
+        )
     except InboundSubscriptionConflict as exc:
         raise HTTPException(
             status_code=409,
             detail={
                 "message": str(exc),
-                "already_inherited": isinstance(exc, InboundSubscriptionAlreadyInherited),
+                "already_inherited": False,
                 "endpoint_slug": exc.endpoint_slug,
                 "conflict_inbound_tag": exc.conflict_inbound_tag,
             },

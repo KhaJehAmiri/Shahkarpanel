@@ -11,11 +11,60 @@ from app.models.proxy import _is_valid_ss2022_key
 
 NXPANEL_INBOUND_KIND = "nexusPanelKind"
 
+# Panel-only inbound flag stored in XRAY_JSON; stripped before Xray run/test.
+NXPANEL_INBOUND_ENABLE_KEY = "enable"
+
 # Xray destOverride accepts only these protocols (bittorrent is routing-only).
 SNIFF_DEST_OVERRIDE_ALLOWED = frozenset({"http", "tls", "quic", "fakedns"})
 SNIFF_DEST_OVERRIDE_DEFAULT = ["http", "tls", "quic"]
 
 DEFAULT_REALITY_TARGET = "www.cloudflare.com:443"
+
+
+def inbound_is_enabled(inbound: Any) -> bool:
+    """Return False only when the panel explicitly disabled the inbound."""
+    if not isinstance(inbound, dict):
+        return True
+    val = inbound.get(NXPANEL_INBOUND_ENABLE_KEY, inbound.get("enabled", True))
+    if val is False or val == 0:
+        return False
+    if isinstance(val, str) and val.strip().lower() in ("false", "0", "off", "no"):
+        return False
+    return True
+
+
+def strip_panel_inbound_fields(inbound: Dict[str, Any]) -> Dict[str, Any]:
+    """Copy an inbound without panel-only keys that Xray must not see."""
+    out = dict(inbound)
+    out.pop(NXPANEL_INBOUND_ENABLE_KEY, None)
+    out.pop("enabled", None)
+    return out
+
+
+def runtime_core_config(config: Dict[str, Any]) -> Dict[str, Any]:
+    """Config safe for ``xray run``: drop disabled inbounds and panel-only keys.
+
+    Disabled inbounds remain in the stored ``XRAY_JSON`` so the UI can re-enable
+    them; they are omitted from the live core / node restart payload.
+    """
+    result = deepcopy(config)
+    kept: List[Dict[str, Any]] = []
+    for ib in result.get("inbounds") or []:
+        if not isinstance(ib, dict):
+            continue
+        if not inbound_is_enabled(ib):
+            continue
+        kept.append(strip_panel_inbound_fields(ib))
+    result["inbounds"] = kept
+    return result
+
+
+def ensure_inbound_enable_flags(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Default missing ``enable`` to True on every inbound (idempotent)."""
+    for ib in data.get("inbounds") or []:
+        if isinstance(ib, dict) and NXPANEL_INBOUND_ENABLE_KEY not in ib:
+            ib[NXPANEL_INBOUND_ENABLE_KEY] = True
+    return data
 
 
 def _reality_target_from_settings(rs: Dict[str, Any]) -> str:
@@ -314,6 +363,7 @@ def normalize_core_config_payload(payload: dict) -> dict:
         changed = True
 
     data["inbounds"] = inbounds
+    ensure_inbound_enable_flags(data)
 
     from app.xray.warp_routing import apply_warp_safe_routing
 

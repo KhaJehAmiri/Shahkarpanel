@@ -8,7 +8,7 @@ TUNNEL_TEMPLATES: dict[str, dict] = {
         "exit_region": "DE",
         "transport": "reality",
         "hops": 2,
-        "params": {"flow": "xtls-rprx-vision"},
+        "params": {},
     },
     "iran-relay-exit-ws": {
         "label": "Iran relay → foreign exit (WebSocket+TLS)",
@@ -28,7 +28,7 @@ TUNNEL_TEMPLATES: dict[str, dict] = {
         "label": "Three-hop chain (relay → transit → exit)",
         "transport": "reality",
         "hops": 3,
-        "params": {"flow": "xtls-rprx-vision"},
+        "params": {},
     },
     "quic-hysteria-stub": {
         "label": "VLESS/QUIC hop (Hysteria-like)",

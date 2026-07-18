@@ -72,17 +72,16 @@ export const InboundSubscriptionModal: FC<Props> = ({ inboundTag, onClose }) => 
 
   const effective = data?.effective;
 
-  // Enabling the toggle on an inbound that currently only *inherits* a
-  // panel-wide endpoint (no override yet) starts from that endpoint's real
-  // values but with a distinct suggested path — submitting the exact same
-  // Listen Domain + URI Path can never succeed (host+path must stay unique
-  // across endpoints), it would just reproduce what's already inherited.
+  // Prefill from the inherited panel endpoint as-is (path stays "sub").
+  // Do NOT invent a unique path like "sub-<inboundTag>" — that was confusing
+  // after 3x-ui migration where every inbound should keep /sub/ on the panel domain.
   const enableOverride = (on: boolean) => {
     setEnabled(on);
-    if (on && data?.inherited && effective && !host && !pathPrefix) {
+    if (on && data?.inherited && effective) {
       setHost(effective.host || "");
       setListenPort(effective.listen_port != null ? String(effective.listen_port) : "");
-      setPathPrefix(`${effective.path_prefix}-${inboundTag}`.slice(0, 64));
+      setPathPrefix(effective.path_prefix || "sub");
+      setPublicBaseUrl(effective.public_base_url || "");
     }
   };
 
@@ -99,21 +98,34 @@ export const InboundSubscriptionModal: FC<Props> = ({ inboundTag, onClose }) => 
       toast.push(t("inboundSub.pathRequired"), "error");
       return;
     }
-    if (duplicatesInherited) {
-      toast.push(t("inboundSub.duplicatesInherited", { slug: effective?.slug }), "error");
-      return;
-    }
     setSaveError(null);
     setSaving(true);
     try {
-      await api.put(`/inbounds/${encodeURIComponent(inboundTag)}/subscription-endpoint`, {
-        host: host.trim() || null,
-        listen_port: listenPort.trim() ? Number(listenPort.trim()) : null,
-        path_prefix: pathPrefix.trim(),
-        public_base_url: publicBaseUrl.trim(),
-        enabled: true,
-      });
-      toast.push(t("inboundSub.saved"), "success");
+      // Same domain+path as the shared panel endpoint → keep inheritance
+      // (no dedicated override). Backend also treats this as success.
+      if (duplicatesInherited) {
+        if (data?.override) {
+          await api.del(`/inbounds/${encodeURIComponent(inboundTag)}/subscription-endpoint`);
+        }
+        toast.push(t("inboundSub.usingInherited", { slug: effective?.slug }), "success");
+        onClose();
+        return;
+      }
+      const res = await api.put<SettingsResponse>(
+        `/inbounds/${encodeURIComponent(inboundTag)}/subscription-endpoint`,
+        {
+          host: host.trim() || null,
+          listen_port: listenPort.trim() ? Number(listenPort.trim()) : null,
+          path_prefix: pathPrefix.trim(),
+          public_base_url: publicBaseUrl.trim(),
+          enabled: true,
+        },
+      );
+      if (res.inherited && !res.override) {
+        toast.push(t("inboundSub.usingInherited", { slug: res.effective?.slug || effective?.slug }), "success");
+      } else {
+        toast.push(t("inboundSub.saved"), "success");
+      }
       onClose();
     } catch (e: unknown) {
       const alreadyInherited = e instanceof ApiError && !!e.body?.detail?.already_inherited;
@@ -157,7 +169,7 @@ export const InboundSubscriptionModal: FC<Props> = ({ inboundTag, onClose }) => 
               {t("inboundSub.clearOverride")}
             </Button>
           )}
-          <Button variant="primary" onClick={save} disabled={saving || loading || !enabled || duplicatesInherited}>
+          <Button variant="primary" onClick={save} disabled={saving || loading || !enabled}>
             {saving ? t("common.loading") : t("common.save")}
           </Button>
         </>
@@ -236,7 +248,7 @@ export const InboundSubscriptionModal: FC<Props> = ({ inboundTag, onClose }) => 
 
           {duplicatesInherited && effective && (
             <div style={{ marginTop: 12 }}>
-              <Callout tone="warn">
+              <Callout tone="info">
                 {t("inboundSub.duplicatesInheritedHint", { slug: effective.slug })}
               </Callout>
             </div>

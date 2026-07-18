@@ -262,12 +262,10 @@ def apply_endpoint_tunnels(config, node_id: Optional[int]):
                     continue
                 _add_inbound(tunnel_svc.build_exit_inbound(t))
 
-            # Panel exit (node_id is None): if the relay has WARP enabled, send
-            # tunnel-exit traffic through Cloudflare WARP so every protocol that
-            # arrived via the tunnel (Xray / sing-box bridge / …) uses WARP —
-            # not only native WireGuard client subnets.
+            # Panel exit: always keep dokodemo→127.0.0.1 WG off geoip:private
+            # BLOCK; optionally pin the rest of exit traffic to WARP.
             if node_id is None and exit_tunnels:
-                result = _apply_panel_exit_warp(result, db, exit_tunnels)
+                result = _apply_panel_exit_routing(result, db, exit_tunnels)
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("Failed to inject tunnels for endpoint node_id=%s: %s", node_id, exc)
         return config
@@ -275,8 +273,14 @@ def apply_endpoint_tunnels(config, node_id: Optional[int]):
     return result
 
 
-def _apply_panel_exit_warp(config, db, exit_tunnels: List) -> dict:
-    """Route panel ``tunnel-*-exit`` inbounds to WARP when the relay opted in."""
+def _apply_panel_exit_routing(config, db, exit_tunnels: List) -> dict:
+    """Pin panel tunnel-exit routing so WireGuard-over-tunnel can reach host wg0.
+
+    Base Xray configs often include ``geoip:private → BLOCK``. Dokodemo on the
+    relay dials ``127.0.0.1:<wg_port>`` on this host after Reality decrypt — that
+    destination is private and was blackholed unless we pin localhost to DIRECT
+    *before* the private-IP block (WARP-on and WARP-off alike).
+    """
     from app.db.models import Node
     from app.utils import warp as warp_util
     from app.xray.warp_routing import ensure_warp_exit, is_warp_tag
@@ -298,6 +302,17 @@ def _apply_panel_exit_warp(config, db, exit_tunnels: List) -> dict:
     warp_by_tag: dict[str, dict] = {}
     pins: list[dict] = []
     for t in exit_tunnels:
+        exit_tag = f"tunnel-{t.id}-exit"
+        # Always first: WG handshakes to host loopback must not hit geoip:private→BLOCK.
+        pins.append(
+            {
+                "type": "field",
+                "inboundTag": [exit_tag],
+                "ip": ["127.0.0.1", "::1"],
+                "outboundTag": "DIRECT",
+            }
+        )
+
         relay_id = t.relay_node_id
         if not relay_id:
             continue
@@ -318,18 +333,6 @@ def _apply_panel_exit_warp(config, db, exit_tunnels: List) -> dict:
                 continue
             warp_by_tag[tag] = outbound
 
-        exit_tag = f"tunnel-{t.id}-exit"
-        # WireGuard-over-tunnel dokodemo dials 127.0.0.1:<wg_port> on the panel.
-        # That must stay on DIRECT/freedom — sending it through WARP blackholes
-        # handshakes while VLESS/user traffic can still use WARP.
-        pins.append(
-            {
-                "type": "field",
-                "inboundTag": [exit_tag],
-                "ip": ["127.0.0.1", "::1"],
-                "outboundTag": "DIRECT",
-            }
-        )
         pins.append(
             {
                 "type": "field",
@@ -345,7 +348,7 @@ def _apply_panel_exit_warp(config, db, exit_tunnels: List) -> dict:
         )
 
     if not warp_by_tag:
-        routing["rules"] = rules
+        routing["rules"] = pins + rules
         result["routing"] = routing
         return result
 
@@ -354,13 +357,9 @@ def _apply_panel_exit_warp(config, db, exit_tunnels: List) -> dict:
 
     routing = result.setdefault("routing", {})
     merged = [r for r in list(routing.get("rules") or []) if not _is_exit_route(r)]
-    # Drop any accidental warp catch-all from ensure_warp_exit if master should
-    # keep DIRECT for local panel inbounds — only pin tunnel exits.
-    # (ensure_warp_exit with as_default_exit=False should not add catch-all.)
     routing["rules"] = pins + merged
     result["routing"] = routing
 
-    # Ensure warp outbounds exist even if ensure_warp_exit renamed tags oddly
     present = {str(o.get("tag") or "") for o in (result.get("outbounds") or [])}
     for tag, outbound in warp_by_tag.items():
         if tag not in present and is_warp_tag(tag):
@@ -371,3 +370,7 @@ def _apply_panel_exit_warp(config, db, exit_tunnels: List) -> dict:
             result["routing"] = routing
 
     return result
+
+
+# Back-compat alias for older callers / tests.
+_apply_panel_exit_warp = _apply_panel_exit_routing

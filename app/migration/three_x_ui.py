@@ -348,10 +348,10 @@ def _persist_xray_inbounds(xray_config: dict) -> None:
     merged["inbounds"] = list(by_tag.values())
     from app import xray
     from app.xray.config import XRayConfig
-    from app.xray.inbound_normalize import normalize_core_config_payload
+    from app.xray.inbound_normalize import normalize_core_config_payload, runtime_core_config
 
     merged = normalize_core_config_payload(merged)
-    xray.config = XRayConfig(merged, api_port=xray.config.api_port)
+    xray.config = XRayConfig(runtime_core_config(merged), api_port=xray.config.api_port)
     with open(XRAY_JSON, "w", encoding="utf-8") as f:
         f.write(json.dumps(merged, indent=4))
 

@@ -209,6 +209,10 @@ class WireGuardSettings(ProxySettings):
 
     ``nexusPanelKind`` records whether the user was assigned plain WG, AmneziaWG,
     or both (panel-only; ignored by the node).
+
+    ``finalmask_slot`` is the sticky Finalmask shard index (UDP port =
+    ``xray_wg_listen_port + slot``). Must round-trip through UserResponse or
+    subscription links always advertise the base port and handshakes fail.
     """
     private_key: str = ""
     public_key: str = ""
@@ -216,6 +220,7 @@ class WireGuardSettings(ProxySettings):
     awg_address: Optional[str] = None
     preshared_key: Optional[str] = None
     nexus_panel_kind: Optional[str] = Field(default=None, alias="nexusPanelKind")
+    finalmask_slot: Optional[int] = None
 
     model_config = ConfigDict(populate_by_name=True)
 

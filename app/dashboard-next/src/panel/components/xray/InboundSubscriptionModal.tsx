@@ -29,12 +29,22 @@ interface Props {
   onClose: () => void;
 }
 
+interface SslStatus {
+  host: string;
+  cert_present: boolean;
+  https_ready: boolean;
+  message: string;
+  ok?: boolean;
+}
+
 export const InboundSubscriptionModal: FC<Props> = ({ inboundTag, onClose }) => {
   const { t } = useTranslation();
   const toast = useToast();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [enablingSsl, setEnablingSsl] = useState(false);
   const [data, setData] = useState<SettingsResponse | null>(null);
+  const [ssl, setSsl] = useState<SslStatus | null>(null);
   const [enabled, setEnabled] = useState(false);
   const [host, setHost] = useState("");
   const [listenPort, setListenPort] = useState("");
@@ -46,6 +56,12 @@ export const InboundSubscriptionModal: FC<Props> = ({ inboundTag, onClose }) => 
   // modal itself until the admin changes something or retries, so "why
   // didn't my change take effect" has an answer that doesn't disappear.
   const [saveError, setSaveError] = useState<{ message: string; tone: "error" | "info" } | null>(null);
+
+  const refreshSsl = (tag: string) =>
+    api
+      .get<SslStatus>(`/inbounds/${encodeURIComponent(tag)}/subscription-endpoint/ssl`)
+      .then(setSsl)
+      .catch(() => setSsl(null));
 
   useEffect(() => {
     let cancelled = false;
@@ -61,6 +77,9 @@ export const InboundSubscriptionModal: FC<Props> = ({ inboundTag, onClose }) => 
         setListenPort(src?.listen_port != null ? String(src.listen_port) : "");
         setPathPrefix(src?.path_prefix || "");
         setPublicBaseUrl(src?.public_base_url || "");
+        if (src?.host || res.effective?.host) {
+          void refreshSsl(inboundTag);
+        }
       })
       .catch((e: unknown) => toast.push(e instanceof Error ? e.message : t("common.error"), "error"))
       .finally(() => !cancelled && setLoading(false));
@@ -69,6 +88,26 @@ export const InboundSubscriptionModal: FC<Props> = ({ inboundTag, onClose }) => 
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inboundTag]);
+
+  const enableSsl = async () => {
+    if (!host.trim() && !data?.override?.host && !data?.effective?.host) {
+      toast.push(t("inboundSub.sslNeedDomain"), "error");
+      return;
+    }
+    setEnablingSsl(true);
+    try {
+      const res = await api.post<SslStatus>(
+        `/inbounds/${encodeURIComponent(inboundTag)}/subscription-endpoint/enable-ssl`,
+        {},
+      );
+      setSsl(res);
+      toast.push(t("inboundSub.sslEnabled"), "success");
+    } catch (e: unknown) {
+      toast.push(e instanceof Error ? e.message : t("inboundSub.sslFailed"), "error");
+    } finally {
+      setEnablingSsl(false);
+    }
+  };
 
   const effective = data?.effective;
 
@@ -245,6 +284,32 @@ export const InboundSubscriptionModal: FC<Props> = ({ inboundTag, onClose }) => 
               />
             </Field>
           </fieldset>
+
+          {(host.trim() || data?.override?.host || data?.effective?.host) && (
+            <div style={{ marginTop: 16 }}>
+              <Callout
+                tone={ssl?.https_ready ? "ok" : "warn"}
+                title={t("inboundSub.sslTitle")}
+              >
+                <div style={{ marginBottom: 10, fontSize: 13 }}>
+                  {ssl?.https_ready
+                    ? t("inboundSub.sslActive", { host: ssl.host })
+                    : ssl?.message || t("inboundSub.sslHint")}
+                </div>
+                <Button
+                  variant="primary"
+                  onClick={enableSsl}
+                  disabled={saving || loading || enablingSsl || !!ssl?.https_ready}
+                >
+                  {enablingSsl
+                    ? t("inboundSub.sslEnabling")
+                    : ssl?.https_ready
+                      ? t("inboundSub.sslAlreadyOn")
+                      : t("inboundSub.enableSsl")}
+                </Button>
+              </Callout>
+            </div>
+          )}
 
           {duplicatesInherited && effective && (
             <div style={{ marginTop: 12 }}>

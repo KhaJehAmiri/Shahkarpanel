@@ -203,7 +203,18 @@ def apply_endpoint_tunnels(config, node_id: Optional[int]):
                 if _add_inbound(sb_socks):
                     rules.insert(1, tunnel_svc.build_singbox_bridge_routing_rule(t))
 
-                relay_tags = list(user_tags)
+                # Panel-exit (exit_node_id is NULL): product proxies (VLESS/…)
+                # usually terminate on the panel itself (CDN / 0.0.0.0:port).
+                # Hairpinning those same inbound tags through Reality on the
+                # relay breaks client paths that still hit the panel, and makes
+                # "tunnel up but VLESS dead" after enabling WG-over-tunnel.
+                # Only WireGuard capture (+ Finalmask's own rules) should ride
+                # the tunnel hop in that mode. Node-exit tunnels keep the
+                # legacy behaviour (all product inbounds → tunnel-out).
+                if t.exit_node_id is None:
+                    relay_tags: List[str] = []
+                else:
+                    relay_tags = list(user_tags)
                 wg_port = (t.params or {}).get("wireguard_port")
                 if wg_port:
                     from app.tunnel.relay import (

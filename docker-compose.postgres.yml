@@ -30,6 +30,10 @@ services:
       # SigmaGuard Wire presets (sigma_preset.py) — required when feature flag
       # sigmaguard_wire is on; same mount as docker-compose.yml.
       - /opt/sigmaguard/wire:/opt/sigmaguard/wire:ro
+      # Host LE certs — read for vhost render; host-side certbot (chroot
+      # reconcile) writes new certs. Keep webroot writable for HTTP-01.
+      - /etc/letsencrypt:/etc/letsencrypt
+      - /var/www/letsencrypt:/var/www/letsencrypt
       # docker/compose/buildx CLI ships in the image itself (see Dockerfile);
       # only the socket needs to come from the host (AUDIT_FINDINGS.md C5).
       - /var/run/docker.sock:/var/run/docker.sock

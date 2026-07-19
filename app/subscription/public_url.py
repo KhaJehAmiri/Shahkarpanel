@@ -160,6 +160,67 @@ def _primary_serving_and_token(
     return default_ep, token
 
 
+def _compose_endpoint_subscription_url(
+    ep: "SubscriptionEndpoint",
+    user: "UserResponse",
+    *,
+    token: Optional[str] = None,
+) -> str:
+    """Build ``https://host:port/path/token/`` from endpoint fields.
+
+    Migrated ``public_base_url`` rows are often incomplete (scheme-only host,
+    missing ``:2096`` / ``/sub``). Always merge ``host``, ``listen_port`` and
+    ``path_prefix`` so the link matches the legacy nginx listener.
+    """
+    from urllib.parse import urlparse
+
+    token = (token or _token_for_endpoint(user, ep) or "").strip()
+    if not token:
+        return ""
+
+    base_url = (ep.public_base_url or "").strip()
+    host = (ep.host or "").strip()
+    prefix = (ep.path_prefix or XRAY_SUBSCRIPTION_PATH).strip("/")
+    port = int(ep.listen_port) if ep.listen_port else 0
+
+    parsed_path = ""
+    scheme = ""
+    if base_url and _SCHEME_RE.match(base_url):
+        parsed = urlparse(base_url)
+        host = host or (parsed.hostname or "")
+        scheme = parsed.scheme or ""
+        if parsed.port and not port:
+            port = int(parsed.port)
+        parsed_path = (parsed.path or "").strip("/")
+    elif base_url and not host:
+        # schemeless "domain.tld" or "domain.tld/json"
+        bare = base_url.split("/", 1)
+        host = bare[0].strip()
+        if len(bare) > 1 and bare[1].strip():
+            parsed_path = bare[1].strip().strip("/")
+
+    if not host:
+        return ""
+
+    path = parsed_path or prefix
+    # If base path is only a format segment (json/clash) keep it; if base is
+    # bare host, use path_prefix (usually ``sub``).
+    if parsed_path and prefix and not parsed_path.endswith(prefix) and parsed_path in {"json", "clash"}:
+        path = parsed_path
+    elif not parsed_path:
+        path = prefix
+
+    if not scheme:
+        scheme = "https" if port and port not in (80,) else "http"
+    if port and not (
+        (scheme == "https" and port == 443) or (scheme == "http" and port == 80)
+    ):
+        port_suffix = f":{port}"
+    else:
+        port_suffix = ""
+    return f"{scheme}://{host}{port_suffix}/{path}/{token}/"
+
+
 def public_subscription_url(
     user: "UserResponse",
     request: Optional[Request] = None,
@@ -186,35 +247,10 @@ def public_subscription_url(
             if auto_token:
                 token = auto_token
 
-    base_url = (ep.public_base_url or "").strip() if ep else ""
-    if base_url and _SCHEME_RE.match(base_url):
-        token = token or _token_for_endpoint(user, ep)
-        base = base_url.rstrip("/")
-        return f"{base}/{token}/"
-
-    if ep and (ep.host or "").strip():
-        # Listen Domain is set but Reverse Proxy URI is blank or missing a
-        # scheme (some legacy migrated rows only ever stored a bare
-        # "domain.tld" / "domain.tld/json" string here) — derive a proper
-        # absolute URL from host/listen_port/path_prefix instead, matching
-        # exactly what sync_subscription_legacy_nginx actually serves (plain
-        # HTTP on the endpoint's own listen_port, path = /{path_prefix}/) so
-        # the link is both domain-correct AND actually reachable. Previously
-        # ep.host was only consulted for host-header request routing
-        # (resolve_subscription_endpoint), never when building the link
-        # handed to admins/clients, so setting just a Listen Domain silently
-        # had no visible effect and pre-existing schemeless rows produced a
-        # broken link once shown directly (e.g. via absoluteUrl() on the
-        # dashboard, which mis-treats a schemeless "domain.tld/token" as a
-        # panel-relative path).
-        token = token or _token_for_endpoint(user, ep)
-        port_suffix = f":{ep.listen_port}" if ep.listen_port else ""
-        prefix = (ep.path_prefix or XRAY_SUBSCRIPTION_PATH).strip("/")
-        # Legacy 3x-ui subscription ports (e.g. 2096) use HTTPS; browsers and
-        # clients expect TLS on the dedicated sub port (see migration subURI).
-        port = int(ep.listen_port) if ep.listen_port else 0
-        scheme = "https" if port and port not in (80,) else "http"
-        return f"{scheme}://{ep.host}{port_suffix}/{prefix}/{token}/"
+    if ep:
+        composed = _compose_endpoint_subscription_url(ep, user, token=token)
+        if composed:
+            return composed
 
     raw = (user.subscription_url or "").strip()
     if raw.startswith("http://") or raw.startswith("https://"):

@@ -436,6 +436,11 @@ class UserResponse(User):
         from app.subscription.userinfo import format_subscription_profile_title, subscription_client_import_url
 
         self.public_subscription_url = public_subscription_url(self)
+        # Prefer the endpoint-aware public URL (migrated panels use alias +
+        # :2096 / custom domain). The generic XRAY_SUBSCRIPTION_URL_PREFIX link
+        # points at the wrong host/token for those users.
+        if self.public_subscription_url:
+            self.subscription_url = self.public_subscription_url
         self.subscription_profile_title = format_subscription_profile_title(self)
         self.client_subscription_url = subscription_client_import_url(
             self.public_subscription_url, self

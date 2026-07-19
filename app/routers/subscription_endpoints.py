@@ -43,7 +43,7 @@ def create_endpoint(
     if hasattr(data.get("export_mode"), "value"):
         data["export_mode"] = data["export_mode"].value
     ep = crud.create_subscription_endpoint(db, data)
-    _refresh_routes()
+    _refresh_routes(ensure_ssl_host=(body.host or "").strip() or None)
     return ep
 
 
@@ -73,7 +73,8 @@ def update_endpoint(
     if "export_mode" in data and data["export_mode"] is not None:
         data["export_mode"] = data["export_mode"].value
     ep = crud.update_subscription_endpoint(db, ep, data)
-    _refresh_routes()
+    host = data.get("host", ep.host)
+    _refresh_routes(ensure_ssl_host=(host or "").strip() or None)
     return ep
 
 
@@ -93,6 +94,57 @@ def delete_endpoint(
     return {"ok": True}
 
 
+@router.get("/{endpoint_id}/ssl", response_model=None)
+def get_endpoint_ssl(
+    endpoint_id: int,
+    db: Session = Depends(get_db),
+    _: Admin = Depends(Admin.check_sudo_admin),
+):
+    from app.models.subscription_endpoint import SubscriptionSslStatusResponse
+    from app.services.edge_proxy import subscription_domain_ssl_status
+
+    ep = crud.get_subscription_endpoint(db, endpoint_id)
+    if not ep:
+        raise HTTPException(status_code=404, detail="Endpoint not found")
+    if not ep.host:
+        raise HTTPException(status_code=400, detail="Endpoint has no host")
+    status = subscription_domain_ssl_status(ep.host)
+    return SubscriptionSslStatusResponse(ok=bool(status.get("https_ready")), **status)
+
+
+@router.post("/{endpoint_id}/enable-ssl", response_model=None)
+def enable_endpoint_ssl(
+    endpoint_id: int,
+    db: Session = Depends(get_db),
+    _: Admin = Depends(Admin.check_sudo_admin),
+):
+    from app.models.subscription_endpoint import SubscriptionSslStatusResponse
+    from app.services.edge_proxy import ensure_subscription_domain_ssl
+
+    ep = crud.get_subscription_endpoint(db, endpoint_id)
+    if not ep:
+        raise HTTPException(status_code=404, detail="Endpoint not found")
+    if not ep.host:
+        raise HTTPException(status_code=400, detail="Endpoint has no host")
+    result = ensure_subscription_domain_ssl(db, ep.host)
+    if not result.get("https_ready"):
+        raise HTTPException(
+            status_code=502,
+            detail=result.get("message")
+            or result.get("sync_message")
+            or "SSL activation failed",
+        )
+    return SubscriptionSslStatusResponse(
+        host=result.get("host") or ep.host,
+        cert_present=bool(result.get("cert_present")),
+        https_ready=bool(result.get("https_ready")),
+        message=result.get("message") or "SSL active",
+        ok=True,
+        sync_applied=result.get("sync_applied"),
+        sync_message=result.get("sync_message") or "",
+    )
+
+
 @router.post("/aliases", response_model=SubscriptionTokenAliasResponse)
 def create_alias(
     body: SubscriptionTokenAliasCreate,
@@ -109,17 +161,27 @@ def create_alias(
     return alias
 
 
-def _refresh_routes() -> None:
+def _refresh_routes(*, ensure_ssl_host: str | None = None) -> None:
     try:
         from app import app
         from app.routers import api_router
         from app.subscription.route_registry import refresh_subscription_routes
 
         refresh_subscription_routes(app, api_router)
-        from app.services.edge_proxy import sync_subscription_legacy_nginx
         from app.db import GetDB
+        from app.services.edge_proxy import (
+            ensure_subscription_domain_ssl,
+            sync_subscription_legacy_nginx,
+        )
 
         with GetDB() as db:
-            sync_subscription_legacy_nginx(db)
+            if ensure_ssl_host:
+                ensure_subscription_domain_ssl(db, ensure_ssl_host)
+            else:
+                sync_subscription_legacy_nginx(db)
     except Exception:
-        pass
+        import logging
+
+        logging.getLogger("nexus-sub-endpoints").exception(
+            "subscription route/nginx refresh failed"
+        )

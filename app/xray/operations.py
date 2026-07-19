@@ -762,19 +762,66 @@ def push_all_node_configs_sync() -> int:
             config = _apply_node_warp_exit(config, node_id)
 
             is_wg_node = dbnode.core_kind == CoreKind.wireguard.value
-            if is_wg_node:
+            last_exc: Exception | None = None
+            for attempt in range(3):
                 try:
-                    node.start(config)
+                    if is_wg_node:
+                        node.start(config)
+                    else:
+                        node.restart(config)
+                    last_exc = None
+                    break
                 except Exception as exc:
+                    last_exc = exc
+                    msg = str(exc).lower()
+                    # Large configs often drop the direct RPyC stream on
+                    # Iran↔abroad paths — retry via SSH control tunnel, then
+                    # a fresh direct session.
+                    if attempt >= 2 or not (
+                        "stream has been closed" in msg
+                        or "eof" in msg
+                        or "result expired" in msg
+                    ):
+                        break
+                    forced = _force_control_tunnel_session(dbnode, node)
+                    if forced is not None:
+                        node = forced
+                        logger.info(
+                            'Node "%s" retrying Xray push via control tunnel (attempt %s)',
+                            dbnode.name,
+                            attempt + 2,
+                        )
+                        continue
+                    try:
+                        if node_id in xray.nodes:
+                            try:
+                                xray.nodes[node_id].disconnect()
+                            except Exception:
+                                pass
+                            xray.nodes.pop(node_id, None)
+                        node = add_node(dbnode)
+                        node.connect()
+                        logger.info(
+                            'Node "%s" retrying Xray push on fresh session (attempt %s)',
+                            dbnode.name,
+                            attempt + 2,
+                        )
+                    except Exception:
+                        pass
+            if last_exc is not None:
+                if is_wg_node:
                     logger.warning(
                         'Node "%s" Xray push failed (%s); continuing WG/sing-box sync',
                         dbnode.name,
-                        exc,
+                        last_exc,
                     )
                     if not node.connected:
-                        node.connect()
-            else:
-                node.restart(config)
+                        try:
+                            node.connect()
+                        except Exception:
+                            pass
+                else:
+                    raise last_exc
 
             _sync_wireguard_node(node_id, node)
             pushed += 1

@@ -316,7 +316,16 @@
     "usingInherited": "Using shared subscription endpoint '{{slug}}' with path /sub/ — no dedicated override needed",
     "saved": "Subscription settings saved — existing users on other inbounds/endpoints are unaffected",
     "clearOverride": "Remove override (inherit again)",
-    "cleared": "Per-inbound override removed"
+    "cleared": "Per-inbound override removed",
+    "sslTitle": "Subscription HTTPS (Let's Encrypt)",
+    "sslHint": "Issue a certificate for this Listen Domain and publish the :443 vhost so the subscribe page stays on this domain (not the main panel domain).",
+    "sslActive": "SSL is active for {{host}} — browser subscribe page uses this domain on port 443.",
+    "enableSsl": "Enable SSL",
+    "sslEnabling": "Issuing certificate…",
+    "sslAlreadyOn": "SSL already active",
+    "sslEnabled": "SSL enabled for this subscription domain",
+    "sslFailed": "SSL activation failed — check DNS A record and that port 80 reaches this server",
+    "sslNeedDomain": "Set a Listen Domain first, then save"
   },
   "bulkCreate": {
     "title": "Bulk create users",

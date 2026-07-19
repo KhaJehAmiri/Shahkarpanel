@@ -562,19 +562,51 @@ def _run_reconcile_script(script: Path) -> tuple[bool, str]:
     return _reconcile_script_succeeded(proc)
 
 
-def _privileged_reconcile_script(script: Path) -> tuple[bool, str]:
-    """Re-run reconcile as root inside this container (panel runs as ``nexuspanel``)."""
-    from app.xray.core import XRayCore
+def _host_script_path(script: Path) -> str:
+    """Map a container script path to the Docker host path.
 
-    cid = XRayCore._self_container_id()
-    if not cid:
-        return False, "nginx reconcile requires root (docker.sock unavailable for escalation)"
+    Postgres compose mounts the repo at ``/code`` while the host path is
+    typically ``/opt/nexuspanel``. Reconcile must run on the host so it can
+    see nginx/certbot under ``/etc``.
+    """
+    resolved = str(script.resolve())
+    if resolved.startswith("/code/"):
+        host_root = os.environ.get("NEXUSPANEL_HOST_ROOT", "/opt/nexuspanel").rstrip("/")
+        return f"{host_root}/{resolved[len('/code/'):]}"
+    return resolved
+
+
+def _privileged_reconcile_script(script: Path) -> tuple[bool, str]:
+    """Run reconcile as root on the Docker *host* (nginx + certbot live there).
+
+    The panel container usually has no nginx binary. Escalating with
+    ``docker exec`` into the same container therefore fails with
+    ``nginx not installed``. Instead we chroot into the host root via a
+    short-lived privileged helper container (docker.sock is mounted).
+    """
+    host_script = _host_script_path(script)
+    helper_image = os.environ.get("NEXUSPANEL_HOST_HELPER_IMAGE", "alpine:3.20")
+    cmd = [
+        "docker",
+        "run",
+        "--rm",
+        "--network",
+        "host",
+        "-v",
+        "/:/host:rw",
+        helper_image,
+        "chroot",
+        "/host",
+        "/bin/bash",
+        host_script,
+        "--apply",
+    ]
     try:
         proc = subprocess.run(
-            ["docker", "exec", "--user", "root", cid, str(script), "--apply"],
+            cmd,
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=300,
             env=_nginx_reconcile_env(),
         )
     except (OSError, subprocess.SubprocessError) as exc:
@@ -582,12 +614,25 @@ def _privileged_reconcile_script(script: Path) -> tuple[bool, str]:
     return _reconcile_script_succeeded(proc)
 
 
+def _needs_host_reconcile(message: str) -> bool:
+    lowered = (message or "").lower()
+    return any(
+        needle in lowered
+        for needle in (
+            "run as root",
+            "nginx not installed",
+            "permission denied",
+            "operation not permitted",
+        )
+    )
+
+
 def _try_reconcile_with_privilege(script: Path) -> tuple[bool, str]:
     applied, message = _run_reconcile_script(script)
     if applied:
         return True, message
-    if "run as root" in message.lower():
-        logger.info("escalating nginx reconcile via docker exec --user root")
+    if _needs_host_reconcile(message):
+        logger.info("escalating nginx reconcile onto docker host via chroot helper")
         return _privileged_reconcile_script(script)
     return False, message
 
@@ -732,14 +777,34 @@ SUB_LEGACY_RECONCILE_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / 
 
 
 def _subscription_tls_cert_paths(host: str) -> tuple[str, str] | None:
-    """Return Let's Encrypt cert paths when a cert exists for ``host``."""
-    domain = (host or "").strip()
+    """Return Let's Encrypt cert paths when a cert exists for ``host``.
+
+    ``/etc/letsencrypt/live`` is often ``0700 root``; the panel user may not
+    be able to ``stat`` files there. Fall back to staging/desired.json markers
+    written by sync/reconcile so SSL status and redirects still work.
+    """
+    domain = (host or "").strip().lower().split(":")[0]
     if not domain or domain == "_":
         return None
     cert = Path(f"/etc/letsencrypt/live/{domain}/fullchain.pem")
     key = Path(f"/etc/letsencrypt/live/{domain}/privkey.pem")
-    if cert.is_file() and key.is_file():
+    try:
+        if cert.is_file() and key.is_file():
+            return str(cert), str(key)
+    except OSError:
+        pass
+    # Reconcile / ensure_https stages a :443 vhost only after certbot succeeds.
+    safe = _DOMAIN_SAFE.sub("-", domain).strip("-") or "legacy"
+    https_key = f"nexuspanel-sub-https-{safe}"
+    if (SUB_LEGACY_STAGING / f"{https_key}.conf").is_file():
         return str(cert), str(key)
+    if SUB_LEGACY_JSON.is_file():
+        try:
+            data = json.loads(SUB_LEGACY_JSON.read_text(encoding="utf-8"))
+            if https_key in (data.get("sites") or {}):
+                return str(cert), str(key)
+        except (OSError, json.JSONDecodeError, TypeError):
+            pass
     return None
 
 
@@ -818,10 +883,13 @@ def _render_subscription_legacy_site(
     listen_port: int,
     path_prefixes: list[str],
     *,
-    force_tls: bool = False,
-    fallback_tls: tuple[str, str] | None = None,
+    tls: tuple[str, str] | None = None,
 ) -> str:
-    """One nginx server block per (host, port) with all path prefixes as locations."""
+    """One nginx server block per (host, port) with all path prefixes as locations.
+
+    ``tls`` must be *this* host's certificate paths. Never pass another
+    domain's cert as a stand-in — browsers then see srw1 while requesting srw3.
+    """
     server_name = host or "_"
     unique_prefixes = sorted({(p or "sub").strip("/") for p in path_prefixes if (p or "").strip()})
     if not unique_prefixes:
@@ -841,10 +909,11 @@ def _render_subscription_legacy_site(
     }}
 """
     # Browser UI belongs on standard HTTPS (443) — legacy sub port lacks /_next assets.
+    # Keep the Host ($host) so p2/p3 never bounce onto the default srw1 vhost name.
     if host and host != "_":
         locations += """
     location /subscribe/ {
-        return 301 https://$server_name$request_uri;
+        return 301 https://$host$request_uri;
     }
 """
     else:
@@ -859,7 +928,6 @@ def _render_subscription_legacy_site(
         proxy_connect_timeout 1s;
     }}
 """
-    tls = _subscription_tls_cert_paths(host) or (fallback_tls if force_tls else None)
     if tls:
         cert, key = tls
         listen_directive = f"""    listen {listen_port} ssl;
@@ -898,100 +966,183 @@ def try_reconcile_subscription_nginx() -> tuple[bool, str]:
     return _try_reconcile_with_privilege(SUB_LEGACY_RECONCILE_SCRIPT)
 
 
-def sync_subscription_legacy_nginx(db) -> dict[str, Any]:
-    """Write nginx vhosts for subscription endpoints with non-443 listen ports."""
+def subscription_domain_ssl_status(host: str) -> dict[str, Any]:
+    """Return whether a subscription domain has a usable LE cert + HTTPS vhost."""
+    domain = (host or "").strip().lower().split(":")[0]
+    if not domain or domain == "_":
+        return {
+            "host": domain,
+            "cert_present": False,
+            "https_ready": False,
+            "message": "No domain configured",
+        }
+    cert_present = _subscription_tls_cert_paths(domain) is not None
+    safe = _DOMAIN_SAFE.sub("-", domain).strip("-") or "legacy"
+    https_key = f"nexuspanel-sub-https-{safe}"
+    https_name = f"{https_key}.conf"
+    https_staged = (SUB_LEGACY_STAGING / https_name).is_file()
+    if not https_staged and SUB_LEGACY_JSON.is_file():
+        try:
+            data = json.loads(SUB_LEGACY_JSON.read_text(encoding="utf-8"))
+            https_staged = https_key in (data.get("sites") or {})
+        except (OSError, json.JSONDecodeError, TypeError):
+            pass
+    # A live LE cert is the readiness gate; reconcile always ensures the :443
+    # vhost when the cert exists (subscription https site or panel vhost).
+    ready = bool(cert_present)
+    return {
+        "host": domain,
+        "cert_present": cert_present,
+        "https_ready": ready,
+        "https_vhost_staged": https_staged,
+        "message": (
+            "SSL active"
+            if ready
+            else "No certificate — click Enable SSL (DNS A record must point here)"
+        ),
+    }
+
+
+def _grouped_subscription_endpoints(db) -> tuple[dict[tuple[str, int], list[str]], set[str]]:
     from app.db import crud
 
-    result: dict[str, Any] = {"sites": {}, "applied": False, "message": ""}
     endpoints = [
         ep
         for ep in crud.list_subscription_endpoints(db, enabled_only=True)
-        if ep.listen_port and int(ep.listen_port) not in (80, 443)
+        if ep.listen_port and int(ep.listen_port) not in (80, 443) and (ep.host or "").strip()
     ]
     grouped: dict[tuple[str, int], list[str]] = {}
     for ep in endpoints:
         port = int(ep.listen_port)
-        host = ep.host or "_"
+        host = (ep.host or "").strip().lower()
         prefix = (ep.path_prefix or "sub").strip("/")
         grouped.setdefault((host, port), []).append(prefix)
+    domains = {host for host, _port in grouped if host and host != "_"}
+    return grouped, domains
 
-    # nginx shares one socket per listen port — if any vhost on a port uses TLS,
-    # every vhost on that port must define ssl_certificate (SNI per server_name).
-    port_fallback_tls: dict[int, tuple[str, str]] = {}
+
+def _build_subscription_sites(
+    grouped: dict[tuple[str, int], list[str]],
+) -> dict[str, str]:
+    """Build nginx site map.
+
+    Never attach another domain's certificate to a ``server_name`` — that is
+    what made p3 open as srw1. When a shared listen port already uses TLS,
+    hosts without their own cert get ACME-only until ``ensure_subscription_domain_ssl``.
+    """
+    ports_needing_tls: set[int] = set()
     for host, port in grouped:
-        tls = _subscription_tls_cert_paths(host)
-        if tls and port not in port_fallback_tls:
-            port_fallback_tls[port] = tls
+        if _subscription_tls_cert_paths(host):
+            ports_needing_tls.add(port)
 
-    def _build_sites() -> dict[str, str]:
-        site_map: dict[str, str] = {}
-        for (host, port), prefixes in grouped.items():
-            safe = _DOMAIN_SAFE.sub("-", host).strip("-") or "legacy"
-            basename = f"nexuspanel-sub-{safe}-{port}"
-            force_tls = port in port_fallback_tls
-            site_map[basename] = _render_subscription_legacy_site(
+    site_map: dict[str, str] = {}
+    for (host, port), prefixes in grouped.items():
+        safe = _DOMAIN_SAFE.sub("-", host).strip("-") or "legacy"
+        own_tls = _subscription_tls_cert_paths(host)
+        if host and host != "_":
+            site_map[f"nexuspanel-sub-acme-{safe}"] = _render_subscription_acme_site(host)
+        if own_tls:
+            site_map[f"nexuspanel-sub-{safe}-{port}"] = _render_subscription_legacy_site(
+                host, port, prefixes, tls=own_tls
+            )
+            https_body = _render_subscription_panel_https_site(host)
+            if https_body:
+                site_map[f"nexuspanel-sub-https-{safe}"] = https_body
+        elif port not in ports_needing_tls:
+            # Plain HTTP legacy port is fine until the first cert appears on this port.
+            site_map[f"nexuspanel-sub-{safe}-{port}"] = _render_subscription_legacy_site(
+                host, port, prefixes, tls=None
+            )
+        else:
+            logger.info(
+                "subscription host %s skipped on :%s until its own LE cert exists",
                 host,
                 port,
-                prefixes,
-                force_tls=force_tls,
-                fallback_tls=port_fallback_tls.get(port),
             )
-            if host and host != "_":
-                acme_name = f"nexuspanel-sub-acme-{safe}"
-                site_map[acme_name] = _render_subscription_acme_site(host)
-                if _subscription_tls_cert_paths(host):
-                    https_name = f"nexuspanel-sub-https-{safe}"
-                    site_map[https_name] = _render_subscription_panel_https_site(host)
-        return site_map
+    return site_map
 
-    domains: set[str] = {host for host, _port in grouped if host and host != "_"}
-    sites = _build_sites()
 
-    def _write_staging(site_map: dict[str, str]) -> None:
-        SUB_LEGACY_DIR.mkdir(parents=True, exist_ok=True)
-        SUB_LEGACY_STAGING.mkdir(parents=True, exist_ok=True)
-        SUB_LEGACY_JSON.write_text(
-            json.dumps({"domains": sorted(domains), "sites": site_map}, indent=2),
-            encoding="utf-8",
-        )
-        for name, content in site_map.items():
-            (SUB_LEGACY_STAGING / f"{name}.conf").write_text(content, encoding="utf-8")
-        stale = {p.name for p in SUB_LEGACY_STAGING.glob("*.conf")}
-        wanted = {f"{n}.conf" for n in site_map}
-        for name in stale - wanted:
-            (SUB_LEGACY_STAGING / name).unlink(missing_ok=True)
+def _write_subscription_staging(domains: set[str], site_map: dict[str, str]) -> None:
+    SUB_LEGACY_DIR.mkdir(parents=True, exist_ok=True)
+    SUB_LEGACY_STAGING.mkdir(parents=True, exist_ok=True)
+    SUB_LEGACY_JSON.write_text(
+        json.dumps({"domains": sorted(domains), "sites": site_map}, indent=2),
+        encoding="utf-8",
+    )
+    for name, content in site_map.items():
+        (SUB_LEGACY_STAGING / f"{name}.conf").write_text(content, encoding="utf-8")
+    stale = {p.name for p in SUB_LEGACY_STAGING.glob("*.conf")}
+    wanted = {f"{n}.conf" for n in site_map}
+    for name in stale - wanted:
+        (SUB_LEGACY_STAGING / name).unlink(missing_ok=True)
+
+
+def sync_subscription_legacy_nginx(db) -> dict[str, Any]:
+    """Write nginx vhosts for subscription endpoints with non-443 listen ports."""
+    result: dict[str, Any] = {"sites": {}, "applied": False, "message": ""}
+    grouped, domains = _grouped_subscription_endpoints(db)
+    sites = _build_subscription_sites(grouped)
 
     try:
-        _write_staging(sites)
+        _write_subscription_staging(domains, sites)
     except OSError as exc:
         result["message"] = str(exc)
         return result
 
-    if sites:
-        applied, message = try_reconcile_subscription_nginx()
-        result["applied"] = applied
-        result["message"] = message
-        # Re-render subscription vhosts now that reconcile may have issued certs.
-        port_fallback_tls.clear()
-        for host, port in grouped:
-            tls = _subscription_tls_cert_paths(host)
-            if tls and port not in port_fallback_tls:
-                port_fallback_tls[port] = tls
-        sites_tls = _build_sites()
-        try:
-            _write_staging(sites_tls)
-            applied2, message2 = try_reconcile_subscription_nginx()
-            if applied2:
-                result["applied"] = True
-            if message2:
-                result["message"] = (result.get("message") or "") + "\n" + message2
-            result["sites"] = sites_tls
-        except OSError as exc:
-            result["message"] = (result.get("message") or "") + f"\n{exc}"
-            result["sites"] = sites
-    else:
+    if not sites:
+        result["sites"] = sites
+        return result
+
+    applied, message = try_reconcile_subscription_nginx()
+    result["applied"] = applied
+    result["message"] = message
+    # Re-render after certbot may have issued certs during reconcile.
+    sites_tls = _build_subscription_sites(grouped)
+    try:
+        _write_subscription_staging(domains, sites_tls)
+        applied2, message2 = try_reconcile_subscription_nginx()
+        if applied2:
+            result["applied"] = True
+        if message2:
+            result["message"] = (result.get("message") or "") + "\n" + message2
+        result["sites"] = sites_tls
+    except OSError as exc:
+        result["message"] = (result.get("message") or "") + f"\n{exc}"
         result["sites"] = sites
     return result
+
+
+def ensure_subscription_domain_ssl(db, host: str | None = None) -> dict[str, Any]:
+    """Issue/activate Let's Encrypt + :443 HTTPS for subscription domain(s).
+
+    When ``host`` is set, only that domain's status is returned (sync still
+    covers every subscription endpoint so shared listen ports stay consistent).
+    """
+    target = (host or "").strip().lower().split(":")[0] or None
+    sync_result = sync_subscription_legacy_nginx(db)
+    if target:
+        status = subscription_domain_ssl_status(target)
+        return {
+            "ok": bool(status.get("https_ready")),
+            "host": target,
+            "cert_present": status["cert_present"],
+            "https_ready": status["https_ready"],
+            "message": status["message"],
+            "sync_applied": sync_result.get("applied"),
+            "sync_message": sync_result.get("message") or "",
+            "sites": sorted((sync_result.get("sites") or {}).keys()),
+        }
+
+    grouped, domains = _grouped_subscription_endpoints(db)
+    statuses = {d: subscription_domain_ssl_status(d) for d in sorted(domains)}
+    ready = all(s.get("https_ready") for s in statuses.values()) if statuses else True
+    return {
+        "ok": ready and bool(sync_result.get("applied") or statuses),
+        "hosts": statuses,
+        "sync_applied": sync_result.get("applied"),
+        "sync_message": sync_result.get("message") or "",
+        "sites": sorted((sync_result.get("sites") or {}).keys()),
+    }
 
 
 def edge_status(db) -> dict[str, Any]:

@@ -329,6 +329,73 @@ def _ensure_migration_host(
     return True
 
 
+def _exclude_new_inbounds_from_foreign_users(
+    db: Session,
+    *,
+    panel_slug: str,
+    new_tags: list[str],
+    inbound_cache: dict[str, Any],
+) -> int:
+    """Keep other panels' users off newly imported inbounds.
+
+    Marzban-style membership is ``all product inbounds − excluded``. When panel
+    ``p2`` adds ``p2-in-*``, existing ``p1_*`` users with an empty exclusion list
+    would otherwise suddenly receive p2 hosts/clients in their subscription.
+    """
+    from app.db.models import Proxy, User
+    from app.models.proxy import ProxyTypes
+    from app import xray
+    from sqlalchemy.orm import joinedload
+
+    tags = [t for t in (new_tags or []) if t]
+    if not tags:
+        return 0
+
+    slug = _TAG_SAFE.sub("-", (panel_slug or "").strip()).strip("-")
+    prefix = f"{slug}_" if slug else ""
+    tag_protocol: dict[str, ProxyTypes] = {}
+    for tag in tags:
+        meta = xray.config.inbounds_by_tag.get(tag) or {}
+        proto = str(meta.get("protocol") or "").lower()
+        try:
+            tag_protocol[tag] = ProxyTypes(proto)
+        except ValueError:
+            continue
+    if not tag_protocol:
+        return 0
+
+    for tag in tag_protocol:
+        crud.get_or_create_inbound(db, tag, inbound_cache=inbound_cache, commit=False)
+
+    touched = 0
+    users = (
+        db.query(User)
+        .options(joinedload(User.proxies).joinedload(Proxy.excluded_inbounds))
+        .all()
+    )
+    for user in users:
+        uname = user.username or ""
+        if prefix and uname.startswith(prefix):
+            continue
+        for proxy in user.proxies:
+            add_rows = []
+            existing = {i.tag for i in proxy.excluded_inbounds}
+            for tag, proto in tag_protocol.items():
+                if proxy.type != proto or tag in existing:
+                    continue
+                row = inbound_cache.get(tag)
+                if row is None:
+                    continue
+                add_rows.append(row)
+            if not add_rows:
+                continue
+            proxy.excluded_inbounds = list(proxy.excluded_inbounds) + add_rows
+            touched += 1
+    if touched:
+        db.commit()
+    return touched
+
+
 def _persist_xray_inbounds(xray_config: dict) -> None:
     import commentjson
     from config import XRAY_JSON
@@ -778,6 +845,20 @@ def _apply_panel_migration(
     inbound_cache: dict[str, _ProxyInbound] = {
         row.tag: row for row in db.query(_ProxyInbound).all()
     }
+    # New inbounds would otherwise appear on every existing user that has an
+    # empty exclusion list (Marzban: all − excluded). Fence them off for users
+    # that belong to a different migrated panel slug.
+    foreign_excluded = _exclude_new_inbounds_from_foreign_users(
+        db,
+        panel_slug=source.slug,
+        new_tags=list(dict.fromkeys(tag_map.values())),
+        inbound_cache=inbound_cache,
+    )
+    if foreign_excluded:
+        preview.warnings.append(
+            f"Kept other panels isolated: excluded new inbound(s) from "
+            f"{foreign_excluded} existing proxy row(s)"
+        )
     # Preload the sets we'd otherwise probe once per client (a SELECT-per-user on
     # a large, still-uncommitted transaction dominated import time). Existing
     # usernames tell us create-vs-update without a lookup; existing alias tokens

@@ -17,7 +17,6 @@ from app.db import GetDB, crud
 from app.db.models import Proxy
 from app.models.proxy import ProxyTypes
 from app.models.user import UserStatus
-from app.utils.concurrency import threaded_function
 from app.wireguard.pool import WireGuardPeerIPAllocator
 from app.wireguard.sync import (WGUserPeer, amneziawg_enabled,
                                 build_direct_spec, build_node_specs,
@@ -39,6 +38,15 @@ SERVED_STATUSES = (UserStatus.active,)
 _TUNNEL_RESTART_KICK_COOLDOWN_SEC = 30.0
 _tunnel_restart_kicked_at: Dict[int, float] = {}
 _tunnel_restart_kick_lock = threading.Lock()
+
+# Coalesce user-change WG syncs. Without this, every user edit/status tick
+# spawns ``@threaded_function`` work that holds a DB session through slow
+# node RPC and exhausts SQLAlchemy QueuePool (idle-in-transaction → 500s).
+_WG_SYNC_DEBOUNCE_SEC = 3.0
+_wg_sync_lock = threading.Lock()
+_wg_sync_timer: Optional[threading.Timer] = None
+_wg_sync_in_flight = False
+_wg_sync_queued = False
 
 
 def _maybe_kick_tunnel_restart(node_id: int) -> None:
@@ -731,49 +739,107 @@ def sync_node(db, dbnode, *, peers: Optional[List[WGUserPeer]] = None, node_obje
         return False
 
 
-def sync_all_nodes(db=None) -> int:
-    """Re-sync every WireGuard node. Returns the count of successful applies."""
+def _prepare_wg_sync(session) -> tuple[List[int], List[WGUserPeer]]:
+    """DB-only prep for a full WG resync. Caller must close the session before RPC."""
     from app.wireguard.wg_manager import autoscale_enabled, ensure_all_peers
 
-    def _run(session) -> int:
-        wg_nodes = crud.get_wireguard_nodes(session)
-        if not wg_nodes:
-            return 0
-        if autoscale_enabled():
-            ensure_all_peers(session)
-            from app.wireguard.address_authority import mirror_autoscale_addresses_to_proxies
+    wg_nodes = crud.get_wireguard_nodes(session)
+    if not wg_nodes:
+        return [], []
+    if autoscale_enabled():
+        ensure_all_peers(session)
+        from app.wireguard.address_authority import mirror_autoscale_addresses_to_proxies
 
-            mirror_autoscale_addresses_to_proxies(session)
-        # Single-subnet model: allocate any missing peer IPs from the first
-        # configured node's subnet before computing the shared peer set.
-        for n in wg_nodes:
-            cfg = n.wireguard
-            if cfg is None:
-                continue
-            if plain_wg_enabled(cfg) and not autoscale_enabled():
-                ensure_addresses_for_subnet(session, cfg.subnet, cfg=cfg)
-            if amneziawg_enabled(cfg):
-                ensure_addresses_for_subnet(session, cfg.awg_subnet, cfg=cfg)
-                crud.ensure_awg_server_keys(session, n)
-            break
-        # Finalmask needs a tunnel IP per WG user — legacy allocates from
-        # cfg.subnet; autoscale mirrors WgPeer (see address_authority).
-        ensure_plain_addresses_for_finalmask(session)
-        from app.wireguard.finalmask_shard import ensure_finalmask_slots
+        mirror_autoscale_addresses_to_proxies(session)
+    for n in wg_nodes:
+        cfg = n.wireguard
+        if cfg is None:
+            continue
+        if plain_wg_enabled(cfg) and not autoscale_enabled():
+            ensure_addresses_for_subnet(session, cfg.subnet, cfg=cfg)
+        if amneziawg_enabled(cfg):
+            ensure_addresses_for_subnet(session, cfg.awg_subnet, cfg=cfg)
+            crud.ensure_awg_server_keys(session, n)
+        break
+    ensure_plain_addresses_for_finalmask(session)
+    from app.wireguard.finalmask_shard import ensure_finalmask_slots
 
-        ensure_finalmask_slots(session)
-        peers = collect_wg_peers(session)
-        count = sum(1 for n in wg_nodes if sync_node(session, n, peers=peers))
-        from app.wireguard.host_sync import sync_panel_exit_wireguard
+    ensure_finalmask_slots(session)
+    peers = collect_wg_peers(session)
+    session.commit()
+    return [n.id for n in wg_nodes], peers
 
-        if sync_panel_exit_wireguard(session, peers=peers):
+
+def sync_all_nodes(db=None) -> int:
+    """Re-sync every WireGuard node. Returns the count of successful applies."""
+    from app.wireguard.host_sync import sync_panel_exit_wireguard
+
+    # When the caller already holds a session, keep legacy behaviour (tests /
+    # migration helpers). The hot user-change path always uses db=None so the
+    # pool connection is released before node RPC.
+    if db is not None:
+        node_ids, peers = _prepare_wg_sync(db)
+        count = 0
+        for node_id in node_ids:
+            dbnode = crud.get_node_by_id(db, node_id)
+            if dbnode is not None and sync_node(db, dbnode, peers=peers):
+                count += 1
+        if sync_panel_exit_wireguard(db, peers=peers):
             count += 1
         return count
 
-    if db is not None:
-        return _run(db)
     with GetDB() as session:
-        return _run(session)
+        node_ids, peers = _prepare_wg_sync(session)
+    # Session closed — do not hold QueuePool slots across apply_specs / SSH.
+
+    count = 0
+    for node_id in node_ids:
+        with GetDB() as session:
+            dbnode = crud.get_node_by_id(session, node_id)
+            if dbnode is None:
+                continue
+            ok = sync_node(session, dbnode, peers=peers)
+            try:
+                session.commit()
+            except Exception:
+                session.rollback()
+        if ok:
+            count += 1
+
+    with GetDB() as session:
+        if sync_panel_exit_wireguard(session, peers=peers):
+            count += 1
+            try:
+                session.commit()
+            except Exception:
+                session.rollback()
+    return count
+
+
+def _run_coalesced_wg_sync() -> None:
+    """Single-flight worker for debounced ``sync_user_change``."""
+    global _wg_sync_in_flight, _wg_sync_queued, _wg_sync_timer
+    with _wg_sync_lock:
+        _wg_sync_timer = None
+        if _wg_sync_in_flight:
+            _wg_sync_queued = True
+            return
+        _wg_sync_in_flight = True
+        _wg_sync_queued = False
+    try:
+        sync_all_nodes()
+    except Exception as exc:
+        logger.warning("WireGuard user-change sync failed: %s", exc)
+    finally:
+        rerun = False
+        with _wg_sync_lock:
+            _wg_sync_in_flight = False
+            if _wg_sync_queued:
+                _wg_sync_queued = False
+                rerun = True
+        if rerun:
+            # Another change landed while we were syncing — one more pass.
+            sync_user_change()
 
 
 def prepare_awg_peer_for_connect(dbnode, public_key: str) -> bool:
@@ -813,26 +879,33 @@ def prepare_awg_peer_for_connect(dbnode, public_key: str) -> bool:
     return True
 
 
-@threaded_function
 def sync_user_change() -> None:
     """Lifecycle hook: re-sync WG nodes after any user add/update/remove.
 
     Pushes the full (idempotent) peer set via ``wg syncconf`` so additions,
     removals and status changes all converge. Cheap no-op when no WG node
-    exists. Runs off-thread so it never blocks the Xray path.
+    exists.
+
+    Debounced + single-flight: callers may fire this on every user touch, but
+    only one ``sync_all_nodes`` runs at a time. Previously each call started a
+    daemon thread that held a DB connection through node RPC and exhausted the
+    SQLAlchemy pool (panel-wide 500 / "Server error").
 
     Also schedules a debounced Finalmask shard hot-replace on enabled nodes so
-    the baked-in peer list matches membership (enable / disable / bulk) without
-    restarting the Reality tunnel. Finalmask is scheduled *before* kernel WG
-    sync so a slow/hung ``sync_all_nodes`` cannot starve the hot-replace path.
+    the baked-in peer list matches membership without restarting Reality.
     """
+    global _wg_sync_timer, _wg_sync_queued
     try:
         from app.wireguard.finalmask_reload import schedule_finalmask_xray_reload
 
         schedule_finalmask_xray_reload()
     except Exception as exc:
         logger.warning("Finalmask reload schedule failed: %s", exc)
-    try:
-        sync_all_nodes()
-    except Exception as exc:
-        logger.warning("WireGuard user-change sync failed: %s", exc)
+    with _wg_sync_lock:
+        _wg_sync_queued = True
+        if _wg_sync_timer is not None:
+            _wg_sync_timer.cancel()
+        timer = threading.Timer(_WG_SYNC_DEBOUNCE_SEC, _run_coalesced_wg_sync)
+        timer.daemon = True
+        _wg_sync_timer = timer
+        timer.start()

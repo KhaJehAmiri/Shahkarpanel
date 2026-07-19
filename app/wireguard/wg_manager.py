@@ -185,8 +185,24 @@ def bootstrap_legacy_interfaces(db: Session, dbnode: Node) -> None:
         slot_index=slot,
         created_at=datetime.utcnow(),
     )
-    db.add(iface)
-    db.flush()
+    try:
+        # SAVEPOINT so a concurrent INSERT of the same (node_id, name) does not
+        # abort the caller's whole transaction (that was aborting WG sync and
+        # driving auto-heal restart storms → panel lag).
+        from sqlalchemy.exc import IntegrityError
+
+        with db.begin_nested():
+            db.add(iface)
+            db.flush()
+    except IntegrityError:
+        existing = (
+            db.query(WgInterface)
+            .filter(WgInterface.node_id == dbnode.id, WgInterface.name == name)
+            .first()
+        )
+        if existing is not None:
+            return
+        raise
     try:
         _create_interface_on_node(db, dbnode, iface)
     except Exception as exc:

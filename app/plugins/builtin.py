@@ -36,7 +36,10 @@ class AutoHealPlugin(Plugin):
     description = "Restarts a node when it errors or goes down (with a cooldown)."
 
     #: Minimum seconds between restart attempts for the same node.
-    cooldown_seconds = 60
+    # Keep this high: on small WG nodes Finalmask peer pushes often flap as
+    # ``node_error`` and a short cooldown turns into a restart storm that
+    # makes the whole panel feel laggy (jobs skipped, core thrash).
+    cooldown_seconds = 300
 
     def __init__(self) -> None:
         self._last_attempt: dict = {}

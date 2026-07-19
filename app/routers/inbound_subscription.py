@@ -8,6 +8,8 @@ bookmarked subscription link.
 """
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.db import Session, get_db
@@ -15,6 +17,7 @@ from app.models.admin import Admin
 from app.models.subscription_endpoint import (
     InboundSubscriptionSettingsModify,
     InboundSubscriptionSettingsResponse,
+    SubscriptionSslStatusResponse,
 )
 from app.subscription.inbound_endpoint import (
     InboundSubscriptionAlreadyInherited,
@@ -25,6 +28,8 @@ from app.subscription.inbound_endpoint import (
 )
 from app.utils import responses
 
+logger = logging.getLogger("nexus-inbound-sub")
+
 router = APIRouter(
     tags=["Inbound Subscription Settings"],
     prefix="/api/inbounds",
@@ -32,20 +37,26 @@ router = APIRouter(
 )
 
 
-def _refresh_routes() -> None:
+def _refresh_routes(*, ensure_ssl_host: str | None = None) -> None:
     try:
         from app import app as fastapi_app
         from app.routers import api_router
         from app.subscription.route_registry import refresh_subscription_routes
 
         refresh_subscription_routes(fastapi_app, api_router)
-        from app.services.edge_proxy import sync_subscription_legacy_nginx
         from app.db import GetDB
+        from app.services.edge_proxy import (
+            ensure_subscription_domain_ssl,
+            sync_subscription_legacy_nginx,
+        )
 
         with GetDB() as db:
-            sync_subscription_legacy_nginx(db)
+            if ensure_ssl_host:
+                ensure_subscription_domain_ssl(db, ensure_ssl_host)
+            else:
+                sync_subscription_legacy_nginx(db)
     except Exception:
-        pass
+        logger.exception("subscription route/nginx refresh failed")
 
 
 @router.get("/{tag}/subscription-endpoint", response_model=InboundSubscriptionSettingsResponse)
@@ -104,13 +115,73 @@ def put_inbound_subscription_endpoint(
         ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    _refresh_routes()
+    # Auto-issue LE + :443 for the Listen Domain so p2/p3 don't fall through to srw1.
+    _refresh_routes(ensure_ssl_host=(body.host or "").strip() or None)
     settings = get_inbound_subscription_settings(db, tag)
     return InboundSubscriptionSettingsResponse(
         inbound_tag=settings.inbound_tag,
         inherited=settings.inherited,
         override=settings.override,
         effective=settings.effective,
+    )
+
+
+@router.get(
+    "/{tag}/subscription-endpoint/ssl",
+    response_model=SubscriptionSslStatusResponse,
+)
+def get_inbound_subscription_ssl(
+    tag: str,
+    db: Session = Depends(get_db),
+    _: Admin = Depends(Admin.check_sudo_admin),
+):
+    settings = get_inbound_subscription_settings(db, tag)
+    ep = settings.override or settings.effective
+    host = (ep.host if ep else None) or ""
+    if not host:
+        raise HTTPException(status_code=400, detail="No Listen Domain configured for this inbound")
+    from app.services.edge_proxy import subscription_domain_ssl_status
+
+    status = subscription_domain_ssl_status(host)
+    return SubscriptionSslStatusResponse(ok=bool(status.get("https_ready")), **status)
+
+
+@router.post(
+    "/{tag}/subscription-endpoint/enable-ssl",
+    response_model=SubscriptionSslStatusResponse,
+)
+def enable_inbound_subscription_ssl(
+    tag: str,
+    db: Session = Depends(get_db),
+    _: Admin = Depends(Admin.check_sudo_admin),
+):
+    """Issue Let's Encrypt cert + publish :443 HTTPS vhost for this inbound's domain."""
+    settings = get_inbound_subscription_settings(db, tag)
+    ep = settings.override or settings.effective
+    host = (ep.host if ep else None) or ""
+    if not host:
+        raise HTTPException(
+            status_code=400,
+            detail="Set a Listen Domain and save before enabling SSL",
+        )
+    from app.services.edge_proxy import ensure_subscription_domain_ssl
+
+    result = ensure_subscription_domain_ssl(db, host)
+    if not result.get("https_ready"):
+        raise HTTPException(
+            status_code=502,
+            detail=result.get("message")
+            or result.get("sync_message")
+            or "SSL activation failed — check DNS A record and port 80 reachability",
+        )
+    return SubscriptionSslStatusResponse(
+        host=result.get("host") or host,
+        cert_present=bool(result.get("cert_present")),
+        https_ready=bool(result.get("https_ready")),
+        message=result.get("message") or "SSL active",
+        ok=True,
+        sync_applied=result.get("sync_applied"),
+        sync_message=result.get("sync_message") or "",
     )
 
 

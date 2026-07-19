@@ -108,6 +108,17 @@ class InboundSubscriptionSettingsResponse(BaseModel):
     effective: Optional[SubscriptionEndpointResponse] = None
 
 
+class SubscriptionSslStatusResponse(BaseModel):
+    host: str
+    cert_present: bool = False
+    https_ready: bool = False
+    https_vhost_staged: bool = False
+    message: str = ""
+    ok: bool = False
+    sync_applied: Optional[bool] = None
+    sync_message: str = ""
+
+
 class SubscriptionTokenAliasCreate(BaseModel):
     token: str = Field(..., min_length=1, max_length=256)
     user_id: int

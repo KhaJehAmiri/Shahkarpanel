@@ -420,10 +420,19 @@ def _browser_subscribe_redirect_url(
     token: str,
     *,
     listen_port: int | None = None,
+    endpoint_host: str | None = None,
 ) -> str:
-    """Send browser users to the panel HTTPS vhost (443), not the legacy sub port."""
+    """Send browser users to the panel HTTPS vhost (443), not the legacy sub port.
+
+    Prefer the subscription endpoint's configured host so p2/p3 never bounce
+    onto the default panel vhost (srw1) when SNI/Host is wrong.
+    Only absolute-redirect to :443 when that host already has a LE cert;
+    otherwise keep a same-host relative/legacy URL so nginx won't fall through
+    to another domain's certificate.
+    """
     host_hdr = (request.headers.get("host") or "").strip().lower()
-    host_name = host_hdr.split(":")[0] if host_hdr else ""
+    req_host = host_hdr.split(":")[0] if host_hdr else ""
+    host_name = (endpoint_host or "").strip().lower().split(":")[0] or req_host
     port: int | None = None
     if ":" in host_hdr:
         port_str = host_hdr.rsplit(":", 1)[-1]
@@ -431,8 +440,21 @@ def _browser_subscribe_redirect_url(
             port = int(port_str)
     elif listen_port:
         port = int(listen_port)
-    if host_name and port and port not in (80, 443):
+
+    ssl_ready = False
+    if host_name:
+        try:
+            from app.services.edge_proxy import subscription_domain_ssl_status
+
+            ssl_ready = bool(subscription_domain_ssl_status(host_name).get("https_ready"))
+        except Exception:
+            ssl_ready = False
+
+    if host_name and ssl_ready:
         return f"https://{host_name}/subscribe/?token={token}"
+    if host_name and port and port not in (80, 443):
+        # Stay on the legacy sub listener until Enable SSL has issued a cert.
+        return f"https://{host_name}:{port}/subscribe/?token={token}"
     return f"/subscribe/?token={token}"
 
 
@@ -480,6 +502,7 @@ def user_subscription(
                     request,
                     token,
                     listen_port=endpoint.listen_port if endpoint else None,
+                    endpoint_host=endpoint.host if endpoint else None,
                 ),
                 status_code=302,
             )

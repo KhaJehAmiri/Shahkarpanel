@@ -398,6 +398,9 @@ class BulkUserCreateBody(BaseModel):
     template_id: Optional[int] = None
     proxies: Dict[ProxyTypes, Dict[str, Any]] = Field(default_factory=dict)
     inbounds: Dict[ProxyTypes, List[str]] = Field(default_factory=dict)
+    # Bind created users to a subscription panel endpoint (p1…p9) so client
+    # links use that panel's domain/port/path (via SubscriptionTokenAlias).
+    subscription_endpoint_id: Optional[int] = None
     data_limit: Optional[int] = 0
     expire: Optional[int] = 0
     data_limit_reset_strategy: UserDataLimitResetStrategy = (
@@ -420,9 +423,17 @@ class BulkUserCreateBody(BaseModel):
         return self
 
 
+class BulkCreatedUserLink(BaseModel):
+    username: str
+    subscription_url: str = ""
+    public_subscription_url: str = ""
+    sub_token: Optional[str] = None
+
+
 class BulkUserCreateResult(BaseModel):
     created: int
     usernames: List[str] = Field(default_factory=list)
+    users: List[BulkCreatedUserLink] = Field(default_factory=list)
     errors: List[str] = Field(default_factory=list)
     duration_ms: int
 
@@ -503,12 +514,20 @@ def bulk_create_users(
     admin: Optional[Admin] = None,
 ) -> BulkUserCreateResult:
     from app import xray as xray_mod
+    from app.models.user import UserResponse
+    from app.subscription.public_url import public_subscription_url
 
     started = time.perf_counter()
     prefix = body.username_prefix or ""
     suffix = body.username_suffix or ""
     alphabet = string.ascii_lowercase + string.digits
     dbadmin = crud.get_admin(db, admin.username) if admin else None
+
+    panel_ep = None
+    if body.subscription_endpoint_id is not None:
+        panel_ep = crud.get_subscription_endpoint(db, body.subscription_endpoint_id)
+        if panel_ep is None or not panel_ep.enabled:
+            raise ValueError("Selected subscription panel endpoint was not found or is disabled")
 
     created: List[str] = []
     errors: List[str] = []
@@ -522,7 +541,18 @@ def bulk_create_users(
                 from app.routers.user import _ensure_protocol_enabled
 
                 _ensure_protocol_enabled(ptype, db)
-            crud.create_user(db, new_user, admin=dbadmin)
+            db_user = crud.create_user(db, new_user, admin=dbadmin)
+            if panel_ep is not None and db_user is not None:
+                # Short token (= username core) keeps subscribe URLs readable and
+                # binds the user to the chosen panel domain/path.
+                crud.upsert_subscription_token_alias(
+                    db,
+                    token=core,
+                    user_id=db_user.id,
+                    endpoint_id=panel_ep.id,
+                    source="bulk-create",
+                    commit=True,
+                )
             created.append(username)
         except IntegrityError:
             db.rollback()
@@ -542,11 +572,49 @@ def bulk_create_users(
         except Exception:
             pass
 
+    users_out: List[BulkCreatedUserLink] = []
+    for username in created:
+        try:
+            db_user = crud.get_user(db, username)
+            if db_user is None:
+                continue
+            ur = UserResponse.model_validate(db_user)
+            # Prefer the panel endpoint the admin picked (not inbound Listen Domain
+            # overrides), so the results popup matches the selected p/sr panel.
+            token = None
+            if panel_ep is not None:
+                for alias in crud.list_subscription_token_aliases_for_user(db, db_user.id):
+                    if alias.endpoint_id == panel_ep.id:
+                        token = alias.token
+                        break
+                pub = public_subscription_url(ur, endpoint=panel_ep, request_token=token) or ""
+            else:
+                pub = public_subscription_url(ur) or ""
+            sub = (ur.subscription_url or pub or "").strip()
+            if pub and not pub.endswith("/"):
+                pub = f"{pub}/"
+            if sub and not sub.endswith("/") and sub.startswith("http"):
+                sub = f"{sub}/"
+            users_out.append(
+                BulkCreatedUserLink(
+                    username=username,
+                    subscription_url=sub or pub,
+                    public_subscription_url=pub or sub,
+                    sub_token=token or getattr(ur, "sub_token", None),
+                )
+            )
+        except Exception as exc:
+            logger.warning("bulk create: failed to build link for %s: %s", username, exc)
+            users_out.append(
+                BulkCreatedUserLink(username=username, subscription_url="", public_subscription_url="")
+            )
+
     duration_ms = int((time.perf_counter() - started) * 1000)
     logger.info("bulk create users: created=%s failed=%s %sms", len(created), len(errors), duration_ms)
     return BulkUserCreateResult(
         created=len(created),
         usernames=created,
+        users=users_out,
         errors=errors,
         duration_ms=duration_ms,
     )

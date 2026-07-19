@@ -2,8 +2,10 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { SubAppTile } from "@/components/subscribe/SubAppTile";
+import { SubWgAppTile } from "@/components/subscribe/SubWgAppTile";
 import { QR } from "@/components/QR";
 import { PLATFORMS, type Platform, type ClientApp, appsFor, detectPlatform } from "@/lib/apps";
+import { wgAppsFor } from "@/lib/wg-apps";
 import { copyToClipboard } from "@/lib/clipboard";
 import { bytes, formatDate, relativeDays } from "@/lib/format";
 import { SUB_LANGS, SubLang, detectSubLang, t as subT } from "@/lib/subscribe-i18n";
@@ -209,9 +211,41 @@ const PROTO_ORDER = [
   "other",
 ];
 
+/** API path prefixes to try when loading subscription JSON (legacy 3x-ui uses ``info``). */
+function candidateSubPrefixes(): string[] {
+  const out: string[] = [];
+  try {
+    const q = new URLSearchParams(window.location.search);
+    for (const key of ["path", "prefix", "path_prefix"]) {
+      const raw = (q.get(key) || "").trim().replace(/^\/+|\/+$/g, "");
+      if (raw) out.push(raw);
+    }
+  } catch {
+    /* ignore */
+  }
+  for (const p of ["sub", "info"]) {
+    if (!out.includes(p)) out.push(p);
+  }
+  return out;
+}
+
+async function fetchSubApi(tok: string, suffix: string, prefixes?: string[]): Promise<{ prefix: string; response: Response }> {
+  const list = prefixes?.length ? prefixes : candidateSubPrefixes();
+  let last: Response | null = null;
+  for (const prefix of list) {
+    const response = await fetch(`/${prefix}/${tok}${suffix}`, {
+      headers: { Accept: suffix === "/info" ? "application/json" : "*/*" },
+    });
+    if (response.ok) return { prefix, response };
+    last = response;
+  }
+  throw new Error(last ? `HTTP ${last.status}` : "fetch failed");
+}
+
 function SubscribeBody() {
   const [lang, setLang] = useState<SubLang>("fa");
   const [token, setToken] = useState("");
+  const [apiPrefix, setApiPrefix] = useState("sub");
   const [info, setInfo] = useState<SubInfo | null>(null);
   const [err, setErr] = useState("");
   const [platform, setPlatform] = useState<Platform>("android");
@@ -227,8 +261,11 @@ function SubscribeBody() {
   const loadInfo = useCallback((tok: string) => {
     if (!tok) return;
     setErr("");
-    fetch(`/sub/${tok}/info`, { headers: { Accept: "application/json" } })
-      .then(async (r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+    fetchSubApi(tok, "/info")
+      .then(async ({ prefix, response }) => {
+        setApiPrefix(prefix);
+        return response.json();
+      })
       .then((data: SubInfo) => setInfo(data))
       .catch((e: Error) => setErr(e.message || subT(lang, "fetchError")));
   }, [lang]);
@@ -241,8 +278,11 @@ function SubscribeBody() {
     loadInfo(tok);
   }, [loadInfo]);
 
-  const subUrl = useMemo(() => resolvePublicSubUrl(info, token), [info, token]);
-  const importUrl = useMemo(() => resolveClientImportUrl(info, token) || subUrl, [info, token, subUrl]);
+  const subUrl = useMemo(() => resolvePublicSubUrl(info, token, apiPrefix), [info, token, apiPrefix]);
+  const importUrl = useMemo(
+    () => resolveClientImportUrl(info, token, apiPrefix) || subUrl,
+    [info, token, apiPrefix, subUrl],
+  );
   const profileTitle = info?.subscription_profile_title?.trim() || "NexusPanel";
 
   const hasWireguard = !!info?.proxies && "wireguard" in info.proxies;
@@ -264,7 +304,7 @@ function SubscribeBody() {
       const nodePath = n.id > 0 ? `/${n.id}` : "";
       // 3x-ui style .conf (Finalmask port) for WireGuard-app QR / download.
       if (n.plain_available || n.wireguard_plain_uri || n.xray_available || n.wireguard_xray_uri) {
-        fetch(`/sub/${token}/wireguard${nodePath}`)
+        fetch(`/${apiPrefix}/${token}/wireguard${nodePath}`)
           .then(async (r) => (r.ok ? r.text() : ""))
           .then((body) => {
             const t = body.trim();
@@ -276,7 +316,7 @@ function SubscribeBody() {
           .catch(() => {});
       }
     });
-  }, [token, info, hasWireguard, wgNodes]);
+  }, [token, info, hasWireguard, wgNodes, apiPrefix]);
 
   const configs: ConfigEntry[] = useMemo(() => {
     if (!info) return [];
@@ -528,6 +568,9 @@ function SubscribeBody() {
   const proxyApps = appsFor(platform);
   const primaryApp = recommendedApp(platform, proxyApps);
   const otherApps = proxyApps.filter((a) => a.id !== primaryApp?.id);
+  // Official WireGuard + AmneziaWG only (skip duplicate store variants).
+  const wgApps = wgAppsFor(platform).filter((a) => a.id === "wireguard" || a.id === "amneziawg");
+  const isPlainWireguard = selected?.protocol === "wireguard";
   const pasteFallback = (n: string) => subT(lang, "pasteFallback").replace("{app}", n);
 
   async function connectPrimary() {
@@ -750,18 +793,32 @@ function SubscribeBody() {
                   <span className="s-qr-hint">{subT(lang, "scanHere")}</span>
                 </button>
 
-                <button type="button" className="s-btn s-btn-main s-btn-xl" onClick={() => copyValue(selected.value)}>
-                  {copied ? subT(lang, "copied") : subT(lang, "copyForApp")}
-                </button>
-
-                {selected.downloadHref && (
-                  <button
-                    type="button"
-                    className="s-btn s-btn-soft"
-                    onClick={() => void downloadConfFile(selected)}
-                  >
-                    {subT(lang, "downloadFile")}
-                  </button>
+                {/* Plain WireGuard: download .conf only — keep WireGuard (Xray) copy CTA unchanged. */}
+                {isPlainWireguard ? (
+                  selected.downloadHref ? (
+                    <button
+                      type="button"
+                      className="s-btn s-btn-main s-btn-xl"
+                      onClick={() => void downloadConfFile(selected)}
+                    >
+                      {subT(lang, "downloadFile")}
+                    </button>
+                  ) : null
+                ) : (
+                  <>
+                    <button type="button" className="s-btn s-btn-main s-btn-xl" onClick={() => copyValue(selected.value)}>
+                      {copied ? subT(lang, "copied") : subT(lang, "copyForApp")}
+                    </button>
+                    {selected.downloadHref && (
+                      <button
+                        type="button"
+                        className="s-btn s-btn-soft"
+                        onClick={() => void downloadConfFile(selected)}
+                      >
+                        {subT(lang, "downloadFile")}
+                      </button>
+                    )}
+                  </>
                 )}
 
                 {selected.protocol === "tuic" && <p className="s-warn">{subT(lang, "tuicWarn")}</p>}
@@ -790,12 +847,26 @@ function SubscribeBody() {
 
       {configAvailable && importUrl && (
         <div className="s-howto">
-          <button type="button" className="s-howto-tog" aria-expanded={showHowTo} onClick={() => setShowHowTo((v) => !v)}>
-            <span>
+          <button
+            type="button"
+            className={`s-howto-tog ${showHowTo ? "open" : ""}`}
+            aria-expanded={showHowTo}
+            onClick={() => setShowHowTo((v) => !v)}
+          >
+            <span className="s-howto-ico" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="5" y="2" width="14" height="20" rx="2" />
+                <path d="M12 18h.01" />
+              </svg>
+            </span>
+            <span className="s-howto-copy">
               <strong>{subT(lang, "howToTitle")}</strong>
               <small>{subT(lang, "howToHint")}</small>
             </span>
-            <span>{showHowTo ? "▴" : "▾"}</span>
+            <span className="s-howto-cta">
+              <span className="s-howto-cta-label">{showHowTo ? subT(lang, "howToHide") : subT(lang, "howToShow")}</span>
+              <span className="s-howto-chev" aria-hidden="true">{showHowTo ? "▴" : "▾"}</span>
+            </span>
           </button>
 
           {showHowTo && (
@@ -820,19 +891,31 @@ function SubscribeBody() {
                 <>
                   <div className="s-app">
                     <div className="s-app-ico" style={{ background: primaryApp.color }}>{primaryApp.short}</div>
-                    <div style={{ flex: 1 }}>
+                    <div className="s-app-meta">
                       <div className="s-app-name">{primaryApp.name}</div>
                       <div className="s-app-tag">{subT(lang, "recommended")}</div>
+                      <div className="s-app-actions">
+                        {primaryApp.download?.[platform] && (
+                          <a
+                            href={primaryApp.download[platform]}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="sub-btn-action"
+                          >
+                            {subT(lang, "downloadApp")}
+                          </a>
+                        )}
+                        <button
+                          type="button"
+                          className="sub-btn-action sub-btn-action-main"
+                          disabled={busyConnect}
+                          onClick={connectPrimary}
+                        >
+                          {busyConnect ? "…" : subT(lang, "importApp")}
+                        </button>
+                      </div>
                     </div>
-                    {primaryApp.download?.[platform] && (
-                      <a href={primaryApp.download[platform]} target="_blank" rel="noopener noreferrer" className="s-btn s-btn-soft s-btn-sm">
-                        {subT(lang, "downloadApp")}
-                      </a>
-                    )}
                   </div>
-                  <button type="button" className="s-btn s-btn-main" style={{ width: "100%", marginTop: 10 }} disabled={busyConnect} onClick={connectPrimary}>
-                    {busyConnect ? "…" : subT(lang, "importApp")}
-                  </button>
                   {otherApps.length > 0 && (
                     <div className="s-more-apps">
                       <p className="s-label">{subT(lang, "otherApps")}</p>
@@ -855,6 +938,21 @@ function SubscribeBody() {
                     </div>
                   )}
                 </>
+              )}
+
+              {wgApps.length > 0 && (
+                <div className="s-more-apps" style={{ marginTop: 16 }}>
+                  <p className="s-label">{subT(lang, "wgApps")}</p>
+                  <p className="s-muted" style={{ marginBottom: 8 }}>{subT(lang, "wgAppsHint")}</p>
+                  {wgApps.map((a) => (
+                    <SubWgAppTile
+                      key={a.id}
+                      app={a}
+                      platform={platform}
+                      downloadLabel={subT(lang, "downloadApp")}
+                    />
+                  ))}
+                </div>
               )}
             </div>
           )}

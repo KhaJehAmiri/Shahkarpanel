@@ -215,6 +215,7 @@
     "tabTunnels": "Tunnels",
     "tabDedip": "Dedicated IPs",
     "tabInbounds": "Inbounds",
+    "tabSubscription": "Subscription",
     "tabOutbounds": "Outbounds",
     "tabRouting": "Routing",
     "tabHosts": "Subscription hosts",
@@ -226,6 +227,33 @@
     "tabCommercial": "Commercial",
     "inboundHintTitle": "Start here",
     "inboundHintBody": "Inbounds are optional. A fresh install starts with none — add a listener (e.g. VLESS on 443) when you need one, then create users."
+  },
+  "subEndpoints": {
+    "hintTitle": "Subscription panels",
+    "hintBody": "Each row is an independent subscription listener (domain, port, URI path) — like 3x-ui panel settings, but one entry per path. Saving applies nginx + live routes immediately; no panel restart required.",
+    "hintBodyCompact": "One card per panel. Main, JSON and Clash paths open as tabs in a single editor — save applies nginx and live routes immediately.",
+    "searchPlaceholder": "Filter by panel, domain, path…",
+    "panelCount": "panels",
+    "channelCount": "{{count}} paths",
+    "editChannel": "Edit {{kind}}",
+    "colSlug": "Slug",
+    "colKind": "Kind",
+    "editTitle": "Subscription — {{slug}}",
+    "editDesc": "Change Listen Domain, Listen Port, URI Path, or Reverse Proxy URI. Updates apply immediately to nginx and subscription routes.",
+    "editDescGrouped": "Switch tabs for Main / JSON / Clash. Each path has its own domain, port and URI — changes apply live without restarting the panel.",
+    "enabled": "Enabled",
+    "previewTitle": "Sample client URL",
+    "saveTab": "Save this tab",
+    "saveAll": "Save all tabs",
+    "saved": "Subscription endpoint saved — routes and nginx updated",
+    "savedAll": "All subscription paths saved — routes and nginx updated",
+    "kind": {
+      "main": "Main",
+      "json": "JSON",
+      "clash": "Clash",
+      "inbound": "Inbound",
+      "default": "Default"
+    }
   },
   "bulkInbound": {
     "title": "Bulk inbound assignment",
@@ -354,7 +382,19 @@
     "next": "Next",
     "back": "Back",
     "templateSkipProtocols": "Protocols and inbounds are taken from the selected template. Switch to manual mode to pick them here.",
-    "summary": "{{count}} users · {{protos}}"
+    "summary": "{{count}} users · {{panel}} · {{protos}}",
+    "sectionPanel": "Subscription panel",
+    "panelHint": "Choose which panel (p1…p9) these users’ subscription links should use.",
+    "panelRequired": "Select a subscription panel first",
+    "panelNone": "no panel",
+    "noPanels": "No panel endpoints found. Configure them under Connection → Subscription.",
+    "resultsTitle": "{{n}} users created",
+    "resultsDesc": "Copy subscription links below, or copy all at once.",
+    "resultsSummary": "{{n}} links · {{panel}}",
+    "resultsCount": "{{n}} links",
+    "copyAll": "Copy all links",
+    "copiedAll": "{{n}} links copied",
+    "noLinks": "Users were created, but subscription links could not be built."
   },
   "users": {
     "title": "Users",

@@ -1089,6 +1089,32 @@ def _apply_panel_migration(
     if not validation.passed:
         preview.warnings.extend(validation.errors)
 
+    # Subscription domain SSL + host nginx reload (SNI). Without this, a new
+    # panel host (srw4, …) can keep serving the default panel certificate until
+    # someone reloads nginx by hand.
+    try:
+        from app.services.edge_proxy import finalize_subscription_ssl_after_migration
+
+        ssl_result = finalize_subscription_ssl_after_migration(db, sub.get("host"))
+        host_label = (sub.get("host") or "").strip() or "?"
+        if ssl_result.get("https_ready") and ssl_result.get("nginx_reloaded"):
+            preview.warnings.append(
+                f"Subscription SSL active for {host_label} (nginx reloaded)"
+            )
+        elif ssl_result.get("https_ready") and not ssl_result.get("nginx_reloaded"):
+            preview.warnings.append(
+                f"Subscription cert ready for {host_label}, but nginx reload failed: "
+                f"{ssl_result.get('nginx_reload_message') or 'unknown'}"
+            )
+        else:
+            preview.warnings.append(
+                f"Subscription SSL pending for {host_label}: "
+                f"{ssl_result.get('message') or ssl_result.get('sync_message') or 'Enable SSL / check DNS'}"
+            )
+    except Exception as exc:
+        preview.warnings.append(f"Subscription SSL finalize skipped: {exc}")
+        logger.warning("post-migration subscription SSL finalize failed: %s", exc)
+
     preview.applied = True
     return preview
 

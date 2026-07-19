@@ -111,6 +111,15 @@ def on_startup():
         raise ValueError(
             f"you can't use /{XRAY_SUBSCRIPTION_PATH}/ as subscription path it reserved for {app.title}"
         )
+    # Mount legacy path prefixes (info/json/clash/…) on the main thread before
+    # accepting traffic — deferred registration left routes logged but unreachable.
+    try:
+        from app.routers import api_router as _api_router
+        from app.subscription.route_registry import register_extra_subscription_routes
+
+        register_extra_subscription_routes(app, _api_router)
+    except Exception:
+        logger.exception("Failed to register extra subscription routes")
     try:
         from app.ha import start as ha_start
         ha_start()
@@ -150,14 +159,6 @@ def on_startup():
             apply_host_network_tuning()
         except Exception:
             logger.debug("host network tuning skipped", exc_info=True)
-        try:
-            from app.routers import api_router
-            from app.subscription.route_registry import register_extra_subscription_routes
-
-            register_extra_subscription_routes(app, api_router)
-        except Exception:
-            logger.exception("Failed to register extra subscription routes")
-
     import threading
 
     threading.Thread(target=_deferred, name="panel-deferred-startup", daemon=True).start()

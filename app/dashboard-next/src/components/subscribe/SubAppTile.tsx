@@ -72,19 +72,24 @@ export function SubAppTile({
       <div className="sub-app-icon" style={{ background: `linear-gradient(145deg, ${app.color}, #0f766e)` }}>
         {app.short}
       </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
+      <div className="sub-app-meta">
         <div className="sub-app-name">{app.name}</div>
-        {dl ? (
-          <a href={dl} target="_blank" rel="noopener noreferrer" className="sub-app-link">
-            {downloadLabel}
-          </a>
-        ) : (
-          <span className="sub-app-hint">{importLabel}</span>
-        )}
+        <div className="sub-app-actions">
+          {dl ? (
+            <a href={dl} target="_blank" rel="noopener noreferrer" className="sub-btn-action">
+              {downloadLabel}
+            </a>
+          ) : null}
+          <button
+            type="button"
+            disabled={busy || !subUrl}
+            onClick={importInApp}
+            className="sub-btn-action sub-btn-action-main"
+          >
+            {busy ? "…" : importLabel}
+          </button>
+        </div>
       </div>
-      <button type="button" disabled={busy || !subUrl} onClick={importInApp} className="sub-btn-primary" style={{ flexShrink: 0 }}>
-        {busy ? "…" : importLabel}
-      </button>
     </div>
   );
 }

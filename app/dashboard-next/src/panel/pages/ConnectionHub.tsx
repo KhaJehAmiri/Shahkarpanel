@@ -6,6 +6,7 @@ import { CoreReadGate } from "../components/SudoGate";
 import { XrayConfigsHub } from "../components/xray/XrayConfigsHub";
 import { Inbounds } from "./Inbounds";
 import { Hosts } from "./Hosts";
+import { SubscriptionEndpoints } from "./SubscriptionEndpoints";
 import { Callout } from "../components/ui";
 
 export const ConnectionHub: FC = () => {
@@ -21,6 +22,7 @@ export const ConnectionHub: FC = () => {
       defaultTab="inbounds"
       tabs={[
         { id: "inbounds", label: t("hub.tabInbounds") },
+        { id: "subscription", label: t("hub.tabSubscription") },
         { id: "outbounds", label: t("hub.tabOutbounds"), hidden: !canReadCore },
         { id: "routing", label: t("hub.tabRouting"), hidden: !canReadCore },
         { id: "hosts", label: t("hub.tabHosts") },
@@ -28,6 +30,7 @@ export const ConnectionHub: FC = () => {
       ]}
     >
       {(tab) => {
+        if (tab === "subscription") return <SubscriptionEndpoints />;
         if (tab === "outbounds") {
           return (
             <CoreReadGate>

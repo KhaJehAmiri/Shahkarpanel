@@ -576,6 +576,17 @@ def _host_script_path(script: Path) -> str:
     return resolved
 
 
+def _host_chroot_env() -> dict[str, str]:
+    """Env for ``docker run … chroot /host`` helpers.
+
+    Alpine's default PATH does not include the host's ``/usr/sbin``, so
+    ``command -v nginx`` fails inside chroot even when the binary exists.
+    """
+    env = _nginx_reconcile_env()
+    env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    return env
+
+
 def _privileged_reconcile_script(script: Path) -> tuple[bool, str]:
     """Run reconcile as root on the Docker *host* (nginx + certbot live there).
 
@@ -592,6 +603,10 @@ def _privileged_reconcile_script(script: Path) -> tuple[bool, str]:
         "--rm",
         "--network",
         "host",
+        "--pid",
+        "host",
+        "-e",
+        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         "-v",
         "/:/host:rw",
         helper_image,
@@ -607,7 +622,7 @@ def _privileged_reconcile_script(script: Path) -> tuple[bool, str]:
             capture_output=True,
             text=True,
             timeout=300,
-            env=_nginx_reconcile_env(),
+            env=_host_chroot_env(),
         )
     except (OSError, subprocess.SubprocessError) as exc:
         return False, str(exc)
@@ -621,8 +636,11 @@ def _needs_host_reconcile(message: str) -> bool:
         for needle in (
             "run as root",
             "nginx not installed",
+            "nginx reload skipped",
+            "reload failed",
             "permission denied",
             "operation not permitted",
+            "no such file",
         )
     )
 
@@ -964,6 +982,104 @@ server {{
 
 def try_reconcile_subscription_nginx() -> tuple[bool, str]:
     return _try_reconcile_with_privilege(SUB_LEGACY_RECONCILE_SCRIPT)
+
+
+def force_reload_subscription_nginx() -> tuple[bool, str]:
+    """HUP host nginx so new SNI certs/vhosts are live (post-migration safety)."""
+    script = SUB_LEGACY_RECONCILE_SCRIPT
+    if not script.is_file():
+        return False, f"Reconcile script missing: {script}"
+
+    # Prefer the privileged host path first — the panel container usually has no
+    # live nginx master to HUP, so an in-container --reload-only is a no-op.
+    host_script = _host_script_path(script)
+    helper_image = os.environ.get("NEXUSPANEL_HOST_HELPER_IMAGE", "alpine:3.20")
+    try:
+        proc = subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--network",
+                "host",
+                "--pid",
+                "host",
+                "-e",
+                "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                "-v",
+                "/:/host:rw",
+                helper_image,
+                "chroot",
+                "/host",
+                "/bin/bash",
+                host_script,
+                "--reload-only",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=90,
+            env=_host_chroot_env(),
+        )
+        applied, message = _reconcile_script_succeeded(proc)
+        if applied:
+            return True, message
+    except (OSError, subprocess.SubprocessError) as exc:
+        message = str(exc)
+        applied = False
+    else:
+        # fall through to direct script if docker helper unavailable
+        pass
+
+    applied2, message2 = _run_reconcile_script_args(script, ["--reload-only"])
+    if applied2:
+        return True, message2
+    return False, message2 or message
+
+
+def _run_reconcile_script_args(script: Path, extra_args: list[str]) -> tuple[bool, str]:
+    if not script.is_file():
+        return False, f"Reconcile script missing: {script}"
+    try:
+        proc = subprocess.run(
+            [str(script), *extra_args],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env=_nginx_reconcile_env(),
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, str(exc)
+    return _reconcile_script_succeeded(proc)
+
+
+def finalize_subscription_ssl_after_migration(
+    db,
+    host: str | None,
+) -> dict[str, Any]:
+    """Issue/activate sub-domain SSL and force nginx reload after a panel import.
+
+    Migration used to leave LE certs / :443 vhosts on disk while nginx workers
+    still served the default panel cert (srw4 opened as srw1) until a manual
+    ``nginx reload``.
+    """
+    target = (host or "").strip().lower().split(":")[0] or None
+    result = ensure_subscription_domain_ssl(db, target)
+    reloaded, reload_msg = force_reload_subscription_nginx()
+    result["nginx_reloaded"] = reloaded
+    result["nginx_reload_message"] = reload_msg or ""
+    if not reloaded:
+        logger.warning(
+            "post-migration nginx reload failed for host=%s: %s",
+            target or "*",
+            reload_msg,
+        )
+    else:
+        logger.info(
+            "post-migration subscription SSL finalized host=%s https_ready=%s nginx_reloaded=1",
+            target or "*",
+            result.get("https_ready"),
+        )
+    return result
 
 
 def subscription_domain_ssl_status(host: str) -> dict[str, Any]:

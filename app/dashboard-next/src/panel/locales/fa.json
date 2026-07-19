@@ -215,6 +215,7 @@
     "tabTunnels": "تونل‌ها",
     "tabDedip": "IP اختصاصی",
     "tabInbounds": "اینباندها",
+    "tabSubscription": "اشتراک",
     "tabOutbounds": "خروجی‌ها",
     "tabRouting": "مسیریابی",
     "tabHosts": "هاست اشتراک",
@@ -226,6 +227,33 @@
     "tabCommercial": "تجاری",
     "inboundHintTitle": "از اینجا شروع کنید",
     "inboundHintBody": "اینباند اختیاری است. نصب خام بدون هیچ inbound شروع می‌شود — وقتی لازم شد یک listener (مثلاً VLESS روی ۴۴۳) بسازید و بعد کاربر اضافه کنید."
+  },
+  "subEndpoints": {
+    "hintTitle": "پنل‌های اشتراک",
+    "hintBody": "هر ردیف یک شنوندهٔ مستقل اشتراک است (دامین، پورت، مسیر URI) — مثل تنظیمات 3x-ui، ولی برای هر مسیر جدا. ذخیره فوراً روی nginx و روت‌ها اعمال می‌شود؛ نیازی به ری‌استارت پنل نیست.",
+    "hintBodyCompact": "هر پنل یک کارت. مسیرهای Main و JSON و Clash داخل یک مودال با تب جداگانه ویرایش می‌شوند — ذخیره بلافاصله روی nginx و روت اعمال می‌شود.",
+    "searchPlaceholder": "فیلتر بر اساس پنل، دامین، مسیر…",
+    "panelCount": "پنل",
+    "channelCount": "{{count}} مسیر",
+    "editChannel": "ویرایش {{kind}}",
+    "colSlug": "شناسه",
+    "colKind": "نوع",
+    "editTitle": "اشتراک — {{slug}}",
+    "editDesc": "دامین، پورت، مسیر URI یا Reverse Proxy را عوض کنید. تغییرات بلافاصله روی nginx و روت‌های اشتراک اعمال می‌شود.",
+    "editDescGrouped": "با تب‌ها بین Main / JSON / Clash جابه‌جا شوید. هر مسیر دامین، پورت و URI خودش را دارد — بدون ری‌استارت پنل.",
+    "enabled": "فعال",
+    "previewTitle": "نمونه لینک کلاینت",
+    "saveTab": "ذخیره این تب",
+    "saveAll": "ذخیره همه تب‌ها",
+    "saved": "اندپوینت ذخیره شد — روت‌ها و nginx به‌روز شدند",
+    "savedAll": "همه مسیرهای اشتراک ذخیره شد — روت‌ها و nginx به‌روز شدند",
+    "kind": {
+      "main": "اصلی",
+      "json": "JSON",
+      "clash": "Clash",
+      "inbound": "اینباند",
+      "default": "پیش‌فرض"
+    }
   },
   "bulkInbound": {
     "title": "اختصاص دسته‌جمعی inbound",
@@ -354,7 +382,19 @@
     "next": "بعدی",
     "back": "قبلی",
     "templateSkipProtocols": "پروتکل‌ها و inbound از قالب انتخاب‌شده گرفته می‌شوند. برای انتخاب دستی، حالت قالب را خاموش کنید.",
-    "summary": "{{count}} کاربر · {{protos}}"
+    "summary": "{{count}} کاربر · {{panel}} · {{protos}}",
+    "sectionPanel": "پنل اشتراک",
+    "panelHint": "انتخاب کنید لینک ساب این کاربران روی کدام پنل (p1…p9) ساخته شود.",
+    "panelRequired": "ابتدا یک پنل اشتراک انتخاب کنید",
+    "panelNone": "بدون پنل",
+    "noPanels": "اندپوینت پنل پیدا نشد. از Connection → Subscription تنظیم کنید.",
+    "resultsTitle": "{{n}} کاربر ساخته شد",
+    "resultsDesc": "لینک‌های ساب را از لیست زیر کپی کنید، یا همه را یکجا کپی کنید.",
+    "resultsSummary": "{{n}} لینک · {{panel}}",
+    "resultsCount": "{{n}} لینک",
+    "copyAll": "کپی همه لینک‌ها",
+    "copiedAll": "{{n}} لینک کپی شد",
+    "noLinks": "کاربران ساخته شدند، اما لینک اشتراک ساخته نشد."
   },
   "users": {
     "title": "کاربران",

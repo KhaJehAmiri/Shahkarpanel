@@ -39,6 +39,31 @@ const PROTO_VISUAL: Record<string, { icon: string; hue: string }> = {
 type TabId = "basic" | "protocols" | "limits";
 type ProtoState = { enabled: boolean; tags: string[]; flow: string; method: string };
 
+interface SubEndpointRow {
+  id: number;
+  slug: string;
+  host: string | null;
+  path_prefix: string;
+  listen_port: number | null;
+  inbound_tag: string | null;
+  enabled: boolean;
+}
+
+interface CreatedUserLink {
+  username: string;
+  subscription_url: string;
+  public_subscription_url: string;
+  sub_token?: string | null;
+}
+
+interface BulkCreateResult {
+  created: number;
+  usernames: string[];
+  users: CreatedUserLink[];
+  errors: string[];
+  duration_ms: number;
+}
+
 interface Props {
   open: boolean;
   onClose: () => void;
@@ -46,11 +71,48 @@ interface Props {
   templates: UserTemplateRow[];
 }
 
+function isPanelEndpoint(ep: SubEndpointRow): boolean {
+  if (!ep.enabled) return false;
+  if (ep.inbound_tag) return false;
+  if (ep.slug === "default") return false;
+  if (ep.slug.endsWith("-json") || ep.slug.endsWith("-clash")) return false;
+  return true;
+}
+
+function tagMatchesPanel(tag: string, slug: string): boolean {
+  return tag === slug || tag.startsWith(`${slug}-`);
+}
+
+async function copyText(text: string): Promise<boolean> {
+  if (!text) return false;
+  try {
+    if (typeof navigator !== "undefined" && navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch { /* fall through */ }
+  try {
+    const a = document.createElement("textarea");
+    a.value = text;
+    a.setAttribute("readonly", "");
+    a.style.position = "fixed";
+    a.style.top = "-9999px";
+    document.body.appendChild(a);
+    a.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(a);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
 export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templates }) => {
   const { t } = useTranslation();
   const toast = useToast();
   const inbounds = useFetch<InboundsByProtocol>(() => api.get("/inbounds"), []);
   const nodes = useFetch<NodeItem[]>(() => api.get("/nodes"), []);
+  const endpoints = useFetch<SubEndpointRow[]>(() => api.get("/subscription-endpoints"), []);
   const routingPresets = useFetch<{ presets: Record<string, { label: string }> }>(
     () => api.get("/routing/presets"),
     [],
@@ -68,6 +130,7 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
   const [suffix, setSuffix] = useState("");
   const [status, setStatus] = useState("active");
   const [note, setNote] = useState("");
+  const [panelId, setPanelId] = useState<number | null>(null);
   const [unlimited, setUnlimited] = useState(true);
   const [dataLimitUnit, setDataLimitUnit] = useState<DataLimitUnit>("GB");
   const [dataLimitValue, setDataLimitValue] = useState("");
@@ -83,12 +146,22 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
   const [dnsPreset, setDnsPreset] = useState("");
   const [protos, setProtos] = useState<Record<string, ProtoState>>({});
   const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<BulkCreateResult | null>(null);
+
+  const panels = useMemo(
+    () => (endpoints.data || []).filter(isPanelEndpoint).sort((a, b) => a.slug.localeCompare(b.slug)),
+    [endpoints.data],
+  );
+  const selectedPanel = panels.find((p) => p.id === panelId) || null;
 
   useEffect(() => {
     if (!open) return;
     setTab("basic");
+    setResult(null);
+    setPanelId(null);
     inbounds.reload();
     nodes.reload();
+    endpoints.reload();
     routingPresets.reload();
     dnsPresets.reload();
     if (templates.length) setTemplateId(templates[0].id);
@@ -145,11 +218,39 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
     });
   };
 
+  const filterTagsForPanel = (tags: string[]): string[] => {
+    if (!selectedPanel) return tags;
+    const matched = tags.filter((tag) => tagMatchesPanel(tag, selectedPanel.slug));
+    // Shared tags (e.g. in1) when the panel has no dedicated inbound rows.
+    return matched.length ? matched : tags;
+  };
+
   const toggleProto = (p: string) => {
     const enabling = !protos[p]?.enabled;
     const isNative = NATIVE_PROTOCOLS.includes(p as typeof NATIVE_PROTOCOLS[number]);
-    const tags = enabling && !isNative ? defaultProtoInboundTags(p, inbounds.data ?? undefined) : [];
+    const all = enabling && !isNative ? defaultProtoInboundTags(p, inbounds.data ?? undefined) : [];
+    const tags = filterTagsForPanel(all);
     setProto(p, { enabled: enabling, ...(enabling && tags.length ? { tags } : {}) });
+  };
+
+  const selectPanel = (id: number | null) => {
+    setPanelId(id);
+    const panel = panels.find((p) => p.id === id) || null;
+    if (panel) {
+      const want = `${panel.slug}_`;
+      setPrefix((prev) => (!prev || /^[a-z0-9]+_$/i.test(prev) ? want : prev));
+      // Re-filter already-enabled protocol tags to the chosen panel.
+      setProtos((s) => {
+        const next = { ...s };
+        for (const [p, v] of Object.entries(next)) {
+          if (!v.enabled || NATIVE_PROTOCOLS.includes(p as typeof NATIVE_PROTOCOLS[number])) continue;
+          const ibList = (inbounds.data?.[p] || []).map((i) => i.tag);
+          const matched = ibList.filter((tag) => tagMatchesPanel(tag, panel.slug));
+          next[p] = { ...v, tags: matched.length ? matched : v.tags.length ? v.tags : ibList };
+        }
+        return next;
+      });
+    }
   };
 
   const buildPayload = () => {
@@ -193,6 +294,10 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
     }
     if (useTemplate && !templateId) {
       toast.push(t("bulkCreate.templateRequired"), "error");
+      return false;
+    }
+    if (!panelId) {
+      toast.push(t("bulkCreate.panelRequired"), "error");
       return false;
     }
     return true;
@@ -245,6 +350,7 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
         client_profile: clientProfile,
         proxies,
         inbounds: inb,
+        subscription_endpoint_id: panelId,
       };
       if (useTemplate && templateId) body.template_id = templateId;
       if (speedUp.trim()) body.speed_limit_up = parseInt(speedUp, 10);
@@ -260,19 +366,36 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
         body.expire = 0;
       }
 
-      const r = await api.post<{ created: number; usernames: string[]; errors: string[]; duration_ms: number }>(
-        "/users/bulk/create",
-        body,
-      );
+      const r = await api.post<BulkCreateResult>("/users/bulk/create", body);
       toast.push(t("bulkCreate.done", { n: r.created, ms: r.duration_ms }), r.errors?.length ? "error" : "success");
       if (r.errors?.length) toast.push(r.errors.slice(0, 3).join("\n"), "error");
       onDone();
-      onClose();
+      setResult({
+        ...r,
+        users: (r.users || []).map((u) => ({
+          ...u,
+          public_subscription_url: u.public_subscription_url || u.subscription_url || "",
+        })),
+      });
     } catch (e: unknown) {
       toast.push(e instanceof Error ? e.message : t("common.error"), "error");
     } finally {
       setBusy(false);
     }
+  };
+
+  const resultLinks = useMemo(() => {
+    if (!result) return [] as { username: string; url: string }[];
+    return (result.users || []).map((u) => ({
+      username: u.username,
+      url: (u.public_subscription_url || u.subscription_url || "").trim(),
+    })).filter((x) => x.url);
+  }, [result]);
+
+  const copyAllLinks = async () => {
+    const text = resultLinks.map((x) => x.url).join("\n");
+    const ok = await copyText(text);
+    toast.push(ok ? t("bulkCreate.copiedAll", { n: resultLinks.length }) : t("common.error"), ok ? "success" : "error");
   };
 
   const presetExpire = (days: number) => {
@@ -297,6 +420,72 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
 
   if (!open) return null;
 
+  if (result) {
+    return (
+      <Modal
+        open
+        formWide
+        className="nx-bulk-create-shell nx-bulk-create-results"
+        overlayClassName="nx-bulk-create-overlay"
+        title={t("bulkCreate.resultsTitle", { n: result.created })}
+        onClose={onClose}
+        footer={
+          <div className="nx-bulk-create-foot">
+            <span className="nx-bulk-create-summary">
+              {t("bulkCreate.resultsSummary", { n: resultLinks.length, panel: selectedPanel?.slug || "—" })}
+            </span>
+            <div className="nx-bulk-create-foot-actions">
+              <Button variant="ghost" onClick={onClose}>{t("common.close")}</Button>
+              <Button variant="primary" onClick={copyAllLinks} disabled={!resultLinks.length}>
+                {t("bulkCreate.copyAll")}
+              </Button>
+            </div>
+          </div>
+        }
+      >
+        <div className="nx-bulk-create-results-body">
+          <p className="nx-bulk-create-intro">{t("bulkCreate.resultsDesc")}</p>
+          <div className="nx-bulk-create-results-toolbar">
+            <Button size="sm" variant="primary" onClick={copyAllLinks} disabled={!resultLinks.length}>
+              {t("bulkCreate.copyAll")}
+            </Button>
+            <span className="nx-faint">{t("bulkCreate.resultsCount", { n: resultLinks.length })}</span>
+          </div>
+          <div className="nx-bulk-create-results-list">
+            {resultLinks.map((row) => (
+              <div key={row.username} className="nx-bulk-create-result-row">
+                <div className="nx-bulk-create-result-meta">
+                  <strong dir="ltr">{row.username}</strong>
+                  <code dir="ltr">{row.url}</code>
+                </div>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={async () => {
+                    const ok = await copyText(row.url);
+                    toast.push(ok ? t("common.copied") : t("common.error"), ok ? "success" : "error");
+                  }}
+                >
+                  {t("common.copy")}
+                </Button>
+              </div>
+            ))}
+            {!resultLinks.length && (
+              <div className="nx-faint">{t("bulkCreate.noLinks")}</div>
+            )}
+          </div>
+          {!!result.errors?.length && (
+            <div className="nx-bulk-create-results-errors">
+              {result.errors.slice(0, 8).map((err) => (
+                <div key={err}>{err}</div>
+              ))}
+            </div>
+          )}
+        </div>
+      </Modal>
+    );
+  }
+
   return (
     <Modal
       open={open}
@@ -308,7 +497,11 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
       footer={
         <div className="nx-bulk-create-foot">
           <span className="nx-bulk-create-summary">
-            {t("bulkCreate.summary", { count, protos: enabledProtoLabels })}
+            {t("bulkCreate.summary", {
+              count,
+              protos: enabledProtoLabels,
+              panel: selectedPanel?.slug || t("bulkCreate.panelNone"),
+            })}
           </span>
           <div className="nx-bulk-create-foot-actions">
             <Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
@@ -352,7 +545,37 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
       <div className="nx-bulk-create-panel">
         {tab === "basic" && (
           <>
-            <h4 className="nx-bulk-create-section-title">{t("bulkCreate.sectionIdentity")}</h4>
+            <h4 className="nx-bulk-create-section-title">{t("bulkCreate.sectionPanel")}</h4>
+            <p className="nx-faint" style={{ fontSize: 12.5, margin: "0 0 12px" }}>{t("bulkCreate.panelHint")}</p>
+            {!endpoints.data ? (
+              <span className="nx-faint">{t("common.loading")}</span>
+            ) : panels.length === 0 ? (
+              <div className="nx-faint">{t("bulkCreate.noPanels")}</div>
+            ) : (
+              <div className="nx-bulk-create-panels">
+                {panels.map((p) => {
+                  const on = panelId === p.id;
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      className={`nx-bulk-create-panel-card ${on ? "selected" : ""}`}
+                      onClick={() => selectPanel(p.id)}
+                    >
+                      <span className="nx-bulk-create-panel-check">✓</span>
+                      <b dir="ltr">{p.slug}</b>
+                      <small dir="ltr">
+                        {p.host || "—"}
+                        {p.listen_port ? `:${p.listen_port}` : ""}
+                        {" · /"}{p.path_prefix}/
+                      </small>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            <h4 className="nx-bulk-create-section-title" style={{ marginTop: 18 }}>{t("bulkCreate.sectionIdentity")}</h4>
             <div className="nx-bulk-create-grid">
               <Field label={t("bulkCreate.count")}>
                 <Input
@@ -476,7 +699,13 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
                           )}
                           {ibList.length > 0 && (
                             <div className="nx-bulk-create-inbound-chips">
-                              {ibList.map((ib) => {
+                              {(selectedPanel
+                                ? (() => {
+                                    const matched = ibList.filter((ib) => tagMatchesPanel(ib.tag, selectedPanel.slug));
+                                    return matched.length ? matched : ibList;
+                                  })()
+                                : ibList
+                              ).map((ib) => {
                                 const ref = p === "shadowsocks" ? ssRef : "";
                                 const ok = p !== "shadowsocks" || inboundMatchesSsMethod(ib.ss_method, ref || ssMethodFromInbound(ib));
                                 const on = v.tags.includes(ib.tag);

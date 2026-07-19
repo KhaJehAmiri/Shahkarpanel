@@ -55,10 +55,18 @@ def converge_after_bulk_native(
                 errors.append(f"wireguard: {exc}")
                 result["sync_ok"] = False
 
+            # Always push Finalmask after membership changes — even when kernel
+            # sync failed. Prod nodes are Finalmask-only; skipping this left
+            # bulk-assigned users with DB proxies but no live clients.
             if wait_finalmask:
                 try:
-                    from app.wireguard.finalmask_reload import flush_finalmask_xray_reload
+                    from app.wireguard.finalmask_reload import (
+                        flush_finalmask_xray_reload,
+                        schedule_finalmask_xray_reload,
+                    )
 
+                    # Mark bulk so any nested schedule uses the longer debounce.
+                    schedule_finalmask_xray_reload(delay=0.1, bulk=True)
                     flush_finalmask_xray_reload()
                     result["finalmask_reloaded"] = True
                 except Exception as exc:
@@ -69,7 +77,7 @@ def converge_after_bulk_native(
                 try:
                     from app.wireguard.finalmask_reload import schedule_finalmask_xray_reload
 
-                    schedule_finalmask_xray_reload()
+                    schedule_finalmask_xray_reload(bulk=True)
                 except Exception as exc:
                     logger.warning("Bulk Finalmask schedule failed: %s", exc)
 

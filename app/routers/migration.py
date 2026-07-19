@@ -77,11 +77,43 @@ def _post_migration_sync(db: Session, *, applied: bool) -> None:
         from app.subscription.route_registry import refresh_subscription_routes
 
         refresh_subscription_routes(app, api_router)
-        from app.services.edge_proxy import sync_subscription_legacy_nginx
-
-        sync_subscription_legacy_nginx(db)
     except Exception:
-        logger.exception("Post-migration subscription/nginx refresh failed")
+        logger.exception("Post-migration subscription route refresh failed")
+
+    # Issue/activate LE + :443 vhosts for every subscription host, then HUP
+    # host nginx with --pid host so new SNI certs are live (without this,
+    # srwN kept serving the default panel cert until a manual reload).
+    try:
+        from app.db import crud
+        from app.services.edge_proxy import (
+            finalize_subscription_ssl_after_migration,
+            force_reload_subscription_nginx,
+        )
+
+        hosts: list[str] = []
+        seen: set[str] = set()
+        for ep in crud.list_subscription_endpoints(db, enabled_only=True):
+            host = (ep.host or "").strip().lower().split(":")[0]
+            if not host or host == "_" or host in seen:
+                continue
+            seen.add(host)
+            hosts.append(host)
+
+        if hosts:
+            for host in hosts:
+                result = finalize_subscription_ssl_after_migration(db, host)
+                logger.info(
+                    "post-migration SSL host=%s https_ready=%s nginx_reloaded=%s",
+                    host,
+                    result.get("https_ready"),
+                    result.get("nginx_reloaded"),
+                )
+        else:
+            ok, msg = force_reload_subscription_nginx()
+            logger.info("post-migration nginx reload ok=%s msg=%s", ok, (msg or "")[:200])
+    except Exception:
+        logger.exception("Post-migration subscription SSL/nginx finalize failed")
+
     if applied:
         try:
             from app.xray.serving import sync_core_users_now

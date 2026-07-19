@@ -5,6 +5,7 @@
 # Usage:
 #   sudo scripts/reconcile_subscription_nginx.sh --apply
 #   sudo scripts/reconcile_subscription_nginx.sh --dry-run
+#   sudo scripts/reconcile_subscription_nginx.sh --reload-only
 set -euo pipefail
 
 EDGE_DIR="${NEXUSPANEL_EDGE_DIR:-/var/lib/nexuspanel/edge}"
@@ -16,6 +17,7 @@ WEBROOT="${NEXUSPANEL_ACME_WEBROOT:-/var/www/letsencrypt}"
 CERTBOT="${CERTBOT:-/opt/certbot-venv/bin/certbot}"
 APPLY=0
 DRY_RUN=0
+RELOAD_ONLY=0
 
 RED=$'\e[31m'; GREEN=$'\e[32m'; BLUE=$'\e[34m'; YELLOW=$'\e[33m'; NC=$'\e[0m'
 log() { echo "${BLUE}[sub-nginx]${NC} $*"; }
@@ -23,15 +25,40 @@ ok() { echo "${GREEN}[sub-nginx]${NC} $*"; }
 warn() { echo "${YELLOW}[sub-nginx]${NC} $*"; }
 die() { echo "${RED}[sub-nginx]${NC} $*" >&2; exit 1; }
 
+reload_nginx() {
+  nginx -t || return 1
+  # Prefer signal reload — works inside chroot helpers where systemctl/dbus
+  # is unavailable (otherwise new SNI certs stay invisible until manual restart).
+  if [ -f /run/nginx.pid ]; then
+    kill -HUP "$(cat /run/nginx.pid)" 2>/dev/null && return 0
+  fi
+  if [ -f /var/run/nginx.pid ]; then
+    kill -HUP "$(cat /var/run/nginx.pid)" 2>/dev/null && return 0
+  fi
+  nginx -s reload 2>/dev/null && return 0
+  systemctl reload nginx 2>/dev/null && return 0
+  warn "nginx reload skipped"
+  return 1
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --apply) APPLY=1; shift;;
     --dry-run) DRY_RUN=1; shift;;
+    --reload-only) RELOAD_ONLY=1; shift;;
     -h|--help)
-      sed -n '2,10p' "$0"; exit 0;;
+      sed -n '2,12p' "$0"; exit 0;;
     *) die "Unknown arg: $1";;
   esac
 done
+
+if [ "$RELOAD_ONLY" -eq 1 ]; then
+  [ "$(id -u)" -eq 0 ] || die "Run as root for --reload-only (sudo)."
+  command -v nginx >/dev/null 2>&1 || die "nginx not installed."
+  reload_nginx || die "nginx -t/reload failed"
+  ok "nginx reloaded"
+  exit 0
+fi
 
 [ -f "$DESIRED" ] || { log "No desired state ($DESIRED) — nothing to reconcile."; exit 0; }
 
@@ -113,22 +140,6 @@ if [ "$DRY_RUN" -eq 1 ]; then
   log "Dry run complete."
   exit 0
 fi
-
-reload_nginx() {
-  nginx -t || return 1
-  # Prefer signal reload — works inside chroot helpers where systemctl/dbus
-  # is unavailable (otherwise new SNI certs stay invisible until manual restart).
-  if [ -f /run/nginx.pid ]; then
-    kill -HUP "$(cat /run/nginx.pid)" 2>/dev/null && return 0
-  fi
-  if [ -f /var/run/nginx.pid ]; then
-    kill -HUP "$(cat /var/run/nginx.pid)" 2>/dev/null && return 0
-  fi
-  nginx -s reload 2>/dev/null && return 0
-  systemctl reload nginx 2>/dev/null && return 0
-  warn "nginx reload skipped"
-  return 1
-}
 
 # Letsencrypt live/archive are often 0700; panel process (non-root) must be
 # able to detect certs for redirects / Enable SSL status.
@@ -226,4 +237,8 @@ if [ "$HTTPS_TOUCHED" -eq 1 ]; then
   reload_nginx || die "nginx -t/reload failed after HTTPS vhost ensure"
 fi
 
+# Always reload once more after cert/vhost changes. A prior HUP (before certbot)
+# is not enough — new SNI server_names (e.g. srw4 after panel migration) stay
+# on the default cert until workers pick up the final config.
+reload_nginx || die "nginx -t/reload failed on final pass"
 ok "subscription legacy nginx reloaded"

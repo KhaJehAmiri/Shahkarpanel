@@ -632,17 +632,51 @@ html:has(.sub-theme) body {
 }
 .s-btn-sm { width: auto; min-height: 40px; padding: 8px 12px; font-size: 12px; }
 
-/* How-to */
+/* How-to — clear apps CTA button */
 .s-howto { margin-bottom: 10px; }
 .s-howto-tog {
-  width: 100%; display: flex; align-items: center; justify-content: space-between;
-  gap: 10px; padding: 13px 14px; border-radius: 14px;
-  border: 1px dashed var(--s-line); background: transparent;
-  cursor: pointer; text-align: start; color: var(--s-muted);
+  width: 100%; display: flex; align-items: center; gap: 12px;
+  padding: 14px 14px 14px 12px; border-radius: 16px;
+  border: 1.5px solid color-mix(in srgb, var(--s-accent) 45%, var(--s-line));
+  background: linear-gradient(135deg, var(--s-soft-accent), var(--s-card) 55%);
+  box-shadow: 0 8px 22px rgba(15, 118, 110, 0.16), 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+  cursor: pointer; text-align: start; color: var(--s-text);
+  transition: transform 0.14s ease, box-shadow 0.14s ease, border-color 0.14s ease;
 }
-.s-howto-tog strong { display: block; color: var(--s-text); font-size: 13px; }
-.s-howto-tog small { display: block; margin-top: 2px; font-size: 12px; color: var(--s-dim); }
-.s-howto-body { margin-top: 8px; }
+.s-howto-tog:hover {
+  transform: translateY(-1px);
+  border-color: var(--s-accent);
+  box-shadow: 0 12px 28px rgba(15, 118, 110, 0.22);
+}
+.s-howto-tog:active { transform: translateY(0); }
+.s-howto-tog.open {
+  border-color: var(--s-accent);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--s-accent) 22%, var(--s-card)), var(--s-card));
+}
+.s-howto-ico {
+  flex-shrink: 0; width: 46px; height: 46px; border-radius: 13px;
+  display: grid; place-items: center;
+  background: var(--s-accent); color: #fff;
+  box-shadow: 0 6px 14px rgba(15, 118, 110, 0.28);
+}
+.s-howto-copy { flex: 1; min-width: 0; }
+.s-howto-tog strong {
+  display: block; color: var(--s-text); font-size: 15px; font-weight: 800; line-height: 1.25;
+}
+.s-howto-tog small {
+  display: block; margin-top: 3px; font-size: 12px; font-weight: 600;
+  color: var(--s-muted); line-height: 1.35;
+}
+.s-howto-cta {
+  flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px;
+  min-height: 36px; padding: 0 12px; border-radius: 999px;
+  background: var(--s-accent); color: #fff;
+  font-size: 12px; font-weight: 800;
+  box-shadow: 0 4px 12px rgba(15, 118, 110, 0.25);
+}
+.s-howto-cta-label { letter-spacing: 0.01em; }
+.s-howto-chev { font-size: 11px; line-height: 1; opacity: 0.9; }
+.s-howto-body { margin-top: 10px; }
 .s-label {
   margin: 0 0 6px; font-size: 11px; font-weight: 800;
   color: var(--s-dim); text-transform: uppercase; letter-spacing: 0.04em;
@@ -673,16 +707,18 @@ html:has(.sub-theme) body {
   border-color: var(--s-accent); background: var(--s-soft-accent); color: var(--s-accent);
 }
 .s-app {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  padding: 11px; border-radius: 12px; background: var(--s-soft); border: 1px solid var(--s-line);
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 14px; border-radius: 14px; background: var(--s-soft); border: 1px solid var(--s-line);
 }
 .s-app-ico {
-  width: 40px; height: 40px; border-radius: 10px;
+  width: 44px; height: 44px; border-radius: 12px; flex-shrink: 0;
   display: grid; place-items: center; color: #fff; font-weight: 800; font-size: 12px;
 }
-.s-app-name { font-size: 14px; font-weight: 800; }
+.s-app-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.s-app-name { font-size: 15px; font-weight: 800; }
 .s-app-tag { font-size: 11px; font-weight: 700; color: var(--s-accent); }
-.s-more-apps { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.s-app-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.s-more-apps { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
 
 .s-foot {
   margin-top: 18px; text-align: center;
@@ -725,22 +761,50 @@ html:has(.sub-theme) body {
 
 /* App tiles */
 .sub-app-tile {
-  display: flex; align-items: center; gap: 10px; padding: 10px 12px;
-  border-radius: 12px; border: 1px solid var(--s-line); background: var(--s-soft);
+  display: flex; align-items: flex-start; gap: 12px; padding: 14px;
+  border-radius: 14px; border: 1px solid var(--s-line); background: var(--s-card);
+  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.04);
 }
 .sub-app-icon {
-  width: 34px; height: 34px; border-radius: 9px; flex-shrink: 0;
-  display: grid; place-items: center; font-size: 10px; font-weight: 800; color: #fff;
+  width: 42px; height: 42px; border-radius: 11px; flex-shrink: 0;
+  display: grid; place-items: center; font-size: 11px; font-weight: 800; color: #fff;
 }
-.sub-app-name { font-size: 13px; font-weight: 700; }
+.sub-app-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.sub-app-name { font-size: 14px; font-weight: 800; color: var(--s-text); }
 .sub-app-link { font-size: 11px; font-weight: 600; color: var(--s-accent); text-decoration: none; }
-.sub-app-hint { font-size: 11px; color: var(--s-muted); }
+.sub-app-hint { font-size: 11px; color: var(--s-muted); line-height: 1.35; }
+.sub-app-download-link {
+  display: inline-block; margin-top: 2px;
+  font-size: 13px; font-weight: 700; color: var(--s-accent);
+  text-decoration: underline; text-underline-offset: 3px;
+}
+.sub-app-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 2px; }
+.sub-btn-action {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: 40px; padding: 9px 14px; border-radius: 11px;
+  font-size: 13px; font-weight: 800; cursor: pointer; text-decoration: none;
+  border: 1.5px solid var(--s-line); background: var(--s-soft); color: var(--s-text);
+  transition: transform 0.12s, border-color 0.12s, background 0.12s;
+}
+.sub-btn-action:hover:not(:disabled) {
+  border-color: var(--s-accent); color: var(--s-accent); transform: translateY(-1px);
+}
+.sub-btn-action-main {
+  background: var(--s-accent); color: #fff; border-color: var(--s-accent);
+  box-shadow: 0 4px 12px rgba(15, 118, 110, 0.22);
+}
+.sub-btn-action-main:hover:not(:disabled) {
+  color: #fff; filter: brightness(1.05);
+}
+.sub-btn-action:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+/* Legacy class kept for ConnectCard / modal */
 .sub-btn-primary {
   display: inline-flex; align-items: center; justify-content: center;
   background: var(--s-accent); color: #fff; font-weight: 700; border: none;
   border-radius: 10px; padding: 8px 12px; font-size: 12px; cursor: pointer; min-height: 38px;
 }
 .sub-btn-primary:disabled { opacity: 0.45; }
+.sub-btn-rose { background: #be123c; }
 
 @media (max-width: 380px) {
   .s-remain-v { font-size: 1.7rem; }

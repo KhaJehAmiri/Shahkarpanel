@@ -747,10 +747,18 @@ def _prepare_wg_sync(session) -> tuple[List[int], List[WGUserPeer]]:
     if not wg_nodes:
         return [], []
     if autoscale_enabled():
-        ensure_all_peers(session)
+        try:
+            ensure_all_peers(session)
+        except Exception:
+            # Never abort Finalmask/peer push because one autoscale race failed —
+            # bulk native assign was returning sync_ok=False with empty client IPs.
+            logger.exception("ensure_all_peers during WG sync prep failed")
         from app.wireguard.address_authority import mirror_autoscale_addresses_to_proxies
 
-        mirror_autoscale_addresses_to_proxies(session)
+        try:
+            mirror_autoscale_addresses_to_proxies(session)
+        except Exception:
+            logger.exception("mirror_autoscale_addresses_to_proxies failed")
     for n in wg_nodes:
         cfg = n.wireguard
         if cfg is None:

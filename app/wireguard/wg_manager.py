@@ -12,6 +12,7 @@ import logging
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.models import Node, Proxy, User, WgInterface, WgPeer
@@ -297,8 +298,14 @@ def _create_interface_on_node(db: Session, dbnode: Node, iface: WgInterface) -> 
     )
 
 
-def create_interface(db: Session, dbnode: Node) -> WgInterface:
-    """Provision a new WG interface on the node and persist metadata."""
+def create_interface(
+    db: Session,
+    dbnode: Node,
+    *,
+    provision_on_node: bool = True,
+    commit: bool = True,
+) -> WgInterface:
+    """Provision a new WG interface metadata (and optionally on the node)."""
     cfg = dbnode.wireguard
     if cfg is None:
         raise WireGuardAutoScaleError("node has no WireGuard config")
@@ -318,26 +325,62 @@ def create_interface(db: Session, dbnode: Node) -> WgInterface:
         slot_index=slot,
         created_at=datetime.utcnow(),
     )
-    db.add(iface)
-    db.flush()
-    _create_interface_on_node(db, dbnode, iface)
-    db.commit()
-    db.refresh(iface)
+    try:
+        with db.begin_nested():
+            db.add(iface)
+            db.flush()
+    except IntegrityError:
+        existing = (
+            db.query(WgInterface)
+            .filter(WgInterface.node_id == dbnode.id, WgInterface.name == name)
+            .first()
+        )
+        if existing is not None:
+            return existing
+        raise
+
+    if provision_on_node and plain_wg_enabled(cfg):
+        _create_interface_on_node(db, dbnode, iface)
+    if commit:
+        db.commit()
+        db.refresh(iface)
     logger.info(
-        "Created auto-scale interface %s on node %s (%s:%s)",
+        "Created auto-scale interface %s on node %s (%s:%s) node_provision=%s",
         iface.name,
         dbnode.id,
         iface.subnet,
         iface.listen_port,
+        bool(provision_on_node and plain_wg_enabled(cfg)),
     )
     return iface
 
 
-def _find_or_create_interface(db: Session, dbnode: Node) -> WgInterface:
+def _find_or_create_interface(
+    db: Session,
+    dbnode: Node,
+    *,
+    provision_on_node: bool = True,
+    commit: bool = True,
+) -> WgInterface:
     iface = _find_interface_with_capacity(db, dbnode.id)
     if iface is not None:
         return iface
-    return create_interface(db, dbnode)
+    # Prefer any interface with capacity on other WG nodes before opening a slot.
+    any_cap = (
+        db.query(WgInterface)
+        .filter(WgInterface.peer_count < WgInterface.max_peers)
+        .order_by(WgInterface.slot_index)
+        .with_for_update()
+        .first()
+    )
+    if any_cap is not None:
+        return any_cap
+    return create_interface(
+        db,
+        dbnode,
+        provision_on_node=provision_on_node,
+        commit=commit,
+    )
 
 
 def _endpoint(dbnode: Node, iface: WgInterface) -> str:
@@ -364,20 +407,17 @@ def render_client_conf(dbnode: Node, iface: WgInterface, peer: WgPeer) -> str:
     )
 
 
-def create_peer(
+def _persist_peer_row(
     db: Session,
     user_id: int,
     *,
     node_id: Optional[int] = None,
-) -> dict:
-    """Main entry point: assign or return a plain WG peer for ``user_id``.
+) -> Tuple[Node, WgInterface, WgPeer, Proxy]:
+    """Allocate/return WgPeer + proxy.address inside the caller's transaction.
 
-    Returns ``{"conf": str, "interface": str, "address": str, "endpoint": str,
-    "node_id": int}``. Idempotent — existing peers are returned unchanged.
+    No ``commit`` and no node RPC — safe for bulk ``ensure_all_peers``.
+    Idempotent under concurrent UniqueViolation (savepoint + re-fetch).
     """
-    if not autoscale_enabled():
-        raise WireGuardAutoScaleError("wg_autoscale feature flag is disabled")
-
     dbnode = _pick_node(db, node_id)
     if dbnode is None or dbnode.wireguard is None:
         raise WireGuardAutoScaleError("no WireGuard node configured")
@@ -392,20 +432,24 @@ def create_peer(
     if existing is not None:
         iface = existing.interface
         dbnode = db.query(Node).filter(Node.id == iface.node_id).first() or dbnode
-        return {
-            "conf": render_client_conf(dbnode, iface, existing),
-            "interface": iface.name,
-            "address": existing.address,
-            "endpoint": _endpoint(dbnode, iface),
-            "node_id": iface.node_id,
-            "public_key": existing.public_key,
-        }
+        settings = dict(proxy.settings or {})
+        if settings.get("address") != existing.address:
+            settings["address"] = existing.address
+            proxy.settings = settings
+            db.flush()
+        return dbnode, iface, existing, proxy
 
     settings = _ensure_proxy_keys(db, proxy)
     user = db.query(User).filter(User.id == user_id).first()
     active = bool(user and user.status in SERVED_STATUSES)
+    kernel_plain = plain_wg_enabled(dbnode.wireguard)
 
-    iface = _find_or_create_interface(db, dbnode)
+    iface = _find_or_create_interface(
+        db,
+        dbnode,
+        provision_on_node=kernel_plain,
+        commit=False,
+    )
     address = _allocate_ip(db, iface)
 
     peer = WgPeer(
@@ -418,12 +462,53 @@ def create_peer(
         active=active,
         created_at=datetime.utcnow(),
     )
-    db.add(peer)
-    _increment_peer_count(db, iface, 1)
+    try:
+        with db.begin_nested():
+            db.add(peer)
+            _increment_peer_count(db, iface, 1)
+            settings = dict(settings)
+            settings["address"] = address
+            proxy.settings = settings
+            db.flush()
+    except IntegrityError:
+        # Concurrent bulk / duplicate pubkey — reuse the row that won the race.
+        existing = db.query(WgPeer).filter(WgPeer.user_id == user_id).first()
+        if existing is None:
+            existing = (
+                db.query(WgPeer)
+                .filter(WgPeer.public_key == settings["public_key"])
+                .first()
+            )
+        if existing is None:
+            raise
+        iface = existing.interface
+        dbnode = db.query(Node).filter(Node.id == iface.node_id).first() or dbnode
+        settings = dict(proxy.settings or {})
+        if settings.get("address") != existing.address:
+            settings["address"] = existing.address
+            proxy.settings = settings
+            db.flush()
+        return dbnode, iface, existing, proxy
 
-    settings["address"] = address
-    proxy.settings = settings
-    db.flush()
+    return dbnode, iface, peer, proxy
+
+
+def create_peer(
+    db: Session,
+    user_id: int,
+    *,
+    node_id: Optional[int] = None,
+) -> dict:
+    """Main entry point: assign or return a plain WG peer for ``user_id``.
+
+    Returns ``{"conf": str, "interface": str, "address": str, "endpoint": str,
+    "node_id": int}``. Idempotent — existing peers are returned unchanged.
+    """
+    if not autoscale_enabled():
+        raise WireGuardAutoScaleError("wg_autoscale feature flag is disabled")
+
+    dbnode, iface, peer, _proxy = _persist_peer_row(db, user_id, node_id=node_id)
+    kernel_plain = bool(dbnode.wireguard and plain_wg_enabled(dbnode.wireguard))
 
     delegates_tunnel = False
     try:
@@ -433,29 +518,24 @@ def create_peer(
     except Exception:
         delegates_tunnel = False
 
-    if delegates_tunnel:
-        # This relay's kernel wg0 is intentionally down — Xray/the tunnel owns
-        # the UDP port, and the peer actually terminates on whichever node
-        # really serves the tunnel exit (the panel's own wg0 for a panel-exit
-        # tunnel), never on this relay's torn-down kernel interface. Hot-adding
-        # here always failed with "no such device" and rolled the whole peer
-        # creation back — new users assigned to a delegated relay could never
-        # get a working WireGuard config at all. Commit the peer and let the
-        # existing full-sync paths (panel-exit sync now, periodic node sync
-        # for any dedicated exit node) push it to the real termination point.
+    # Finalmask-only / tunnel-delegated nodes: DB identity is enough; full sync
+    # (or Finalmask hot-replace) pushes peers. Never roll back the peer row when
+    # kernel wg is intentionally absent — that was aborting bulk native assign.
+    if delegates_tunnel or not kernel_plain:
         db.commit()
         db.refresh(peer)
         db.refresh(iface)
-        try:
-            from app.wireguard.host_sync import sync_panel_exit_wireguard
+        if delegates_tunnel:
+            try:
+                from app.wireguard.host_sync import sync_panel_exit_wireguard
 
-            sync_panel_exit_wireguard(db)
-        except Exception as exc:
-            logger.warning(
-                "Panel-exit WireGuard sync after creating peer for user %s failed: %s",
-                user_id,
-                exc,
-            )
+                sync_panel_exit_wireguard(db)
+            except Exception as exc:
+                logger.warning(
+                    "Panel-exit WireGuard sync after creating peer for user %s failed: %s",
+                    user_id,
+                    exc,
+                )
         try:
             from app.wireguard.operations import sync_user_change
 
@@ -465,24 +545,36 @@ def create_peer(
     else:
         client = _node_client(dbnode)
         if client is None or not hasattr(client, "autoscale_hot_add_peer"):
-            db.rollback()
-            raise WireGuardAutoScaleError(f"node {dbnode.id} is not connected")
-
-        allowed = _normalize_allowed(address) if active else "0.0.0.0/32"
-        try:
-            client.autoscale_hot_add_peer(
-                iface.name,
-                peer.public_key,
-                allowed,
-                preshared_key=peer.preshared_key,
+            # Keep the DB peer (Finalmask / later sync) — do not wipe bulk work.
+            db.commit()
+            db.refresh(peer)
+            db.refresh(iface)
+            logger.warning(
+                "Peer for user %s persisted without hot-add (node %s unavailable)",
+                user_id,
+                dbnode.id,
             )
-        except Exception as exc:
-            db.rollback()
-            raise WireGuardAutoScaleError(f"hot-add failed on {iface.name}: {exc}") from exc
-
-        db.commit()
-        db.refresh(peer)
-        db.refresh(iface)
+        else:
+            user = db.query(User).filter(User.id == user_id).first()
+            active = bool(user and user.status in SERVED_STATUSES)
+            allowed = _normalize_allowed(peer.address) if active else "0.0.0.0/32"
+            try:
+                client.autoscale_hot_add_peer(
+                    iface.name,
+                    peer.public_key,
+                    allowed,
+                    preshared_key=peer.preshared_key,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "hot-add failed on %s for user %s (peer kept in DB): %s",
+                    iface.name,
+                    user_id,
+                    exc,
+                )
+            db.commit()
+            db.refresh(peer)
+            db.refresh(iface)
 
     return {
         "conf": render_client_conf(dbnode, iface, peer),
@@ -564,18 +656,32 @@ def sync_user_statuses(db: Session) -> int:
 
 
 def ensure_all_peers(db: Session) -> int:
-    """Create missing auto-scale peers for every WG user (bootstrap helper)."""
+    """Create missing auto-scale peers for every WG user (DB-only, bulk-safe).
+
+    Never aborts the whole sync on one bad user / UniqueViolation — that used
+    to mark bulk native assign as ``sync_ok=False`` while leaving thousands of
+    users without tunnel IPs (Finalmask empty for new members).
+    """
     from app.wireguard.operations import _all_wg_proxies
 
     created = 0
+    failed = 0
+    existing_ids = {
+        uid for (uid,) in db.query(WgPeer.user_id).all()
+    }
     for proxy in _all_wg_proxies(db):
-        if db.query(WgPeer).filter(WgPeer.user_id == proxy.user_id).first():
+        if proxy.user_id in existing_ids:
             continue
         try:
-            create_peer(db, proxy.user_id)
+            with db.begin_nested():
+                _persist_peer_row(db, proxy.user_id)
+            existing_ids.add(proxy.user_id)
             created += 1
-        except WireGuardAutoScaleError as exc:
+        except Exception as exc:
+            failed += 1
             logger.warning("ensure_all_peers skipped user %s: %s", proxy.user_id, exc)
+    if created or failed:
+        logger.info("ensure_all_peers created=%s failed=%s", created, failed)
     return created
 
 

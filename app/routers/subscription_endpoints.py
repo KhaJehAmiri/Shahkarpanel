@@ -162,6 +162,11 @@ def create_alias(
 
 
 def _refresh_routes(*, ensure_ssl_host: str | None = None) -> None:
+    """Hot-apply path mounts + nginx after endpoint CRUD.
+
+    Always syncs legacy subscription nginx so domain/port/path edits take effect
+    without a panel restart. SSL ensure is optional when a host is known.
+    """
     try:
         from app import app
         from app.routers import api_router
@@ -175,10 +180,11 @@ def _refresh_routes(*, ensure_ssl_host: str | None = None) -> None:
         )
 
         with GetDB() as db:
-            if ensure_ssl_host:
-                ensure_subscription_domain_ssl(db, ensure_ssl_host)
-            else:
-                sync_subscription_legacy_nginx(db)
+            # Path-only edits must rebuild nginx vhosts even when SSL is already OK.
+            sync_subscription_legacy_nginx(db)
+            host = (ensure_ssl_host or "").strip() or None
+            if host:
+                ensure_subscription_domain_ssl(db, host)
     except Exception:
         import logging
 

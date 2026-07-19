@@ -39,22 +39,9 @@ router = APIRouter(
 
 def _refresh_routes(*, ensure_ssl_host: str | None = None) -> None:
     try:
-        from app import app as fastapi_app
-        from app.routers import api_router
-        from app.subscription.route_registry import refresh_subscription_routes
+        from app.routers.subscription_endpoints import _refresh_routes as refresh_all
 
-        refresh_subscription_routes(fastapi_app, api_router)
-        from app.db import GetDB
-        from app.services.edge_proxy import (
-            ensure_subscription_domain_ssl,
-            sync_subscription_legacy_nginx,
-        )
-
-        with GetDB() as db:
-            if ensure_ssl_host:
-                ensure_subscription_domain_ssl(db, ensure_ssl_host)
-            else:
-                sync_subscription_legacy_nginx(db)
+        refresh_all(ensure_ssl_host=ensure_ssl_host)
     except Exception:
         logger.exception("subscription route/nginx refresh failed")
 

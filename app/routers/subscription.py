@@ -421,6 +421,7 @@ def _browser_subscribe_redirect_url(
     *,
     listen_port: int | None = None,
     endpoint_host: str | None = None,
+    path_prefix: str | None = None,
 ) -> str:
     """Send browser users to the panel HTTPS vhost (443), not the legacy sub port.
 
@@ -429,6 +430,10 @@ def _browser_subscribe_redirect_url(
     Only absolute-redirect to :443 when that host already has a LE cert;
     otherwise keep a same-host relative/legacy URL so nginx won't fall through
     to another domain's certificate.
+
+    ``path_prefix`` is passed as ``?path=`` so the Next.js page fetches
+    ``/{path}/{token}/info`` (e.g. ``info`` for migrated 3x-ui panels) instead
+    of hardcoding ``/sub/``.
     """
     host_hdr = (request.headers.get("host") or "").strip().lower()
     req_host = host_hdr.split(":")[0] if host_hdr else ""
@@ -450,12 +455,17 @@ def _browser_subscribe_redirect_url(
         except Exception:
             ssl_ready = False
 
+    prefix = (path_prefix or "").strip().strip("/")
+    qs = f"token={token}"
+    if prefix:
+        qs += f"&path={prefix}"
+
     if host_name and ssl_ready:
-        return f"https://{host_name}/subscribe/?token={token}"
+        return f"https://{host_name}/subscribe/?{qs}"
     if host_name and port and port not in (80, 443):
         # Stay on the legacy sub listener until Enable SSL has issued a cert.
-        return f"https://{host_name}:{port}/subscribe/?token={token}"
-    return f"/subscribe/?token={token}"
+        return f"https://{host_name}:{port}/subscribe/?{qs}"
+    return f"/subscribe/?{qs}"
 
 
 # Many VPN client apps (V2Box, Happ, some HiddifyNext/v2rayNG builds) send a
@@ -503,6 +513,11 @@ def user_subscription(
                     token,
                     listen_port=endpoint.listen_port if endpoint else None,
                     endpoint_host=endpoint.host if endpoint else None,
+                    path_prefix=(
+                        (endpoint.path_prefix if endpoint else None)
+                        or sub_ctx.path_prefix
+                        or None
+                    ),
                 ),
                 status_code=302,
             )

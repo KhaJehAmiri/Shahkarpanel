@@ -3,6 +3,7 @@ import math
 import secrets
 import socket
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 import psutil
@@ -97,37 +98,152 @@ xr_bw.packets_recv = None
 xr_bw.packets_sent = None
 xr_bw.last_perf_counter = None
 xr_bw_ready = False
+# How many Xray APIs contributed to the last successful fleet sample (panel=1).
+xr_bw_sources = 0
+
+
+def _live_xray_apis() -> dict:
+    """Panel Xray API plus every connected node that has a live Stats API."""
+    from app import xray
+
+    apis = {None: xray.api}
+    for node_id, node in list(getattr(xray, "nodes", {}).items()):
+        try:
+            if getattr(node, "has_live_api", None) and node.has_live_api():
+                apis[node_id] = node.api
+            elif getattr(node, "started", False) and getattr(node, "_api", None) is not None:
+                apis[node_id] = node.api
+        except Exception:
+            continue
+    return {nid: api for nid, api in apis.items() if api is not None}
+
+
+def _sum_link_counters(api, *, prefer_inbound: bool = True) -> tuple[int, int]:
+    """Return (uplink, downlink) cumulative bytes on one core.
+
+    Prefer inbound counters (stable; not reset by usage jobs). Fall back to
+    outbound when inbound stats are still disabled on an older core config.
+    """
+    def _sum(stats) -> tuple[int, int]:
+        up = down = 0
+        for stat in stats:
+            if not getattr(stat, "value", 0):
+                continue
+            if stat.link == "uplink":
+                up += int(stat.value)
+            else:
+                down += int(stat.value)
+        return up, down
+
+    if prefer_inbound:
+        try:
+            up, down = _sum(api.get_inbounds_stats(reset=False, timeout=3))
+            if up or down:
+                return up, down
+        except Exception:
+            pass
+    up, down = _sum(api.get_outbounds_stats(reset=False, timeout=3))
+    return up, down
 
 
 def _sample_xray_inbound_rates() -> None:
-    """Sum all inbound uplink/downlink counters and derive bytes/s."""
-    global xr_bw, xr_bw_ready
-    try:
-        from app import xray
+    """Fleet Overall Speed from panel + every connected node (3x-ui style).
 
-        up = down = 0
-        for stat in xray.api.get_inbounds_stats(reset=False, timeout=5):
-            if stat.link == "uplink":
-                up += stat.value
-            else:
-                down += stat.value
+    Polarity matches 3x-ui Overall Speed / NetIO (server view):
+      Upload   = bytes the server sends   ≈ downlink (to clients / from net)
+      Download = bytes the server receives ≈ uplink (from clients / to net)
+
+    Same delta/dt approach as 3x-ui ``Status.NetIO``, but summed across the
+    whole fleet's Xray cores instead of only the panel host NIC.
+    """
+    global xr_bw, xr_bw_ready, xr_bw_sources
+    try:
+        apis = _live_xray_apis()
+        if not apis:
+            xr_bw_ready = False
+            xr_bw_sources = 0
+            return
+
+        total_up = total_down = 0
+        ok = 0
+        workers = min(16, max(1, len(apis)))
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {
+                nid: executor.submit(_sum_link_counters, api)
+                for nid, api in apis.items()
+            }
+            for _nid, fut in futures.items():
+                try:
+                    up, down = fut.result(timeout=4)
+                    total_up += up
+                    total_down += down
+                    ok += 1
+                except Exception:
+                    continue
+
+        if ok == 0:
+            xr_bw_ready = False
+            xr_bw_sources = 0
+            return
 
         last_t = xr_bw.last_perf_counter
-        prev_recv = xr_bw.bytes_recv
-        prev_sent = xr_bw.bytes_sent
+        prev_up = xr_bw.bytes_sent
+        prev_down = xr_bw.bytes_recv
         now = time.perf_counter()
-        if last_t is not None and prev_recv is not None and prev_sent is not None:
+        if last_t is not None and prev_up is not None and prev_down is not None:
             dt = now - last_t
             if dt > 0:
-                # downlink = traffic to clients (دانلود کاربر), uplink = آپلود کاربر
-                xr_bw.incoming_bytes = max(0, round((down - prev_recv) / dt))
-                xr_bw.outgoing_bytes = max(0, round((up - prev_sent) / dt))
-        xr_bw.bytes_recv = down
-        xr_bw.bytes_sent = up
+                d_up = total_up - prev_up
+                d_down = total_down - prev_down
+                if d_up < 0 or d_down < 0:
+                    # Outbound counters are periodically reset by usage jobs.
+                    xr_bw.incoming_bytes = 0
+                    xr_bw.outgoing_bytes = 0
+                else:
+                    # Download card ← server RX ← uplink
+                    xr_bw.incoming_bytes = max(0, round(d_up / dt))
+                    # Upload card ← server TX ← downlink
+                    xr_bw.outgoing_bytes = max(0, round(d_down / dt))
+        xr_bw.bytes_sent = total_up
+        xr_bw.bytes_recv = total_down
         xr_bw.last_perf_counter = now
         xr_bw_ready = True
+        xr_bw_sources = ok
     except Exception:
         xr_bw_ready = False
+        xr_bw_sources = 0
+
+
+# Same family of exclusions as 3x-ui ``isVirtualInterface``.
+_VIRTUAL_NIC_PREFIXES = (
+    "lo", "loopback", "docker", "br-", "veth", "virbr",
+    "tun", "tap", "wg", "tailscale", "zt",
+)
+
+
+def _nic_io_totals() -> tuple[int, int, int, int]:
+    """Sum host NIC counters, skipping virtual interfaces (3x-ui NetIO style)."""
+    try:
+        per_nic = psutil.net_io_counters(pernic=True) or {}
+    except Exception:
+        per_nic = {}
+    if not per_nic:
+        io = psutil.net_io_counters()
+        return io.bytes_sent, io.bytes_recv, io.packets_sent, io.packets_recv
+
+    sent = recv = pkts_sent = pkts_recv = 0
+    for name, io in per_nic.items():
+        low = (name or "").lower()
+        if any(low == p or low.startswith(p) for p in _VIRTUAL_NIC_PREFIXES):
+            continue
+        sent += int(io.bytes_sent)
+        recv += int(io.bytes_recv)
+        pkts_sent += int(io.packets_sent)
+        pkts_recv += int(io.packets_recv)
+    if sent or recv:
+        return sent, recv, pkts_sent, pkts_recv
+    io = psutil.net_io_counters()
+    return io.bytes_sent, io.bytes_recv, io.packets_sent, io.packets_recv
 
 
 # sample time is 2 seconds, values lower than this may not produce good results
@@ -135,7 +251,7 @@ def _sample_xray_inbound_rates() -> None:
 def record_realtime_bandwidth() -> None:
     global rt_bw
     last_perf_counter = rt_bw.last_perf_counter
-    io = psutil.net_io_counters()
+    sent, recv, pkts_sent, pkts_recv = _nic_io_totals()
     now = time.perf_counter()
     rt_bw.last_perf_counter = now
     if last_perf_counter is None:
@@ -143,24 +259,41 @@ def record_realtime_bandwidth() -> None:
     else:
         sample_time = now - last_perf_counter
     if sample_time > 0:
-        rt_bw.incoming_bytes = round((io.bytes_recv - (rt_bw.bytes_recv or 0)) / sample_time)
-        rt_bw.outgoing_bytes = round((io.bytes_sent - (rt_bw.bytes_sent or 0)) / sample_time)
-        rt_bw.incoming_packets = round((io.packets_recv - (rt_bw.packets_recv or 0)) / sample_time)
-        rt_bw.outgoing_packets = round((io.packets_sent - (rt_bw.packets_sent or 0)) / sample_time)
-    rt_bw.bytes_recv = io.bytes_recv
-    rt_bw.bytes_sent = io.bytes_sent
-    rt_bw.packets_recv = io.packets_recv
-    rt_bw.packets_sent = io.packets_sent
+        rt_bw.incoming_bytes = round((recv - (rt_bw.bytes_recv or 0)) / sample_time)
+        rt_bw.outgoing_bytes = round((sent - (rt_bw.bytes_sent or 0)) / sample_time)
+        rt_bw.incoming_packets = round((pkts_recv - (rt_bw.packets_recv or 0)) / sample_time)
+        rt_bw.outgoing_packets = round((pkts_sent - (rt_bw.packets_sent or 0)) / sample_time)
+    rt_bw.bytes_recv = recv
+    rt_bw.bytes_sent = sent
+    rt_bw.packets_recv = pkts_recv
+    rt_bw.packets_sent = pkts_sent
     _sample_xray_inbound_rates()
 
 
-def realtime_bandwidth() -> RealtimeBandwidthStat:
-    """Prefer Xray inbound rates (proxy). Fall back to whole-server NIC via psutil.
+# Ignore tiny Xray counter noise; below this, prefer host NIC like 3x-ui.
+_FLEET_RATE_FLOOR = 8_192  # 8 KiB/s
 
-    When Xray stats are reachable but idle (common while traffic flows through
-    nodes rather than panel inbounds), fall back to NIC so Home stays live.
+
+def _use_fleet_bandwidth() -> bool:
+    if not xr_bw_ready:
+        return False
+    # Multi-node sample: always trust the fleet aggregate (even when idle).
+    if xr_bw_sources > 1:
+        return True
+    return (
+        xr_bw.incoming_bytes >= _FLEET_RATE_FLOOR
+        or xr_bw.outgoing_bytes >= _FLEET_RATE_FLOOR
+    )
+
+
+def realtime_bandwidth() -> RealtimeBandwidthStat:
+    """Fleet Xray (panel + nodes) when it carries real traffic; else host NIC.
+
+    3x-ui Overall Speed is host NetIO. We extend that for NexusPanel by summing
+    Xray counters across every connected node so Home shows whole-fleet proxy
+    throughput instead of only the panel box.
     """
-    if xr_bw_ready and (xr_bw.incoming_bytes > 0 or xr_bw.outgoing_bytes > 0):
+    if _use_fleet_bandwidth():
         return RealtimeBandwidthStat(
             incoming_bytes=xr_bw.incoming_bytes,
             outgoing_bytes=xr_bw.outgoing_bytes,
@@ -176,8 +309,8 @@ def realtime_bandwidth() -> RealtimeBandwidthStat:
 
 
 def realtime_bandwidth_source() -> str:
-    if xr_bw_ready and (xr_bw.incoming_bytes > 0 or xr_bw.outgoing_bytes > 0):
-        return "xray"
+    if _use_fleet_bandwidth():
+        return "fleet" if xr_bw_sources > 1 else "xray"
     return "nic"
 
 

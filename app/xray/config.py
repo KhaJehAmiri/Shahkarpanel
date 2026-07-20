@@ -74,8 +74,10 @@ class XRayConfig(dict):
                 }
             },
             "system": {
-                "statsInboundDownlink": False,
-                "statsInboundUplink": False,
+                # Inbound counters power Home "Overall Speed" (fleet panel+nodes)
+                # without racing record_node_usages, which resets outbound stats.
+                "statsInboundDownlink": True,
+                "statsInboundUplink": True,
                 "statsOutboundDownlink": True,
                 "statsOutboundUplink": True
             }

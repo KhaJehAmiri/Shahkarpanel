@@ -147,7 +147,9 @@ export const UpdateProvider: FC<{ sudo: boolean; lang: string; children: ReactNo
   const openUpdateModal = useCallback(() => {
     if (!sudo) return;
     setUpdateModalOpen(true);
-    refreshCheck();
+    // Use cached check first so the modal opens instantly; a background
+    // refresh must not race ``git reset`` when the admin hits Apply.
+    void refreshCheck(false);
   }, [sudo, refreshCheck]);
 
   const closeUpdateModal = useCallback(() => {

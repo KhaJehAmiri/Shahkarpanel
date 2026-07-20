@@ -26,6 +26,12 @@ _VERSION_FILE = _ROOT / "VERSION"
 _META_FILE = Path(os.environ.get("NEXUSPANEL_DATA_DIR", "/var/lib/nexuspanel")) / "install-meta.json"
 _COMPOSE_PROJECT = os.environ.get("COMPOSE_PROJECT_NAME", "nexuspanel").strip() or "nexuspanel"
 _lock = threading.Lock()
+# Serialize every git mutation/fetch against the bind-mounted checkout.
+# Concurrent ``git fetch`` (update check) + ``git reset --hard`` (apply) races
+# on ``.git/index`` and fails the panel update with
+# ``Could not reset index file to revision …`` — which the UI shows as an
+# instant cancel.
+_git_lock = threading.Lock()
 _jobs: Dict[str, "UpdateJob"] = {}
 
 STEP_ORDER = ("pull", "backup", "migrate", "build", "restart")
@@ -280,6 +286,51 @@ def _run_cmd_quiet(cmd: List[str], cwd: Optional[Path] = None, timeout: int = 60
 _GIT_SAFE = ("-c", f"safe.directory={_ROOT}")
 
 
+def _clear_stale_git_lock() -> None:
+    lock = _ROOT / ".git" / "index.lock"
+    try:
+        if lock.is_file():
+            # Stale lock from a killed/racy git; safe to drop if older than 30s.
+            age = time.time() - lock.stat().st_mtime
+            if age > 30:
+                lock.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _run_git_locked(cmd: List[str], *, timeout: int = 120, retries: int = 3) -> str:
+    """Run a git command under ``_git_lock``, retrying index races."""
+    last_err = "git failed"
+    with _git_lock:
+        for attempt in range(retries):
+            _clear_stale_git_lock()
+            proc = subprocess.Popen(
+                ["git", *_GIT_SAFE, *cmd],
+                cwd=str(_ROOT),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            try:
+                out, err = proc.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                last_err = "timeout"
+                continue
+            if proc.returncode == 0:
+                return (out or "").strip()
+            last_err = ((err or out or "").strip().splitlines() or [f"exit {proc.returncode}"])[-1]
+            # Index / lock races — brief backoff then retry.
+            if any(
+                needle in last_err.lower()
+                for needle in ("index", "lock", "unable to write", "could not reset")
+            ):
+                time.sleep(0.4 * (attempt + 1))
+                continue
+            break
+    raise RuntimeError(last_err)
+
+
 def _git_available() -> bool:
     return shutil.which("git") is not None and (_ROOT / ".git").is_dir()
 
@@ -396,8 +447,8 @@ def plan_update(changed: List[str]) -> Tuple[UpdateMode, str]:
 
 def _git_pull() -> None:
     branch = _github_branch()
-    _run_cmd_quiet(["git", *_GIT_SAFE, "fetch", "origin", branch, "--depth", "1"])
-    _run_cmd_quiet(["git", *_GIT_SAFE, "reset", "--hard", f"origin/{branch}"])
+    _run_git_locked(["fetch", "origin", branch, "--depth", "1"], timeout=120)
+    _run_git_locked(["reset", "--hard", f"origin/{branch}"], timeout=120)
 
 
 def _pip_install_requirements() -> None:
@@ -946,44 +997,23 @@ def _compute_check_updates() -> dict:
     if _git_available():
         try:
             branch = _github_branch()
-            result["current_sha"] = (
-                subprocess.check_output(
-                    ["git", *_GIT_SAFE, "rev-parse", "--short", "HEAD"],
-                    cwd=_ROOT,
-                    stderr=subprocess.DEVNULL,
-                    text=True,
-                ).strip()
-            )
+            result["current_sha"] = _run_git_locked(["rev-parse", "--short", "HEAD"], timeout=15)
             # Hard timeout: on a filtered/slow network a fetch to github.com can
             # otherwise hang for minutes, blocking the whole check (and the
             # Install button). Failing fast falls through to the HTTPS path.
-            subprocess.check_call(
-                ["git", *_GIT_SAFE, "fetch", "origin", branch, "--depth", "1"],
-                cwd=_ROOT,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=12,
-            )
-            remote_sha = (
-                subprocess.check_output(
-                    ["git", *_GIT_SAFE, "rev-parse", "--short", f"origin/{branch}"],
-                    cwd=_ROOT,
-                    stderr=subprocess.DEVNULL,
-                    text=True,
-                ).strip()
-            )
+            # Share ``_git_lock`` with apply so fetch never races ``reset --hard``.
+            _run_git_locked(["fetch", "origin", branch, "--depth", "1"], timeout=12)
+            remote_sha = _run_git_locked(["rev-parse", "--short", f"origin/{branch}"], timeout=15)
             remote_version = _version_at_git_ref(f"origin/{branch}") or _remote_version_https() or current_version
             if result["current_sha"] and remote_sha and result["current_sha"] != remote_sha:
-                count_out = subprocess.check_output(
-                    ["git", *_GIT_SAFE, "rev-list", "--count", f'HEAD..origin/{branch}'],
-                    cwd=_ROOT,
-                    stderr=subprocess.DEVNULL,
-                    text=True,
-                ).strip()
+                count_out = _run_git_locked(
+                    ["rev-list", "--count", f"HEAD..origin/{branch}"],
+                    timeout=15,
+                )
                 commits_behind = int(count_out or "0")
             git_ok = True
             result["check_source"] = "git"
-        except (subprocess.SubprocessError, FileNotFoundError, OSError, ValueError):
+        except (RuntimeError, subprocess.SubprocessError, FileNotFoundError, OSError, ValueError):
             git_ok = False
 
     if not git_ok:

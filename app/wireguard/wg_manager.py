@@ -557,7 +557,7 @@ def create_peer(
         else:
             user = db.query(User).filter(User.id == user_id).first()
             active = bool(user and user.status in SERVED_STATUSES)
-            allowed = _normalize_allowed(peer.address) if active else "0.0.0.0/32"
+            allowed = _normalize_allowed(peer.address) if active else "127.0.0.1/32"
             try:
                 client.autoscale_hot_add_peer(
                     iface.name,

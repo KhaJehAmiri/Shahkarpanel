@@ -19,7 +19,10 @@ except ImportError:
 
 logger = logging.getLogger("nexus-node-wg-autoscale")
 
-DISABLED_ALLOWED_IPS = "0.0.0.0/32"
+# Soft-disable: keep the peer entry but black-hole traffic. Prefer a host
+# loopback /32 — some ``wg``/``awg`` builds reject ``0.0.0.0/32``.
+DISABLED_ALLOWED_IPS = "127.0.0.1/32"
+DISABLED_ALLOWED_IPS_FALLBACK = "0.0.0.0/32"
 CONF_DIR = "/etc/wireguard"
 
 
@@ -77,7 +80,12 @@ class WireGuardAutoScale:
         )
 
     def available(self) -> bool:
-        return shutil.which("wg") is not None and shutil.which("ip") is not None
+        return self._wg_bin() is not None and shutil.which("ip") is not None
+
+    @staticmethod
+    def _wg_bin() -> Optional[str]:
+        """Prefer ``awg`` when present (AmneziaWG nodes), else plain ``wg``."""
+        return shutil.which("awg") or shutil.which("wg")
 
     def interface_exists(self, name: str) -> bool:
         result = self._run(["ip", "link", "show", name], check=False)
@@ -154,13 +162,26 @@ class WireGuardAutoScale:
         *,
         preshared_key: Optional[str] = None,
     ) -> None:
-        """Add or update a peer via ``wg set`` without restarting the interface."""
-        cmd = ["wg", "set", interface, "peer", public_key, "allowed-ips", allowed_ips]
+        """Add or update a peer via ``wg``/``awg set`` without restarting the interface."""
+        wg = self._wg_bin()
+        if not wg:
+            raise RuntimeError("wg/awg not available on node")
+        if not self.interface_exists(interface):
+            raise RuntimeError(f"interface {interface} does not exist")
+        cmd = [wg, "set", interface, "peer", public_key, "allowed-ips", allowed_ips]
+
+        def _run_set(extra: Optional[list] = None):
+            full = cmd + (extra or [])
+            result = self._run(full, check=False)
+            if getattr(result, "returncode", 1) != 0:
+                err = (getattr(result, "stderr", "") or getattr(result, "stdout", "") or "").strip()
+                raise RuntimeError(err or f"{wg} set failed for {interface}")
+
         if preshared_key:
             with ephemeral_psk_file(preshared_key) as psk_path:
-                self._run(cmd + ["preshared-key", psk_path], check=True)
+                _run_set(["preshared-key", psk_path])
         else:
-            self._run(cmd, check=True)
+            _run_set()
 
     def toggle_peer(
         self,
@@ -171,14 +192,30 @@ class WireGuardAutoScale:
         allowed_ips: str,
         preshared_key: Optional[str] = None,
     ) -> None:
-        """Enable or soft-disable a peer (``0.0.0.0/32`` keeps config, blocks traffic)."""
-        ips = allowed_ips if active else DISABLED_ALLOWED_IPS
-        self.hot_add_peer(
-            interface,
-            public_key,
-            ips,
-            preshared_key=preshared_key,
-        )
+        """Enable or soft-disable a peer (keep config, block traffic when inactive)."""
+        if active:
+            self.hot_add_peer(
+                interface,
+                public_key,
+                allowed_ips,
+                preshared_key=preshared_key,
+            )
+            return
+        # Soft-disable: try loopback /32 first, then legacy 0.0.0.0/32.
+        last_err: Optional[Exception] = None
+        for ips in (DISABLED_ALLOWED_IPS, DISABLED_ALLOWED_IPS_FALLBACK):
+            try:
+                self.hot_add_peer(
+                    interface,
+                    public_key,
+                    ips,
+                    preshared_key=preshared_key,
+                )
+                return
+            except Exception as exc:
+                last_err = exc
+        if last_err:
+            raise last_err
 
     def show_dump_all(self) -> List[dict]:
         """Parse ``wg show all dump`` into a list of peer rows."""

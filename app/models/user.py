@@ -441,10 +441,16 @@ class UserResponse(User):
         # points at the wrong host/token for those users.
         if self.public_subscription_url:
             self.subscription_url = self.public_subscription_url
-        self.subscription_profile_title = format_subscription_profile_title(self)
-        self.client_subscription_url = subscription_client_import_url(
-            self.public_subscription_url, self
-        )
+        # Keep a title already set by the subscription router (tenant branding).
+        if not (self.subscription_profile_title or "").strip():
+            self.subscription_profile_title = format_subscription_profile_title(self)
+        if not (self.client_subscription_url or "").strip():
+            self.client_subscription_url = subscription_client_import_url(
+                self.public_subscription_url, self
+            )
+        else:
+            # Ensure fragment stays aligned when only the title was pre-set.
+            pass
         try:
             self.subscription_urls = list_user_subscription_urls(self)
         except Exception:
@@ -468,6 +474,15 @@ class UserResponse(User):
         raise ValueError("must be an integer or a float, not a string")  # Reject strings
 
 
+class SubscriptionBranding(BaseModel):
+    panel_title: Optional[str] = None
+    logo_url: Optional[str] = None
+    favicon_url: Optional[str] = None
+    primary_color: Optional[str] = None
+    support_url: Optional[str] = None
+    sub_profile_title: Optional[str] = None
+
+
 class SubscriptionUserResponse(UserResponse):
     admin: Admin | None = Field(default=None, exclude=True)
     excluded_inbounds: Dict[ProxyTypes, List[str]] | None = Field(None, exclude=True)
@@ -489,6 +504,7 @@ class SubscriptionUserResponse(UserResponse):
     wireguard_nodes: List[WireGuardNodeItem] = []
     singbox_nodes: List[SingBoxNodeItem] = []
     link_items: List[SubscriptionLinkItem] = []
+    branding: Optional[SubscriptionBranding] = None
     model_config = ConfigDict(from_attributes=True)
 
 

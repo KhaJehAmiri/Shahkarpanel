@@ -2,7 +2,7 @@ import { FC, useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import type { InboundsByProtocol, NodeItem } from "../api/types";
-import { protocolAssignable } from "../lib/userHelpers";
+import { type AssignableNativeProtocols, protocolAssignable } from "../lib/userHelpers";
 import { Button, Field, Modal, Select, useToast } from "./ui";
 
 export type BulkInboundScope = "all" | "selected" | "filtered";
@@ -82,6 +82,7 @@ interface Props {
   inboundTags?: string[];
   inbounds?: InboundsByProtocol;
   nodes?: NodeItem[];
+  nativeCaps?: AssignableNativeProtocols | null;
 }
 
 export const BulkAssignModal: FC<Props> = ({
@@ -95,6 +96,7 @@ export const BulkAssignModal: FC<Props> = ({
   inboundTags = [],
   inbounds,
   nodes,
+  nativeCaps,
 }) => {
   const { t } = useTranslation();
   const toast = useToast();
@@ -127,13 +129,13 @@ export const BulkAssignModal: FC<Props> = ({
       NATIVE_OPTIONS.filter((opt) => {
         if (opt.id === "both") {
           return (
-            protocolAssignable("wireguard", inbounds, nodes)
-            && protocolAssignable("amneziawg", inbounds, nodes)
+            protocolAssignable("wireguard", inbounds, nodes, nativeCaps)
+            && protocolAssignable("amneziawg", inbounds, nodes, nativeCaps)
           );
         }
-        return protocolAssignable(opt.id, inbounds, nodes);
+        return protocolAssignable(opt.id, inbounds, nodes, nativeCaps);
       }),
-    [inbounds, nodes],
+    [inbounds, nodes, nativeCaps],
   );
 
   useEffect(() => {

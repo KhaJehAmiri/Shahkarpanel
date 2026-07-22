@@ -269,10 +269,9 @@ def _find_interface_with_capacity(db: Session, node_id: int) -> Optional[WgInter
 
 
 def _allocate_ip(db: Session, iface: WgInterface) -> str:
-    used = [
-        row.address
-        for row in db.query(WgPeer.address).filter(WgPeer.interface_id == iface.id).all()
-    ]
+    # Finalmask bakes every peer onto every Iran relay — allowedIPs must be
+    # unique fleet-wide, not merely per interface (3x-ui has one inbound).
+    used = [row.address for row in db.query(WgPeer.address).all() if row.address]
     allocator = WireGuardPeerIPAllocator(iface.subnet, used=used)
     address = allocator.allocate()
     if not address:
@@ -587,7 +586,13 @@ def create_peer(
 
 
 def toggle_peer(db: Session, user_id: int, *, active: bool) -> bool:
-    """Soft-enable/disable a peer via allowed-ips (never removes peer config)."""
+    """Soft-enable/disable a peer via allowed-ips (never removes peer config).
+
+    Kernel ``wg set`` only runs when this node actually serves plain WireGuard.
+    Finalmask-only / tunnel-delegated relays keep peers in the DB (and in Xray
+    inbounds) but intentionally have no kernel ``wg0`` — hammering ``wg set``
+    there just floods logs and stalls the usage job.
+    """
     peer = db.query(WgPeer).filter(WgPeer.user_id == user_id).first()
     if peer is None:
         return False
@@ -600,52 +605,87 @@ def toggle_peer(db: Session, user_id: int, *, active: bool) -> bool:
     peer.active = active
     db.commit()
 
+    kernel_plain = bool(dbnode.wireguard and plain_wg_enabled(dbnode.wireguard))
+    delegates_tunnel = False
     try:
         from app.tunnel.relay import node_delegates_wireguard_to_tunnel
 
-        if node_delegates_wireguard_to_tunnel(db, dbnode.id):
-            # Kernel wg0 is intentionally down on a delegated relay; the peer
-            # is served from wherever the tunnel really exits (panel wg0 for
-            # a panel-exit tunnel). The next full sync (sync_panel_exit_wireguard
-            # / sync_node) picks up the persisted ``peer.active`` above — no
-            # point attempting (and failing) a hot toggle against a device
-            # that does not exist here.
+        delegates_tunnel = node_delegates_wireguard_to_tunnel(db, dbnode.id)
+    except Exception:
+        delegates_tunnel = False
+
+    if delegates_tunnel or not kernel_plain:
+        # DB flag is authoritative for Finalmask / panel-exit sync. Do NOT
+        # schedule a Finalmask reload per user here — quota disconnect and
+        # ``sync_user_change`` already debounce one fleet reload. Firing it on
+        # every toggle rebuilds multi‑MB configs and stalls the usage jobs.
+        if delegates_tunnel:
             try:
                 from app.wireguard.host_sync import sync_panel_exit_wireguard
 
                 sync_panel_exit_wireguard(db)
             except Exception:
                 pass
-            return True
-    except Exception:
-        pass
+        return True
 
     client = _node_client(dbnode)
     if client is None or not hasattr(client, "autoscale_toggle_peer"):
         return False
 
     try:
-        client.autoscale_toggle_peer(
-            iface.name,
-            peer.public_key,
-            active=active,
-            allowed_ips=_normalize_allowed(peer.address),
-            preshared_key=peer.preshared_key,
-        )
+        # Prefer hot-add with loopback soft-disable so older node agents that
+        # still hardcode ``0.0.0.0/32`` (rejected by some wg builds) still work.
+        if active and hasattr(client, "autoscale_hot_add_peer"):
+            client.autoscale_hot_add_peer(
+                iface.name,
+                peer.public_key,
+                _normalize_allowed(peer.address),
+                preshared_key=peer.preshared_key,
+            )
+        elif not active and hasattr(client, "autoscale_hot_add_peer"):
+            try:
+                client.autoscale_hot_add_peer(
+                    iface.name,
+                    peer.public_key,
+                    "127.0.0.1/32",
+                    preshared_key=peer.preshared_key,
+                )
+            except Exception:
+                client.autoscale_toggle_peer(
+                    iface.name,
+                    peer.public_key,
+                    active=False,
+                    allowed_ips=_normalize_allowed(peer.address),
+                    preshared_key=peer.preshared_key,
+                )
+        else:
+            client.autoscale_toggle_peer(
+                iface.name,
+                peer.public_key,
+                active=active,
+                allowed_ips=_normalize_allowed(peer.address),
+                preshared_key=peer.preshared_key,
+            )
     except Exception as exc:
         logger.warning("toggle_peer for user %s failed: %s", user_id, exc)
         return False
     return True
 
 
-def sync_user_statuses(db: Session) -> int:
-    """Reconcile peer active flags with user status (returns count toggled)."""
+def sync_user_statuses(db: Session, *, node_id: Optional[int] = None) -> int:
+    """Reconcile peer active flags with user status (returns count toggled).
+
+    When ``node_id`` is set, only peers on that node's interfaces are checked
+    (``sync_node`` used to re-toggle the whole fleet on every node sync).
+    """
     from app.wireguard.operations import _all_wg_proxies
 
     toggled = 0
     for proxy in _all_wg_proxies(db):
         peer = db.query(WgPeer).filter(WgPeer.user_id == proxy.user_id).first()
         if peer is None:
+            continue
+        if node_id is not None and int(peer.interface.node_id) != int(node_id):
             continue
         user = proxy.user
         want_active = bool(user and user.status in SERVED_STATUSES)

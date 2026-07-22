@@ -16,8 +16,8 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional, Tuple
 
 from app.db import GetDB, crud
-from app.wireguard.operations import _node_object, collect_wg_peers
-from app.wireguard.sync import build_pubkey_user_map
+from app.wireguard.operations import _node_object
+from app.wireguard.peer_cache import peer_cache
 from app.wireguard.transport import client_for_node
 
 logger = logging.getLogger("nexus-wg")
@@ -100,7 +100,7 @@ def collect_wg_usage_params(db=None) -> Tuple[Dict[int, List[dict]], Dict[int, f
         wg_nodes = crud.get_wireguard_nodes(session)
         if not wg_nodes:
             return None
-        pubkey_map = build_pubkey_user_map(collect_wg_peers(session))
+        pubkey_map = peer_cache.get_pubkey_map(session)
         plans = []
         for dbnode in wg_nodes:
             cfg = dbnode.wireguard
@@ -217,7 +217,7 @@ def collect_panel_host_wg_usage_params(
             interfaces.append(cfg.awg_interface)
         if not interfaces:
             return None
-        pubkey_map = build_pubkey_user_map(collect_wg_peers(session))
+        pubkey_map = peer_cache.get_pubkey_map(session)
         return pubkey_map, interfaces
 
     if db is not None:

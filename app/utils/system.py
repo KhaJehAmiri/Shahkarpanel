@@ -167,7 +167,11 @@ def _sample_xray_inbound_rates() -> None:
         total_up = total_down = 0
         ok = 0
         workers = min(16, max(1, len(apis)))
-        with ThreadPoolExecutor(max_workers=workers) as executor:
+        # Do NOT use ``with ThreadPoolExecutor``: after ``future.result(timeout=…)``
+        # the context manager still ``shutdown(wait=True)``, so one hung node RPC
+        # blocks the 2s bandwidth job forever (max_instances=1 → Overview freeze).
+        executor = ThreadPoolExecutor(max_workers=workers)
+        try:
             futures = {
                 nid: executor.submit(_sum_link_counters, api)
                 for nid, api in apis.items()
@@ -180,6 +184,8 @@ def _sample_xray_inbound_rates() -> None:
                     ok += 1
                 except Exception:
                     continue
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
 
         if ok == 0:
             xr_bw_ready = False

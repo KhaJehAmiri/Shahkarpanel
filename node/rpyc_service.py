@@ -181,6 +181,8 @@ class XrayService(rpyc.Service):
             XRAY_EXECUTABLE_PATH,
             list(data.get("remove_tags") or []),
             list(data.get("inbounds") or []),
+            # Large Finalmask shards routinely exceed the old 30s CLI budget.
+            timeout=float(data.get("timeout") or 180.0),
         )
         return json.dumps(result)
 
@@ -237,6 +239,28 @@ class XrayService(rpyc.Service):
         wanted = [int(p) for p in (plain or []) if p]
         self.wg.open_udp_ports(wanted)
         return len(wanted)
+
+    @rpyc.exposed
+    def wg_apply_batch_json(self, payload_json: str) -> str:
+        """Resumable incremental peer apply (panel high-scale sync)."""
+        import json
+
+        data = json.loads(payload_json or "{}")
+        result = self.wg.apply_batch(
+            str(data.get("interface") or ""),
+            generation=int(data.get("generation") or 0),
+            cursor=int(data.get("cursor") or 0),
+            peers=list(data.get("peers") or []),
+            removes=list(data.get("removes") or []),
+        )
+        return json.dumps(result)
+
+    @rpyc.exposed
+    def wg_sync_status_json(self, interface: str = "") -> str:
+        import json
+
+        iface = (interface or "").strip() or None
+        return json.dumps(self.wg.sync_status(iface))
 
     @rpyc.exposed
     def wg_transfer(self, interface: str) -> str:
@@ -342,6 +366,28 @@ class XrayService(rpyc.Service):
     def singbox_transfer(self) -> str:
         import json
         return json.dumps(self.singbox.get_transfer())
+
+    @rpyc.exposed
+    def xray_users_transfer(self, reset: bool = True) -> str:
+        """Per-user Finalmask/Xray interval bytes via loopback StatsService.
+
+        Panel gRPC to the public TLS API port flaps during hot-replace; reading
+        ``127.0.0.1:<api+1>`` over RPyC stays reliable while the control
+        session is up. Shape matches ``singbox_transfer`` / ``wg_transfer``.
+        """
+        import json
+
+        from config import XRAY_API_PORT
+        from v2ray_stats import query_user_transfer
+
+        local_port = int(XRAY_API_PORT) + 1
+        try:
+            out = query_user_transfer(
+                "127.0.0.1", local_port, reset=bool(reset), timeout=8.0
+            )
+        except Exception:
+            out = {}
+        return json.dumps(out or {})
 
     @rpyc.exposed
     def singbox_available(self) -> bool:

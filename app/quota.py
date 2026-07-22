@@ -162,27 +162,37 @@ def resellers_over_traffic_cap(db: Session) -> Tuple[set, set]:
 
 
 def enforce_reseller_traffic_caps(db: Session):
-    """Suspend/restore users based on their reseller's total-traffic cap.
+    """Suspend/restore users based on reseller commercial limits.
 
-    - Over-cap resellers: every currently ``active`` user is disabled and flagged
-      ``capped_by_reseller`` so it can be brought back later.
-    - Under-cap resellers: users this flag marks are reactivated (to ``active``,
-      or ``limited`` if their own quota is exhausted), never touching users the
-      admin disabled manually.
+    Suspend when either:
+      - ``users_usage`` reaches ``max_total_traffic``, or
+      - wallet cannot cover currently unbilled GB usage (prepaid billing).
+
+    Restore ``capped_by_reseller`` users when the reseller is under the traffic
+    cap **and** the wallet can cover (or there is nothing pending).
 
     Returns ``(newly_suspended, reactivated_ids)`` so the caller can run the live
     disconnect / core re-sync **after** the DB session closes (mirrors review()).
     """
     from types import SimpleNamespace
 
-    over_ids, under_ids = resellers_over_traffic_cap(db)
+    over_ids, _under_cap = resellers_over_traffic_cap(db)
+    try:
+        from app.billing.usage_billing import resellers_with_unpaid_usage
+
+        wallet_blocked = resellers_with_unpaid_usage(db)
+    except Exception:
+        logger.debug("wallet insolvency check skipped", exc_info=True)
+        wallet_blocked = set()
+
+    suspend_ids = set(over_ids) | set(wallet_blocked)
     newly: List[SimpleNamespace] = []
     reactivated: List[int] = []
 
-    if over_ids:
+    if suspend_ids:
         for u in (
             db.query(User)
-            .filter(User.admin_id.in_(over_ids), User.status == UserStatus.active)
+            .filter(User.admin_id.in_(suspend_ids), User.status == UserStatus.active)
             .all()
         ):
             u.status = UserStatus.disabled
@@ -190,26 +200,28 @@ def enforce_reseller_traffic_caps(db: Session):
             u.last_status_change = datetime.utcnow()
             newly.append(SimpleNamespace(id=int(u.id), username=u.username))
 
-    if under_ids:
-        for u in (
-            db.query(User)
-            .filter(
-                User.admin_id.in_(under_ids),
-                User.capped_by_reseller.is_(True),
-            )
-            .all()
-        ):
-            u.capped_by_reseller = False
-            u.last_status_change = datetime.utcnow()
-            if quota_exhausted(u):
-                # Their own package is spent — don't serve, let review() manage it.
-                u.status = UserStatus.limited
-            else:
-                u.status = UserStatus.active
-                reactivated.append(int(u.id))
+    # Restore any capped users whose reseller is no longer blocked.
+    capped_users = (
+        db.query(User)
+        .filter(User.capped_by_reseller.is_(True), User.admin_id.isnot(None))
+        .all()
+    )
+    for u in capped_users:
+        if u.admin_id in suspend_ids:
+            continue
+        u.capped_by_reseller = False
+        u.last_status_change = datetime.utcnow()
+        if quota_exhausted(u):
+            u.status = UserStatus.limited
+        else:
+            u.status = UserStatus.active
+            reactivated.append(int(u.id))
 
     if newly or reactivated:
         db.commit()
+
+    # Peer / Finalmask / sing-box re-enable runs in ``restore_users_everywhere``
+    # after the caller closes this session (mirrors disconnect + review()).
     return newly, reactivated
 
 
@@ -323,6 +335,98 @@ def disconnect_users_everywhere(
         logger.debug("sing-box sync during disconnect skipped", exc_info=True)
 
     return True
+
+
+def restore_users_everywhere(user_ids: Sequence[int]) -> None:
+    """Re-enable Xray / WireGuard / sing-box after a reseller or quota restore.
+
+    Mirrors ``disconnect_users_everywhere``: DB peer flags, Finalmask reload,
+    sing-box sync, and per-user Xray hot-push. Callers must invoke this **after**
+    the DB session that flipped ``User.status`` has closed/committed.
+
+    ``update_user`` must run while the ORM user is still session-bound
+    (``UserResponse`` touches ``usage_logs`` / admin columns).
+    """
+    from app.db import GetDB, crud
+    from app.wireguard.wg_manager import toggle_peer
+
+    ids = [int(uid) for uid in user_ids if uid is not None]
+    if not ids:
+        return
+
+    with GetDB() as db:
+        for uid in ids:
+            try:
+                toggle_peer(db, uid, active=True)
+            except Exception:
+                logger.debug("WG peer re-enable skipped for user %s", uid, exc_info=True)
+
+        for uid in ids:
+            dbuser = crud.get_user_by_id(db, uid)
+            if dbuser is None:
+                continue
+            if dbuser.status not in (UserStatus.active, UserStatus.on_hold):
+                continue
+            try:
+                from app.xray import operations as xops
+
+                xops.update_user(dbuser)
+            except Exception:
+                logger.exception(
+                    "restore_users_everywhere: Xray update failed for id=%s",
+                    uid,
+                )
+
+    try:
+        from app.wireguard.peer_cache import peer_cache
+        from app.wireguard.operations import sync_user_change as wg_sync
+
+        peer_cache.invalidate()
+        wg_sync()
+    except Exception:
+        logger.exception("restore_users_everywhere: WireGuard/Finalmask sync failed")
+
+    try:
+        from app.singbox.operations import sync_user_change as singbox_sync
+
+        singbox_sync()
+    except Exception:
+        logger.exception("restore_users_everywhere: sing-box sync failed")
+
+
+def reconcile_wg_peer_active_flags(db: Session) -> int:
+    """Fix ``wg_peers.active`` drift vs billable user status. Returns count fixed."""
+    from sqlalchemy import and_, or_
+
+    from app.db.models import WgPeer
+    from app.wireguard.wg_manager import SERVED_STATUSES, toggle_peer
+
+    served = list(SERVED_STATUSES)
+    mismatched = (
+        db.query(WgPeer.user_id)
+        .join(User, User.id == WgPeer.user_id)
+        .filter(
+            or_(
+                and_(User.status.in_(served), WgPeer.active.is_(False)),
+                and_(User.status.notin_(served), WgPeer.active.is_(True)),
+            )
+        )
+        .all()
+    )
+    fixed = 0
+    for (uid,) in mismatched:
+        user = db.query(User).filter(User.id == uid).first()
+        want = bool(user and user.status in SERVED_STATUSES)
+        try:
+            if toggle_peer(db, int(uid), active=want):
+                fixed += 1
+        except Exception:
+            logger.debug(
+                "reconcile_wg_peer_active_flags skipped user %s",
+                uid,
+                exc_info=True,
+            )
+    return fixed
 
 
 def disconnect_user_everywhere(dbuser: User) -> None:

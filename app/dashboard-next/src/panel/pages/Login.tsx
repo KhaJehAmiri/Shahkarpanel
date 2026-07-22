@@ -13,7 +13,9 @@ export const Login: FC = () => {
   const [branding, setBranding] = useState<Branding | null>(null);
 
   useEffect(() => {
-    api.get<Branding>("/branding").then((b) => {
+    const host = typeof window !== "undefined" ? window.location.hostname : "";
+    const q = host ? `?domain=${encodeURIComponent(host)}` : "";
+    api.get<Branding>(`/branding${q}`).then((b) => {
       setBranding(b);
       applyBranding(b);
     }).catch(() => {});

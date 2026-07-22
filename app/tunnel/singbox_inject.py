@@ -148,7 +148,13 @@ def apply_singbox_endpoint_tunnels(spec: dict, node_id: Optional[int]) -> dict:
                     continue
                 out_tags.add(tag)
                 outbounds.append(ob)
-                rules.append({"inbound": list(inbound_tags), "outbound": tag})
+                # sing-box 1.12+ prefers explicit route actions; keep ``outbound``
+                # for older builds that still accept the legacy form.
+                rules.append({
+                    "inbound": list(inbound_tags),
+                    "action": "route",
+                    "outbound": tag,
+                })
                 primary_outbound = tag
 
             if not outbounds:

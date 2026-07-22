@@ -42,15 +42,25 @@ class UsageSplit:
 
 
 def traffic_to_gb_units(byte_count: int) -> int:
-    """Billable whole GB units (round up partial GB)."""
+    """Whole GB units for display (floor). Charging uses byte-proportional cost."""
     n = int(byte_count or 0)
     if n <= 0:
         return 0
-    return (n + GB - 1) // GB
+    return n // GB
+
+
+def align_billing_tick(dt: datetime) -> datetime:
+    """Second-resolution watermark so pay-as-you-go can settle near-realtime."""
+    return dt.replace(microsecond=0)
 
 
 def align_hour(dt: datetime) -> datetime:
+    """Deprecated hour bucket — kept for callers; prefer align_billing_tick."""
     return datetime.fromisoformat(dt.strftime("%Y-%m-%dT%H:00:00"))
+
+
+def billing_lookback_seconds() -> int:
+    return max(15, int(ps.get_int("billing.job_interval_seconds", 30) or 30))
 
 
 def node_owned_by_reseller(
@@ -70,11 +80,16 @@ def aggregate_reseller_usage(
     since: datetime,
     until: datetime,
 ) -> UsageSplit:
-    """Sum user traffic on each node, split by node ownership."""
+    """Sum user traffic on each node, split by node ownership.
+
+    Panel-local / unknown-node rows (``node_id IS NULL``) are billed at the
+    full shared-node rate — an inner join previously dropped them entirely,
+    so pay-as-you-go never saw most traffic.
+    """
     rows = (
         db.query(NodeUserUsage.used_traffic, Node)
         .join(User, NodeUserUsage.user_id == User.id)
-        .join(Node, NodeUserUsage.node_id == Node.id)
+        .outerjoin(Node, NodeUserUsage.node_id == Node.id)
         .filter(
             User.admin_id == admin_id,
             NodeUserUsage.created_at > since,
@@ -87,7 +102,7 @@ def aggregate_reseller_usage(
         traffic = int(used or 0)
         if traffic <= 0:
             continue
-        if node_owned_by_reseller(node, admin_id, tenant_id):
+        if node is not None and node_owned_by_reseller(node, admin_id, tenant_id):
             split.owned_bytes += traffic
         else:
             split.foreign_bytes += traffic
@@ -108,9 +123,13 @@ def get_or_create_checkpoint(db: Session, admin_id: int) -> UsageBillingCheckpoi
         .first()
     )
     if row is None:
+        admin = db.query(Admin).filter(Admin.id == admin_id).first()
+        current_usage = int(admin.users_usage or 0) if admin else 0
         row = UsageBillingCheckpoint(
             admin_id=admin_id,
-            last_billed_at=align_hour(datetime.utcnow()) - timedelta(hours=1),
+            last_billed_at=align_billing_tick(datetime.utcnow())
+            - timedelta(seconds=billing_lookback_seconds()),
+            last_billed_users_usage=current_usage,
         )
         db.add(row)
         db.commit()
@@ -123,11 +142,34 @@ def compute_charge(
     rate_per_gb: int,
     discount_percent: int,
 ) -> int:
-    return billing.usage_cost(
-        base_rate=rate_per_gb,
-        owned_units=split.owned_gb,
-        foreign_units=split.foreign_gb,
-        discount_percent=discount_percent,
+    """Charge proportional to bytes (floor), not ceil-to-1GB."""
+    rate = int(rate_per_gb or 0)
+    if rate <= 0:
+        return 0
+    owned_rate = billing.effective_rate(rate, discount_percent)
+    owned = (int(split.owned_bytes) * int(owned_rate)) // GB
+    foreign = (int(split.foreign_bytes) * rate) // GB
+    return owned + foreign
+
+
+def apply_prepaid_cover(split: UsageSplit, prepaid_remaining: int) -> Tuple[UsageSplit, int]:
+    """Cover usage from prepaid package bytes first (foreign before owned)."""
+    prepaid = max(0, int(prepaid_remaining or 0))
+    if prepaid <= 0 or split.total_bytes <= 0:
+        return split, 0
+
+    foreign = int(split.foreign_bytes)
+    owned = int(split.owned_bytes)
+    cover_foreign = min(foreign, prepaid)
+    remain = prepaid - cover_foreign
+    cover_owned = min(owned, remain)
+    covered = cover_foreign + cover_owned
+    return (
+        UsageSplit(
+            owned_bytes=owned - cover_owned,
+            foreign_bytes=foreign - cover_foreign,
+        ),
+        covered,
     )
 
 
@@ -138,6 +180,45 @@ def wallet_is_low(balance: Optional[int], threshold: Optional[int] = None) -> bo
     return balance < limit
 
 
+def ownership_ratio_split(
+    db: Session,
+    admin_id: int,
+    tenant_id: Optional[int],
+    delta_bytes: int,
+) -> UsageSplit:
+    """Attribute a users_usage delta to owned vs shared using a recent ratio.
+
+    Falls back to all-shared (full rate) when no NodeUserUsage breakdown exists
+    — typical for panel-local traffic recorded with node_id NULL.
+    """
+    delta = max(0, int(delta_bytes or 0))
+    if delta <= 0:
+        return UsageSplit()
+
+    until = align_billing_tick(datetime.utcnow())
+    since = until - timedelta(hours=24)
+    ratio = aggregate_reseller_usage(db, admin_id, tenant_id, since, until)
+    total = ratio.total_bytes
+    if total <= 0:
+        return UsageSplit(owned_bytes=0, foreign_bytes=delta)
+
+    owned = (delta * int(ratio.owned_bytes)) // total
+    foreign = delta - owned
+    return UsageSplit(owned_bytes=owned, foreign_bytes=foreign)
+
+
+def unbilled_usage_split(db: Session, dbadmin: Admin) -> Tuple[UsageSplit, int, int]:
+    """Return (split, current_users_usage, last_billed_users_usage)."""
+    checkpoint = get_or_create_checkpoint(db, dbadmin.id)
+    current = int(dbadmin.users_usage or 0)
+    last = int(getattr(checkpoint, "last_billed_users_usage", 0) or 0)
+    if current < last:
+        # Admin usage was reset — restart watermark without charging the drop.
+        last = current
+    delta = max(0, current - last)
+    return ownership_ratio_split(db, dbadmin.id, dbadmin.tenant_id, delta), current, last
+
+
 def usage_summary_for_admin(
     db: Session,
     dbadmin: Admin,
@@ -146,17 +227,14 @@ def usage_summary_for_admin(
 ) -> dict:
     rate = int(rate_per_gb if rate_per_gb is not None else ps.get_int("billing.usage_rate_per_gb", 0))
     checkpoint = get_or_create_checkpoint(db, dbadmin.id)
-    until = align_hour(datetime.utcnow())
-    split = aggregate_reseller_usage(
-        db,
-        dbadmin.id,
-        dbadmin.tenant_id,
-        checkpoint.last_billed_at,
-        until,
-    )
+    until = align_billing_tick(datetime.utcnow())
+    split, current_usage, last_usage = unbilled_usage_split(db, dbadmin)
     discount = resolve_discount_percent(db, dbadmin)
+    prepaid = int(getattr(dbadmin, "prepaid_traffic_remaining", 0) or 0)
+    overflow, covered = apply_prepaid_cover(split, prepaid)
     wallet = billing.get_or_create_wallet(db, dbadmin.id)
-    estimated = compute_charge(split, rate, discount) if rate > 0 else 0
+    estimated = compute_charge(overflow, rate, discount) if rate > 0 else 0
+    currency = (ps.get_setting("billing.currency_label") or "").strip() or None
     return {
         "rate_per_gb": rate,
         "discount_percent": discount,
@@ -170,6 +248,14 @@ def usage_summary_for_admin(
         "wallet_balance": wallet.balance,
         "wallet_low": wallet_is_low(wallet.balance),
         "wallet_low_threshold": ps.get_int("billing.wallet_low_threshold", 10000),
+        "wallet_blocked": bool(rate > 0 and estimated > 0 and wallet.balance < estimated),
+        "currency_label": currency,
+        "prepaid_traffic_remaining": prepaid,
+        "package_covered_bytes": covered,
+        "overflow_owned_bytes": overflow.owned_bytes,
+        "overflow_foreign_bytes": overflow.foreign_bytes,
+        "users_usage": current_usage,
+        "last_billed_users_usage": last_usage,
     }
 
 
@@ -195,25 +281,46 @@ def bill_reseller_usage(
     rate_per_gb: Optional[int] = None,
     now: Optional[datetime] = None,
 ) -> Tuple[Optional[Transaction], UsageSplit]:
-    """Bill unbilled hourly usage for one reseller. Returns (tx or None, split)."""
+    """Bill unbilled usage for one reseller from Admin.users_usage deltas.
+
+    ``users_usage`` is incremented by every live connection path the panel
+    records (panel Xray, nodes, Finalmask, WG, sing-box), so pay-as-you-go
+    no longer depends on hourly NodeUserUsage timestamps.
+    """
     rate = int(rate_per_gb if rate_per_gb is not None else ps.get_int("billing.usage_rate_per_gb", 0))
     if rate <= 0:
         return None, UsageSplit()
 
     now = now or datetime.utcnow()
-    until = align_hour(now)
+    until = align_billing_tick(now)
     checkpoint = get_or_create_checkpoint(db, dbadmin.id)
-    since = checkpoint.last_billed_at
-    if until <= since:
-        return None, UsageSplit()
 
-    split = aggregate_reseller_usage(db, dbadmin.id, dbadmin.tenant_id, since, until)
+    db.refresh(dbadmin)
+    split, current_usage, last_usage = unbilled_usage_split(db, dbadmin)
+    # Keep last_billed_users_usage coherent after a reset detected above.
+    if current_usage < int(getattr(checkpoint, "last_billed_users_usage", 0) or 0):
+        checkpoint.last_billed_users_usage = current_usage
+
     discount = resolve_discount_percent(db, dbadmin)
-    cost = compute_charge(split, rate, discount)
-
-    checkpoint.last_billed_at = until
+    prepaid = int(getattr(dbadmin, "prepaid_traffic_remaining", 0) or 0)
+    overflow, covered = apply_prepaid_cover(split, prepaid)
+    cost = compute_charge(overflow, rate, discount)
 
     if cost <= 0:
+        if covered > 0:
+            dbadmin.prepaid_traffic_remaining = max(0, prepaid - covered)
+            checkpoint.last_billed_users_usage = current_usage
+            checkpoint.last_billed_at = until
+            db.commit()
+            return None, split
+        if split.total_bytes <= 0:
+            checkpoint.last_billed_users_usage = current_usage
+            checkpoint.last_billed_at = until
+            db.commit()
+            return None, split
+        # Sub-GB overflow leftovers: advance time watermark only; keep byte watermark
+        # so the bytes remain billable once they accumulate to >= 1 charge unit.
+        checkpoint.last_billed_at = until
         db.commit()
         return None, split
 
@@ -221,28 +328,68 @@ def bill_reseller_usage(
     if wallet.balance < cost:
         _log_low_balance_event(db, dbadmin, cost, wallet.balance)
         logger.warning(
-            'Usage billing skipped for "%s": need %s, balance %s',
+            'Usage billing held for "%s": need %s, balance %s '
+            "(unbilled %s bytes, package cover pending %s, checkpoint unchanged)",
             dbadmin.username,
             cost,
             wallet.balance,
+            split.total_bytes,
+            covered,
         )
         db.commit()
         return None, split
 
+    if covered > 0:
+        dbadmin.prepaid_traffic_remaining = max(0, prepaid - covered)
+
+    checkpoint.last_billed_users_usage = current_usage
+    checkpoint.last_billed_at = until
+    owned_gb = round(overflow.owned_bytes / GB, 4)
+    foreign_gb = round(overflow.foreign_bytes / GB, 4)
+    covered_gb = round(covered / GB, 4)
     tx = billing.add_transaction(
         db,
         dbadmin.id,
         -cost,
         type="usage_billing",
         description=(
-            f"Usage billing: {split.owned_gb} GB own nodes + "
-            f"{split.foreign_gb} GB shared ({since:%Y-%m-%d %H:00}–{until:%H:00} UTC)"
+            f"Usage billing: {owned_gb} GB own + {foreign_gb} GB shared "
+            f"(package covered {covered_gb} GB) "
+            f"({last_usage}→{current_usage} bytes, {until:%Y-%m-%d %H:%M:%S} UTC)"
         ),
-        reference=f"usage:{since.isoformat()}:{until.isoformat()}",
+        reference=f"usage:{last_usage}:{current_usage}:{until.isoformat()}",
     )
     if wallet_is_low(wallet.balance):
         _log_low_balance_event(db, dbadmin, 0, wallet.balance)
     return tx, split
+
+
+def resellers_with_unpaid_usage(db: Session) -> set[int]:
+    """Admin ids whose unbilled GB charge exceeds their current wallet balance."""
+    from app import feature_flags
+
+    if not feature_flags.is_enabled("billing"):
+        return set()
+    rate = ps.get_int("billing.usage_rate_per_gb", 0)
+    if rate <= 0:
+        return set()
+
+    blocked: set[int] = set()
+    admins = db.query(Admin).filter(Admin.is_sudo.is_(False)).all()
+    for dbadmin in admins:
+        split, _, _ = unbilled_usage_split(db, dbadmin)
+        if split.total_bytes <= 0:
+            continue
+        discount = resolve_discount_percent(db, dbadmin)
+        prepaid = int(getattr(dbadmin, "prepaid_traffic_remaining", 0) or 0)
+        overflow, _ = apply_prepaid_cover(split, prepaid)
+        cost = compute_charge(overflow, rate, discount)
+        if cost <= 0:
+            continue
+        wallet = billing.get_or_create_wallet(db, dbadmin.id)
+        if wallet.balance < cost:
+            blocked.add(dbadmin.id)
+    return blocked
 
 
 def run_usage_billing() -> int:

@@ -422,7 +422,7 @@ JOB_CORE_USER_RECONCILE_INTERVAL = config("JOB_CORE_USER_RECONCILE_INTERVAL", ca
 # Off by default — endpoint reconcile (`reconcile_awg_endpoints`) already runs every tick.
 JOB_AWG_FLUSH_STALE_PEERS = config("JOB_AWG_FLUSH_STALE_PEERS", cast=bool, default=False)
 JOB_RECORD_NODE_USAGES_INTERVAL = config("JOB_RECORD_NODE_USAGES_INTERVAL", cast=int, default=30)
-JOB_RECORD_USER_USAGES_INTERVAL = config("JOB_RECORD_USER_USAGES_INTERVAL", cast=int, default=5)
+JOB_RECORD_USER_USAGES_INTERVAL = config("JOB_RECORD_USER_USAGES_INTERVAL", cast=int, default=15)
 # "Online now" window: a user counts as online if their ``online_at`` (bumped by
 # the 5s usage job on real traffic, and by subscription refresh) is within this
 # many minutes. Kept short so the count reflects who is actually connected.
@@ -438,7 +438,7 @@ BILLING_BLIND_DISCONNECT_CYCLES = config("BILLING_BLIND_DISCONNECT_CYCLES", cast
 # long-lived session rather than a connection that is merely closing.
 # 0 disables the restart escalation entirely (hot remove only; accept a bounded leak).
 LIMITED_LEAK_RESTART_STREAK = config("LIMITED_LEAK_RESTART_STREAK", cast=int, default=3)
-JOB_BILL_USAGE_INTERVAL = config("JOB_BILL_USAGE_INTERVAL", cast=int, default=3600)
+JOB_BILL_USAGE_INTERVAL = config("JOB_BILL_USAGE_INTERVAL", cast=int, default=30)
 
 # Usage-based billing (phase 3): minor units charged per GB of user traffic.
 # 0 disables the periodic billing job.
@@ -453,7 +453,7 @@ PAYMENT_MAX_AMOUNT = config("PAYMENT_MAX_AMOUNT", cast=int, default=100_000_000)
 
 # Sub-reseller limits (phase 5).
 SUB_RESELLER_MAX_PER_PARENT = config("SUB_RESELLER_MAX_PER_PARENT", cast=int, default=10)
-JOB_REVIEW_USERS_INTERVAL = config("JOB_REVIEW_USERS_INTERVAL", cast=int, default=5)
+JOB_REVIEW_USERS_INTERVAL = config("JOB_REVIEW_USERS_INTERVAL", cast=int, default=30)
 JOB_SEND_NOTIFICATIONS_INTERVAL = config("JOB_SEND_NOTIFICATIONS_INTERVAL", cast=int, default=30)
 
 # Auto-upgrade Xray-core on panel + Xray nodes when a newer GitHub release exists.

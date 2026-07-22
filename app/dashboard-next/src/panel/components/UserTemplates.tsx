@@ -6,7 +6,7 @@ import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import { InboundsByProtocol, NodeItem } from "../api/types";
 import { useFetch } from "../lib/useFetch";
-import { protocolAssignable } from "../lib/userHelpers";
+import { type AssignableNativeProtocols, protocolAssignable } from "../lib/userHelpers";
 import { formatBytes } from "../lib/format";
 import {
   Button, Card, EmptyState, Field, Input, Modal, Select, SkeletonRows, useToast,
@@ -116,6 +116,10 @@ const TemplateFormModal: FC<{ row?: UserTemplateRow; onClose: () => void; onDone
   const toast = useToast();
   const inbounds = useFetch<InboundsByProtocol>(() => api.get("/inbounds"), []);
   const nodes = useFetch<NodeItem[]>(() => api.get("/nodes"), []);
+  const nativeCaps = useFetch<AssignableNativeProtocols>(
+    () => api.get("/assignable-native-protocols"),
+    [],
+  );
   const [name, setName] = useState(row?.name || "");
   const [dataLimitUnit, setDataLimitUnit] = useState<DataLimitUnit>(
     row?.data_limit ? detectDataLimitUnit(row.data_limit) : "MB",
@@ -220,7 +224,12 @@ const TemplateFormModal: FC<{ row?: UserTemplateRow; onClose: () => void; onDone
     .filter(([, list]) => list.length > 0);
   const nativeProtos = NATIVE_PROTOCOLS.filter((p) => {
     if ((inbounds.data?.[p]?.length || 0) > 0) return false;
-    return protocolAssignable(p, inbounds.data ?? undefined, nodes.data ?? undefined);
+    return protocolAssignable(
+      p,
+      inbounds.data ?? undefined,
+      nodes.data ?? undefined,
+      nativeCaps.data,
+    );
   });
 
   return (

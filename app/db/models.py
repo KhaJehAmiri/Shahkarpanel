@@ -57,6 +57,8 @@ class Admin(Base):
     role = Column(String(32), nullable=True)
     max_users = Column(Integer, nullable=True)
     max_total_traffic = Column(BigInteger, nullable=True)
+    # Prepaid GB pool from traffic packages (consumed before wallet pay-as-you-go).
+    prepaid_traffic_remaining = Column(BigInteger, nullable=False, default=0, server_default=text("0"))
     max_nodes = Column(Integer, nullable=True)
 
     # White-label reseller (phase 6). An admin that belongs to a tenant is a
@@ -113,7 +115,7 @@ class User(Base):
         default=UserDataLimitResetStrategy.no_reset,
     )
     usage_logs = relationship("UserUsageResetLogs", back_populates="user")  # maybe rename it to reset_usage_logs?
-    expire = Column(Integer, nullable=True)
+    expire = Column(Integer, nullable=True, index=True)
     admin_id = Column(Integer, ForeignKey("admins.id"), index=True)
     admin = relationship("Admin", back_populates="users")
     sub_token = Column(String(32), unique=True, nullable=True, index=True)
@@ -284,9 +286,9 @@ class Proxy(Base):
     __tablename__ = "proxies"
 
     id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
     user = relationship("User", back_populates="proxies")
-    type = Column(Enum(ProxyTypes), nullable=False)
+    type = Column(Enum(ProxyTypes), nullable=False, index=True)
     settings = Column(JSON, nullable=False)
     excluded_inbounds = relationship(
         "ProxyInbound", secondary=excluded_inbounds_association
@@ -818,6 +820,37 @@ class Plan(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class ResellerTrafficPackage(Base):
+    """Master catalog of prepaid traffic packs resellers can buy with wallet."""
+
+    __tablename__ = "reseller_traffic_packages"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(128), nullable=False)
+    bytes = Column(BigInteger, nullable=False)                   # traffic granted
+    price = Column(BigInteger, nullable=False, default=0)        # minor units
+    enabled = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ResellerTrafficPurchase(Base):
+    """Ledger of reseller traffic package purchases and manual credits."""
+
+    __tablename__ = "reseller_traffic_purchases"
+
+    id = Column(Integer, primary_key=True)
+    admin_id = Column(Integer, ForeignKey("admins.id"), index=True, nullable=False)
+    package_id = Column(Integer, ForeignKey("reseller_traffic_packages.id"), nullable=True)
+    bytes = Column(BigInteger, nullable=False)
+    price_paid = Column(BigInteger, nullable=False, default=0)
+    source = Column(String(16), nullable=False, default="purchase")  # purchase|manual
+    created_by_admin_id = Column(Integer, ForeignKey("admins.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    admin = relationship("Admin", foreign_keys=[admin_id])
+    package = relationship("ResellerTrafficPackage")
+
+
 class Wallet(Base):
     """Per-admin (reseller/customer) prepaid balance."""
 
@@ -950,12 +983,17 @@ class DedicatedIP(Base):
 
 
 class UsageBillingCheckpoint(Base):
-    """Tracks the last hour billed for per-GB usage charges on a reseller."""
+    """Tracks how far pay-as-you-go billing has advanced for a reseller."""
 
     __tablename__ = "usage_billing_checkpoints"
 
     admin_id = Column(Integer, ForeignKey("admins.id"), primary_key=True)
     last_billed_at = Column(DateTime, nullable=False)
+    # Watermark on Admin.users_usage — covers every connection path the panel
+    # records (VLESS/WG/Finalmask/sing-box), not just hourly NodeUserUsage rows.
+    last_billed_users_usage = Column(
+        BigInteger, nullable=False, default=0, server_default=text("0")
+    )
 
     admin = relationship("Admin")
 
@@ -993,6 +1031,7 @@ class Invoice(Base):
     amount = Column(BigInteger, nullable=False)                 # minor units
     status = Column(String(16), nullable=False, default="pending", index=True)  # pending|paid|canceled
     provider = Column(String(32), nullable=True)
+    description = Column(String(512), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     paid_at = Column(DateTime, nullable=True)
 
@@ -1068,6 +1107,8 @@ class BrandingSettings(Base):
     support_url = Column(String(512), nullable=True)
     sub_profile_title = Column(String(128), nullable=True)
     domain = Column(String(256), nullable=True, index=True)
+    # Public panel login URL for this brand (shown to customers / copied by reseller).
+    panel_url = Column(String(512), nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     tenant = relationship("Tenant", back_populates="branding")
@@ -1227,3 +1268,36 @@ class SubscriptionTokenAlias(Base):
         ),
     )
     endpoint = relationship("SubscriptionEndpoint", back_populates="token_aliases")
+
+
+class NodeSyncCursor(Base):
+    """Per-node resumable WireGuard sync watermark (generation + cursor)."""
+
+    __tablename__ = "node_sync_cursors"
+
+    node_id = Column(Integer, ForeignKey("nodes.id", ondelete="CASCADE"), primary_key=True)
+    generation = Column(Integer, nullable=False, server_default=text("0"), default=0)
+    cursor_user_id = Column(Integer, nullable=False, server_default=text("0"), default=0)
+    last_outbox_id = Column(Integer, nullable=False, server_default=text("0"), default=0)
+    desired_hash = Column(String(64), nullable=True)
+    applied_hash = Column(String(64), nullable=True)
+    status = Column(String(32), nullable=False, server_default=text("'converged'"), default="converged")
+    peers_done = Column(Integer, nullable=False, server_default=text("0"), default=0)
+    peers_total = Column(Integer, nullable=False, server_default=text("0"), default=0)
+    error = Column(String(512), nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    node = relationship("Node", backref=backref("sync_cursor", uselist=False, cascade="all, delete-orphan"))
+
+
+class PeerChangeOutbox(Base):
+    """Delta queue for WireGuard peer upsert/remove (hot path, resumable)."""
+
+    __tablename__ = "peer_change_outbox"
+
+    id = Column(Integer, primary_key=True)
+    op = Column(String(16), nullable=False)  # upsert | remove | disable
+    user_id = Column(Integer, nullable=True, index=True)
+    public_key = Column(String(128), nullable=True, index=True)
+    payload = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)

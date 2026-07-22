@@ -2,7 +2,12 @@
 from typing import Any, Dict, List, Optional
 
 from app.models.proxy import ProxyTypes
-from app.subscription.quic import user_anytls_link, user_hysteria2_link, user_tuic_link
+from app.subscription.quic import (
+    filter_singbox_client_entry_nodes,
+    user_anytls_link,
+    user_hysteria2_link,
+    user_tuic_link,
+)
 from app.subscription.region_display import node_config_remark
 from app.subscription.wireguard import user_config as build_wireguard_user_config
 from app.tls.inspect import cert_requires_insecure
@@ -81,12 +86,15 @@ def build_materials(
     v2ray_links = v2ray_links or []
 
     wg_nodes = [n for n in crud.get_wireguard_nodes(db) if n.wireguard is not None]
-    sb_nodes = [
-        n for n in crud.get_singbox_nodes(db)
-        if n.singbox and (
-            n.singbox.hysteria2_enabled or n.singbox.tuic_enabled or n.singbox.anytls_enabled
-        )
-    ]
+    sb_nodes = filter_singbox_client_entry_nodes(
+        db,
+        [
+            n for n in crud.get_singbox_nodes(db)
+            if n.singbox and (
+                n.singbox.hysteria2_enabled or n.singbox.tuic_enabled or n.singbox.anytls_enabled
+            )
+        ],
+    )
 
     if "wireguard" in protocols:
         nid = protocol_nodes.get("wireguard")

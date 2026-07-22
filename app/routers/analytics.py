@@ -46,14 +46,21 @@ def usage_by_protocol(
     db: Session = Depends(get_db),
     admin: Admin = Depends(Admin.get_current),
 ):
-    """Per-protocol traffic breakdown (informational analytics)."""
+    """Per-protocol traffic breakdown (scoped to the caller's users)."""
     start, end = validate_dates(start, end)
-    if not admin.is_sudo and user_id is not None:
+    admin_id = None
+    if not admin.is_sudo:
         dbadmin = crud.get_admin(db, admin.username)
-        owner = db.query(User).filter(User.id == user_id, User.admin_id == dbadmin.id).first()
-        if not owner:
-            raise HTTPException(status_code=404, detail="User not found")
-    rows = crud.get_protocol_usage(db, start, end, user_id=user_id)
+        if not dbadmin:
+            raise HTTPException(status_code=404, detail="Admin not found")
+        admin_id = dbadmin.id
+        if user_id is not None:
+            owner = db.query(User).filter(User.id == user_id, User.admin_id == admin_id).first()
+            if not owner:
+                raise HTTPException(status_code=404, detail="User not found")
+    rows = crud.get_protocol_usage(
+        db, start, end, user_id=user_id, admin_id=admin_id
+    )
     return [ProtocolUsageRow(protocol=r["protocol"], used_traffic=r["used_traffic"]) for r in rows]
 
 

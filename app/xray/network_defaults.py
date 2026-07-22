@@ -42,11 +42,12 @@ def inbound_supports_xtls_vision(inbound: dict) -> bool:
 
 
 def effective_vless_flow(flow: str | None, inbound: dict) -> str:
-    """Return the flow value to push into the core / subscription for VLESS."""
-    if flow and flow not in (XTLSFlows.NONE.value, "none"):
+    """Return the flow value to push into the core / subscription for VLESS.
+
+    Vision is opt-in only: empty/missing flow stays empty (never auto-filled).
+    """
+    if flow and flow not in (XTLSFlows.NONE.value, "none", ""):
         return str(flow)
-    if inbound_supports_xtls_vision(inbound):
-        return XTLSFlows.VISION.value
     return XTLSFlows.NONE.value
 
 

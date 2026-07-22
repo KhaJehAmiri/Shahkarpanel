@@ -109,6 +109,22 @@ def _apply_topup(db: Session, intent: PaymentIntent) -> None:
         description=f"Wallet top-up via {intent.provider}",
         reference=f"payment:{intent.id}",
     )
+    # Wallet credit can clear insolvency caps — restore users onto live cores.
+    try:
+        from app.billing.usage_billing import bill_reseller_usage
+        from app.db import crud
+        from app.quota import enforce_reseller_traffic_caps, restore_users_everywhere
+
+        admin = crud.get_admin_by_id(db, intent.admin_id)
+        if admin is not None:
+            bill_reseller_usage(db, admin)
+        _newly, reactivated = enforce_reseller_traffic_caps(db)
+        if reactivated:
+            # Commit first so restore sees restored statuses; caller commits too.
+            db.commit()
+            restore_users_everywhere(reactivated)
+    except Exception:
+        pass
 
 
 def _apply_portal_renew(db: Session, intent: PaymentIntent) -> User:

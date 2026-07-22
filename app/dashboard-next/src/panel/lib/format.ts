@@ -7,6 +7,17 @@ export function formatBytes(bytes: number | null | undefined, digits = 1): strin
   return `${(bytes / Math.pow(k, i)).toFixed(digits)} ${units[i]}`;
 }
 
+/** Compact wallet amounts: 500000000 → "500M", 4500 → "4,500". */
+export function formatCompactAmount(n: number | null | undefined): string {
+  if (n == null || Number.isNaN(n)) return "—";
+  const abs = Math.abs(n);
+  const sign = n < 0 ? "-" : "";
+  if (abs >= 1_000_000_000) return `${sign}${(abs / 1_000_000_000).toFixed(abs >= 10_000_000_000 ? 0 : 1)}B`;
+  if (abs >= 1_000_000) return `${sign}${(abs / 1_000_000).toFixed(abs >= 10_000_000 ? 0 : 1)}M`;
+  if (abs >= 100_000) return `${sign}${(abs / 1_000).toFixed(0)}K`;
+  return `${sign}${Math.round(abs).toLocaleString()}`;
+}
+
 export function formatSpeed(bytesPerSec: number): string {
   return `${formatBytes(bytesPerSec)}/s`;
 }

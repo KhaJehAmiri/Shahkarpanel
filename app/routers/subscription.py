@@ -14,7 +14,12 @@ from app.models.user import SubscriptionUserResponse, UserResponse
 from app.subscription.guards import ensure_subscription_config_allowed, subscription_access
 from app.subscription.blocked import blocked_message, generate_blocked_subscription
 from app.subscription.public_url import public_subscription_url
-from app.subscription.quic import user_anytls_link, user_hysteria2_link, user_tuic_link
+from app.subscription.quic import (
+    filter_singbox_client_entry_nodes,
+    user_anytls_link,
+    user_hysteria2_link,
+    user_tuic_link,
+)
 from app.services.node_pick import pick_node
 from app.subscription.share import encode_title, generate_subscription
 from app.subscription.userinfo import (
@@ -79,19 +84,34 @@ def _attachment_headers(filename: str) -> dict[str, str]:
     }
 
 
+def _subscription_branding(db: Session, dbuser: User) -> dict:
+    try:
+        from app.tenant import branding_for_user
+
+        return branding_for_user(db, dbuser)
+    except Exception:
+        return {}
+
+
 def _subscription_response_headers(
     user: UserResponse,
     request: Request,
     req_token: str,
     *,
     endpoint=None,
+    branding: dict | None = None,
 ) -> dict:
+    from app.tenant import subscription_brand_title
+
+    branding = branding or {}
+    brand = subscription_brand_title(branding) or None
+    support = (branding.get("support_url") or SUB_SUPPORT_URL) or ""
     pub_url = public_subscription_url(user, request, request_token=req_token, endpoint=endpoint)
     return {
         "content-disposition": f'attachment; filename="{user.username}"',
         "profile-web-page-url": pub_url,
-        "support-url": SUB_SUPPORT_URL,
-        "profile-title": encode_title(format_subscription_profile_title(user)),
+        "support-url": support,
+        "profile-title": encode_title(format_subscription_profile_title(user, brand=brand)),
         "profile-update-interval": SUB_UPDATE_INTERVAL,
         "subscription-userinfo": format_subscription_userinfo(user),
         **NO_STORE_HEADERS,
@@ -106,8 +126,14 @@ def _resolve_subscription_body(
     reverse: bool,
     inbound_filter: str | None = None,
     profile_web_page_url: str = "",
+    branding: dict | None = None,
 ) -> tuple[str, dict]:
     """Return subscription body plus access metadata (for blocked profile title)."""
+    from app.tenant import subscription_brand_title
+
+    branding = branding or {}
+    brand = subscription_brand_title(branding) or None
+    support = branding.get("support_url")
     access = subscription_access(user)
     if not access["config_available"]:
         conf = generate_blocked_subscription(
@@ -130,6 +156,8 @@ def _resolve_subscription_body(
         config_format,
         as_base64=as_base64,
         profile_web_page_url=profile_web_page_url,
+        brand=brand,
+        support_url=support,
     )
     return conf, access
 
@@ -140,6 +168,7 @@ def _v2ray_json_response(
     *,
     reverse: bool = False,
     inbound_filter: str | None = None,
+    branding: dict | None = None,
 ) -> Response:
     conf, access = _resolve_subscription_body(
         user,
@@ -148,6 +177,7 @@ def _v2ray_json_response(
         reverse=reverse,
         inbound_filter=inbound_filter,
         profile_web_page_url=response_headers.get("profile-web-page-url", ""),
+        branding=branding,
     )
     if not access["config_available"]:
         response_headers["profile-title"] = encode_title(blocked_message(access["block_reason"]))
@@ -159,6 +189,7 @@ def _v2ray_base64_response(
     response_headers: dict,
     *,
     inbound_filter: str | None = None,
+    branding: dict | None = None,
 ) -> Response:
     conf, access = _resolve_subscription_body(
         user,
@@ -167,6 +198,7 @@ def _v2ray_base64_response(
         reverse=False,
         inbound_filter=inbound_filter,
         profile_web_page_url=response_headers.get("profile-web-page-url", ""),
+        branding=branding,
     )
     if not access["config_available"]:
         response_headers["profile-title"] = encode_title(blocked_message(access["block_reason"]))
@@ -226,7 +258,9 @@ def _attach_subscription_share_links(db: Session, dbuser, payload: dict) -> None
     hy2_settings = _proxy_settings(dbuser, ProxyTypes.Hysteria2)
     tuic_settings = _proxy_settings(dbuser, ProxyTypes.TUIC)
     anytls_settings = _proxy_settings(dbuser, ProxyTypes.AnyTLS)
-    sb_nodes = [n for n in crud.get_singbox_nodes(db) if n.singbox is not None]
+    sb_nodes = filter_singbox_client_entry_nodes(
+        db, [n for n in crud.get_singbox_nodes(db) if n.singbox is not None]
+    )
     if sb_nodes and (hy2_settings or tuic_settings or anytls_settings):
         preferred_hy2 = None
         preferred_tuic = None
@@ -535,8 +569,9 @@ def user_subscription(
 
     crud.update_user_sub(db, dbuser, user_agent)
     req_token = request.path_params.get("token", "")
+    branding = _subscription_branding(db, dbuser)
     response_headers = _subscription_response_headers(
-        user, request, req_token, endpoint=endpoint
+        user, request, req_token, endpoint=endpoint, branding=branding
     )
     if not access["config_available"]:
         response_headers["profile-title"] = encode_title(blocked_message(access["block_reason"]))
@@ -549,6 +584,7 @@ def user_subscription(
             reverse=reverse,
             inbound_filter=inbound_filter,
             profile_web_page_url=response_headers.get("profile-web-page-url", ""),
+            branding=branding,
         )
         return Response(content=conf, media_type=media_type, headers=response_headers)
 
@@ -577,42 +613,64 @@ def user_subscription(
         return _format_response("clash", "text/yaml")
 
     elif re.match(r'^HiddifyNextX', user_agent):
-        return _v2ray_json_response(user, response_headers, inbound_filter=inbound_filter)
+        return _v2ray_json_response(
+            user, response_headers, inbound_filter=inbound_filter, branding=branding
+        )
 
     elif re.match(r'^[Vv]2[Bb]ox', user_agent):
         # V2Box imports the base64 share-link list (vless://, vmess://, …).
         # Serving v2ray-json broke subscription import in the app.
         # Finalmask / Xray-native WG: use /sub/<token>/v2ray-json explicitly.
-        return _v2ray_base64_response(user, response_headers, inbound_filter=inbound_filter)
+        return _v2ray_base64_response(
+            user, response_headers, inbound_filter=inbound_filter, branding=branding
+        )
 
     elif re.match(r'^v2rayN/(\d+\.\d+)', user_agent):
         version_str = re.match(r'^v2rayN/(\d+\.\d+)', user_agent).group(1)
         if LooseVersion(version_str) >= LooseVersion("6.40"):
-            return _v2ray_json_response(user, response_headers, inbound_filter=inbound_filter)
+            return _v2ray_json_response(
+                user, response_headers, inbound_filter=inbound_filter, branding=branding
+            )
         if USE_CUSTOM_JSON_DEFAULT or USE_CUSTOM_JSON_FOR_V2RAYN:
-            return _v2ray_json_response(user, response_headers, inbound_filter=inbound_filter)
-        return _v2ray_base64_response(user, response_headers, inbound_filter=inbound_filter)
+            return _v2ray_json_response(
+                user, response_headers, inbound_filter=inbound_filter, branding=branding
+            )
+        return _v2ray_base64_response(
+            user, response_headers, inbound_filter=inbound_filter, branding=branding
+        )
 
     elif re.match(r'^v2rayNG/(\d+\.\d+\.\d+)', user_agent):
         version_str = re.match(r'^v2rayNG/(\d+\.\d+\.\d+)', user_agent).group(1)
         if LooseVersion(version_str) >= LooseVersion("1.8.29"):
-            return _v2ray_json_response(user, response_headers, inbound_filter=inbound_filter)
+            return _v2ray_json_response(
+                user, response_headers, inbound_filter=inbound_filter, branding=branding
+            )
         if LooseVersion(version_str) >= LooseVersion("1.8.18"):
             return _v2ray_json_response(
-                user, response_headers, reverse=True, inbound_filter=inbound_filter
+                user, response_headers, reverse=True, inbound_filter=inbound_filter, branding=branding
             )
-        return _v2ray_base64_response(user, response_headers, inbound_filter=inbound_filter)
+        return _v2ray_base64_response(
+            user, response_headers, inbound_filter=inbound_filter, branding=branding
+        )
 
     elif re.match(r'^Happ/(\d+\.\d+\.\d+)', user_agent):
         version_str = re.match(r'^Happ/(\d+\.\d+\.\d+)', user_agent).group(1)
         if LooseVersion(version_str) >= LooseVersion("1.63.1"):
-            return _v2ray_json_response(user, response_headers, inbound_filter=inbound_filter)
+            return _v2ray_json_response(
+                user, response_headers, inbound_filter=inbound_filter, branding=branding
+            )
         if USE_CUSTOM_JSON_DEFAULT or USE_CUSTOM_JSON_FOR_HAPP:
-            return _v2ray_json_response(user, response_headers, inbound_filter=inbound_filter)
-        return _v2ray_base64_response(user, response_headers, inbound_filter=inbound_filter)
+            return _v2ray_json_response(
+                user, response_headers, inbound_filter=inbound_filter, branding=branding
+            )
+        return _v2ray_base64_response(
+            user, response_headers, inbound_filter=inbound_filter, branding=branding
+        )
 
     else:
-        return _v2ray_base64_response(user, response_headers, inbound_filter=inbound_filter)
+        return _v2ray_base64_response(
+            user, response_headers, inbound_filter=inbound_filter, branding=branding
+        )
 
 
 @router.get("/{token}/info", response_model=SubscriptionUserResponse)
@@ -635,10 +693,23 @@ def user_subscription_info(
     )
     payload.update(access)
     from app.subscription.userinfo import format_subscription_profile_title, subscription_client_import_url
+    from app.tenant import subscription_brand_title
 
-    payload["subscription_profile_title"] = format_subscription_profile_title(user)
+    branding = _subscription_branding(db, dbuser)
+    brand = subscription_brand_title(branding) or None
+    payload["subscription_profile_title"] = format_subscription_profile_title(user, brand=brand)
     payload["public_subscription_url"] = pub_url
-    payload["client_subscription_url"] = subscription_client_import_url(pub_url, user)
+    payload["client_subscription_url"] = subscription_client_import_url(pub_url, user, brand=brand)
+    payload["branding"] = {
+        "panel_title": branding.get("panel_title"),
+        "logo_url": branding.get("logo_url"),
+        "favicon_url": branding.get("favicon_url"),
+        "primary_color": branding.get("primary_color"),
+        "support_url": branding.get("support_url"),
+        "sub_profile_title": branding.get("sub_profile_title"),
+        "domain": branding.get("domain"),
+        "panel_url": branding.get("panel_url"),
+    }
     from app.subscription.public_url import list_user_subscription_urls
 
     payload["subscription_urls"] = list_user_subscription_urls(user, request) if access["config_available"] else []
@@ -995,8 +1066,9 @@ def user_subscription_with_client_type(
         _enforce_export_guards(db, dbuser, request)
 
     req_token = request.path_params.get("token", "")
+    branding = _subscription_branding(db, dbuser)
     response_headers = _subscription_response_headers(
-        user, request, req_token, endpoint=sub_ctx.endpoint
+        user, request, req_token, endpoint=sub_ctx.endpoint, branding=branding
     )
     if not access["config_available"]:
         response_headers["profile-title"] = encode_title(blocked_message(access["block_reason"]))
@@ -1011,6 +1083,7 @@ def user_subscription_with_client_type(
         reverse=config["reverse"],
         inbound_filter=sub_ctx.inbound_filter,
         profile_web_page_url=response_headers.get("profile-web-page-url", ""),
+        branding=branding,
     )
 
     return Response(content=conf, media_type=config["media_type"], headers=response_headers)

@@ -2,6 +2,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
+from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 
 from app import xray
@@ -276,6 +277,88 @@ def get_current_admin(admin: Admin = Depends(Admin.get_current)):
     return data
 
 
+class _PasswordChangeBody(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class _UsernameChangeBody(BaseModel):
+    new_username: str
+    current_password: str
+
+
+@router.put("/admin/me/password")
+def change_my_password(
+    body: _PasswordChangeBody,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(Admin.get_current),
+):
+    """Reseller/admin self-service password change (requires current password)."""
+    from datetime import datetime
+
+    from app.models.admin import pwd_context
+
+    new_password = (body.new_password or "").strip()
+    if len(new_password) < 6:
+        raise HTTPException(status_code=400, detail="new_password must be at least 6 characters")
+    dbadmin = crud.get_admin(db, admin.username)
+    if dbadmin is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Password change requires a database-backed admin",
+        )
+    if not pwd_context.verify(body.current_password or "", dbadmin.hashed_password):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    dbadmin.hashed_password = pwd_context.hash(new_password)
+    dbadmin.password_reset_at = datetime.utcnow()
+    db.commit()
+    return {"detail": "Password updated"}
+
+
+@router.put("/admin/me/username")
+def change_my_username(
+    body: _UsernameChangeBody,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(Admin.get_current),
+):
+    """Reseller self-service username change. Forces re-login (JWT is username-bound)."""
+    import re
+    from datetime import datetime
+
+    from app.models.admin import pwd_context
+    from app.utils.admin_sessions import revoke_user_sessions
+
+    if admin.is_sudo:
+        raise HTTPException(status_code=400, detail="Sudo username cannot be changed here")
+    new_username = (body.new_username or "").strip().lower()
+    if not re.fullmatch(r"[a-z0-9_]{3,32}", new_username):
+        raise HTTPException(
+            status_code=400,
+            detail="Username must be 3–32 chars: lowercase letters, digits, underscore",
+        )
+    if new_username == admin.username.lower():
+        return {"detail": "Username unchanged", "username": admin.username}
+    dbadmin = crud.get_admin(db, admin.username)
+    if dbadmin is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Username change requires a database-backed admin",
+        )
+    if not pwd_context.verify(body.current_password or "", dbadmin.hashed_password):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    if crud.get_admin(db, new_username) is not None:
+        raise HTTPException(status_code=409, detail="Username already taken")
+    old = dbadmin.username
+    dbadmin.username = new_username
+    dbadmin.password_reset_at = datetime.utcnow()
+    db.commit()
+    try:
+        revoke_user_sessions(old)
+    except Exception:
+        pass
+    return {"detail": "Username updated — please sign in again", "username": new_username}
+
+
 @router.get(
     "/admins",
     response_model=List[Admin],
@@ -289,7 +372,22 @@ def get_admins(
     admin: Admin = Depends(Admin.check_sudo_admin),
 ):
     """Fetch a list of admins with optional filters for pagination and username."""
-    return crud.get_admins(db, offset, limit, username)
+    from app import billing, feature_flags
+
+    rows = crud.get_admins(db, offset, limit, username)
+    out: List[Admin] = []
+    for row in rows:
+        item = Admin.model_validate(row)
+        if feature_flags.is_enabled("billing") and not row.is_sudo:
+            try:
+                item.wallet_balance = billing.get_or_create_wallet(db, row.id).balance
+            except Exception:
+                item.wallet_balance = 0
+            item.prepaid_traffic_remaining = int(
+                getattr(row, "prepaid_traffic_remaining", 0) or 0
+            )
+        out.append(item)
+    return out
 
 
 @router.post("/admin/{username}/users/disable", responses={403: responses._403, 404: responses._404})

@@ -32,6 +32,8 @@ __all__ = [
     "get_branding",
     "set_branding",
     "resolve_branding",
+    "branding_for_user",
+    "subscription_brand_title",
     "tenant_owned_node_ids",
     "ensure_reseller_tenants",
 ]
@@ -194,7 +196,7 @@ def set_branding(
         db.add(row)
     for key in (
         "panel_title", "logo_url", "favicon_url", "primary_color",
-        "support_url", "sub_profile_title", "domain",
+        "support_url", "sub_profile_title", "domain", "panel_url",
     ):
         if key in fields:
             setattr(row, key, fields[key])
@@ -214,6 +216,7 @@ def _branding_dict(row: Optional[BrandingSettings]) -> dict:
         "support_url": row.support_url,
         "sub_profile_title": row.sub_profile_title,
         "domain": row.domain,
+        "panel_url": getattr(row, "panel_url", None),
     }
 
 
@@ -234,6 +237,7 @@ def resolve_branding(db: Session, tenant_id: Optional[int]) -> dict:
         "support_url": SUB_SUPPORT_URL,
         "sub_profile_title": SUB_PROFILE_TITLE,
         "domain": None,
+        "panel_url": None,
     }
 
     layers = [_branding_dict(get_branding(db, None))]
@@ -245,3 +249,23 @@ def resolve_branding(db: Session, tenant_id: Optional[int]) -> dict:
             if value:
                 base[key] = value
     return base
+
+
+def branding_for_user(db: Session, dbuser) -> dict:
+    """Resolve branding for a subscription user via their owning admin's tenant."""
+    tenant_id = None
+    admin_id = getattr(dbuser, "admin_id", None)
+    if admin_id is not None:
+        admin = db.query(Admin).filter(Admin.id == admin_id).first()
+        if admin is not None:
+            tenant_id = admin.tenant_id
+    return resolve_branding(db, tenant_id)
+
+
+def subscription_brand_title(branding: dict) -> str:
+    """Title clients show for a subscription profile."""
+    return (
+        (branding.get("sub_profile_title") or "").strip()
+        or (branding.get("panel_title") or "").strip()
+        or ""
+    )

@@ -523,10 +523,14 @@ def bulk_create_users(
     alphabet = string.ascii_lowercase + string.digits
     dbadmin = crud.get_admin(db, admin.username) if admin else None
 
-    panel_ep = None
+    from app.subscription.panel_balance import bind_user_to_panel, resolve_panel_for_create
+
+    # Optional pin: when set, every user goes to that panel. When omitted,
+    # each user is placed on the current least-loaded p1…p9 endpoint.
+    pinned_ep = None
     if body.subscription_endpoint_id is not None:
-        panel_ep = crud.get_subscription_endpoint(db, body.subscription_endpoint_id)
-        if panel_ep is None or not panel_ep.enabled:
+        pinned_ep = crud.get_subscription_endpoint(db, body.subscription_endpoint_id)
+        if pinned_ep is None or not pinned_ep.enabled:
             raise ValueError("Selected subscription panel endpoint was not found or is disabled")
 
     created: List[str] = []
@@ -536,6 +540,17 @@ def bulk_create_users(
         core = "".join(secrets.choice(alphabet) for _ in range(8))
         username = f"{prefix}{core}{suffix}"
         try:
+            if pinned_ep is not None:
+                panel_ep, username = resolve_panel_for_create(
+                    db,
+                    endpoint_id=pinned_ep.id,
+                    username=username,
+                    username_prefix=prefix or None,
+                )
+            else:
+                panel_ep, username = resolve_panel_for_create(
+                    db, username=username, username_prefix=prefix or None
+                )
             new_user = _user_create_from_bulk_body(body, username=username, db=db)
             for ptype in new_user.proxies:
                 from app.routers.user import _ensure_protocol_enabled
@@ -543,17 +558,15 @@ def bulk_create_users(
                 _ensure_protocol_enabled(ptype, db)
             db_user = crud.create_user(db, new_user, admin=dbadmin)
             if panel_ep is not None and db_user is not None:
-                # Short token (= username core) keeps subscribe URLs readable and
-                # binds the user to the chosen panel domain/path.
-                crud.upsert_subscription_token_alias(
+                bind_user_to_panel(
                     db,
-                    token=core,
                     user_id=db_user.id,
-                    endpoint_id=panel_ep.id,
-                    source="bulk-create",
+                    username=db_user.username,
+                    endpoint=panel_ep,
+                    source="bulk-create" if pinned_ep is not None else "auto-balance",
                     commit=True,
                 )
-            created.append(username)
+            created.append(db_user.username if db_user else username)
         except IntegrityError:
             db.rollback()
             errors.append(f"{username}: already exists")

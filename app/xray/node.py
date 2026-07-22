@@ -297,7 +297,7 @@ class ReSTXRayNode:
         remove_tags: list,
         inbounds: list,
         *,
-        timeout: int = 60,
+        timeout: int = 180,
     ) -> dict:
         """Hot-swap inbounds on the live core (Finalmask shard reload)."""
         if not self.connected:
@@ -406,6 +406,17 @@ class _LockedRemoteRoot:
     def __init__(self, node: "RPyCXRayNode"):
         object.__setattr__(self, "_node", node)
 
+    # Methods that must not wait minutes behind a large WG batch sync.
+    # If the node lock is held by sync, fail fast so usage/health can skip
+    # this tick instead of freezing Overview (max_instances skips).
+    _FAST_FAIL_METHODS = frozenset({
+        "wg_transfer",
+        "xray_users_transfer",
+        "channel_ping",
+        "wg_sync_status_json",
+    })
+    _FAST_FAIL_TIMEOUT_SEC = 2.0
+
     def __getattr__(self, name):
         node = object.__getattribute__(self, "_node")
         with node._lock:
@@ -415,12 +426,27 @@ class _LockedRemoteRoot:
             if not hasattr(node.connection.root, name):
                 raise AttributeError(name)
 
+        fast = name in _LockedRemoteRoot._FAST_FAIL_METHODS
+
         def _locked_call(*args, **kwargs):
-            with node._lock:
+            timeout = _LockedRemoteRoot._FAST_FAIL_TIMEOUT_SEC if fast else None
+            acquired = node._lock.acquire(timeout=timeout) if timeout is not None else True
+            if timeout is not None:
+                if not acquired:
+                    raise TimeoutError(
+                        f"node RPyC busy (skipped fast call {name})"
+                    )
+            else:
+                node._lock.acquire()
+                acquired = True
+            try:
                 conn = getattr(node, "connection", None)
                 if conn is None or getattr(conn, "closed", True):
                     node.connect()
                 return getattr(node.connection.root, name)(*args, **kwargs)
+            finally:
+                if acquired:
+                    node._lock.release()
 
         return _locked_call
 
@@ -675,7 +701,7 @@ class RPyCXRayNode:
     def get_version(self):
         return self.remote.fetch_xray_version()
 
-    def ensure_api(self, timeout: float = 5) -> bool:
+    def ensure_api(self, timeout: float = 5, *, refresh: bool = False) -> bool:
         """Attach the gRPC stats/API client to an already-running remote core.
 
         For nodes marked ``started`` out-of-band (e.g. a WireGuard relay whose
@@ -685,11 +711,21 @@ class RPyCXRayNode:
         (``record_usages.py`` treats a connected+started node's ``None`` api
         as "no stats", but downstream code that blindly calls methods on it
         crashes). Best-effort: returns whether the API is usable afterwards.
+
+        ``refresh=True`` drops a stale channel (common after Finalmask core
+        blips / hot-replace) and dials again — without this, ``has_live_api``
+        stays true while every ``get_users_stats`` gets Connection refused.
         """
-        if self._api is not None:
+        if self._api is not None and not refresh:
             return True
         if not self.connected or not self.started:
             return False
+        if self._api is not None:
+            try:
+                self._api.close()
+            except Exception:
+                pass
+            self._api = None
         try:
             self._api = XRayAPI(
                 address=self.address,
@@ -766,7 +802,7 @@ class RPyCXRayNode:
         remove_tags: list,
         inbounds: list,
         *,
-        timeout: int = 60,
+        timeout: int = 180,
     ) -> dict:
         """Hot-swap inbounds on the live core (Finalmask shard reload).
 
@@ -780,7 +816,11 @@ class RPyCXRayNode:
         if not hasattr(remote, "xray_hot_replace_inbounds_json"):
             raise AttributeError("node agent has no xray_hot_replace_inbounds_json")
         payload = json.dumps(
-            {"remove_tags": list(remove_tags or []), "inbounds": list(inbounds or [])},
+            {
+                "remove_tags": list(remove_tags or []),
+                "inbounds": list(inbounds or []),
+                "timeout": int(timeout),
+            },
             separators=(",", ":"),
         )
         prev = None
@@ -788,6 +828,8 @@ class RPyCXRayNode:
         try:
             if conn is not None:
                 prev = conn._config.get("sync_request_timeout")
+                # Large Finalmask shards need well above the default 15s RPyC
+                # budget or the call surfaces as "result expired".
                 conn._config["sync_request_timeout"] = max(int(prev or 15), int(timeout))
             raw = remote.xray_hot_replace_inbounds_json(payload)
         finally:

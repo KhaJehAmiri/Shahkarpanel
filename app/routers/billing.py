@@ -52,11 +52,21 @@ class CreditRequest(BaseModel):
     description: Optional[str] = None
 
 
+class AdjustRequest(BaseModel):
+    """Sudo wallet correction: set absolute balance or apply a signed delta."""
+
+    username: str
+    mode: str  # "set" | "delta"
+    amount: int
+    description: Optional[str] = None
+
+
 class InvoiceCreate(BaseModel):
     username: Optional[str] = None
     amount: int
     plan_id: Optional[int] = None
     provider: Optional[str] = "manual"
+    description: Optional[str] = None
 
 
 class InvoiceResponse(BaseModel):
@@ -66,6 +76,9 @@ class InvoiceResponse(BaseModel):
     amount: int
     status: str
     provider: Optional[str] = None
+    description: Optional[str] = None
+    created_at: Optional[datetime] = None
+    paid_at: Optional[datetime] = None
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -76,6 +89,7 @@ class TransactionResponse(BaseModel):
     type: str
     description: Optional[str] = None
     reference: Optional[str] = None
+    created_at: Optional[datetime] = None
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -109,6 +123,26 @@ def my_wallet(
     return billing.get_or_create_wallet(db, dbadmin.id)
 
 
+def _after_wallet_topup(db: Session, target) -> None:
+    """Catch up held GB charges and restore capped users after a balance change."""
+    reactivated: list[int] = []
+    try:
+        from app.billing.usage_billing import bill_reseller_usage
+        from app.quota import enforce_reseller_traffic_caps
+
+        bill_reseller_usage(db, target)
+        _newly, reactivated = enforce_reseller_traffic_caps(db)
+    except Exception:
+        pass
+    if reactivated:
+        try:
+            from app.quota import restore_users_everywhere
+
+            restore_users_everywhere(reactivated)
+        except Exception:
+            pass
+
+
 @router.post("/credit", response_model=WalletResponse)
 def add_credit(
     body: CreditRequest,
@@ -117,12 +151,68 @@ def add_credit(
 ):
     """Top up an admin's wallet. Sudo only."""
     _require_billing_enabled()
+    if body.amount <= 0:
+        raise HTTPException(status_code=400, detail="amount must be positive")
     target = crud.get_admin(db, body.username)
     if target is None:
         raise HTTPException(status_code=404, detail="Admin not found")
     billing.add_transaction(
-        db, target.id, body.amount, type="credit", description=body.description
+        db,
+        target.id,
+        body.amount,
+        type="credit",
+        description=body.description or f"Manual credit by master ({body.amount})",
     )
+    _after_wallet_topup(db, target)
+    return billing.get_or_create_wallet(db, target.id)
+
+
+@router.post("/adjust", response_model=WalletResponse)
+def adjust_wallet(
+    body: AdjustRequest,
+    db: Session = Depends(get_db),
+    _: Admin = Depends(Admin.check_sudo_admin),
+):
+    """Set absolute balance or apply a signed delta. Sudo only.
+
+    ``mode=set`` writes a ledger delta so ``balance == sum(transactions)`` stays true.
+    ``mode=delta`` credits (positive) or debits (negative) by ``amount``.
+    """
+    _require_billing_enabled()
+    mode = (body.mode or "").strip().lower()
+    if mode not in ("set", "delta"):
+        raise HTTPException(status_code=400, detail="mode must be 'set' or 'delta'")
+    target = crud.get_admin(db, body.username)
+    if target is None:
+        raise HTTPException(status_code=404, detail="Admin not found")
+    if target.is_sudo:
+        raise HTTPException(status_code=400, detail="Cannot adjust a sudo wallet")
+
+    wallet = billing.get_or_create_wallet(db, target.id)
+    if mode == "set":
+        if body.amount < 0:
+            raise HTTPException(status_code=400, detail="set amount must be >= 0")
+        delta = int(body.amount) - int(wallet.balance)
+        if delta == 0:
+            return wallet
+        tx_type = "credit" if delta > 0 else "debit"
+        desc = body.description or f"Manual balance set to {body.amount} by master"
+    else:
+        delta = int(body.amount)
+        if delta == 0:
+            raise HTTPException(status_code=400, detail="delta amount must be non-zero")
+        tx_type = "credit" if delta > 0 else "debit"
+        desc = body.description or f"Manual wallet {tx_type} by master ({delta})"
+
+    billing.add_transaction(
+        db,
+        target.id,
+        delta,
+        type=tx_type,
+        description=desc,
+        skip_commission=True,
+    )
+    _after_wallet_topup(db, target)
     return billing.get_or_create_wallet(db, target.id)
 
 
@@ -141,7 +231,12 @@ def create_invoice(
     if target is None:
         raise HTTPException(status_code=404, detail="Admin not found")
     return billing.create_invoice(
-        db, target.id, body.amount, plan_id=body.plan_id, provider=body.provider
+        db,
+        target.id,
+        body.amount,
+        plan_id=body.plan_id,
+        provider=body.provider,
+        description=body.description,
     )
 
 
@@ -163,16 +258,29 @@ def list_invoices(
 def pay_invoice(
     invoice_id: int,
     db: Session = Depends(get_db),
-    _: Admin = Depends(Admin.check_sudo_admin),
+    admin: Admin = Depends(require_permission("billing:read")),
 ):
-    """Confirm payment of an invoice. Sudo only (manual confirmation)."""
+    """Pay a pending invoice from the reseller wallet.
+
+    Resellers may pay their own invoices; sudo may pay any invoice
+    (still debits that reseller's wallet).
+    """
     _require_billing_enabled()
     from app.db.models import Invoice
 
     invoice = db.query(Invoice).filter(Invoice.id == invoice_id).first()
     if invoice is None:
         raise HTTPException(status_code=404, detail="Invoice not found")
-    return billing.pay_invoice(db, invoice)
+    if not admin.is_sudo:
+        if invoice.admin_id != _admin_id(db, admin):
+            raise HTTPException(status_code=403, detail="Cannot pay another admin's invoice")
+    provider = "wallet" if not admin.is_sudo else (invoice.provider or "manual")
+    try:
+        return billing.pay_invoice(db, invoice, provider_name=provider)
+    except billing.InsufficientWalletBalance as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/transactions", response_model=List[TransactionResponse])
@@ -197,6 +305,247 @@ class UsageSummaryResponse(BaseModel):
     wallet_balance: int
     wallet_low: bool
     wallet_low_threshold: int
+    wallet_blocked: bool = False
+    currency_label: Optional[str] = None
+    prepaid_traffic_remaining: int = 0
+    package_covered_bytes: int = 0
+    overflow_owned_bytes: int = 0
+    overflow_foreign_bytes: int = 0
+
+
+class TrafficPackageCreate(BaseModel):
+    name: str
+    bytes: int
+    price: int = 0
+    enabled: bool = True
+
+
+class TrafficPackageModify(BaseModel):
+    name: Optional[str] = None
+    bytes: Optional[int] = None
+    price: Optional[int] = None
+    enabled: Optional[bool] = None
+
+
+class TrafficPackageResponse(BaseModel):
+    id: int
+    name: str
+    bytes: int
+    price: int
+    enabled: bool
+    created_at: Optional[datetime] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TrafficCreditRequest(BaseModel):
+    username: str
+    bytes: int
+    description: Optional[str] = None
+
+
+class TrafficPurchaseResponse(BaseModel):
+    id: int
+    admin_id: int
+    package_id: Optional[int] = None
+    bytes: int
+    price_paid: int
+    source: str
+    created_by_admin_id: Optional[int] = None
+    created_at: Optional[datetime] = None
+    prepaid_traffic_remaining: Optional[int] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+def _map_package_error(exc: Exception) -> HTTPException:
+    from app.billing.traffic_packages import TrafficPackageError
+
+    if isinstance(exc, TrafficPackageError):
+        return HTTPException(status_code=exc.status_code, detail=exc.message)
+    return HTTPException(status_code=400, detail=str(exc))
+
+
+def _after_traffic_credit(db: Session, target) -> None:
+    """Re-run billing/caps after prepaid traffic increases."""
+    _after_wallet_topup(db, target)
+
+
+@router.get("/traffic-packages", response_model=List[TrafficPackageResponse])
+def list_traffic_packages(
+    enabled_only: bool = False,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(require_permission("billing:read")),
+):
+    _require_billing_enabled()
+    from app.billing.traffic_packages import list_packages
+
+    # Resellers only see enabled catalog entries.
+    if not admin.is_sudo:
+        enabled_only = True
+    return list_packages(db, enabled_only=enabled_only)
+
+
+@router.post("/traffic-packages", response_model=TrafficPackageResponse)
+def create_traffic_package(
+    body: TrafficPackageCreate,
+    db: Session = Depends(get_db),
+    _: Admin = Depends(Admin.check_sudo_admin),
+):
+    _require_billing_enabled()
+    from app.billing.traffic_packages import TrafficPackageError, create_package
+
+    try:
+        return create_package(
+            db,
+            name=body.name,
+            bytes=body.bytes,
+            price=body.price,
+            enabled=body.enabled,
+        )
+    except TrafficPackageError as exc:
+        raise _map_package_error(exc) from exc
+
+
+@router.put("/traffic-packages/{package_id}", response_model=TrafficPackageResponse)
+def modify_traffic_package(
+    package_id: int,
+    body: TrafficPackageModify,
+    db: Session = Depends(get_db),
+    _: Admin = Depends(Admin.check_sudo_admin),
+):
+    _require_billing_enabled()
+    from app.billing.traffic_packages import TrafficPackageError, get_package, update_package
+
+    pkg = get_package(db, package_id)
+    if pkg is None:
+        raise HTTPException(status_code=404, detail="Traffic package not found")
+    try:
+        return update_package(db, pkg, **body.model_dump(exclude_unset=True))
+    except TrafficPackageError as exc:
+        raise _map_package_error(exc) from exc
+
+
+@router.delete("/traffic-packages/{package_id}")
+def remove_traffic_package(
+    package_id: int,
+    db: Session = Depends(get_db),
+    _: Admin = Depends(Admin.check_sudo_admin),
+):
+    _require_billing_enabled()
+    from app.billing.traffic_packages import delete_package, get_package
+
+    pkg = get_package(db, package_id)
+    if pkg is None:
+        raise HTTPException(status_code=404, detail="Traffic package not found")
+    delete_package(db, pkg)
+    return {"detail": "Traffic package removed"}
+
+
+@router.post("/traffic-packages/credit", response_model=TrafficPurchaseResponse)
+def credit_traffic_package(
+    body: TrafficCreditRequest,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(Admin.check_sudo_admin),
+):
+    """Sudo: grant prepaid traffic bytes to a reseller without wallet debit."""
+    _require_billing_enabled()
+    from app.billing.traffic_packages import TrafficPackageError, credit_traffic
+
+    target = crud.get_admin(db, body.username)
+    if target is None or target.is_sudo:
+        raise HTTPException(status_code=404, detail="Reseller not found")
+    actor = crud.get_admin(db, admin.username)
+    try:
+        purchase = credit_traffic(
+            db,
+            admin_id=target.id,
+            bytes=body.bytes,
+            created_by_admin_id=actor.id if actor else None,
+            description=body.description,
+        )
+    except TrafficPackageError as exc:
+        raise _map_package_error(exc) from exc
+    db.refresh(target)
+    _after_traffic_credit(db, target)
+    return TrafficPurchaseResponse(
+        id=purchase.id,
+        admin_id=purchase.admin_id,
+        package_id=purchase.package_id,
+        bytes=purchase.bytes,
+        price_paid=purchase.price_paid,
+        source=purchase.source,
+        created_by_admin_id=purchase.created_by_admin_id,
+        created_at=purchase.created_at,
+        prepaid_traffic_remaining=int(target.prepaid_traffic_remaining or 0),
+    )
+
+
+@router.get("/traffic-packages/purchases", response_model=List[TrafficPurchaseResponse])
+def list_traffic_purchases(
+    username: Optional[str] = None,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(require_permission("billing:read")),
+):
+    _require_billing_enabled()
+    from app.billing.traffic_packages import list_purchases
+
+    admin_id: Optional[int] = None
+    if admin.is_sudo:
+        if username:
+            target = crud.get_admin(db, username)
+            if target is None:
+                raise HTTPException(status_code=404, detail="Admin not found")
+            admin_id = target.id
+        # else: sudo sees all purchases when username omitted
+    else:
+        admin_id = _admin_id(db, admin)
+
+    rows = list_purchases(db, admin_id=admin_id, limit=limit)
+    return rows
+
+
+@router.post("/traffic-packages/{package_id}/purchase", response_model=TrafficPurchaseResponse)
+def purchase_traffic_package(
+    package_id: int,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(require_permission("billing:read")),
+):
+    """Reseller: buy a catalog package with wallet balance."""
+    _require_billing_enabled()
+    from app.billing.traffic_packages import TrafficPackageError, purchase_package
+
+    if admin.is_sudo:
+        raise HTTPException(status_code=400, detail="Sudo accounts cannot purchase traffic packages")
+    admin_id = _admin_id(db, admin)
+    actor = crud.get_admin(db, admin.username)
+    try:
+        purchase = purchase_package(
+            db,
+            admin_id=admin_id,
+            package_id=package_id,
+            created_by_admin_id=actor.id if actor else admin_id,
+        )
+    except TrafficPackageError as exc:
+        raise _map_package_error(exc) from exc
+
+    target = crud.get_admin(db, admin.username)
+    if target is not None:
+        db.refresh(target)
+        _after_traffic_credit(db, target)
+        prepaid = int(target.prepaid_traffic_remaining or 0)
+    else:
+        prepaid = None
+    return TrafficPurchaseResponse(
+        id=purchase.id,
+        admin_id=purchase.admin_id,
+        package_id=purchase.package_id,
+        bytes=purchase.bytes,
+        price_paid=purchase.price_paid,
+        source=purchase.source,
+        created_by_admin_id=purchase.created_by_admin_id,
+        created_at=purchase.created_at,
+        prepaid_traffic_remaining=prepaid,
+    )
 
 
 class TopUpRequest(BaseModel):

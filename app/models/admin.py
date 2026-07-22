@@ -37,6 +37,9 @@ class Admin(BaseModel):
     tenant_id: Optional[int] = None
     parent_admin_id: Optional[int] = None
     commission_percent: int = 0
+    # Populated by sudo list endpoints (not a DB column).
+    wallet_balance: Optional[int] = None
+    prepaid_traffic_remaining: Optional[int] = None
     model_config = ConfigDict(from_attributes=True)
 
     @property

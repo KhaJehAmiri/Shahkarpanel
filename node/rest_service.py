@@ -64,6 +64,8 @@ class Service(object):
         # spec and reads back per-peer transfer counters for central accounting.
         self.router.add_api_route("/wg/apply", self.wg_apply, methods=["POST"])
         self.router.add_api_route("/wg/apply-specs", self.wg_apply_specs, methods=["POST"])
+        self.router.add_api_route("/wg/apply-batch", self.wg_apply_batch, methods=["POST"])
+        self.router.add_api_route("/wg/sync-status", self.wg_sync_status, methods=["POST"])
         self.router.add_api_route("/wg/warp-tproxy", self.wg_warp_tproxy, methods=["POST"])
         self.router.add_api_route("/wg/open-udp-ports", self.wg_open_udp_ports, methods=["POST"])
         self.router.add_api_route("/wg/transfer", self.wg_transfer, methods=["POST"])
@@ -275,6 +277,7 @@ class Service(object):
             XRAY_EXECUTABLE_PATH,
             list(remove_tags or []),
             list(inbounds or []),
+            timeout=180.0,
         )
         if not result.get("ok"):
             raise HTTPException(
@@ -347,6 +350,41 @@ class Service(object):
             logger.error(f"Failed to apply WireGuard specs: {exc}")
             raise HTTPException(status_code=503, detail=str(exc))
         return {"interfaces": [s.interface for s in wg_specs], "peers": sum(len(s.peers) for s in wg_specs)}
+
+    def wg_apply_batch(
+        self,
+        session_id: UUID = Body(embed=True),
+        interface: str = Body(embed=True),
+        generation: int = Body(embed=True),
+        cursor: int = Body(embed=True),
+        peers: list = Body(default=[], embed=True),
+        removes: list = Body(default=[], embed=True),
+    ):
+        self.match_session_id(session_id)
+        try:
+            return self.wg.apply_batch(
+                interface,
+                generation=int(generation or 0),
+                cursor=int(cursor or 0),
+                peers=list(peers or []),
+                removes=list(removes or []),
+            )
+        except Exception as exc:
+            logger.error(f"Failed to apply WireGuard batch: {exc}")
+            raise HTTPException(status_code=503, detail=str(exc))
+
+    def wg_sync_status(
+        self,
+        session_id: UUID = Body(embed=True),
+        interface: str = Body(default="", embed=True),
+    ):
+        self.match_session_id(session_id)
+        try:
+            iface = (interface or "").strip() or None
+            return self.wg.sync_status(iface)
+        except Exception as exc:
+            logger.error(f"Failed to read WG sync status: {exc}")
+            raise HTTPException(status_code=503, detail=str(exc))
 
     def wg_warp_tproxy(
         self,

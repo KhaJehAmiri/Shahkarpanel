@@ -134,24 +134,49 @@ def _build_desired_by_inbound() -> dict[str, dict[str, "Account"]]:
     Validation/proxy access happens while the DB session is still open;
     SQLAlchemy lazy-loads (``proxies``/``inbounds``) cannot survive a detached
     instance, so we must materialize the accounts inside the ``with`` block.
+
+    Note: ``get_user_queryset`` uses ``joinedload`` on collections, which is
+    incompatible with ``yield_per`` (SQLAlchemy InvalidRequestError). Chunk by
+    primary key instead so hot-sync keeps working for new reseller accounts.
     """
+    from sqlalchemy.orm import selectinload
+
+    from app.db.models import Proxy, User
+
     desired: dict[str, dict[str, Account]] = defaultdict(dict)
 
     with GetDB() as db:
-        users = crud.get_users(db, status=[UserStatus.active, UserStatus.on_hold])
-        for dbuser in users:
-            proxies = _proxy_settings_map(dbuser)
-            email = f"{dbuser.id}.{dbuser.username}"
-            for proxy_type, inbound_tags in dbuser.inbounds.items():
-                for inbound_tag in inbound_tags:
-                    account = _account_for_inbound(
-                        proxies, proxy_type, inbound_tag, email,
-                        user_id=dbuser.id,
-                        speed_limit_up=dbuser.speed_limit_up,
-                        speed_limit_down=dbuser.speed_limit_down,
-                    )
-                    if account is not None:
-                        desired[inbound_tag][email] = account
+        last_id = 0
+        while True:
+            batch = (
+                db.query(User)
+                .options(
+                    selectinload(User.proxies).selectinload(Proxy.excluded_inbounds),
+                )
+                .filter(
+                    User.status.in_([UserStatus.active, UserStatus.on_hold]),
+                    User.id > last_id,
+                )
+                .order_by(User.id)
+                .limit(500)
+                .all()
+            )
+            if not batch:
+                break
+            for dbuser in batch:
+                proxies = _proxy_settings_map(dbuser)
+                email = f"{dbuser.id}.{dbuser.username}"
+                for proxy_type, inbound_tags in dbuser.inbounds.items():
+                    for inbound_tag in inbound_tags:
+                        account = _account_for_inbound(
+                            proxies, proxy_type, inbound_tag, email,
+                            user_id=dbuser.id,
+                            speed_limit_up=dbuser.speed_limit_up,
+                            speed_limit_down=dbuser.speed_limit_down,
+                        )
+                        if account is not None:
+                            desired[inbound_tag][email] = account
+            last_id = batch[-1].id
     return desired
 
 
@@ -262,9 +287,12 @@ def hot_sync_main_core() -> bool:
     except Exception:
         return False
 
+    # Build desired set *outside* the hot lock so a 500k-user DB scan cannot
+    # block hot_disconnect_users / sync_main_core_user for the whole reconcile.
+    desired = _build_desired_by_inbound()
+
     with _hot_lock:
         _ensure_registry_current()
-        desired = _build_desired_by_inbound()
         snapshot = {tag: set(emails) for tag, emails in _registered.items()}
 
         if _core_user_diff_requires_restart(desired, snapshot):

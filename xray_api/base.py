@@ -17,3 +17,13 @@ class XRayBase(object):
             self._channel = grpc.secure_channel(f"{address}:{port}",
                                                 credentials=creds,
                                                 options=opts)
+
+    def close(self) -> None:
+        channel = getattr(self, "_channel", None)
+        if channel is None:
+            return
+        try:
+            channel.close()
+        except Exception:
+            pass
+        self._channel = None

@@ -210,6 +210,17 @@ def add_user(
     for proxy_type in new_user.proxies:
         _ensure_protocol_enabled(proxy_type, db)
 
+    from app.subscription.panel_balance import bind_user_to_panel, resolve_panel_for_create
+
+    try:
+        panel_ep, balanced_username = resolve_panel_for_create(
+            db, username=new_user.username
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if balanced_username != new_user.username:
+        new_user = new_user.model_copy(update={"username": balanced_username})
+
     try:
         dbuser = crud.create_user(
             db,
@@ -224,10 +235,23 @@ def add_user(
         db.rollback()
         raise HTTPException(status_code=409, detail="User already exists")
 
+    if panel_ep is not None:
+        bind_user_to_panel(
+            db,
+            user_id=dbuser.id,
+            username=dbuser.username,
+            endpoint=panel_ep,
+            source="auto-balance",
+        )
+
     bg.add_task(xray.operations.add_user, dbuser=dbuser)
     user = _user_response(dbuser)
     report.user_created(user=user, user_id=dbuser.id, by=admin, user_admin=dbuser.admin)
-    logger.info(f'New user "{dbuser.username}" added')
+    logger.info(
+        'New user "%s" added (panel=%s)',
+        dbuser.username,
+        panel_ep.slug if panel_ep else "-",
+    )
     return user
 
 
@@ -251,10 +275,23 @@ def add_user_from_template(
     if status is None and getattr(db_tpl, "default_status", None):
         status = UserStatusCreate(db_tpl.default_status.value)
 
+    from app.subscription.panel_balance import bind_user_to_panel, resolve_panel_for_create
+
     try:
-        new_user = _user_create_from_db_template(db_tpl, username=body.username.strip(), status=status)
+        new_user = _user_create_from_db_template(
+            db_tpl, username=body.username.strip(), status=status
+        )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    try:
+        panel_ep, balanced_username = resolve_panel_for_create(
+            db, username=new_user.username
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if balanced_username != new_user.username:
+        new_user = new_user.model_copy(update={"username": balanced_username})
 
     for ptype in new_user.proxies:
         _ensure_protocol_enabled(ptype, db)
@@ -269,10 +306,24 @@ def add_user_from_template(
         db.rollback()
         raise HTTPException(status_code=409, detail="User already exists")
 
+    if panel_ep is not None:
+        bind_user_to_panel(
+            db,
+            user_id=dbuser.id,
+            username=dbuser.username,
+            endpoint=panel_ep,
+            source="auto-balance",
+        )
+
     bg.add_task(xray.operations.add_user, dbuser=dbuser)
     user = _user_response(dbuser)
     report.user_created(user=user, user_id=dbuser.id, by=admin, user_admin=dbuser.admin)
-    logger.info(f'New user "{dbuser.username}" added from template {body.template_id}')
+    logger.info(
+        'New user "%s" added from template %s (panel=%s)',
+        dbuser.username,
+        body.template_id,
+        panel_ep.slug if panel_ep else "-",
+    )
     return user
 
 
@@ -305,24 +356,41 @@ def bulk_users_from_template(
     suffix = body.username_suffix or db_tpl.username_suffix or ""
     dbadmin = crud.get_admin(db, admin.username)
 
+    from app.subscription.panel_balance import bind_user_to_panel, resolve_panel_for_create
+
     created: List[str] = []
     errors: List[str] = []
     alphabet = string.ascii_lowercase + string.digits
 
     for _ in range(body.count):
         core = "".join(secrets.choice(alphabet) for _ in range(8))
-        username = f"{prefix}{core}{suffix}"
+        # Pass core only — template may add its own prefix/suffix; we balance after.
         try:
-            new_user = _user_create_from_db_template(db_tpl, username=username, status=status)
+            new_user = _user_create_from_db_template(
+                db_tpl, username=f"{prefix}{core}{suffix}", status=status
+            )
+            panel_ep, balanced_username = resolve_panel_for_create(
+                db, username=new_user.username, username_prefix=prefix or None
+            )
+            if balanced_username != new_user.username:
+                new_user = new_user.model_copy(update={"username": balanced_username})
             for ptype in new_user.proxies:
                 _ensure_protocol_enabled(ptype, db)
             dbuser = crud.create_user(db, new_user, admin=dbadmin)
+            if panel_ep is not None:
+                bind_user_to_panel(
+                    db,
+                    user_id=dbuser.id,
+                    username=dbuser.username,
+                    endpoint=panel_ep,
+                    source="auto-balance",
+                )
             created.append(dbuser.username)
         except IntegrityError:
             db.rollback()
-            errors.append(f"{username}: already exists")
+            errors.append(f"{prefix}{core}{suffix}: already exists")
         except Exception as exc:
-            errors.append(f"{username}: {exc}")
+            errors.append(f"{prefix}{core}{suffix}: {exc}")
 
     if created:
         bg.add_task(xray.operations.sync_core_users_async)

@@ -1,8 +1,9 @@
 """White-label tenants & branding API (phase 6)."""
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, ConfigDict
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel, ConfigDict, field_validator
+import re
 
 from app import feature_flags, tenant as tenant_svc
 from app.db import Session, crud, get_db
@@ -64,6 +65,44 @@ class BrandingUpdate(BaseModel):
     support_url: Optional[str] = None
     sub_profile_title: Optional[str] = None
     domain: Optional[str] = None
+    panel_url: Optional[str] = None
+
+    @field_validator("domain")
+    @classmethod
+    def validate_domain(cls, value: Optional[str]):
+        if value is None:
+            return None
+        host = str(value).strip().lower()
+        if not host:
+            return None
+        if "://" in host:
+            from urllib.parse import urlparse
+            host = (urlparse(host).hostname or "").strip().lower()
+        # Custom panel hostname only — not a free-text label.
+        if " " in host or not re.fullmatch(
+            r"[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+",
+            host,
+        ):
+            raise ValueError(
+                "domain must be a hostname like panel.example.com (leave blank if unused)"
+            )
+        return host
+
+    @field_validator("panel_url")
+    @classmethod
+    def validate_panel_url(cls, value: Optional[str]):
+        if value is None:
+            return None
+        url = str(value).strip()
+        if not url:
+            return None
+        if not re.match(r"^https?://", url, re.I):
+            url = "https://" + url
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        if not parsed.hostname:
+            raise ValueError("panel_url must be a valid URL like https://panel.example.com")
+        return url.rstrip("/")
 
 
 class BrandingResponse(BaseModel):
@@ -74,6 +113,7 @@ class BrandingResponse(BaseModel):
     support_url: Optional[str] = None
     sub_profile_title: Optional[str] = None
     domain: Optional[str] = None
+    panel_url: Optional[str] = None
 
 
 # --------------------------------------------------------------------------- #
@@ -148,6 +188,7 @@ def delete_tenant(
 # --------------------------------------------------------------------------- #
 @router.get("/branding", response_model=BrandingResponse)
 def public_branding(
+    request: Request,
     tenant: Optional[str] = Query(default=None, description="tenant slug"),
     domain: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
@@ -155,12 +196,17 @@ def public_branding(
     """Resolve effective branding for the dashboard/subscription. Public: no auth
     so the login page and subscription pages can theme themselves."""
     tenant_id = None
+    host = (domain or (request.headers.get("host") or "").split(":")[0] or "").strip().lower()
     if tenant:
         t = tenant_svc.get_tenant_by_slug(db, tenant)
         tenant_id = t.id if t else None
-    elif domain:
+    elif host:
         from app.db.models import BrandingSettings
-        row = db.query(BrandingSettings).filter(BrandingSettings.domain == domain).first()
+        row = (
+            db.query(BrandingSettings)
+            .filter(BrandingSettings.domain == host)
+            .first()
+        )
         tenant_id = row.tenant_id if row else None
     return BrandingResponse(**tenant_svc.resolve_branding(db, tenant_id))
 

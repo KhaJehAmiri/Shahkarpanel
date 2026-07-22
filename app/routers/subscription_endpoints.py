@@ -31,6 +31,34 @@ def list_endpoints(
     return crud.list_subscription_endpoints(db)
 
 
+@router.get("/balance")
+def panel_balance(
+    db: Session = Depends(get_db),
+    _: Admin = Depends(Admin.get_current),
+):
+    """Least-loaded panel picker stats (p1…p9) for owner + reseller create flows."""
+    from app.subscription.panel_balance import panel_counts, pick_least_loaded_panel
+
+    rows = panel_counts(db)
+    next_ep = pick_least_loaded_panel(db)
+    return {
+        "panels": rows,
+        "next": (
+            {
+                "id": next_ep.id,
+                "slug": next_ep.slug,
+                "host": next_ep.host,
+                "user_count": next(
+                    (r["user_count"] for r in rows if r["id"] == next_ep.id),
+                    0,
+                ),
+            }
+            if next_ep
+            else None
+        ),
+    }
+
+
 @router.post("", response_model=SubscriptionEndpointResponse)
 def create_endpoint(
     body: SubscriptionEndpointCreate,

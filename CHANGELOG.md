@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.23.0 — 2026-07-20
+
+- Scale: WireGuard peer cache (joinedload + in-process TTL) so usage/sync no longer N+1 scan tens of thousands of proxies every few seconds.
+- Scale: resumable node sync — `peer_change_outbox` + `node_sync_cursors`, batch `wg_apply_batch` / Finalmask shard batches with cursor resume after disconnect.
+- Scale: SQL-targeted `review_users`; safer default job intervals (usage 15s, review 30s); serving reconcile builds desired set outside the hot lock.
+- Scale: Finalmask shard port reserve default 256; fleet subnet capacity auto-widen guard; RPyC fast-fail for transfer while sync holds the node lock.
+
 ## 0.22.2 — 2026-07-18
 
 - Inbounds list: enable/disable toggle per Xray inbound (disabled inbounds stay in config, omitted from the live core).

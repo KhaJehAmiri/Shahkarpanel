@@ -38,9 +38,17 @@ class WorkspaceResponse(BaseModel):
     max_nodes: Optional[int] = None
     wallet_balance: Optional[int] = None
     wallet_low: bool = False
+    wallet_blocked: bool = False
     usage_rate_per_gb: int = 0
     users_usage: int = 0
     max_total_traffic: Optional[int] = None
+    traffic_remaining: Optional[int] = None
+    prepaid_traffic_remaining: int = 0
+    pending_usage_cost: int = 0
+    pending_usage_bytes: int = 0
+    capped_users: int = 0
+    currency_label: Optional[str] = None
+    last_usage_debit: Optional[Dict[str, Any]] = None
     model_config = ConfigDict(from_attributes=True)
 
 

@@ -61,18 +61,30 @@ def build_xray_wireguard_peers(peers: List[WGUserPeer]) -> List[Dict]:
 
     Tunnel IP prefers plain ``address``; falls back to ``awg_address`` so
     amnezia-only users are not dropped from the inbound.
+
+    ``allowedIPs`` must be unique within the baked set — duplicate tunnel IPs
+    make Xray attribute traffic to the wrong ``email`` (or drop stats).
     """
     out = []
-    seen = set()
+    seen_keys = set()
+    seen_ips = set()
     for p in peers:
         tunnel = (p.address or p.awg_address or "").strip()
-        if not p.active or not p.public_key or not tunnel or p.public_key in seen:
+        if not p.active or not p.public_key or not tunnel or p.public_key in seen_keys:
             continue
-        seen.add(p.public_key)
+        allowed = _normalize_allowed(tunnel)
+        ip_key = allowed.split("/")[0]
+        if ip_key in seen_ips:
+            continue
+        seen_keys.add(p.public_key)
+        seen_ips.add(ip_key)
         entry: Dict = {
             "publicKey": p.public_key,
-            "allowedIPs": [_normalize_allowed(tunnel)],
+            "allowedIPs": [allowed],
             "email": _peer_email(p),
+            # Match 3x-ui: level 0 enables policy statsUserUplink/Downlink
+            # so Xray UserManager emits user>>>email>>>traffic counters.
+            "level": 0,
         }
         if p.preshared_key:
             entry["preSharedKey"] = p.preshared_key

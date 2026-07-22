@@ -88,6 +88,69 @@ def list_scoped_nodes(db: Session, admin) -> List[Node]:
     return scoped_nodes_query(db, admin).order_by(Node.id).all()
 
 
+def list_protocol_capability_nodes(db: Session, admin) -> List[Node]:
+    """Nodes that decide which protocols a caller may assign to users.
+
+    Resellers manage only their workspace nodes in Infrastructure, but user
+    creation rides the shared main-panel fleet (``tenant_id`` / ``owner_admin_id``
+    both NULL). Include those platform nodes so WireGuard / Finalmask / sing-box
+    toggles match what sudo sees on the main panel.
+    """
+    from sqlalchemy import and_, or_
+
+    if getattr(admin, "is_sudo", False):
+        return db.query(Node).order_by(Node.id).all()
+
+    clauses = [and_(Node.tenant_id.is_(None), Node.owner_admin_id.is_(None))]
+    scoped = list_scoped_nodes(db, admin)
+    if scoped:
+        clauses.append(Node.id.in_([n.id for n in scoped]))
+    return db.query(Node).filter(or_(*clauses)).order_by(Node.id).all()
+
+
+def assignable_native_protocols(db: Session, admin) -> Dict[str, bool]:
+    """Booleans for native protocols assignable from the shared/workspace fleet.
+
+    Mirrors ``protocolAssignable`` in the dashboard (Finalmask / plain WG /
+    AmneziaWG / sing-box) so resellers see the same toggles as the main panel.
+    """
+    from app.models.node import CoreKind
+    from app.wireguard.sync import amneziawg_enabled, plain_wg_enabled
+
+    wireguard = False
+    amneziawg = False
+    hysteria2 = False
+    tuic = False
+    anytls = False
+
+    for node in list_protocol_capability_nodes(db, admin):
+        wg = node.wireguard
+        if wg is not None:
+            if getattr(wg, "xray_wg_enabled", False):
+                wireguard = True
+            elif plain_wg_enabled(wg) and (node.core_kind or "") == CoreKind.wireguard.value:
+                wireguard = True
+            if amneziawg_enabled(wg):
+                amneziawg = True
+
+        sb = node.singbox
+        if sb is not None:
+            if getattr(sb, "hysteria2_enabled", False):
+                hysteria2 = True
+            if getattr(sb, "tuic_enabled", False):
+                tuic = True
+            if getattr(sb, "anytls_enabled", False):
+                anytls = True
+
+    return {
+        "wireguard": wireguard,
+        "amneziawg": amneziawg,
+        "hysteria2": hysteria2,
+        "tuic": tuic,
+        "anytls": anytls,
+    }
+
+
 def admin_owns_node(db: Session, admin, node: Node) -> bool:
     if getattr(admin, "is_sudo", False):
         return True
@@ -106,7 +169,8 @@ def assert_owns_node(db: Session, admin, node: Node) -> None:
 
 
 def workspace_summary(db: Session, admin) -> Dict[str, Any]:
-    from app import billing, feature_flags
+    from app import billing, feature_flags, platform_settings as ps
+    from app.db.models import Transaction
 
     dbadmin = db_admin(db, admin)
     tenant_id = admin_tenant_id(db, admin) if dbadmin else None
@@ -121,13 +185,57 @@ def workspace_summary(db: Session, admin) -> Dict[str, Any]:
     nodes_count = count_owned_nodes(db, dbadmin, tenant_id) if dbadmin else 0
 
     wallet_low = False
+    wallet_blocked = False
     usage_rate_per_gb = 0
+    pending_usage_cost = 0
+    pending_usage_bytes = 0
+    currency_label: Optional[str] = None
+    last_usage_debit: Optional[Dict[str, Any]] = None
+    capped_users = 0
+
+    users_usage = int(dbadmin.users_usage or 0) if dbadmin else 0
+    max_total_traffic = dbadmin.max_total_traffic if dbadmin else None
+    traffic_remaining: Optional[int] = None
+    if max_total_traffic is not None:
+        traffic_remaining = max(0, int(max_total_traffic) - users_usage)
+
     if feature_flags.is_enabled("billing") and dbadmin and wallet_balance is not None:
-        from app.billing.usage_billing import wallet_is_low
-        from app import platform_settings as ps
+        from app.billing.usage_billing import usage_summary_for_admin, wallet_is_low
 
         usage_rate_per_gb = ps.get_int("billing.usage_rate_per_gb", 0)
         wallet_low = wallet_is_low(wallet_balance)
+        currency_label = (ps.get_setting("billing.currency_label") or "").strip() or None
+        summary = usage_summary_for_admin(db, dbadmin, rate_per_gb=usage_rate_per_gb)
+        pending_usage_cost = int(summary.get("estimated_cost") or 0)
+        pending_usage_bytes = int(summary.get("owned_bytes") or 0) + int(
+            summary.get("foreign_bytes") or 0
+        )
+        wallet_blocked = bool(summary.get("wallet_blocked"))
+        capped_users = (
+            db.query(User)
+            .filter(User.admin_id == dbadmin.id, User.capped_by_reseller.is_(True))
+            .count()
+        )
+        last_tx = (
+            db.query(Transaction)
+            .filter(
+                Transaction.admin_id == dbadmin.id,
+                Transaction.type == "usage_billing",
+            )
+            .order_by(Transaction.id.desc())
+            .first()
+        )
+        if last_tx is not None:
+            last_usage_debit = {
+                "id": last_tx.id,
+                "amount": last_tx.amount,
+                "description": last_tx.description,
+                "created_at": last_tx.created_at.isoformat() if last_tx.created_at else None,
+            }
+
+    prepaid_traffic_remaining = (
+        int(getattr(dbadmin, "prepaid_traffic_remaining", 0) or 0) if dbadmin else 0
+    )
 
     return {
         "username": admin.username,
@@ -142,7 +250,15 @@ def workspace_summary(db: Session, admin) -> Dict[str, Any]:
         "max_nodes": resolve_max_nodes(db, dbadmin, tenant_id) if dbadmin else None,
         "wallet_balance": wallet_balance,
         "wallet_low": wallet_low,
+        "wallet_blocked": wallet_blocked,
         "usage_rate_per_gb": usage_rate_per_gb,
-        "users_usage": dbadmin.users_usage if dbadmin else 0,
-        "max_total_traffic": dbadmin.max_total_traffic if dbadmin else None,
+        "users_usage": users_usage,
+        "max_total_traffic": max_total_traffic,
+        "traffic_remaining": traffic_remaining,
+        "prepaid_traffic_remaining": prepaid_traffic_remaining,
+        "pending_usage_cost": pending_usage_cost,
+        "pending_usage_bytes": pending_usage_bytes,
+        "capped_users": capped_users,
+        "currency_label": currency_label,
+        "last_usage_debit": last_usage_debit,
     }

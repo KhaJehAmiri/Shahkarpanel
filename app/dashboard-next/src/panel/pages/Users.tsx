@@ -1,6 +1,6 @@
 import { FC, Fragment, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import { ImportPreviewResponse, ImportPreviewRow, InboundsByProtocol, NodeItem, Plan, SystemStats, UserItem, UsersResponse } from "../api/types";
 import { useFetch, useLiveReload } from "../lib/useFetch";
@@ -27,6 +27,7 @@ import { useApp } from "../context/AppContext";
 import { useCopilot } from "../copilot/CopilotContext";
 import {
   NXPANEL_WG_KIND,
+  type AssignableNativeProtocols,
   defaultProtoInboundTags,
   deriveSsMethodFromInbounds,
   generateRandomUsername,
@@ -206,6 +207,15 @@ export const Users: FC = () => {
   const [editUser, setEditUser] = useState<UserItem | null>(null);
   const [viewUser, setViewUser] = useState<UserItem | null>(null);
   const [showImport, setShowImport] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    if (searchParams.get("import") === "1") {
+      setShowImport(true);
+      const next = new URLSearchParams(searchParams);
+      next.delete("import");
+      setSearchParams(next, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [showBulkAssign, setShowBulkAssign] = useState(false);
   const [showBulkExtend, setShowBulkExtend] = useState(false);
@@ -222,6 +232,10 @@ export const Users: FC = () => {
   const templates = useFetch<UserTemplateRow[]>(() => api.get("/user_template"), []);
   const inboundsList = useFetch<InboundsByProtocol>(() => api.get("/inbounds"), []);
   const nodesForBulk = useFetch<NodeItem[]>(() => api.get("/nodes"), []);
+  const nativeCapsForBulk = useFetch<AssignableNativeProtocols>(
+    () => api.get("/assignable-native-protocols"),
+    [],
+  );
   const inboundTags = useMemo(() => {
     const ib = inboundsList.data;
     if (!ib) return [] as string[];
@@ -638,6 +652,7 @@ export const Users: FC = () => {
           inboundTags={inboundTags}
           inbounds={inboundsList.data ?? undefined}
           nodes={nodesForBulk.data ?? undefined}
+          nativeCaps={nativeCapsForBulk.data}
         />
       )}
       {showBulkExtend && (
@@ -682,24 +697,34 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
   const toast = useToast();
   const inbounds = useFetch<InboundsByProtocol>(() => api.get("/inbounds"), []);
   const nodes = useFetch<NodeItem[]>(() => api.get("/nodes"), []);
+  const nativeCaps = useFetch<AssignableNativeProtocols>(
+    () => api.get("/assignable-native-protocols"),
+    [],
+  );
   useEffect(() => {
     inbounds.reload();
     nodes.reload();
+    nativeCaps.reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const hasHy2Node = (nodes.data || []).some((n) => n.singbox?.hysteria2_enabled);
-  const hasTuicNode = (nodes.data || []).some((n) => n.singbox?.tuic_enabled);
-  const hasAnytlsNode = (nodes.data || []).some((n) => n.singbox?.anytls_enabled);
-  const hasPlainWgNode = (nodes.data || []).some((n) => {
-    const wg = n.wireguard;
-    if (!wg) return false;
-    if (wg.xray_wg_enabled) return true;
-    if (wg.plain_enabled === false) return false;
-    return n.core_kind === "wireguard";
-  });
-  const hasAwgNode = (nodes.data || []).some(
-    (n) => n.core_kind === "wireguard" && !!n.wireguard?.awg_enabled,
-  );
+  const hasHy2Node = nativeCaps.data?.hysteria2
+    ?? (nodes.data || []).some((n) => n.singbox?.hysteria2_enabled);
+  const hasTuicNode = nativeCaps.data?.tuic
+    ?? (nodes.data || []).some((n) => n.singbox?.tuic_enabled);
+  const hasAnytlsNode = nativeCaps.data?.anytls
+    ?? (nodes.data || []).some((n) => n.singbox?.anytls_enabled);
+  const hasPlainWgNode = nativeCaps.data?.wireguard
+    ?? (nodes.data || []).some((n) => {
+      const wg = n.wireguard;
+      if (!wg) return false;
+      if (wg.xray_wg_enabled) return true;
+      if (wg.plain_enabled === false) return false;
+      return n.core_kind === "wireguard";
+    });
+  const hasAwgNode = nativeCaps.data?.amneziawg
+    ?? (nodes.data || []).some(
+      (n) => n.core_kind === "wireguard" && !!n.wireguard?.awg_enabled,
+    );
   const templates = useFetch<{ id: number; name?: string }[]>(
     () => (admin?.is_sudo ? api.get("/user_template") : Promise.resolve([])),
     [admin?.is_sudo],
@@ -1100,7 +1125,12 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
   const availableProtos = PROTO_ORDER.filter((p) => {
     if (!protos[p]) return false;
     if (protos[p].enabled) return true;
-    return protocolAssignable(p, inbounds.data ?? undefined, nodes.data ?? undefined);
+    return protocolAssignable(
+      p,
+      inbounds.data ?? undefined,
+      nodes.data ?? undefined,
+      nativeCaps.data,
+    );
   });
 
   const toggleWizardProto = (p: string) => {

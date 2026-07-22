@@ -9,6 +9,7 @@ import {
   defaultProtoInboundTags,
   deriveSsMethodFromInbounds,
   inboundMatchesSsMethod,
+  type AssignableNativeProtocols,
   protocolAssignable,
   ssMethodFromInbound,
   toggleSsInboundTag,
@@ -112,6 +113,10 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
   const toast = useToast();
   const inbounds = useFetch<InboundsByProtocol>(() => api.get("/inbounds"), []);
   const nodes = useFetch<NodeItem[]>(() => api.get("/nodes"), []);
+  const nativeCaps = useFetch<AssignableNativeProtocols>(
+    () => api.get("/assignable-native-protocols"),
+    [],
+  );
   const endpoints = useFetch<SubEndpointRow[]>(() => api.get("/subscription-endpoints"), []);
   const routingPresets = useFetch<{ presets: Record<string, { label: string }> }>(
     () => api.get("/routing/presets"),
@@ -130,7 +135,12 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
   const [suffix, setSuffix] = useState("");
   const [status, setStatus] = useState("active");
   const [note, setNote] = useState("");
+  /** null = auto-balance to least-loaded p panel; number = pinned panel id */
   const [panelId, setPanelId] = useState<number | null>(null);
+  const balance = useFetch<{
+    panels: Array<{ id: number; slug: string; host: string | null; user_count: number }>;
+    next: { id: number; slug: string; host: string | null; user_count: number } | null;
+  }>(() => api.get("/subscription-endpoints/balance"), []);
   const [unlimited, setUnlimited] = useState(true);
   const [dataLimitUnit, setDataLimitUnit] = useState<DataLimitUnit>("GB");
   const [dataLimitValue, setDataLimitValue] = useState("");
@@ -148,20 +158,37 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<BulkCreateResult | null>(null);
 
-  const panels = useMemo(
-    () => (endpoints.data || []).filter(isPanelEndpoint).sort((a, b) => a.slug.localeCompare(b.slug)),
-    [endpoints.data],
-  );
+  const panels = useMemo(() => {
+    const fromApi = (endpoints.data || [])
+      .filter(isPanelEndpoint)
+      .sort((a, b) => a.slug.localeCompare(b.slug));
+    if (fromApi.length) return fromApi;
+    // Resellers cannot list full endpoints — use balance rows for pin cards.
+    return (balance.data?.panels || [])
+      .slice()
+      .sort((a, b) => a.slug.localeCompare(b.slug))
+      .map((p) => ({
+        id: p.id,
+        slug: p.slug,
+        host: p.host,
+        path_prefix: "sub",
+        listen_port: 2096,
+        enabled: true,
+        inbound_tag: null,
+      })) as SubEndpointRow[];
+  }, [endpoints.data, balance.data]);
   const selectedPanel = panels.find((p) => p.id === panelId) || null;
 
   useEffect(() => {
     if (!open) return;
     setTab("basic");
     setResult(null);
-    setPanelId(null);
+    setPanelId(null); // default: auto-balance
     inbounds.reload();
     nodes.reload();
+    nativeCaps.reload();
     endpoints.reload();
+    balance.reload();
     routingPresets.reload();
     dnsPresets.reload();
     if (templates.length) setTemplateId(templates[0].id);
@@ -191,7 +218,12 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
   const availableProtos = PROTO_ORDER.filter((p) => {
     if (!protos[p]) return false;
     if (protos[p].enabled) return true;
-    return protocolAssignable(p, inbounds.data ?? undefined, nodes.data ?? undefined);
+    return protocolAssignable(
+      p,
+      inbounds.data ?? undefined,
+      nodes.data ?? undefined,
+      nativeCaps.data,
+    );
   });
 
   const enabledProtoLabels = useMemo(() => {
@@ -296,10 +328,6 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
       toast.push(t("bulkCreate.templateRequired"), "error");
       return false;
     }
-    if (!panelId) {
-      toast.push(t("bulkCreate.panelRequired"), "error");
-      return false;
-    }
     return true;
   };
 
@@ -350,8 +378,8 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
         client_profile: clientProfile,
         proxies,
         inbounds: inb,
-        subscription_endpoint_id: panelId,
       };
+      if (panelId != null) body.subscription_endpoint_id = panelId;
       if (useTemplate && templateId) body.template_id = templateId;
       if (speedUp.trim()) body.speed_limit_up = parseInt(speedUp, 10);
       if (speedDown.trim()) body.speed_limit_down = parseInt(speedDown, 10);
@@ -546,15 +574,34 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
         {tab === "basic" && (
           <>
             <h4 className="nx-bulk-create-section-title">{t("bulkCreate.sectionPanel")}</h4>
-            <p className="nx-faint" style={{ fontSize: 12.5, margin: "0 0 12px" }}>{t("bulkCreate.panelHint")}</p>
-            {!endpoints.data ? (
+            <p className="nx-faint" style={{ fontSize: 12.5, margin: "0 0 12px" }}>
+              {t("bulkCreate.panelBalanceHint", "Auto picks the p-panel with the fewest users (srw1…srw9). Pin one only if you need a fixed host.")}
+            </p>
+            {!endpoints.data && !balance.data ? (
               <span className="nx-faint">{t("common.loading")}</span>
-            ) : panels.length === 0 ? (
+            ) : panels.length === 0 && !balance.data?.panels?.length ? (
               <div className="nx-faint">{t("bulkCreate.noPanels")}</div>
             ) : (
               <div className="nx-bulk-create-panels">
+                <button
+                  type="button"
+                  className={`nx-bulk-create-panel-card ${panelId == null ? "selected" : ""}`}
+                  onClick={() => setPanelId(null)}
+                >
+                  <span className="nx-bulk-create-panel-check">✓</span>
+                  <b dir="ltr">{t("bulkCreate.autoBalance", "Auto balance")}</b>
+                  <small dir="ltr">
+                    {balance.data?.next
+                      ? t("bulkCreate.nextPanel", "Next → {{slug}} ({{n}} users)", {
+                        slug: balance.data.next.slug,
+                        n: balance.data.next.user_count,
+                      })
+                      : t("bulkCreate.autoBalanceHint", "Least-loaded panel")}
+                  </small>
+                </button>
                 {panels.map((p) => {
                   const on = panelId === p.id;
+                  const count = balance.data?.panels?.find((b) => b.id === p.id)?.user_count;
                   return (
                     <button
                       key={p.id}
@@ -568,6 +615,7 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
                         {p.host || "—"}
                         {p.listen_port ? `:${p.listen_port}` : ""}
                         {" · /"}{p.path_prefix}/
+                        {count != null ? ` · ${count}` : ""}
                       </small>
                     </button>
                   );

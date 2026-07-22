@@ -8,6 +8,7 @@ Every entry point is best-effort and never raises into the caller — sing-box
 sync must never break the Xray user lifecycle.
 """
 import logging
+from sqlalchemy.orm import joinedload
 from typing import List, Optional
 
 from app.db import GetDB, crud
@@ -34,7 +35,7 @@ def collect_singbox_users(db) -> List[SBUser]:
     TUIC proxy."""
     users: List[SBUser] = []
     proxies = (
-        db.query(Proxy)
+        db.query(Proxy).options(joinedload(Proxy.user))
         .filter(Proxy.type.in_([ProxyTypes.Hysteria2, ProxyTypes.TUIC, ProxyTypes.AnyTLS]))
         .all()
     )

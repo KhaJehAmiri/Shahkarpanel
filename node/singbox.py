@@ -202,11 +202,25 @@ def render_config(spec: SingBoxSpec, *, include_v2ray_api: bool = True) -> dict:
                 "users": user_names,
             },
         }
+    tunnel_final = spec.tunnel_route_final or "direct"
+    dns_servers: list = [{"type": "local", "tag": "local"}]
+    # When egress is pinned to a tunnel hop, resolve DNS through that hop so
+    # lookups cannot leak out the Iran NIC and pull traffic onto ``direct``.
+    if tunnel_final != "direct":
+        dns_servers.insert(
+            0,
+            {
+                "type": "udp",
+                "tag": "tunnel-dns",
+                "server": "1.1.1.1",
+                "detour": tunnel_final,
+            },
+        )
     return {
         "log": {"level": spec.log_level, "timestamp": True},
         "dns": {
-            "servers": [{"type": "local", "tag": "local"}],
-            "final": "local",
+            "servers": dns_servers,
+            "final": "tunnel-dns" if tunnel_final != "direct" else "local",
             "strategy": "prefer_ipv4",
         },
         "inbounds": [_render_inbound(i) for i in spec.inbounds],
@@ -214,13 +228,15 @@ def render_config(spec: SingBoxSpec, *, include_v2ray_api: bool = True) -> dict:
             {
                 "type": "direct",
                 "tag": "direct",
-                "domain_strategy": "prefer_ipv4",
             },
         ],
         "route": {
             "rules": list(spec.tunnel_route_rules),
-            "final": spec.tunnel_route_final or "direct",
+            "final": tunnel_final,
             "auto_detect_interface": False,
+            "default_domain_resolver": (
+                "tunnel-dns" if tunnel_final != "direct" else "local"
+            ),
         },
         "experimental": experimental,
     }

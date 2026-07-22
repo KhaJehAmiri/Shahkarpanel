@@ -629,7 +629,9 @@ class XRayConfig(dict):
             ).filter(
                 db_models.User.status.in_([UserStatus.active, UserStatus.on_hold])
             )
-            result = query.all()
+            # Stream rows — materializing hundreds of thousands at once OOMs
+            # the panel during core rebuild / health recovery.
+            result_iter = query.yield_per(2000)
 
             # Aggregate excluded inbound tags per (proxy_type, user) in Python so
             # the query stays dialect-agnostic: lower(enum) and group_concat()
@@ -638,7 +640,7 @@ class XRayConfig(dict):
             _seen = {}
             user_speed: dict[int, tuple] = {}
 
-            for row in result:
+            for row in result_iter:
                 proxy_type = row.type.value if hasattr(row.type, "value") else str(row.type)
                 proxy_type = proxy_type.lower()
                 key = (proxy_type, row.id)

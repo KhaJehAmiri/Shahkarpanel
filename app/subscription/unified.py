@@ -12,6 +12,7 @@ from app.singbox.quality import hysteria2_outbound_quality, tuic_outbound_qualit
 from app.singbox.speed import speed_tier
 from app.subscription.quic import (
     singbox_link_insecure,
+    filter_singbox_client_entry_nodes,
     user_anytls_link,
     user_hysteria2_link,
     user_tuic_link,
@@ -214,13 +215,20 @@ def _collect_wireguard_exports(
     return exports
 
 
-def _singbox_tls(dbnode, host: str) -> dict:
+def _singbox_tls(dbnode, host: str, *, sni: str | None = None) -> dict:
     cfg = dbnode.singbox
     insecure = singbox_link_insecure(cfg)
-    tls: dict = {"enabled": True, "server_name": (cfg.sni if cfg else None) or host}
+    tls: dict = {"enabled": True, "server_name": sni or host}
     if insecure:
         tls["insecure"] = True
     return tls
+
+
+def _singbox_client_dial(dbnode, preferred_host: str) -> tuple[str, str]:
+    """Dial host/SNI for client sing-box JSON (same policy as share URIs)."""
+    from app.subscription.quic import singbox_dial_host_sni
+
+    return singbox_dial_host_sni(dbnode, dbnode.singbox, preferred_host)
 
 
 def _refresh_singbox_selector_groups(data: dict) -> None:
@@ -261,7 +269,9 @@ def _append_singbox(user: "UserResponse", config_text: str) -> str:
             if n.status == NodeStatus.connected
         ]
         wg_nodes = [n for n in nodes if n.core_kind == "wireguard" or getattr(n, "wireguard", None)]
-        sb_nodes = [n for n in nodes if getattr(n, "singbox", None)]
+        sb_nodes = filter_singbox_client_entry_nodes(
+            db, [n for n in nodes if getattr(n, "singbox", None)]
+        )
 
         # WireGuard → sing-box wireguard outbound (one outbound per connected node)
         if ProxyTypes.WireGuard in (user.proxies or {}):
@@ -318,13 +328,14 @@ def _append_singbox(user: "UserResponse", config_text: str) -> str:
                     )
                     if tag in tags:
                         continue
+                    dial_host, dial_sni = _singbox_client_dial(node, host)
                     outbounds.append({
                         "type": "hysteria2",
                         "tag": tag,
-                        "server": host,
+                        "server": dial_host,
                         "server_port": port,
                         "password": settings.get("password"),
-                        "tls": _singbox_tls(node, host),
+                        "tls": _singbox_tls(node, dial_host, sni=dial_sni),
                         **hysteria2_outbound_quality(tier_limited=tier_limited),
                     })
                     if node.singbox.hysteria2_obfs_password:
@@ -358,14 +369,15 @@ def _append_singbox(user: "UserResponse", config_text: str) -> str:
                     )
                     if tag in tags:
                         continue
+                    dial_host, dial_sni = _singbox_client_dial(node, host)
                     outbounds.append({
                         "type": "tuic",
                         "tag": tag,
-                        "server": host,
+                        "server": dial_host,
                         "server_port": port,
                         "uuid": str(settings.get("uuid") or ""),
                         "password": settings.get("password"),
-                        "tls": _singbox_tls(node, host),
+                        "tls": _singbox_tls(node, dial_host, sni=dial_sni),
                         **tuic_outbound_quality(
                             congestion_control=node.singbox.tuic_congestion_control or "bbr"
                         ),
@@ -388,13 +400,14 @@ def _append_singbox(user: "UserResponse", config_text: str) -> str:
                     user.speed_limit_up,
                     user.speed_limit_down,
                 )
+                dial_host, dial_sni = _singbox_client_dial(node, host)
                 outbounds.append({
                     "type": "anytls",
                     "tag": tag,
-                    "server": host,
+                    "server": dial_host,
                     "server_port": anytls_port,
                     "password": settings.get("password"),
-                    "tls": _singbox_tls(node, host),
+                    "tls": _singbox_tls(node, dial_host, sni=dial_sni),
                 })
                 tags.add(tag)
 
@@ -428,7 +441,9 @@ def _append_clash_meta(user: "UserResponse", config_text: str) -> str:
 
     with GetDB() as db:
         nodes = [n for n in crud.get_nodes(db) if n.status == NodeStatus.connected]
-        sb_nodes = [n for n in nodes if getattr(n, "singbox", None)]
+        sb_nodes = filter_singbox_client_entry_nodes(
+            db, [n for n in nodes if getattr(n, "singbox", None)]
+        )
         wg_nodes = [n for n in nodes if n.core_kind == "wireguard" or getattr(n, "wireguard", None)]
 
         from app.subscription.host_buckets import singbox_dial_endpoints
@@ -687,7 +702,9 @@ def collect_unified_share_links(user: "UserResponse") -> list[str]:
     with GetDB() as db:
         nodes = [n for n in crud.get_nodes(db) if n.status == NodeStatus.connected]
         wg_nodes = [n for n in nodes if n.core_kind == "wireguard" or getattr(n, "wireguard", None)]
-        sb_nodes = [n for n in nodes if getattr(n, "singbox", None)]
+        sb_nodes = filter_singbox_client_entry_nodes(
+            db, [n for n in nodes if getattr(n, "singbox", None)]
+        )
 
         settings = _client_settings(user, ProxyTypes.Hysteria2)
         if settings:

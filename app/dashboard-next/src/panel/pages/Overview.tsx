@@ -7,7 +7,7 @@ import { usePanelUpdate } from "../context/UpdateContext";
 import { useApp } from "../context/AppContext";
 import { useCopilot } from "../copilot/CopilotContext";
 import { useFetch, useLiveReload, usePolling } from "../lib/useFetch";
-import { formatBytes, formatSpeed } from "../lib/format";
+import { formatBytes, formatCompactAmount, formatSpeed, usagePct } from "../lib/format";
 import { PageHeader } from "../components/Shell";
 import { HealthChecklist } from "../components/HealthChecklist";
 import { SystemVitals } from "../components/viz/SystemVitals";
@@ -95,6 +95,112 @@ const KpiTile: FC<{
   );
   const cls = `nx-kpi${to ? " nx-kpi-link" : ""}${live ? " is-live" : ""}`;
   return to ? <Link to={to} className={cls}>{body}</Link> : <div className={cls}>{body}</div>;
+};
+
+const PACKAGE_BUY_HREF = "/business?tab=billing&billingTab=packages";
+
+const ResellerCommerceStrip: FC<{ ws: ResellerWorkspace }> = ({ ws }) => {
+  const { t } = useTranslation();
+  const used = ws.users_usage ?? 0;
+  const cap = ws.max_total_traffic ?? null;
+  const remaining = cap != null
+    ? Math.max(0, (ws.traffic_remaining ?? (cap - used)))
+    : null;
+  const pct = usagePct(used, cap);
+  const currency = (ws.currency_label || "").trim();
+  const pending = ws.pending_usage_cost ?? 0;
+  const balance = ws.wallet_balance ?? 0;
+  const prepaid = ws.prepaid_traffic_remaining ?? 0;
+  const packageEmpty = prepaid <= 0;
+
+  return (
+    <div className="nx-commerce-strip">
+      <article className="nx-commerce-card nx-commerce-wallet">
+        <header className="nx-commerce-card-head">
+          <span className="nx-commerce-eyebrow">{t("billing.wallet")}</span>
+          {ws.wallet_blocked ? (
+            <span className="nx-commerce-badge is-danger">{t("overview.walletBlockedBadge")}</span>
+          ) : ws.wallet_low ? (
+            <span className="nx-commerce-badge is-warn">{t("overview.lowWalletBadge")}</span>
+          ) : (
+            <span className="nx-commerce-badge is-ok">{t("overview.walletOkBadge")}</span>
+          )}
+        </header>
+        <div className="nx-commerce-balance">
+          <strong title={balance.toLocaleString()}>{formatCompactAmount(balance)}</strong>
+          {currency ? <span className="nx-commerce-currency">{currency}</span> : null}
+        </div>
+        <p className="nx-commerce-meta">
+          {pending > 0
+            ? t("overview.pendingCharge", {
+                cost: pending.toLocaleString(),
+                currency,
+              })
+            : ws.last_usage_debit
+              ? t("overview.lastDebit", {
+                  amount: Math.abs(ws.last_usage_debit.amount).toLocaleString(),
+                  currency,
+                })
+              : ws.usage_rate_per_gb
+                ? t("overview.gbRate", {
+                    rate: ws.usage_rate_per_gb.toLocaleString(),
+                    currency,
+                  })
+                : t("overview.noPendingCharge")}
+        </p>
+        <div className="nx-commerce-foot">
+          <span>{t("overview.fullBalance")}: {balance.toLocaleString()}{currency ? ` ${currency}` : ""}</span>
+          <Link to="/business?tab=billing" className="nx-commerce-link">{t("overview.openBilling")} →</Link>
+        </div>
+      </article>
+
+      <article className={`nx-commerce-card nx-commerce-traffic${packageEmpty ? " is-package-empty" : ""}`}>
+        <header className="nx-commerce-card-head">
+          <span className="nx-commerce-eyebrow">{t("overview.trafficPackage")}</span>
+          {packageEmpty ? (
+            <span className="nx-commerce-badge is-danger">{t("overview.packageExhaustedBadge")}</span>
+          ) : (
+            <span className="nx-commerce-badge is-ok">{t("overview.packageActiveBadge")}</span>
+          )}
+        </header>
+        <div className="nx-commerce-balance">
+          <strong>{formatBytes(prepaid)}</strong>
+          <span className="nx-commerce-currency">{t("overview.packageLeftLabel")}</span>
+        </div>
+        <div className="nx-commerce-meter" aria-hidden>
+          <span style={{ width: packageEmpty ? "100%" : `${Math.max(2, Math.min(100, prepaid > 0 ? 35 : 100))}%` }} />
+        </div>
+        <p className="nx-commerce-meta">
+          {packageEmpty
+            ? t("overview.packageExhaustedMeta")
+            : t("overview.prepaidRemaining", { remaining: formatBytes(prepaid) })}
+          {cap != null
+            ? ` · ${t("overview.trafficRemaining", {
+                remaining: formatBytes(remaining ?? 0),
+                cap: formatBytes(cap),
+              })}`
+            : ` · ${t("overview.usageTotal", { used: formatBytes(used) })}`}
+        </p>
+        <div className="nx-commerce-foot">
+          {packageEmpty ? (
+            <Link to={PACKAGE_BUY_HREF} className="nx-commerce-link" style={{ fontWeight: 700 }}>
+              {t("overview.buyPackageCta")} →
+            </Link>
+          ) : (
+            <Link to={PACKAGE_BUY_HREF} className="nx-commerce-link">{t("overview.managePackages")} →</Link>
+          )}
+          {(ws.pending_usage_bytes ?? 0) > 0 ? (
+            <span>
+              {t("overview.unbilledCost", {
+                cost: (ws.pending_usage_cost ?? 0).toLocaleString(),
+                currency,
+              })}
+            </span>
+          ) : null}
+        </div>
+      </article>
+    </div>
+  );
 };
 
 const LiveHero: FC<{
@@ -313,8 +419,13 @@ export const Overview: FC = () => {
     ];
   }, [admin?.is_sudo, connectedNodes, hasInbounds, hasUsers, s?.total_user, t]);
 
-  const up = rt?.outgoing_bandwidth_speed ?? s?.outgoing_bandwidth_speed ?? 0;
-  const down = rt?.incoming_bandwidth_speed ?? s?.incoming_bandwidth_speed ?? 0;
+  // User-facing polarity (not server NIC TX/RX):
+  // Upload  = client → server  ≈ API incoming / Xray uplink
+  // Download = server → client ≈ API outgoing / Xray downlink
+  // Matches Node traffic ↑ uplink / ↓ downlink and typical VPN usage
+  // (download >> upload), unlike 3x-ui's server-centric Overall Speed labels.
+  const up = rt?.incoming_bandwidth_speed ?? s?.incoming_bandwidth_speed ?? 0;
+  const down = rt?.outgoing_bandwidth_speed ?? s?.outgoing_bandwidth_speed ?? 0;
 
   return (
     <div className="nx-overview nx-home-min nx-home-alive">
@@ -353,9 +464,36 @@ export const Overview: FC = () => {
         </Callout>
       )}
 
-      {!admin?.is_sudo && ws?.wallet_low && (
+      {!admin?.is_sudo && ws?.wallet_blocked && (
+        <Callout tone="danger" title={t("overview.walletBlockedTitle")} className="nx-mb-16">
+          {t("overview.walletBlockedHint", {
+            cost: (ws.pending_usage_cost ?? 0).toLocaleString(),
+            balance: (ws.wallet_balance ?? 0).toLocaleString(),
+            currency: ws.currency_label || "",
+            traffic: formatBytes(ws.pending_usage_bytes ?? 0),
+          })}
+        </Callout>
+      )}
+      {!admin?.is_sudo && (ws?.prepaid_traffic_remaining ?? 0) <= 0 && (
+        <Callout tone="warn" title={t("overview.packageExhaustedTitle")} className="nx-mb-16">
+          <div className="nx-stack" style={{ gap: 10 }}>
+            <span>{t("overview.packageExhaustedHint")}</span>
+            <div>
+              <Link to="/business?tab=billing&billingTab=packages">
+                <Button variant="primary" size="sm">{t("overview.buyPackageCta")}</Button>
+              </Link>
+            </div>
+          </div>
+        </Callout>
+      )}
+      {!admin?.is_sudo && !ws?.wallet_blocked && ws?.wallet_low && (
         <Callout tone="warn" title={t("overview.lowWalletTitle")} className="nx-mb-16">
           {t("overview.lowWalletHint")}
+        </Callout>
+      )}
+      {!admin?.is_sudo && (ws?.capped_users ?? 0) > 0 && (
+        <Callout tone="warn" title={t("overview.cappedUsersTitle")} className="nx-mb-16">
+          {t("overview.cappedUsersHint", { count: ws?.capped_users ?? 0 })}
         </Callout>
       )}
 
@@ -382,8 +520,8 @@ export const Overview: FC = () => {
           <LiveHero
             up={up}
             down={down}
-            totalUp={s?.outgoing_bandwidth}
-            totalDown={s?.incoming_bandwidth}
+            totalUp={s?.incoming_bandwidth}
+            totalDown={s?.outgoing_bandwidth}
             stale={rtStale}
             xray={liveXrayUptime}
             os={liveOsUptime}
@@ -395,36 +533,36 @@ export const Overview: FC = () => {
         {sys.loading && !s ? (
           <Card><SkeletonRows rows={2} cols={4} /></Card>
         ) : (
-          <div className="nx-kpi-grid">
-            <KpiTile label={t("overview.totalUsers")} value={s?.total_user} to="/users" />
-            <KpiTile
-              live
-              label={t("overview.onlineUsers")}
-              value={rt?.online_users ?? s?.online_users}
-              sub={t("users.stats.online")}
-            />
-            <KpiTile
-              label={t("overview.activeUsers")}
-              value={rt?.users_active ?? s?.users_active}
-              sub={s && (rt?.users_active ?? s.users_active) != null && s.total_user > 0
-                ? `${Math.round(((rt?.users_active ?? s.users_active) / s.total_user) * 100)}%`
-                : undefined}
-            />
-            <KpiTile
-              label={t("overview.inactiveUsers")}
-              value={s ? Math.max(0, s.total_user - s.users_active) : null}
-              sub={`${s?.users_disabled ?? 0} ${t("users.status.disabled")}`}
-            />
-            {admin?.is_sudo ? (
-              <KpiTile label={t("overview.nodes")} value={rt?.nodes_connected ?? connectedNodes} to="/servers?tab=nodes" />
-            ) : (
-              <>
+          <div className="nx-fleet-stack">
+            <div className={`nx-kpi-grid${admin?.is_sudo ? "" : " is-reseller"}`}>
+              <KpiTile label={t("overview.totalUsers")} value={s?.total_user} to="/users" />
+              <KpiTile
+                live
+                label={t("overview.onlineUsers")}
+                value={rt?.online_users ?? s?.online_users}
+                sub={t("users.stats.online")}
+              />
+              <KpiTile
+                label={t("overview.activeUsers")}
+                value={rt?.users_active ?? s?.users_active}
+                sub={s && (rt?.users_active ?? s.users_active) != null && s.total_user > 0
+                  ? `${Math.round(((rt?.users_active ?? s.users_active) / s.total_user) * 100)}%`
+                  : undefined}
+              />
+              <KpiTile
+                label={t("overview.inactiveUsers")}
+                value={s ? Math.max(0, s.total_user - s.users_active) : null}
+                sub={`${s?.users_disabled ?? 0} ${t("users.status.disabled")}`}
+              />
+              {admin?.is_sudo ? (
+                <KpiTile label={t("overview.nodes")} value={rt?.nodes_connected ?? connectedNodes} to="/servers?tab=nodes" />
+              ) : (
                 <KpiTile label={t("overview.myNodes")} value={ws?.nodes_count} />
-                {ws?.wallet_balance != null && (
-                  <KpiTile label={t("billing.wallet")} value={ws.wallet_balance} />
-                )}
-              </>
-            )}
+              )}
+            </div>
+            {!admin?.is_sudo && ws?.wallet_balance != null ? (
+              <ResellerCommerceStrip ws={ws} />
+            ) : null}
           </div>
         )}
       </Section>

@@ -34,16 +34,23 @@ BULK_DEBOUNCE_SEC = 15.0
 # Heuristic: if this many shard fingerprints differ at once, prefer the longer
 # coalesce window so a bulk enable lands as one hot-replace per touched shard.
 BULK_DIFF_THRESHOLD = 3
-# Only fall back to a full-core restart when *many* shard swaps would thrash;
-# must stay above a single node's full shard count (first converge after panel
-# start hot-replaces every slot) so that path never becomes a tunnel-dropping
-# restart.
-EXTREME_HOT_SWAP_THRESHOLD = 80
+# Only fall back to a full-core restart when *many* shard swaps would thrash.
+# Must stay well above one node's full shard span — a cold fingerprint cache
+# after panel boot used to sum ~100 slots × N nodes and escalate every node
+# into ``restart_node``, which OOMs 2GB Finalmask relays.
+EXTREME_HOT_SWAP_THRESHOLD = 400
+# Slot counts at/above this on a single plan look like cold-cache converge,
+# not real churn — never escalate those to full restart.
+COLD_CACHE_SLOT_FLOOR = 40
 
 _lock = threading.Lock()
 _timer: Optional[threading.Timer] = None
 _reload_in_flight = False
 _pending_bulk = False
+# Slots known dirty from outbox/user changes. When non-empty, hot path only
+# considers these slots (plus fingerprint diffs) so 500k fleets do not rehash
+# every shard on every debounce flush.
+_dirty_slots: Set[int] = set()
 
 # Per-node: structure fingerprint (restart required) and per-slot peer fingerprints.
 _last_structure_fp: Dict[int, str] = {}
@@ -147,6 +154,27 @@ def _structure_fingerprint(db, dbnode, node_id: int) -> str:
     return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
 
 
+def mark_finalmask_slots_dirty(slots) -> None:
+    """Record Finalmask shard slots that need a hot-replace on next flush."""
+    global _dirty_slots
+    try:
+        cleaned = {int(s) for s in (slots or []) if s is not None}
+    except (TypeError, ValueError):
+        cleaned = set()
+    if not cleaned:
+        return
+    with _lock:
+        _dirty_slots |= cleaned
+
+
+def take_finalmask_dirty_slots() -> Set[int]:
+    global _dirty_slots
+    with _lock:
+        out = set(_dirty_slots)
+        _dirty_slots = set()
+        return out
+
+
 def schedule_finalmask_xray_reload(
     *,
     delay: Optional[float] = None,
@@ -193,6 +221,8 @@ def hot_replace_finalmask_shards(
     changed_slots: Set[int],
     *,
     node_object=None,
+    peers=None,
+    skip_address_ensure: bool = False,
 ) -> bool:
     """Rebuild and hot-swap only the given Finalmask shard inbounds.
 
@@ -204,36 +234,59 @@ def hot_replace_finalmask_shards(
     from app import xray
     from app.db import GetDB, crud
     from app.wireguard.finalmask_shard import ensure_finalmask_slots, shard_inbound_tag
-    from app.wireguard.operations import collect_wg_peers, ensure_plain_addresses_for_finalmask
+    from app.wireguard.operations import ensure_plain_addresses_for_finalmask
+    from app.wireguard.peer_cache import peer_cache
     from app.wireguard.xray_native import build_xray_wireguard_shard_inbound
     from app.xray.operations import _finalmask_mtu_override
 
     if not changed_slots:
         return True
 
+    # Shard rmi/adi drops unread per-user counters on that inbound. Bank them
+    # into User.used_traffic first or Finalmask traffic never gets billed.
+    try:
+        from app.wireguard.finalmask_usage import flush_finalmask_node_stats
+
+        flushed = flush_finalmask_node_stats(int(node_id))
+        if flushed:
+            logger.info(
+                "Finalmask node %s: flushed %s bytes of user stats before hot-replace",
+                node_id,
+                flushed,
+            )
+    except Exception:
+        logger.debug(
+            "Finalmask node %s: pre-hot-replace stats flush skipped",
+            node_id,
+            exc_info=True,
+        )
+
     with GetDB() as db:
         dbnode = crud.get_node_by_id(db, node_id)
         cfg = dbnode.wireguard if dbnode else None
         if cfg is None:
             return False
-        ensure_plain_addresses_for_finalmask(db)
-        ensure_finalmask_slots(db)
-        peers = collect_wg_peers(db)
+        if not skip_address_ensure:
+            ensure_plain_addresses_for_finalmask(db)
+            ensure_finalmask_slots(db)
+        if peers is None:
+            peers = peer_cache.get_peers(db)
         mtu_override = _finalmask_mtu_override(db, dbnode, node_id)
 
-        # A brand-new slot has no routing rule entry yet → need full restart.
+        # Brand-new slots are not yet in the live routing rule. Try hot-add
+        # first (rmi unknown-tag is fine); if the agent rejects or routing
+        # would strand traffic, callers escalate via restart_node.
         known = set(_last_shard_fps.get(node_id, {}) or {})
-        if any(slot not in known and slot != 0 for slot in changed_slots):
-            # First-ever apply (known empty) still allows hot add of slot 0 only
-            # when the core was baked with that tag already; safer to restart
-            # when introducing any never-seen slot.
-            if known and any(slot not in known for slot in changed_slots):
-                logger.info(
-                    "Finalmask node %s: new shard slot(s) %s require full restart",
-                    node_id,
-                    sorted(s for s in changed_slots if s not in known),
-                )
-                return False
+        new_slots = sorted(
+            s for s in changed_slots if s not in known and int(s) != 0
+        )
+        if known and new_slots:
+            logger.info(
+                "Finalmask node %s: hot-adding new shard slot(s) %s "
+                "(not in fingerprint cache; may need restart if routing lacks tags)",
+                node_id,
+                new_slots,
+            )
 
         from app.wireguard.finalmask_shard import group_peers_by_slot
 
@@ -267,6 +320,7 @@ def hot_replace_finalmask_shards(
             if _dbnode is None:
                 return False
             node_object = xray.operations.add_node(_dbnode)
+            xray.nodes[node_id] = node_object
         except Exception as exc:
             logger.warning("Finalmask hot replace: cannot attach node %s: %s", node_id, exc)
             return False
@@ -279,34 +333,122 @@ def hot_replace_finalmask_shards(
     if not hasattr(node_object, "hot_replace_inbounds"):
         return False
 
-    try:
-        result = node_object.hot_replace_inbounds(remove_tags, inbounds)
-    except AttributeError:
-        return False
-    except Exception as exc:
+    def _do_replace(target) -> tuple:
+        try:
+            result = target.hot_replace_inbounds(remove_tags, inbounds)
+            return result, None
+        except AttributeError as exc:
+            return None, exc
+        except Exception as exc:
+            return None, exc
+
+    result, err = _do_replace(node_object)
+    if err is not None:
+        msg = str(err).lower()
+        # Flaky direct RPyC mid-write — retry once over SSH control tunnel.
+        # (Missing agent methods are not fixed by a tunnel; those need a rebuild.)
+        stream_dead = (
+            "stream has been closed" in msg
+            or "connection reset" in msg
+            or "result expired" in msg
+        )
+        if stream_dead:
+            try:
+                from app.db import GetDB, crud as _crud
+                from app.xray.operations import _force_control_tunnel_session
+
+                with GetDB() as _db:
+                    _dbnode = _crud.get_node_by_id(_db, node_id)
+                if _dbnode is not None:
+                    forced = _force_control_tunnel_session(_dbnode, node_object)
+                    if forced is not None:
+                        xray.nodes[node_id] = forced
+                        result, err = _do_replace(forced)
+            except Exception as tunnel_exc:
+                logger.warning(
+                    "Finalmask hot replace tunnel retry node %s failed: %s",
+                    node_id,
+                    tunnel_exc,
+                )
+
+    if err is not None:
         logger.warning(
             "Finalmask hot replace on node %s failed: %s",
             node_id,
-            exc,
+            err,
         )
         return False
 
     ok = bool(result.get("ok")) if isinstance(result, dict) else bool(result)
     if not ok:
-        logger.warning(
-            "Finalmask hot replace on node %s returned not-ok: %s",
-            node_id,
-            result,
+        detail = ""
+        if isinstance(result, dict):
+            detail = str(result.get("detail") or "")
+        detail_l = detail.lower()
+        # rmi succeeded but adi hit a short CLI/API timeout — core is usually
+        # still up. Retry in-place WITHOUT disconnect(): tearing the RPyC
+        # session mid-fleet-sync is what flips nodes connecting↔connected.
+        retryable_detail = (
+            "deadlineexceeded" in detail_l
+            or "context deadline exceeded" in detail_l
+            or "existing tag found" in detail_l
+            or "failed to dial" in detail_l
         )
-    return ok
+        if retryable_detail:
+            try:
+                if not getattr(node_object, "connected", False):
+                    node_object.connect()
+                result2, err2 = _do_replace(node_object)
+                if err2 is None and isinstance(result2, dict) and result2.get("ok"):
+                    result = result2
+                    ok = True
+            except Exception as retry_exc:
+                logger.warning(
+                    "Finalmask hot replace retry node %s failed: %s",
+                    node_id,
+                    retry_exc,
+                )
+        elif "xray core is not running" in detail_l:
+            # Leave reconnect to the health job / sync cooldown. Calling
+            # connect_node here races the sync worker and flaps UI status.
+            logger.warning(
+                "Finalmask hot replace node %s: core down; holding for cooldown",
+                node_id,
+            )
+        if not ok:
+            logger.warning(
+                "Finalmask hot replace on node %s returned not-ok: %s",
+                node_id,
+                result,
+            )
+            return False
+
+    # Persist per-slot fingerprints as each shard lands so the cache grows
+    # with the live peer set instead of staying stuck at a cold-boot snapshot.
+    try:
+        from app.wireguard.finalmask_shard import group_peers_by_slot as _gps
+
+        slot_fps = _shard_fingerprints(peers)
+        cur_map = dict(_last_shard_fps.get(node_id) or {})
+        for slot in changed_slots:
+            if int(slot) in slot_fps:
+                cur_map[int(slot)] = slot_fps[int(slot)]
+        _last_shard_fps[node_id] = cur_map
+        _save_fp_cache()
+    except Exception:
+        logger.debug("Finalmask per-slot fingerprint update failed", exc_info=True)
+    return True
 
 
 def _plan_node_reload(
-    db, dbnode, peers,
+    db, dbnode, peers, dirty_slots: Optional[Set[int]] = None,
 ) -> Tuple[str, Set[int], bool]:
     """Return ``(mode, changed_slots, structure_changed)``.
 
     ``mode`` is ``"noop"``, ``"hot"``, or ``"restart"``.
+    When ``dirty_slots`` is provided, only those slots (plus fingerprint
+    mismatches) are candidates for hot-replace — avoids O(all shards) work
+    when the outbox already knows which slots moved.
     """
     node_id = dbnode.id
     structure = _structure_fingerprint(db, dbnode, node_id)
@@ -314,12 +456,12 @@ def _plan_node_reload(
     prev_structure = _last_structure_fp.get(node_id)
     prev_shards = _last_shard_fps.get(node_id) or {}
 
-    # First sighting after panel start: hot-replace every shard once so DB and
-    # the live core converge without a full restart (tunnel stays up). Skipping
-    # apply here would let a membership change that *triggered* the first
-    # schedule get fingerprinted but never pushed.
+    # First sighting after panel start: seed fingerprints only. The connect
+    # path already keep-lives the node's Xray (pushing a fresh multi‑MB
+    # Finalmask config OOMs small relays). Next real membership diff will
+    # hot-replace just the changed shards.
     if prev_structure is None:
-        return "hot", set(shard_fps.keys()) or {0}, False
+        return "seed", set(shard_fps.keys()) or {0}, False
 
     structure_changed = prev_structure != structure
     changed: Set[int] = set()
@@ -327,6 +469,8 @@ def _plan_node_reload(
     for slot in all_slots:
         if shard_fps.get(slot) != prev_shards.get(slot):
             changed.add(slot)
+    if dirty_slots:
+        changed |= {int(s) for s in dirty_slots}
 
     if structure_changed:
         return "restart", changed or {0}, True
@@ -362,22 +506,24 @@ def _run_finalmask_xray_reload() -> None:
     try:
         from app.db import GetDB
         from app.wireguard.finalmask_shard import ensure_finalmask_slots
-        from app.wireguard.operations import (
-            collect_wg_peers,
-            ensure_plain_addresses_for_finalmask,
-        )
+        from app.wireguard.operations import ensure_plain_addresses_for_finalmask
+        from app.wireguard.peer_cache import peer_cache
         from app.xray.operations import restart_node
 
+        dirty = take_finalmask_dirty_slots()
         plans: List[Tuple[int, str, Set[int]]] = []
+        peers: List = []
+        node_by_id: Dict[int, object] = {}
         with GetDB() as db:
             nodes = _finalmask_nodes(db)
             if not nodes:
                 return
             ensure_plain_addresses_for_finalmask(db)
             ensure_finalmask_slots(db)
-            peers = collect_wg_peers(db)
+            peers = peer_cache.get_peers(db)
             for dbnode in nodes:
-                mode, changed, _ = _plan_node_reload(db, dbnode, peers)
+                node_by_id[int(dbnode.id)] = dbnode
+                mode, changed, _ = _plan_node_reload(db, dbnode, peers, dirty_slots=dirty or None)
                 if mode != "noop":
                     plans.append((dbnode.id, mode, changed))
 
@@ -385,42 +531,115 @@ def _run_finalmask_xray_reload() -> None:
             logger.debug("Finalmask reload skipped: peer membership unchanged")
             return
 
-        # Extreme churn across many nodes: one restart each is cheaper than
-        # hundreds of sequential shard swaps. A single node's full converge
-        # (≤ FINALMASK_SHARD_PORT_RESERVE slots) must stay on the hot path.
+        # Extreme churn across many nodes: one restart each can be cheaper than
+        # hundreds of sequential shard swaps — but never escalate a cold-cache
+        # full-slot plan (panel boot) into restart (OOM on 2GB relays).
         total_changed = sum(len(c) for _, mode, c in plans if mode == "hot")
         if total_changed >= EXTREME_HOT_SWAP_THRESHOLD:
-            plans = [(nid, "restart", slots) for nid, _, slots in plans]
+            escalated = []
+            for nid, mode, slots in plans:
+                if mode == "hot" and len(slots) >= COLD_CACHE_SLOT_FLOOR:
+                    escalated.append((nid, "hot", slots))
+                elif mode == "seed":
+                    escalated.append((nid, mode, slots))
+                else:
+                    escalated.append((nid, "restart", slots))
+            plans = escalated
 
         logger.info(
             "Finalmask reload on %s node(s): %s",
             len(plans),
-            [(nid, mode, sorted(slots)) for nid, mode, slots in plans],
+            [(nid, mode, sorted(slots)[:12] + (["…"] if len(slots) > 12 else [])) for nid, mode, slots in plans],
         )
 
+        # Reuse the peer list from planning — re-collecting 10k+ proxies per
+        # node was pinning the panel at ~100% CPU for minutes after every boot.
         for node_id, mode, changed in plans:
             try:
+                dbnode = node_by_id.get(int(node_id))
+                if dbnode is None:
+                    continue
+
+                if mode == "seed" or (
+                    mode == "hot" and len(changed) >= COLD_CACHE_SLOT_FLOOR
+                ):
+                    with GetDB() as db:
+                        from app.db import crud
+
+                        live = crud.get_node_by_id(db, node_id)
+                        if live is None:
+                            continue
+                        _commit_fingerprints(node_id, db, live, peers)
+                    logger.info(
+                        "Finalmask node %s: seeded fingerprint cache (%s shards, mode=%s); "
+                        "enqueue resumable shard sync",
+                        node_id,
+                        len(changed),
+                        mode,
+                    )
+                    # Cold seed used to leave peers stale until the next churn.
+                    # Wake the resumable engine so shards converge in the background.
+                    try:
+                        from app.wireguard.sync_engine import on_node_connected
+
+                        on_node_connected(int(node_id))
+                    except Exception:
+                        logger.debug(
+                            "Finalmask seed→sync enqueue failed for node %s",
+                            node_id,
+                            exc_info=True,
+                        )
+                    continue
+
                 if mode == "hot":
-                    ok = hot_replace_finalmask_shards(node_id, changed)
+                    try:
+                        from app.wireguard.sync_engine import mark_finalmask_rpc_busy
+
+                        mark_finalmask_rpc_busy(node_id, True)
+                        ok = hot_replace_finalmask_shards(node_id, changed)
+                    finally:
+                        try:
+                            from app.wireguard.sync_engine import mark_finalmask_rpc_busy
+
+                            mark_finalmask_rpc_busy(node_id, False)
+                        except Exception:
+                            pass
                     if not ok:
+                        # Do not escalate dirty-slot failures into full
+                        # restart_node — that OOMs relays and flaps RPyC.
+                        # The resumable sync worker will retry the shard.
                         logger.warning(
-                            "Finalmask hot replace failed on node %s; falling back to restart",
+                            "Finalmask hot replace failed on node %s; "
+                            "deferring to resumable sync (no restart)",
                             node_id,
                         )
-                        restart_node(node_id)
+                        try:
+                            from app.wireguard.sync_engine import on_node_connected
+
+                            on_node_connected(int(node_id))
+                        except Exception:
+                            pass
+                        continue
                 else:
+                    try:
+                        from app.wireguard.finalmask_usage import flush_finalmask_node_stats
+
+                        flush_finalmask_node_stats(int(node_id))
+                    except Exception:
+                        logger.debug(
+                            "Finalmask node %s: pre-restart stats flush skipped",
+                            node_id,
+                            exc_info=True,
+                        )
                     restart_node(node_id)
 
                 with GetDB() as db:
                     from app.db import crud
 
-                    dbnode = crud.get_node_by_id(db, node_id)
-                    if dbnode is None:
+                    live = crud.get_node_by_id(db, node_id)
+                    if live is None:
                         continue
-                    ensure_plain_addresses_for_finalmask(db)
-                    ensure_finalmask_slots(db)
-                    peers = collect_wg_peers(db)
-                    _commit_fingerprints(node_id, db, dbnode, peers)
+                    _commit_fingerprints(node_id, db, live, peers)
             except Exception:
                 logger.exception("Finalmask reload failed on node %s", node_id)
     except Exception:

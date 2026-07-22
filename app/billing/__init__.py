@@ -95,12 +95,14 @@ def create_invoice(
     amount: int,
     plan_id: Optional[int] = None,
     provider: Optional[str] = None,
+    description: Optional[str] = None,
 ) -> Invoice:
     invoice = Invoice(
         admin_id=admin_id,
         amount=amount,
         plan_id=plan_id,
         provider=provider,
+        description=(description or "").strip() or None,
         status="pending",
     )
     db.add(invoice)
@@ -109,26 +111,39 @@ def create_invoice(
     return invoice
 
 
+class InsufficientWalletBalance(ValueError):
+    """Raised when paying an invoice would overdraw the wallet."""
+
+
 def pay_invoice(db: Session, invoice: Invoice, provider_name: Optional[str] = None) -> Invoice:
-    """Mark an invoice paid and record the corresponding charge."""
+    """Mark an invoice paid and debit the reseller wallet."""
     if invoice.status == "paid":
         return invoice
+    if invoice.status == "canceled":
+        raise ValueError("Invoice is canceled")
+
+    wallet = get_or_create_wallet(db, invoice.admin_id)
+    if wallet.balance < int(invoice.amount):
+        raise InsufficientWalletBalance(
+            f"Insufficient wallet balance (need {invoice.amount}, have {wallet.balance})"
+        )
 
     invoice.status = "paid"
     invoice.paid_at = datetime.utcnow()
     if provider_name:
         invoice.provider = provider_name
-    db.commit()
-    db.refresh(invoice)
 
+    note = (invoice.description or "").strip()
+    tx_desc = f"Invoice #{invoice.id}" + (f" — {note}" if note else "")
     add_transaction(
         db,
         invoice.admin_id,
         -invoice.amount,
         type="invoice",
-        description=f"Invoice #{invoice.id}",
+        description=tx_desc,
         reference=str(invoice.id),
     )
+    db.refresh(invoice)
     return invoice
 
 

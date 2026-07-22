@@ -106,6 +106,29 @@ def get_inbounds(admin: Admin = Depends(Admin.get_current)) -> Dict[str, List[di
     return {key: list(items) for key, items in xray.config.inbounds_by_protocol.items()}
 
 
+class AssignableNativeProtocols(BaseModel):
+    wireguard: bool = False
+    amneziawg: bool = False
+    hysteria2: bool = False
+    tuic: bool = False
+    anytls: bool = False
+
+
+@router.get("/assignable-native-protocols", response_model=AssignableNativeProtocols)
+def get_assignable_native_protocols(
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(Admin.get_current),
+):
+    """Native protocols the caller may assign when creating/editing users.
+
+    Includes the shared main-panel fleet for resellers (not only workspace-owned
+    nodes), so toggles match what is active on the owner panel.
+    """
+    from app.tenant.reseller_ops import assignable_native_protocols
+
+    return AssignableNativeProtocols(**assignable_native_protocols(db, admin))
+
+
 def _host_tags() -> list[str]:
     from app.subscription.host_buckets import host_bucket_tags
 

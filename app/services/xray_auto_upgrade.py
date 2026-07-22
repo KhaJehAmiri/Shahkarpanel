@@ -82,13 +82,12 @@ def _upgrade_xray_nodes(tag: str, *, force: bool) -> dict[int, str | None]:
         dbnodes = crud.get_nodes(db, enabled=True)
 
     for dbnode in dbnodes:
-        if (dbnode.core_kind or CoreKind.xray.value) == CoreKind.wireguard.value:
-            continue
         current = dbnode.xray_version
         if not force and not is_version_older(current, tag):
             continue
 
         node_id = dbnode.id
+        is_wg_node = (dbnode.core_kind or CoreKind.xray.value) == CoreKind.wireguard.value
         logger.info(
             "xray auto-upgrade: node %s (%s) %s -> %s",
             node_id,
@@ -107,10 +106,15 @@ def _upgrade_xray_nodes(tag: str, *, force: bool) -> dict[int, str | None]:
                 usage_coefficient=dbnode.usage_coefficient or 1,
             )
             live_version = remote.upgrade_xray(tag)
-            if config is None:
-                config = xray.config.include_db_users()
             try:
-                xray_ops.restart_node(node_id, config)
+                # WireGuard/Finalmask nodes must rebuild from their own bake
+                # (build_node_xray_config via restart_node), not the panel VLESS config.
+                if is_wg_node:
+                    xray_ops.restart_node(node_id)
+                else:
+                    if config is None:
+                        config = xray.config.include_db_users()
+                    xray_ops.restart_node(node_id, config)
             except Exception as exc:
                 logger.warning(
                     "xray auto-upgrade: node %s upgraded but restart failed: %s",

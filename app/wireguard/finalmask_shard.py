@@ -26,15 +26,28 @@ from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger("nexus-wg")
 
+def _env_int(name: str, default: int) -> int:
+    import os
+
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return int(default)
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return int(default)
+
+
 # Peers per Finalmask inbound. Small enough that a single shard rebuild is cheap
 # (fast bind, tiny config) yet large enough that most nodes need only a handful
 # of shards. Mirrors the kernel autoscale sizing philosophy (200/iface).
-FINALMASK_MAX_PEERS_PER_INBOUND = 250
+# Override via FINALMASK_MAX_PEERS_PER_INBOUND for denser packing.
+FINALMASK_MAX_PEERS_PER_INBOUND = _env_int("FINALMASK_MAX_PEERS_PER_INBOUND", 250)
 
 # UDP ports to pre-open on the node firewall for Finalmask, counted from the
-# base ``xray_wg_listen_port``. Bounds how many shards a node can grow before an
-# admin must widen the range; 64 shards * 250 = 16k peers/node of headroom.
-FINALMASK_SHARD_PORT_RESERVE = 64
+# base ``xray_wg_listen_port``. Default 256 shards * 250 = 64k peers/node —
+# enough headroom for large fleets; raise further via env if needed.
+FINALMASK_SHARD_PORT_RESERVE = _env_int("FINALMASK_SHARD_PORT_RESERVE", 256)
 
 _SETTINGS_SLOT_KEY = "finalmask_slot"
 

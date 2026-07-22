@@ -103,6 +103,13 @@ def _sync_wireguard():
 def _sync_wireguard_node(node_id: int, node_object):
     """Best-effort: push WG peers and sing-box to a node that just connected."""
     try:
+        from app.wireguard.sync_engine import on_node_connected
+
+        # Resume batch sync from stored cursor (or start reconcile).
+        on_node_connected(int(node_id))
+    except Exception:
+        logger.debug("resumable WG sync wake on connect failed", exc_info=True)
+    try:
         from app.wireguard.operations import sync_node
         from app.wireguard.sync import amneziawg_enabled, plain_wg_enabled
 
@@ -113,9 +120,22 @@ def _sync_wireguard_node(node_id: int, node_object):
             else:
                 cfg = dbnode.wireguard
                 if plain_wg_enabled(cfg) or amneziawg_enabled(cfg):
-                    ok = sync_node(db, dbnode, node_object=node_object)
-                    if not ok:
-                        logger.warning("WireGuard sync to node %s did not apply (client unavailable or no specs)", node_id)
+                    # Bootstrap interface only when agent lacks batch API; otherwise
+                    # the resumable engine fills peers without a multi-MB syncconf.
+                    client_ok = False
+                    try:
+                        from app.wireguard.transport import client_for_node
+                        client = client_for_node(node_object)
+                        client_ok = bool(client and hasattr(client, "apply_batch"))
+                    except Exception:
+                        client_ok = False
+                    if not client_ok:
+                        ok = sync_node(db, dbnode, node_object=node_object)
+                        if not ok:
+                            logger.warning(
+                                "WireGuard sync to node %s did not apply (client unavailable or no specs)",
+                                node_id,
+                            )
     except Exception:
         logger.exception("WireGuard sync to node %s raised", node_id)
     # A normal Xray node may *also* carry a sing-box config (Hysteria2/TUIC);
@@ -464,7 +484,18 @@ def add_node(
 
 
 def _ssh_host_for_node(dbnode) -> str:
-    return (getattr(dbnode, "provision_host", None) or dbnode.address or "").strip()
+    """Prefer the live dial address over a stale provision_host IP.
+
+    ``provision_host`` is the IP captured at first SSH provision; nodes that
+    later move behind a DNS name (or change DC IP) keep the old value, which
+    makes control-tunnel fallback hang on an unreachable host while
+    ``dbnode.address`` still works.
+    """
+    address = (getattr(dbnode, "address", None) or "").strip()
+    provision = (getattr(dbnode, "provision_host", None) or "").strip()
+    if address:
+        return address
+    return provision
 
 
 def _connect_node_session(dbnode, node):
@@ -846,6 +877,22 @@ def connect_node(node_id, config=None):
         if not dbnode:
             return
 
+        from app.models.node import NodeStatus as _NodeStatus
+
+        if dbnode.status == _NodeStatus.disabled:
+            # Drop any stale live session so health checks stop hammering a
+            # node the operator explicitly took offline.
+            try:
+                stale = xray.nodes.pop(dbnode.id, None)
+                if stale is not None:
+                    try:
+                        stale.disconnect()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            return
+
         try:
             node = xray.nodes[dbnode.id]
             if not node.connected:
@@ -854,7 +901,19 @@ def connect_node(node_id, config=None):
             preferred = _prefer_control_tunnel(dbnode)
             node = preferred if preferred is not None else xray.operations.add_node(dbnode)
 
-        _change_node_status(node_id, NodeStatus.connecting)
+        # Skip soft refresh while a Finalmask hot-replace holds the RPyC
+        # channel — preempting it is what flips nodes connecting↔connected.
+        try:
+            from app.wireguard.sync_engine import is_finalmask_rpc_busy
+
+            if is_finalmask_rpc_busy(node_id):
+                logger.debug(
+                    "Skipping connect_node for \"%s\": Finalmask RPC in progress",
+                    dbnode.name,
+                )
+                return
+        except Exception:
+            pass
 
         need_connect = True
         if node.connected:
@@ -863,7 +922,11 @@ def connect_node(node_id, config=None):
                 need_connect = False
             except Exception:
                 pass
+        # Only advertise "connecting" when we actually tear down / rebuild
+        # the session — otherwise UI + health look like a flap on every
+        # keep-alive refresh.
         if need_connect:
+            _change_node_status(node_id, NodeStatus.connecting)
             logger.info(f"Connecting to \"{dbnode.name}\" node")
             try:
                 node = _connect_node_session(dbnode, node)
@@ -873,48 +936,78 @@ def connect_node(node_id, config=None):
         else:
             logger.debug("Reusing live RPyC session for \"%s\"", dbnode.name)
 
-        if config is None:
-            from app.services.xray_node import build_node_xray_config
-            config = build_node_xray_config(node_id)
-        else:
-            from app.services.xray_node import filter_xray_config_for_node, node_xray_inbound_tags
-            with GetDB() as db:
-                allowed = node_xray_inbound_tags(db, node_id)
-            config = filter_xray_config_for_node(config, allowed)
-            config = _apply_node_tunnels(config, node_id)
-            config = _apply_native_wireguard_inbound(config, node_id)
-            config = _apply_node_warp_exit(config, node_id)
-
         from app.models.node import CoreKind
 
         is_wg_node = dbnode.core_kind == CoreKind.wireguard.value
         version = None
         degraded_msg = None
+        delegates_tunnel = False
+        xray_wg_enabled = False
+        kept_live = False
         if is_wg_node:
             with GetDB() as db:
+                from app.db.models import NodeWireGuard
                 from app.tunnel.relay import (
                     node_delegates_wireguard_to_tunnel,
                     prepare_relay_wireguard_tunnel,
                 )
 
                 delegates_tunnel = node_delegates_wireguard_to_tunnel(db, node_id)
-            if delegates_tunnel:
-                # Do not early-return on get_version alone: the agent can still
-                # report a version while UDP capture (51820/51901) is down, which
-                # left clients timing out. Always fall through to start/restart
-                # (with prepare_relay freeing the plain WG port first).
-                try:
-                    if not node.connected:
-                        node.connect()
+                wg_row = (
+                    db.query(NodeWireGuard.xray_wg_enabled)
+                    .filter(NodeWireGuard.node_id == node_id)
+                    .first()
+                )
+                xray_wg_enabled = bool(wg_row[0]) if wg_row else False
+            # Keep-live is only safe for Finalmask / tunnel-capture relays
+            # (multi‑MB configs OOM small VMs on blind restart). Pure VLESS
+            # tunnel exits share core_kind=wireguard but must receive a fresh
+            # include_db_users config — otherwise reseller restores never land.
+            prefer_keep_live = bool(delegates_tunnel or xray_wg_enabled)
+            try:
+                if not node.connected:
+                    node.connect()
+                if delegates_tunnel:
                     with GetDB() as db:
                         prepare_relay_wireguard_tunnel(db, node_id, node)
-                except Exception:
-                    pass
+                version = node.get_version()
+                if version and prefer_keep_live:
+                    if delegates_tunnel:
+                        node.wg_tunnel_capture_active = True
+                    try:
+                        node.started = True
+                    except Exception:
+                        pass
+                    kept_live = True
+                    logger.info(
+                        "WireGuard node \"%s\" keeping live Xray (%s)",
+                        dbnode.name,
+                        version,
+                    )
+            except Exception:
+                version = None
+                kept_live = False
+
+        if not kept_live:
+            if config is None:
+                from app.services.xray_node import build_node_xray_config
+                config = build_node_xray_config(node_id)
+            else:
+                from app.services.xray_node import filter_xray_config_for_node, node_xray_inbound_tags
+                with GetDB() as db:
+                    allowed = node_xray_inbound_tags(db, node_id)
+                config = filter_xray_config_for_node(config, allowed)
+                config = _apply_node_tunnels(config, node_id)
+                config = _apply_native_wireguard_inbound(config, node_id)
+                config = _apply_node_warp_exit(config, node_id)
+
+        if is_wg_node:
             # WireGuard nodes need the RPyC channel for wg_apply; Xray on the
             # node is best-effort (stats/API) and must not block AWG sync.
             xray_exc = None
-            version = None
-            if delegates_tunnel:
+            if kept_live:
+                xray_exc = None
+            elif delegates_tunnel:
                 # Prefer reuse when the agent already has a live core. Blind
                 # restart of a ~2MB Finalmask config OOMs small relay VMs
                 # (second Xray during stop/start) and leaves UDP dead.
@@ -926,17 +1019,12 @@ def connect_node(node_id, config=None):
                             prepare_relay_wireguard_tunnel(db, node_id, node)
                         try:
                             version = node.get_version()
-                            # get_version alone only proves *some* Xray core is
-                            # alive — the live one could be a stale native-
-                            # fallback push from before delegation was granted
-                            # (or regranted after a breaker suspension). Only
-                            # skip the restart when we know the live core is
-                            # the one that actually captured the tunnel port.
-                            if (
-                                version
-                                and getattr(node, "started", False)
-                                and getattr(node, "wg_tunnel_capture_active", False)
-                            ):
+                            if version:
+                                node.wg_tunnel_capture_active = True
+                                try:
+                                    node.started = True
+                                except Exception:
+                                    pass
                                 xray_exc = None
                                 logger.info(
                                     "WireGuard node \"%s\" keeping live Xray (%s)",
@@ -977,14 +1065,24 @@ def connect_node(node_id, config=None):
                                 if forced is not None:
                                     node = forced
             else:
+                # Non-Finalmask wireguard-core nodes (VLESS tunnel exits): always
+                # apply the built config so restored/reseller users converge.
                 for attempt in range(3):
                     try:
                         if not node.connected:
                             node.connect()
-                        node.start(config)
+                        try:
+                            node.start(config)
+                        except Exception:
+                            node.restart(config)
                         version = node.get_version()
                         node.wg_tunnel_capture_active = False
                         xray_exc = None
+                        logger.info(
+                            "WireGuard node \"%s\" Xray config applied (%s)",
+                            dbnode.name,
+                            version,
+                        )
                         break
                     except Exception as exc:
                         xray_exc = exc

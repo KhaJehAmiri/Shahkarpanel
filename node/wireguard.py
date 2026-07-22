@@ -284,6 +284,97 @@ class WireGuardManager:
         # method that calls another locking method internally (e.g. `apply`
         # -> `ensure_interface` -> `teardown`) doesn't self-deadlock.
         self._lock = threading.RLock()
+        # Resumable batch sync watermark (panel ↔ node). Survives process
+        # lifetime; panel also tracks cursor in Postgres for reconnect resume.
+        self._sync_state: Dict[str, dict] = {}
+
+    def apply_batch(
+        self,
+        interface: str,
+        *,
+        generation: int,
+        cursor: int,
+        peers: Optional[Sequence[dict]] = None,
+        removes: Optional[Sequence[str]] = None,
+    ) -> dict:
+        """Incremental peer apply (``wg set``) for resumable high-scale sync.
+
+        Unlike ``apply``/``syncconf`` this never replaces the whole peer set in
+        one shot — the panel streams batches and resumes from ``cursor`` after
+        disconnects.
+        """
+        import hashlib
+
+        peers = list(peers or [])
+        removes = list(removes or [])
+        with self._lock:
+            wg = "awg" if self._interface_is_userspace_awg(interface) or shutil.which("awg") else "wg"
+            if not self.interface_exists(interface):
+                raise RuntimeError(f"interface {interface} does not exist; full apply required first")
+            applied = 0
+            for pubkey in removes:
+                if not pubkey:
+                    continue
+                self._run([wg, "set", interface, "peer", pubkey, "remove"], check=False)
+                applied += 1
+            for row in peers:
+                pubkey = (row or {}).get("public_key")
+                if not pubkey:
+                    continue
+                active = bool((row or {}).get("active", True))
+                if not active:
+                    self._run([wg, "set", interface, "peer", pubkey, "remove"], check=False)
+                    applied += 1
+                    continue
+                allowed = (row or {}).get("allowed_ips") or ""
+                if not allowed:
+                    continue
+                ok = self._add_peer(
+                    wg,
+                    interface,
+                    pubkey,
+                    {
+                        "allowed_ips": allowed,
+                        "preshared_key": (row or {}).get("preshared_key"),
+                    },
+                )
+                if ok:
+                    applied += 1
+            # Peer count + content fingerprint for panel drift detection.
+            show = self._run([wg, "show", interface, "peers"], check=False)
+            peer_list = [
+                line.strip()
+                for line in (getattr(show, "stdout", "") or "").splitlines()
+                if line.strip()
+            ]
+            peer_count = len(peer_list)
+            digest = hashlib.sha256("\n".join(sorted(peer_list)).encode("utf-8")).hexdigest()
+            state = {
+                "generation": int(generation),
+                "cursor": int(cursor),
+                "peer_count": peer_count,
+                "hash": digest,
+                "interface": interface,
+            }
+            self._sync_state[interface] = state
+            return {
+                "ok": True,
+                "applied": applied,
+                "cursor": int(cursor),
+                "generation": int(generation),
+                "peer_count": peer_count,
+                "hash": digest,
+            }
+
+    def sync_status(self, interface: Optional[str] = None) -> dict:
+        """Return stored batch-sync watermarks (and optional live peer counts)."""
+        with self._lock:
+            if interface:
+                st = dict(self._sync_state.get(interface) or {})
+                if st:
+                    return st
+                return {"interface": interface, "peer_count": 0, "generation": 0, "cursor": 0}
+            return {iface: dict(st) for iface, st in self._sync_state.items()}
 
     @staticmethod
     def _default_run(cmd, input=None, check=True):

@@ -264,3 +264,34 @@ def ensure_cfg_subnet_capacity(
         db.add(cfg)
         db.flush()
     return widened
+
+
+def guard_fleet_subnet_capacity(db, *, active_peers: int) -> None:
+    """Widen every WG node's subnet when active peers exceed usable slots.
+
+    Prevents the half-synced state seen when nodes stay on ``/24`` (~253 hosts)
+    while the panel tries to push tens of thousands of peers.
+    """
+    from app.db import crud
+    from app.wireguard.sync import amneziawg_enabled, plain_wg_enabled
+
+    need = max(0, int(active_peers or 0)) + 64  # headroom
+    if need <= 0:
+        return
+    for dbnode in crud.get_wireguard_nodes(db) or []:
+        cfg = dbnode.wireguard
+        if cfg is None:
+            continue
+        try:
+            if plain_wg_enabled(cfg) and cfg.subnet:
+                ensure_cfg_subnet_capacity(
+                    db, cfg, settings_key="address", needed_peers=need
+                )
+            if amneziawg_enabled(cfg) and cfg.awg_subnet:
+                ensure_cfg_subnet_capacity(
+                    db, cfg, settings_key="awg_address", needed_peers=need
+                )
+        except Exception:
+            logger.exception(
+                "subnet capacity guard failed for node %s", getattr(dbnode, "id", "?")
+            )

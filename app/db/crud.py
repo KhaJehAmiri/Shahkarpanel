@@ -1461,6 +1461,14 @@ def create_admin(db: Session, admin: AdminCreate) -> Admin:
         dbadmin.tenant_id = tenant.id
         db.commit()
         db.refresh(dbadmin)
+    if not dbadmin.is_sudo:
+        try:
+            from app import billing, feature_flags
+
+            if feature_flags.is_enabled("billing"):
+                billing.get_or_create_wallet(db, dbadmin.id)
+        except Exception:
+            pass
     return dbadmin
 
 
@@ -1485,10 +1493,14 @@ def update_admin(db: Session, dbadmin: Admin, modified_admin: AdminModify) -> Ad
         dbadmin.telegram_id = modified_admin.telegram_id
     if modified_admin.discord_webhook:
         dbadmin.discord_webhook = modified_admin.discord_webhook
+    fields_set = getattr(modified_admin, "model_fields_set", None) or set()
     for attr in ("role", "max_users", "max_total_traffic", "max_nodes", "commission_percent"):
-        value = getattr(modified_admin, attr, None)
-        if value is not None:
-            setattr(dbadmin, attr, value)
+        if attr in fields_set:
+            setattr(dbadmin, attr, getattr(modified_admin, attr))
+        else:
+            value = getattr(modified_admin, attr, None)
+            if value is not None:
+                setattr(dbadmin, attr, value)
 
     db.commit()
     db.refresh(dbadmin)
@@ -1873,8 +1885,13 @@ def get_protocol_usage(
     start: datetime,
     end: datetime,
     user_id: Optional[int] = None,
+    admin_id: Optional[int] = None,
 ) -> List[dict]:
-    """Aggregate hourly per-protocol usage in a date range."""
+    """Aggregate hourly per-protocol usage in a date range.
+
+    When ``admin_id`` is set (reseller workspace), only rows belonging to that
+    admin's users are included — never the global/main-panel totals.
+    """
     from sqlalchemy import func
 
     from app.db.models import NodeUserProtocolUsage
@@ -1886,15 +1903,17 @@ def get_protocol_usage(
     if user_id is not None:
         cond = and_(cond, NodeUserProtocolUsage.user_id == user_id)
 
-    rows = (
-        db.query(
-            NodeUserProtocolUsage.protocol,
-            func.sum(NodeUserProtocolUsage.used_traffic).label("bytes"),
+    q = db.query(
+        NodeUserProtocolUsage.protocol,
+        func.sum(NodeUserProtocolUsage.used_traffic).label("bytes"),
+    ).filter(cond)
+
+    if admin_id is not None:
+        q = q.join(User, User.id == NodeUserProtocolUsage.user_id).filter(
+            User.admin_id == admin_id
         )
-        .filter(cond)
-        .group_by(NodeUserProtocolUsage.protocol)
-        .all()
-    )
+
+    rows = q.group_by(NodeUserProtocolUsage.protocol).all()
     return [{"protocol": r[0], "used_traffic": int(r[1] or 0)} for r in rows]
 
 

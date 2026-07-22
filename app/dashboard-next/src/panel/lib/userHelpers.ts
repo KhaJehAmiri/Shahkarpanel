@@ -52,15 +52,28 @@ export function wgKindForSubmit(wireguardOn: boolean, amneziaOn: boolean): strin
   return undefined;
 }
 
+/** Native protocol flags from GET /assignable-native-protocols (shared fleet). */
+export type AssignableNativeProtocols = {
+  wireguard?: boolean;
+  amneziawg?: boolean;
+  hysteria2?: boolean;
+  tuic?: boolean;
+  anytls?: boolean;
+};
+
 /** True when the panel can assign users on this protocol (Xray inbound or native node). */
 export function protocolAssignable(
   proto: string,
   inbounds: InboundsByProtocol | undefined,
   nodes: NodeItem[] | undefined,
+  native?: AssignableNativeProtocols | null,
 ): boolean {
   const nodeList = nodes || [];
   switch (proto) {
     case "wireguard":
+      if (native?.wireguard != null) {
+        return !!native.wireguard || (inbounds?.wireguard?.length || 0) > 0;
+      }
       // Finalmask (xray_wg) alone is enough — plain 51820 is not required.
       return (inbounds?.wireguard?.length || 0) > 0
         || nodeList.some((n) => {
@@ -71,13 +84,19 @@ export function protocolAssignable(
           return n.core_kind === "wireguard";
         });
     case "amneziawg":
+      if (native?.amneziawg != null) {
+        return !!native.amneziawg || (inbounds?.amneziawg?.length || 0) > 0;
+      }
       return (inbounds?.amneziawg?.length || 0) > 0
         || nodeList.some((n) => n.core_kind === "wireguard" && !!n.wireguard?.awg_enabled);
     case "hysteria2":
+      if (native?.hysteria2 != null) return !!native.hysteria2;
       return nodeList.some((n) => !!n.singbox?.hysteria2_enabled);
     case "tuic":
+      if (native?.tuic != null) return !!native.tuic;
       return nodeList.some((n) => !!n.singbox?.tuic_enabled);
     case "anytls":
+      if (native?.anytls != null) return !!native.anytls;
       return nodeList.some((n) => !!n.singbox?.anytls_enabled);
     default:
       return (inbounds?.[proto]?.length || 0) > 0;

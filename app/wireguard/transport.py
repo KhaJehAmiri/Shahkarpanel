@@ -137,6 +137,33 @@ class RESTWireGuardClient(AutoScaleWireGuardMixin):
         res = self._node.make_request("/wg/transfer", timeout, interface=interface)
         return (res or {}).get("transfer", {})
 
+    def apply_batch(
+        self,
+        *,
+        interface: str,
+        generation: int,
+        cursor: int,
+        peers: list,
+        removes: list,
+        timeout: int = 60,
+    ) -> dict:
+        return self._node.make_request(
+            "/wg/apply-batch",
+            timeout,
+            interface=interface,
+            generation=int(generation),
+            cursor=int(cursor),
+            peers=list(peers or []),
+            removes=list(removes or []),
+        ) or {}
+
+    def sync_status(self, interface: str = "", timeout: int = 15) -> dict:
+        return self._node.make_request(
+            "/wg/sync-status",
+            timeout,
+            interface=interface or "",
+        ) or {}
+
     def down(self, interface: str, timeout: int = 10) -> None:
         self._node.make_request("/wg/down", timeout, interface=interface)
 
@@ -366,6 +393,53 @@ class RPyCWireGuardClient(AutoScaleWireGuardMixin):
             return plain if isinstance(plain, dict) else {}
         except Exception:
             return {}
+
+    def apply_batch(
+        self,
+        *,
+        interface: str,
+        generation: int,
+        cursor: int,
+        peers: list,
+        removes: list,
+        timeout: int = 60,
+    ) -> dict:
+        remote = self._node.remote
+        conn = getattr(self._node, "connection", None) or getattr(remote, "_conn", None)
+        payload = json.dumps(
+            {
+                "interface": interface,
+                "generation": int(generation),
+                "cursor": int(cursor),
+                "peers": list(peers or []),
+                "removes": list(removes or []),
+            },
+            separators=(",", ":"),
+        )
+        with _rpyc_sync_timeout(conn, timeout):
+            if not hasattr(remote, "wg_apply_batch_json"):
+                raise WireGuardTransportError("node agent has no wg_apply_batch_json")
+            raw = remote.wg_apply_batch_json(payload)
+        if isinstance(raw, str):
+            try:
+                return json.loads(raw) if raw else {}
+            except json.JSONDecodeError:
+                return {}
+        plain = _plain_tree(raw)
+        return plain if isinstance(plain, dict) else {}
+
+    def sync_status(self, interface: str = "", timeout: int = 15) -> dict:
+        remote = self._node.remote
+        if not hasattr(remote, "wg_sync_status_json"):
+            return {}
+        raw = remote.wg_sync_status_json(interface or "")
+        if isinstance(raw, str):
+            try:
+                return json.loads(raw) if raw else {}
+            except json.JSONDecodeError:
+                return {}
+        plain = _plain_tree(raw)
+        return plain if isinstance(plain, dict) else {}
 
     def down(self, interface: str, timeout: int = 10) -> None:
         self._node.remote.wg_down(interface)

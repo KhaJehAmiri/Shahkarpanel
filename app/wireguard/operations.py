@@ -301,12 +301,23 @@ def ensure_preshared_key(db, proxy: Proxy) -> dict:
     return settings
 
 
-def collect_wg_peers(db) -> List[WGUserPeer]:
-    """Build the WireGuard peer list from every user that holds a WG proxy."""
+def collect_wg_peers_uncached(db) -> List[WGUserPeer]:
+    """Build the WireGuard peer list with a single joined Proxy⋈User query.
+
+    Prefer ``collect_wg_peers`` / ``peer_cache`` on hot paths so usage jobs do
+    not re-scan tens/hundreds of thousands of rows every few seconds.
+    """
+    from sqlalchemy.orm import joinedload
+
     from app.wireguard.finalmask_shard import user_finalmask_slot
 
     peers: List[WGUserPeer] = []
-    proxies = db.query(Proxy).filter(Proxy.type == ProxyTypes.WireGuard).all()
+    proxies = (
+        db.query(Proxy)
+        .options(joinedload(Proxy.user))
+        .filter(Proxy.type == ProxyTypes.WireGuard)
+        .all()
+    )
     for proxy in proxies:
         settings = proxy.settings or {}
         public_key = settings.get("public_key")
@@ -328,6 +339,13 @@ def collect_wg_peers(db) -> List[WGUserPeer]:
             )
         )
     return peers
+
+
+def collect_wg_peers(db=None) -> List[WGUserPeer]:
+    """Cached peer list (joinedload). Pass ``db`` to reuse an open session."""
+    from app.wireguard.peer_cache import peer_cache
+
+    return peer_cache.get_peers(db)
 
 
 def _node_object(node_id: int, *, connect: bool = True):
@@ -524,7 +542,7 @@ def sync_node(db, dbnode, *, peers: Optional[List[WGUserPeer]] = None, node_obje
         from app.wireguard.wg_manager import bootstrap_legacy_interfaces, sync_user_statuses
 
         bootstrap_legacy_interfaces(db, dbnode)
-        sync_user_statuses(db)
+        sync_user_statuses(db, node_id=dbnode.id)
 
     if peers is None:
         if plain_wg_enabled(cfg) and not autoscale_enabled():
@@ -835,9 +853,17 @@ def _run_coalesced_wg_sync() -> None:
         _wg_sync_in_flight = True
         _wg_sync_queued = False
     try:
-        sync_all_nodes()
+        from app.wireguard.sync_engine import schedule_resumable_sync
+
+        # Resumable batch sync (outbox + per-node cursor). Falls back to a
+        # classic full push only when the engine cannot start.
+        schedule_resumable_sync()
     except Exception as exc:
-        logger.warning("WireGuard user-change sync failed: %s", exc)
+        logger.warning("WireGuard resumable sync schedule failed: %s — falling back", exc)
+        try:
+            sync_all_nodes()
+        except Exception as exc2:
+            logger.warning("WireGuard user-change sync failed: %s", exc2)
     finally:
         rerun = False
         with _wg_sync_lock:
@@ -846,7 +872,6 @@ def _run_coalesced_wg_sync() -> None:
                 _wg_sync_queued = False
                 rerun = True
         if rerun:
-            # Another change landed while we were syncing — one more pass.
             sync_user_change()
 
 
@@ -890,14 +915,9 @@ def prepare_awg_peer_for_connect(dbnode, public_key: str) -> bool:
 def sync_user_change() -> None:
     """Lifecycle hook: re-sync WG nodes after any user add/update/remove.
 
-    Pushes the full (idempotent) peer set via ``wg syncconf`` so additions,
-    removals and status changes all converge. Cheap no-op when no WG node
-    exists.
-
-    Debounced + single-flight: callers may fire this on every user touch, but
-    only one ``sync_all_nodes`` runs at a time. Previously each call started a
-    daemon thread that held a DB connection through node RPC and exhausted the
-    SQLAlchemy pool (panel-wide 500 / "Server error").
+    Schedules a resumable per-node batch sync (outbox + cursor) so large fleets
+    converge without a multi-MB ``syncconf`` and can resume after disconnects.
+    Debounced + single-flight to protect the SQLAlchemy pool.
 
     Also schedules a debounced Finalmask shard hot-replace on enabled nodes so
     the baked-in peer list matches membership without restarting Reality.

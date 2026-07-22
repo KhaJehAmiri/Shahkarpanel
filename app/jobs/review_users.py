@@ -1,12 +1,14 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, or_
+from sqlalchemy.orm import Session, joinedload
 
 from app import logger, scheduler, xray
 from app.db import (GetDB, get_notification_reminder, get_users,
                     start_user_expire, reset_user_by_next, update_user_status)
+from app.db.models import User
 from app.models.user import ReminderType, UserResponse, UserStatus
 from app.quota import (
     disconnect_limited_users_if_due,
@@ -15,6 +17,8 @@ from app.quota import (
     enforce_usage_cap,
     limit_user_quota,
     reactivate_if_quota_available,
+    reconcile_wg_peer_active_flags,
+    restore_users_everywhere,
 )
 from app.utils import report
 from app.utils.helpers import (calculate_expiration_days,
@@ -74,8 +78,28 @@ def review():
     limited_safety_net: list[SimpleNamespace] = []
 
     with GetDB() as db:
-        for user in get_users(db, status=UserStatus.active):
-
+        # Active users that hit quota or expiry — never scan the whole table.
+        active_due = (
+            db.query(User)
+            .options(joinedload(User.admin), joinedload(User.next_plan))
+            .filter(
+                User.status == UserStatus.active,
+                or_(
+                    and_(
+                        User.data_limit.isnot(None),
+                        User.data_limit > 0,
+                        User.used_traffic >= User.data_limit,
+                    ),
+                    and_(
+                        User.expire.isnot(None),
+                        User.expire > 0,
+                        User.expire <= int(now_ts),
+                    ),
+                ),
+            )
+            .yield_per(500)
+        )
+        for user in active_due:
             limited = user.data_limit and user.used_traffic >= user.data_limit
             expired = user.expire and user.expire <= now_ts
 
@@ -95,7 +119,7 @@ def review():
                         user_admin=user.admin,
                     )
                 continue
-            elif expired:
+            if expired:
                 status = UserStatus.expired
                 update_user_status(db, user, status)
                 expired_users.append(SimpleNamespace(id=int(user.id), username=user.username))
@@ -105,13 +129,49 @@ def review():
                 )
                 logger.info(f"User \"{user.username}\" status changed to {status}")
                 continue
-            else:
-                if WEBHOOK_ADDRESS:
-                    add_notification_reminders(db, user, now)
-                continue
 
-        for user in get_users(db, status=UserStatus.on_hold):
+        # Webhook reminders: only users near expiry OR near usage percent.
+        if WEBHOOK_ADDRESS:
+            max_days = max(NOTIFY_DAYS_LEFT) if NOTIFY_DAYS_LEFT else 0
+            soon = int(now_ts) + int(max_days) * 86400 if max_days else 0
+            min_pct = min(NOTIFY_REACHED_USAGE_PERCENT) if NOTIFY_REACHED_USAGE_PERCENT else 80
+            # used_traffic >= data_limit * min_pct / 100
+            near_usage = and_(
+                User.data_limit.isnot(None),
+                User.data_limit > 0,
+                User.used_traffic >= (User.data_limit * int(min_pct)) / 100,
+            )
+            clauses = [near_usage]
+            if soon:
+                clauses.append(
+                    and_(User.expire.isnot(None), User.expire > 0, User.expire <= soon)
+                )
+            remind_q = (
+                db.query(User)
+                .options(joinedload(User.admin))
+                .filter(User.status == UserStatus.active, or_(*clauses))
+                .yield_per(500)
+            )
+            for user in remind_q:
+                add_notification_reminders(db, user, now)
 
+        # On-hold: only rows that can activate this tick.
+        on_hold_due = (
+            db.query(User)
+            .options(joinedload(User.admin))
+            .filter(
+                User.status == UserStatus.on_hold,
+                or_(
+                    User.online_at.isnot(None),
+                    and_(
+                        User.on_hold_timeout.isnot(None),
+                        User.on_hold_timeout <= now,
+                    ),
+                ),
+            )
+            .yield_per(500)
+        )
+        for user in on_hold_due:
             if user.edit_at:
                 base_time = datetime.timestamp(user.edit_at)
             else:
@@ -119,10 +179,8 @@ def review():
 
             if user.online_at and base_time <= datetime.timestamp(user.online_at):
                 status = UserStatus.active
-
             elif user.on_hold_timeout and (datetime.timestamp(user.on_hold_timeout) <= (now_ts)):
                 status = UserStatus.active
-
             else:
                 continue
 
@@ -135,7 +193,13 @@ def review():
 
             logger.info(f"User \"{user.username}\" status changed to {status}")
 
-        for user in get_users(db, status=UserStatus.limited):
+        # Limited set is typically small; still stream it.
+        for user in (
+            db.query(User)
+            .options(joinedload(User.admin))
+            .filter(User.status == UserStatus.limited)
+            .yield_per(500)
+        ):
             if user.data_limit and user.used_traffic > user.data_limit:
                 enforce_usage_cap(db, user)
             elif reactivate_if_quota_available(user):
@@ -172,21 +236,10 @@ def review():
             logger.exception("review: limited safety-net disconnect failed")
 
     if next_plan_users or reactivated_ids:
-        from app.db import crud
-
-        live_users = []
-        with GetDB() as db:
-            for uid in next_plan_users + reactivated_ids:
-                dbuser = crud.get_user_by_id(db, uid)
-                if dbuser is None:
-                    continue
-                db.expunge(dbuser)
-                live_users.append(dbuser)
-        for dbuser in live_users:
-            try:
-                xray.operations.update_user(dbuser)
-            except Exception:
-                logger.exception('review: live update failed for user id=%s', dbuser.id)
+        try:
+            restore_users_everywhere(next_plan_users + reactivated_ids)
+        except Exception:
+            logger.exception("review: quota/next-plan restore live paths failed")
 
     if activated_on_hold_ids:
         try:
@@ -212,24 +265,24 @@ def review():
             logger.exception("review: reseller-cap disconnect failed")
 
     if cap_reactivated:
-        from app.db import crud
+        try:
+            restore_users_everywhere(cap_reactivated)
+        except Exception:
+            logger.exception("review: reseller-cap restore live paths failed")
 
-        live_users = []
+    # Safety net: peer.active can drift after cap→limited→recharge paths.
+    try:
         with GetDB() as db:
-            for uid in cap_reactivated:
-                dbuser = crud.get_user_by_id(db, uid)
-                if dbuser is None:
-                    continue
-                db.expunge(dbuser)
-                live_users.append(dbuser)
-        for dbuser in live_users:
-            try:
-                xray.operations.update_user(dbuser)
-            except Exception:
-                logger.exception(
-                    "review: reseller-cap reactivation live update failed for id=%s",
-                    dbuser.id,
-                )
+            fixed = reconcile_wg_peer_active_flags(db)
+        if fixed:
+            from app.wireguard.operations import sync_user_change as wg_sync
+            from app.wireguard.peer_cache import peer_cache
+
+            peer_cache.invalidate()
+            wg_sync()
+            logger.info("review: reconciled %s wg_peers.active flags", fixed)
+    except Exception:
+        logger.exception("review: wg peer active reconcile failed")
 
 
 from app.ha import run_if_leader  # noqa: E402

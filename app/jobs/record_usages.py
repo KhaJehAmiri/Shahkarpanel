@@ -199,8 +199,14 @@ def record_node_stats(params: dict, node_id: Union[int, None]):
 
 
 def get_users_stats(api: XRayAPI):
+    """Return per-user params, or ``None`` when the API call itself failed.
+
+    Distinguishing failure from a genuine empty interval lets the collector
+    refresh a stale gRPC channel / fall back to RPyC loopback stats instead of
+    silently dropping Finalmask WireGuard traffic.
+    """
     if api is None:
-        return []
+        return None
     try:
         params = defaultdict(int)
         up_params = defaultdict(int)
@@ -227,7 +233,114 @@ def get_users_stats(api: XRayAPI):
         return params
     except xray_exc.XrayError as exc:
         logger.warning("get_users_stats failed: %s", exc)
+        return None
+
+
+def _params_from_xray_transfer(transfer: dict) -> list:
+    """Convert ``{email: {rx, tx}}`` (RPyC loopback) into usage-job params."""
+    out = []
+    for email, counters in (transfer or {}).items():
+        try:
+            uid = str(email).split(".", 1)[0]
+            int(uid)
+        except (TypeError, ValueError):
+            continue
+        try:
+            down = int((counters or {}).get("rx") or 0)
+            up = int((counters or {}).get("tx") or 0)
+        except (TypeError, ValueError):
+            continue
+        value = up + down
+        if value <= 0:
+            continue
+        out.append({"uid": uid, "value": value, "up": up, "down": down})
+    return out
+
+
+def _collect_node_users_stats(node_id, api: XRayAPI, node=None) -> list:
+    """gRPC stats with stale-channel refresh + RPyC loopback fallback."""
+    params = get_users_stats(api)
+    if params is not None:
+        return params
+
+    if node is not None and hasattr(node, "ensure_api"):
+        try:
+            if node.ensure_api(refresh=True, timeout=5):
+                params = get_users_stats(node.api)
+                if params is not None:
+                    return params
+        except Exception as exc:
+            logger.warning("get_users_stats refresh failed for node %s: %s", node_id, exc)
+
+    if node is None:
         return []
+    try:
+        remote = getattr(node, "remote", None)
+        if remote is None or not hasattr(remote, "xray_users_transfer"):
+            return []
+        raw = remote.xray_users_transfer(True)
+        if isinstance(raw, (bytes, bytearray)):
+            raw = raw.decode("utf-8", errors="ignore")
+        if isinstance(raw, str):
+            import json
+
+            transfer = json.loads(raw or "{}")
+        else:
+            transfer = dict(raw or {})
+        return _params_from_xray_transfer(transfer)
+    except AttributeError:
+        return []
+    except Exception as exc:
+        logger.warning("xray_users_transfer fallback failed for node %s: %s", node_id, exc)
+        return []
+
+
+def flush_node_user_stats(node_id: int) -> int:
+    """Pull+record one node's user stats before a dataplane mutation.
+
+    Finalmask ``rmi``/restart wipes unread Xray counters; calling this first
+    keeps WireGuard billing from leaking those bytes. Returns bytes recorded.
+    """
+    node = xray.nodes.get(node_id)
+    if node is None:
+        return 0
+    try:
+        if hasattr(node, "ensure_api"):
+            node.ensure_api(timeout=5)
+    except Exception:
+        pass
+    api = getattr(node, "_api", None)
+    try:
+        params = _collect_node_users_stats(node_id, api, node)
+    except Exception as exc:
+        logger.warning("flush_node_user_stats node %s failed: %s", node_id, exc)
+        return 0
+    if not params:
+        return 0
+    coefficient = {node_id: float(getattr(node, "usage_coefficient", 1) or 1)}
+    record_aggregated_user_usages({node_id: params}, coefficient)
+    try:
+        uids = {int(p["uid"]) for p in params}
+        with GetDB() as db:
+            billable_ids = {
+                row[0]
+                for row in db.query(User.id)
+                .filter(User.id.in_(uids), User.status.in_(BILLABLE_STATUSES))
+                .all()
+            }
+        proto_map = _node_usage_protocols([node_id])
+        record_protocol_breakdown(
+            [{
+                "protocol": proto_map.get(node_id, "xray"),
+                "node_id": node_id,
+                "params": params,
+                "coefficient": coefficient[node_id],
+            }],
+            billable_ids,
+        )
+    except Exception:
+        logger.debug("flush_node_user_stats protocol breakdown skipped", exc_info=True)
+    return sum(int(p.get("value") or 0) for p in params)
 
 
 def get_outbounds_stats(api: XRayAPI):
@@ -457,10 +570,8 @@ def record_aggregated_user_usages(api_params: dict, usage_coefficient: dict):
 def _connected_node_core_kinds(node_ids) -> dict:
     """Map ``node_id -> core_kind`` (``"xray"``/``"wireguard"``) for the given nodes.
 
-    Used only for the informational protocol breakdown: a ``wireguard`` core node
-    runs an Xray core whose sole purpose is the native WireGuard inbound, so its
-    per-user stats must be labelled ``wireguard`` rather than the generic
-    ``xray``. Best-effort — an empty/failed lookup falls back to ``xray``.
+    Used only for the informational protocol breakdown. Best-effort — an
+    empty/failed lookup falls back to ``xray``.
     """
     ids = [nid for nid in node_ids if nid is not None]
     if not ids:
@@ -476,6 +587,39 @@ def _connected_node_core_kinds(node_ids) -> dict:
         return {}
 
 
+def _node_usage_protocols(node_ids) -> dict:
+    """Map ``node_id -> protocol label`` for Xray API stats breakdown.
+
+    Tunnel/exit nodes also use ``core_kind=wireguard`` for agent packaging, but
+    their per-user stats are VLESS/Xray — only Finalmask relays
+    (``xray_wg_enabled``) should be labelled ``wireguard``.
+    """
+    ids = [nid for nid in node_ids if nid is not None]
+    if not ids:
+        return {}
+    try:
+        from app.db.models import NodeWireGuard
+
+        with GetDB() as db:
+            rows = (
+                db.query(NodeWireGuard.node_id, NodeWireGuard.xray_wg_enabled)
+                .filter(NodeWireGuard.node_id.in_(ids))
+                .all()
+            )
+        enabled = {int(r[0]): bool(r[1]) for r in rows}
+        return {
+            nid: ("wireguard" if enabled.get(nid) else "xray")
+            for nid in ids
+        }
+    except Exception:
+        logger.debug("xray_wg protocol lookup failed", exc_info=True)
+        kinds = _connected_node_core_kinds(ids)
+        return {
+            nid: ("wireguard" if kinds.get(nid) == "wireguard" else "xray")
+            for nid in ids
+        }
+
+
 def collect_user_usage_params() -> tuple:
     """Gather raw per-user stats from the local Xray core and every connected
     node.  Returns ``(api_params, usage_coefficient, protocol_breakdown)``.
@@ -486,19 +630,36 @@ def collect_user_usage_params() -> tuple:
     "coefficient"}`` — captured *before* merging so a node that serves several
     protocols (e.g. a WireGuard-core node that also runs sing-box) is attributed
     correctly instead of collapsing to one per-node label.
+
+    Finalmask relays are billed only via ``finalmask_usage`` (cumulative /
+    delta over RPyC). They are excluded from ``get_users_stats(reset=True)``
+    so a flaky TLS API cannot wipe unread WireGuard counters.
     """
+    try:
+        from app.wireguard.finalmask_usage import finalmask_node_ids
+
+        fm_ids = finalmask_node_ids()
+    except Exception:
+        fm_ids = set()
+
     api_instances = {None: xray.api}
     usage_coefficient = {None: 1}
+    node_refs: dict = {None: None}
 
     for node_id, node in list(xray.nodes.items()):
+        if node_id in fm_ids:
+            # Authoritative Finalmask path is collect_finalmask_usage_params().
+            continue
         # Use lock-free has_live_api — node.connected pings RPyC under a lock
         # shared with WG/health jobs and was freezing Overview stats.
         if getattr(node, "has_live_api", None) and node.has_live_api():
             api_instances[node_id] = node.api
             usage_coefficient[node_id] = node.usage_coefficient
+            node_refs[node_id] = node
         elif getattr(node, "started", False) and getattr(node, "_api", None) is not None:
             api_instances[node_id] = node.api
             usage_coefficient[node_id] = node.usage_coefficient
+            node_refs[node_id] = node
 
     # Do NOT use ``with ThreadPoolExecutor``: after ``future.result(timeout=…)``
     # the context manager still ``shutdown(wait=True)``, so one hung node RPC
@@ -506,10 +667,18 @@ def collect_user_usage_params() -> tuple:
     executor = ThreadPoolExecutor(max_workers=10)
     api_params: dict = {}
     try:
-        futures = {node_id: executor.submit(get_users_stats, api) for node_id, api in api_instances.items()}
+        futures = {
+            node_id: executor.submit(
+                _collect_node_users_stats,
+                node_id,
+                api,
+                node_refs.get(node_id),
+            )
+            for node_id, api in api_instances.items()
+        }
         for node_id, future in futures.items():
             try:
-                api_params[node_id] = future.result(timeout=35)
+                api_params[node_id] = future.result(timeout=35) or []
             except Exception as exc:
                 logger.warning("get_users_stats timed out/failed for node %s: %s", node_id, exc)
                 api_params[node_id] = []
@@ -532,13 +701,25 @@ def collect_user_usage_params() -> tuple:
                 }
             )
 
-    # Xray core stats: label by the node's core kind. The local panel core
-    # (``None``) and normal nodes are ``xray``; a WireGuard-core node's Xray API
-    # only carries its native WireGuard inbound, so attribute it to ``wireguard``.
-    core_kinds = _connected_node_core_kinds(api_instances.keys())
+    # Non-Finalmask Xray API stats (tunnel exits, panel core, …).
+    proto_map = _node_usage_protocols(api_instances.keys())
     for node_id, params in api_params.items():
-        proto = "wireguard" if core_kinds.get(node_id) == "wireguard" else "xray"
+        proto = proto_map.get(node_id, "xray")
         _add_breakdown(proto, node_id, params, usage_coefficient.get(node_id, 1))
+
+    # Finalmask: cumulative user>>>email over RPyC (never reset-on-read).
+    try:
+        from app.wireguard.finalmask_usage import (
+            collect_finalmask_usage_params,
+            merge_finalmask_usage,
+        )
+
+        fm_params, fm_coefficient = collect_finalmask_usage_params()
+        for node_id, params in fm_params.items():
+            _add_breakdown("wireguard", node_id, params, fm_coefficient.get(node_id, 1))
+        merge_finalmask_usage(api_params, usage_coefficient, fm_params, fm_coefficient)
+    except Exception:
+        logger.exception("Finalmask usage collection failed")
 
     try:
         from app.wireguard.usage import collect_wg_usage_params, merge_wg_usage

@@ -1,9 +1,11 @@
 import { FC, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import { Branding, SubResellerAccount, Tenant } from "../api/types";
 import { useApp } from "../context/AppContext";
 import { useFetch } from "../lib/useFetch";
+import { formatBytes } from "../lib/format";
 import { PageHeader } from "../components/Shell";
 import {
   Button, Callout, Card, CardHead, EmptyState, Field, Input, Modal, Pager, Pill, SkeletonRows, Tabs, Textarea, usePagedList, useToast,
@@ -17,6 +19,9 @@ type ResellerAccount = {
   max_users?: number | null;
   max_nodes?: number | null;
   max_total_traffic?: number | null;
+  users_usage?: number | null;
+  wallet_balance?: number | null;
+  prepaid_traffic_remaining?: number | null;
 };
 
 export const Resellers: FC<{ embedded?: boolean }> = ({ embedded }) => {
@@ -29,6 +34,8 @@ export const Resellers: FC<{ embedded?: boolean }> = ({ embedded }) => {
       { id: "tenants", label: t("resellers.tabTenants") },
     ] : [
       { id: "subaccounts", label: t("resellers.tabSubAccounts") },
+      { id: "account", label: t("resellers.tabAccount") },
+      { id: "migration", label: t("resellers.tabMigration") },
     ]),
     { id: "branding", label: t("resellers.tabBranding") },
     { id: "provision", label: t("infra.addNode") },
@@ -41,6 +48,8 @@ export const Resellers: FC<{ embedded?: boolean }> = ({ embedded }) => {
       {tab === "subaccounts" && <SubResellersTab />}
       {tab === "tenants" && <TenantsTab />}
       {tab === "branding" && <BrandingTab />}
+      {tab === "account" && <AccountTab />}
+      {tab === "migration" && <MigrationTab />}
       {tab === "provision" && <ProvisionTab />}
     </div>
   );
@@ -201,11 +210,14 @@ const AddSubReseller: FC<{ onClose: () => void; onDone: () => void }> = ({ onClo
 
 const ResellerAccountsTab: FC = () => {
   const { t } = useTranslation();
+  const { isEnabled } = useApp();
   const toast = useToast();
   const [show, setShow] = useState(false);
   const [edit, setEdit] = useState<ResellerAccount | null>(null);
   const [credit, setCredit] = useState<ResellerAccount | null>(null);
+  const [trafficCredit, setTrafficCredit] = useState<ResellerAccount | null>(null);
   const { data, loading, error, reload, status } = useFetch<ResellerAccount[]>(() => api.get("/admins"), []);
+  const billingOn = isEnabled("billing");
 
   const [search, setSearch] = useState("");
   const accounts = (data || []).filter(
@@ -232,6 +244,11 @@ const ResellerAccountsTab: FC = () => {
         <Callout tone="info" title={t("resellers.accountsHintTitle")}>
           {t("resellers.accountsHint")}
         </Callout>
+        {!billingOn && (
+          <div style={{ marginTop: 10 }}>
+            <Callout tone="warn">{t("resellers.billingDisabledHint")}</Callout>
+          </div>
+        )}
       </div>
       <div className="nx-row" style={{ justifyContent: "flex-end", marginBottom: 14, gap: 8 }}>
         {(data?.length ?? 0) > 8 && (
@@ -254,8 +271,10 @@ const ResellerAccountsTab: FC = () => {
                 <thead><tr>
                   <th>{t("common.username")}</th>
                   <th>{t("system.role")}</th>
+                  <th>{t("billing.wallet")}</th>
+                  <th>{t("billing.prepaidRemaining")}</th>
+                  <th>{t("resellers.trafficUsed")}</th>
                   <th>{t("system.maxUsers")}</th>
-                  <th>{t("system.maxNodes")}</th>
                   <th style={{ textAlign: "end" }}>{t("common.actions")}</th>
                 </tr></thead>
                 <tbody>
@@ -263,11 +282,31 @@ const ResellerAccountsTab: FC = () => {
                     <tr key={a.username}>
                       <td><code>{a.username}</code></td>
                       <td><Pill tone="default">{a.role || "reseller"}</Pill></td>
+                      <td>{billingOn ? (a.wallet_balance ?? 0).toLocaleString() : "—"}</td>
+                      <td>{billingOn ? formatBytes(a.prepaid_traffic_remaining ?? 0) : "—"}</td>
+                      <td>
+                        {formatBytes(a.users_usage ?? 0)}
+                        <span className="nx-faint">
+                          {" / "}
+                          {a.max_total_traffic != null ? formatBytes(a.max_total_traffic) : "∞"}
+                          {a.max_total_traffic != null
+                            ? ` (${formatBytes(Math.max(0, (a.max_total_traffic ?? 0) - (a.users_usage ?? 0)))} left)`
+                            : ""}
+                        </span>
+                      </td>
                       <td>{a.max_users ?? "∞"}</td>
-                      <td>{a.max_nodes ?? "∞"}</td>
                       <td>
                         <div className="nx-row" style={{ justifyContent: "flex-end", gap: 6 }}>
-                          <Button size="sm" variant="ghost" title={t("billing.addCredit")} onClick={() => setCredit(a)}><IcWallet className="nx-ico" /></Button>
+                          {billingOn && (
+                            <>
+                              <Button size="sm" variant="primary" title={t("resellers.adjustWallet")} onClick={() => setCredit(a)}>
+                                <IcWallet className="nx-ico" /> {t("resellers.adjustWallet")}
+                              </Button>
+                              <Button size="sm" variant="ghost" title={t("resellers.creditTraffic")} onClick={() => setTrafficCredit(a)}>
+                                {t("resellers.creditTraffic")}
+                              </Button>
+                            </>
+                          )}
                           <Button size="sm" variant="ghost" title={t("common.edit")} onClick={() => setEdit(a)}><IcEdit className="nx-ico" /></Button>
                           <Button size="sm" variant="danger" title={t("common.delete")} onClick={() => remove(a)}><IcTrash className="nx-ico" /></Button>
                         </div>
@@ -282,31 +321,106 @@ const ResellerAccountsTab: FC = () => {
       <Pager page={pager.page} pages={pager.pages} onPage={pager.setPage} />
       {show && <AddResellerAccount onClose={() => setShow(false)} onDone={() => { setShow(false); reload(); }} />}
       {edit && <EditResellerAccount account={edit} onClose={() => setEdit(null)} onDone={() => { setEdit(null); reload(); }} />}
-      {credit && <CreditResellerAccount account={credit} onClose={() => setCredit(null)} onDone={() => setCredit(null)} />}
+      {credit && <CreditResellerAccount account={credit} onClose={() => setCredit(null)} onDone={() => { setCredit(null); reload(); }} />}
+      {trafficCredit && (
+        <CreditResellerTraffic
+          account={trafficCredit}
+          onClose={() => setTrafficCredit(null)}
+          onDone={() => { setTrafficCredit(null); reload(); }}
+        />
+      )}
     </>
+  );
+};
+
+const CreditResellerTraffic: FC<{ account: ResellerAccount; onClose: () => void; onDone: () => void }> = ({ account, onClose, onDone }) => {
+  const { t } = useTranslation();
+  const toast = useToast();
+  const [gb, setGb] = useState("100");
+  const [description, setDescription] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    setBusy(true);
+    try {
+      const n = parseFloat(gb);
+      if (!Number.isFinite(n) || n <= 0) throw new Error(t("billing.packageTrafficRequired"));
+      const bytes = Math.round(n * (1024 ** 3));
+      await api.post("/billing/traffic-packages/credit", {
+        username: account.username,
+        bytes,
+        description: description.trim() || undefined,
+      });
+      toast.push(t("resellers.trafficCreditDone"), "success");
+      onDone();
+    } catch (e: any) { toast.push(e.message, "error"); } finally { setBusy(false); }
+  };
+  return (
+    <Modal open title={`${t("resellers.creditTraffic")} — ${account.username}`} onClose={onClose}
+      footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
+        <Button variant="primary" disabled={busy || !gb} onClick={submit}>{t("common.save")}</Button></>}>
+      <div className="nx-stack">
+        <Callout tone="info">
+          {t("resellers.prepaidHint", { remaining: formatBytes(account.prepaid_traffic_remaining ?? 0) })}
+        </Callout>
+        <Field label={t("billing.packageTrafficGb")} hint={t("resellers.creditTrafficHint")}>
+          <Input type="number" value={gb} onChange={(e: any) => setGb(e.target.value)} autoFocus />
+        </Field>
+        <Field label={`${t("billing.description")} (${t("common.optional")})`}>
+          <Input value={description} onChange={(e: any) => setDescription(e.target.value)} />
+        </Field>
+      </div>
+    </Modal>
   );
 };
 
 const CreditResellerAccount: FC<{ account: ResellerAccount; onClose: () => void; onDone: () => void }> = ({ account, onClose, onDone }) => {
   const { t } = useTranslation();
   const toast = useToast();
+  const [mode, setMode] = useState<"set" | "delta">("set");
   const [amount, setAmount] = useState("");
+  const [description, setDescription] = useState("");
   const [busy, setBusy] = useState(false);
   const submit = async () => {
     setBusy(true);
     try {
-      await api.post("/billing/credit", { username: account.username, amount: parseInt(amount, 10) || 0 });
-      toast.push(t("common.saved"), "success");
+      const amt = parseInt(amount, 10);
+      if (Number.isNaN(amt)) throw new Error(t("billing.creditAmountHint"));
+      if (mode === "set" && amt < 0) throw new Error(t("resellers.setBalanceHint"));
+      if (mode === "delta" && amt === 0) throw new Error(t("resellers.deltaAmountHint"));
+      await api.post("/billing/adjust", {
+        username: account.username,
+        mode,
+        amount: amt,
+        description: description.trim() || undefined,
+      });
+      toast.push(t("billing.creditDone"), "success");
       onDone();
     } catch (e: any) { toast.push(e.message, "error"); } finally { setBusy(false); }
   };
   return (
-    <Modal open title={`${t("billing.addCredit")} — ${account.username}`} onClose={onClose}
+    <Modal open title={`${t("resellers.adjustWallet")} — ${account.username}`} onClose={onClose}
       footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
-        <Button variant="primary" disabled={busy || !amount} onClick={submit}>{t("common.save")}</Button></>}>
-      <Field label={t("billing.creditAmount")} hint={t("billing.creditAmountHint")}>
-        <Input type="number" min={1} value={amount} onChange={(e: any) => setAmount(e.target.value)} autoFocus />
-      </Field>
+        <Button variant="primary" disabled={busy || amount === ""} onClick={submit}>{t("common.save")}</Button></>}>
+      <div className="nx-stack">
+        <Callout tone="info">
+          {t("resellers.creditBalanceHint", { balance: (account.wallet_balance ?? 0).toLocaleString() })}
+        </Callout>
+        <Field label={t("resellers.adjustMode")}>
+          <select className="nx-select" value={mode} onChange={(e: any) => setMode(e.target.value)}>
+            <option value="set">{t("resellers.modeSetBalance")}</option>
+            <option value="delta">{t("resellers.modeDelta")}</option>
+          </select>
+        </Field>
+        <Field
+          label={mode === "set" ? t("resellers.newBalance") : t("billing.creditAmount")}
+          hint={mode === "set" ? t("resellers.setBalanceHint") : t("resellers.deltaAmountHint")}
+        >
+          <Input type="number" value={amount} onChange={(e: any) => setAmount(e.target.value)} autoFocus />
+        </Field>
+        <Field label={`${t("billing.description")} (${t("common.optional")})`}>
+          <Input value={description} onChange={(e: any) => setDescription(e.target.value)} placeholder={t("resellers.creditNotePlaceholder")} />
+        </Field>
+      </div>
     </Modal>
   );
 };
@@ -604,10 +718,14 @@ const BrandingTab: FC = () => {
 
   if (loading) return <Card><SkeletonRows rows={4} cols={2} /></Card>;
 
+  const suggestedLogin = model.panel_url
+    || (model.domain ? `https://${model.domain}` : "");
+
   return (
     <Card style={{ maxWidth: 640 }}>
       <CardHead title={t("resellers.tabBranding")} desc={t("resellers.brandingDesc")} />
       <div className="nx-stack">
+        <Callout tone="info">{t("resellers.domainDnsHint")}</Callout>
         <Field label={t("resellers.panelTitle")}><Input value={model.panel_title || ""} onChange={upd("panel_title")} /></Field>
         <div className="nx-row" style={{ gap: 12 }}>
           <Field label={t("resellers.logoUrl")}><Input value={model.logo_url || ""} onChange={upd("logo_url")} /></Field>
@@ -618,9 +736,127 @@ const BrandingTab: FC = () => {
           <Field label={t("resellers.supportUrl")}><Input value={model.support_url || ""} onChange={upd("support_url")} /></Field>
         </div>
         <Field label={t("resellers.subProfileTitle")}><Input value={model.sub_profile_title || ""} onChange={upd("sub_profile_title")} /></Field>
-        <Field label={`${t("resellers.domain")} (${t("common.optional")})`}><Input value={model.domain || ""} onChange={upd("domain")} /></Field>
+        <Field label={t("resellers.domain")} hint={t("resellers.domainHint")}>
+          <Input value={model.domain || ""} onChange={upd("domain")} placeholder="panel.example.com" />
+        </Field>
+        <Field label={t("resellers.panelUrl")} hint={t("resellers.panelUrlHint")}>
+          <Input value={model.panel_url || ""} onChange={upd("panel_url")} placeholder="https://panel.example.com" />
+        </Field>
+        {suggestedLogin && (
+          <Callout tone="info">
+            {t("resellers.loginLinkHint")}: <code>{suggestedLogin}</code>
+          </Callout>
+        )}
         <div className="nx-row" style={{ justifyContent: "flex-end" }}>
           <Button variant="primary" disabled={busy} onClick={save}>{t("resellers.saveBranding")}</Button>
+        </div>
+      </div>
+    </Card>
+  );
+};
+
+const AccountTab: FC = () => {
+  const { t } = useTranslation();
+  const { admin, logout } = useApp();
+  const toast = useToast();
+  const [pw, setPw] = useState({ current: "", next: "", confirm: "" });
+  const [un, setUn] = useState({ next: "", password: "" });
+  const [busyPw, setBusyPw] = useState(false);
+  const [busyUn, setBusyUn] = useState(false);
+
+  const changePassword = async () => {
+    setBusyPw(true);
+    try {
+      if (pw.next.length < 6) throw new Error(t("resellers.passwordTooShort"));
+      if (pw.next !== pw.confirm) throw new Error(t("resellers.passwordMismatch"));
+      await api.put("/admin/me/password", {
+        current_password: pw.current,
+        new_password: pw.next,
+      });
+      toast.push(t("resellers.passwordChanged"), "success");
+      setPw({ current: "", next: "", confirm: "" });
+    } catch (e: any) {
+      toast.push(e.message, "error");
+    } finally {
+      setBusyPw(false);
+    }
+  };
+
+  const changeUsername = async () => {
+    setBusyUn(true);
+    try {
+      const res = await api.put<{ detail: string; username?: string }>("/admin/me/username", {
+        new_username: un.next.trim(),
+        current_password: un.password,
+      });
+      toast.push(res.detail || t("resellers.usernameChanged"), "success");
+      logout?.();
+    } catch (e: any) {
+      toast.push(e.message, "error");
+    } finally {
+      setBusyUn(false);
+    }
+  };
+
+  return (
+    <div className="nx-stack" style={{ maxWidth: 560 }}>
+      <Card>
+        <CardHead title={t("resellers.changePassword")} desc={t("resellers.changePasswordDesc")} />
+        <div className="nx-stack">
+          <Field label={t("resellers.currentPassword")}>
+            <Input type="password" value={pw.current} onChange={(e: any) => setPw({ ...pw, current: e.target.value })} />
+          </Field>
+          <Field label={t("resellers.newPassword")}>
+            <Input type="password" value={pw.next} onChange={(e: any) => setPw({ ...pw, next: e.target.value })} />
+          </Field>
+          <Field label={t("resellers.confirmPassword")}>
+            <Input type="password" value={pw.confirm} onChange={(e: any) => setPw({ ...pw, confirm: e.target.value })} />
+          </Field>
+          <div className="nx-row" style={{ justifyContent: "flex-end" }}>
+            <Button variant="primary" disabled={busyPw || !pw.current || !pw.next} onClick={changePassword}>
+              {t("resellers.changePassword")}
+            </Button>
+          </div>
+        </div>
+      </Card>
+      <Card>
+        <CardHead title={t("resellers.changeUsername")} desc={t("resellers.changeUsernameDesc")} />
+        <div className="nx-stack">
+          <Callout tone="info">{t("resellers.currentUsernameHint", { username: admin?.username || "" })}</Callout>
+          <Field label={t("resellers.newUsername")} hint={t("resellers.usernameRules")}>
+            <Input value={un.next} onChange={(e: any) => setUn({ ...un, next: e.target.value })} />
+          </Field>
+          <Field label={t("resellers.currentPassword")}>
+            <Input type="password" value={un.password} onChange={(e: any) => setUn({ ...un, password: e.target.value })} />
+          </Field>
+          <div className="nx-row" style={{ justifyContent: "flex-end" }}>
+            <Button variant="primary" disabled={busyUn || !un.next.trim() || !un.password} onClick={changeUsername}>
+              {t("resellers.changeUsername")}
+            </Button>
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+};
+
+const MigrationTab: FC = () => {
+  const { t } = useTranslation();
+  return (
+    <Card style={{ maxWidth: 640 }}>
+      <CardHead title={t("resellers.tabMigration")} desc={t("resellers.migrationDesc")} />
+      <div className="nx-stack">
+        <Callout tone="info" title={t("resellers.migrationFormatsTitle")}>
+          <div>{t("users.importFmtMarzban")}</div>
+          <div>{t("users.importFmt3xui")}</div>
+          <div>{t("users.importFmtCsv")}</div>
+          <div>{t("users.importFmtLinks")}</div>
+        </Callout>
+        <p className="nx-faint" style={{ margin: 0 }}>{t("resellers.migrationHint")}</p>
+        <div className="nx-row" style={{ justifyContent: "flex-start" }}>
+          <Link to="/users?import=1">
+            <Button variant="primary">{t("resellers.openImport")}</Button>
+          </Link>
         </div>
       </div>
     </Card>

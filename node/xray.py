@@ -395,7 +395,7 @@ def hot_replace_inbounds(
     remove_tags: list,
     inbounds: list,
     *,
-    timeout: float = 30.0,
+    timeout: float = 180.0,
 ) -> dict:
     """Swap inbounds on the *live* core via the local ``xray api`` CLI.
 
@@ -442,6 +442,22 @@ def hot_replace_inbounds(
         )
         ok = proc.returncode == 0
         detail = (proc.stderr or proc.stdout or "").strip()
+        # Partial prior attempt left the tag in place — clear then re-add once.
+        if (not ok) and "existing tag found" in detail.lower():
+            for tag in remove_tags or []:
+                try:
+                    subprocess.run(
+                        [executable_path, "api", "rmi", f"--server={server}", str(tag)],
+                        capture_output=True, text=True, timeout=timeout,
+                    )
+                except Exception:
+                    pass
+            proc = subprocess.run(
+                [executable_path, "api", "adi", f"--server={server}", conf_path],
+                capture_output=True, text=True, timeout=timeout,
+            )
+            ok = proc.returncode == 0
+            detail = (proc.stderr or proc.stdout or "").strip()
     except Exception as exc:  # noqa: BLE001 - reported to the panel
         ok, detail = False, str(exc)
     finally:

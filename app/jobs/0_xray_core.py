@@ -343,6 +343,18 @@ def core_health_check():
         # One fetch per node per tick, reused below — used to be up to 6
         # separate `get_node_by_id` queries per WireGuard node per tick
         # (AUDIT_FINDINGS.md M4).
+        try:
+            with GetDB() as db:
+                dbnode = crud.get_node_by_id(db, node_id)
+                if dbnode is not None and dbnode.status == NodeStatus.disabled:
+                    try:
+                        node.disconnect()
+                    except Exception:
+                        pass
+                    xray.nodes.pop(node_id, None)
+                    continue
+        except Exception:
+            pass
         node_meta = _node_probe_meta(node_id)
         is_wg_node = node_meta[0] == CoreKind.wireguard.value
         if node.connected:
@@ -363,6 +375,16 @@ def core_health_check():
             except (ConnectionError, xray_exc.XrayError, AssertionError, TimeoutError, EOFError):
                 if now < _node_restart_after.get(node_id, 0):
                     continue
+                # Hot-replace holds RPyC for a long time; a probe timeout here
+                # is expected — do not preempt with connect_node.
+                if is_wg_node:
+                    try:
+                        from app.wireguard.sync_engine import is_finalmask_rpc_busy
+
+                        if is_finalmask_rpc_busy(node_id):
+                            continue
+                    except Exception:
+                        pass
                 if is_wg_node:
                     from app.tunnel.relay import (
                         node_delegates_wireguard_to_tunnel,
@@ -393,6 +415,13 @@ def core_health_check():
             # Tunnel-delegated relays can keep serving WG while the panel-side
             # RPyC session is briefly unhealthy — do not restart Xray for that.
             if is_wg_node:
+                try:
+                    from app.wireguard.sync_engine import is_finalmask_rpc_busy
+
+                    if is_finalmask_rpc_busy(node_id):
+                        continue
+                except Exception:
+                    pass
                 from app.tunnel.relay import node_delegates_wireguard_to_tunnel, relay_tunnel_xray_ready
 
                 with GetDB() as db:
@@ -403,15 +432,18 @@ def core_health_check():
                 if tunnel_ready:
                     _record_node_health(node_id, 0.0)
                     continue
-            try:
-                from app.control_tunnel import heal_tunnels
-
-                heal_tunnels()
-            except Exception:
-                pass
             if not config:
                 config = _health_check_config()
             xray.operations.connect_node(node_id, config)
+
+    # Once per tick — not once per disconnected node (SSH heal was stacking
+    # under load and blocking the health job → max_instances skips).
+    try:
+        from app.control_tunnel import heal_tunnels
+
+        heal_tunnels()
+    except Exception:
+        pass
 
 
 @app.on_event("startup")

@@ -4,8 +4,47 @@ These protocols are served by the node's sing-box engine (not Xray inbounds), so
 they cannot ride the standard ``share.py`` inbound loop. Like WireGuard they use
 dedicated subscription endpoints tied to the same token and central quota.
 """
-from typing import Optional
+from typing import Iterable, List, Optional, Sequence, TypeVar
 from urllib import parse
+
+_NodeT = TypeVar("_NodeT")
+
+
+def filter_singbox_client_entry_nodes(db, nodes: Iterable[_NodeT]) -> List[_NodeT]:
+    """Keep only nodes that are valid *client entry* points for sing-box.
+
+    Tunnel exit nodes run sing-box with ``final: direct``. If we advertise them
+    in subscriptions, clients dial abroad and skip the Iran relay → tunnel hop.
+    Relays (and nodes that are not an exit-only tunnel role) stay published.
+    """
+    from app.db.models import Tunnel
+
+    node_list = list(nodes)
+    if not node_list:
+        return node_list
+
+    rows: Sequence = (
+        db.query(
+            Tunnel.relay_node_id,
+            Tunnel.intermediate_node_id,
+            Tunnel.exit_node_id,
+        )
+        .filter(Tunnel.enabled.is_(True))
+        .all()
+    )
+    entry_ids: set[int] = set()
+    exit_ids: set[int] = set()
+    for relay_id, mid_id, exit_id in rows:
+        if relay_id is not None:
+            entry_ids.add(int(relay_id))
+        if mid_id is not None:
+            entry_ids.add(int(mid_id))
+        if exit_id is not None:
+            exit_ids.add(int(exit_id))
+    skip = exit_ids - entry_ids
+    if not skip:
+        return node_list
+    return [n for n in node_list if int(getattr(n, "id")) not in skip]
 
 
 def node_host(dbnode, *, protocol: str = "hysteria2") -> str:
@@ -125,6 +164,41 @@ def singbox_link_insecure(cfg) -> bool:
     )
 
 
+def _looks_like_ip(host: Optional[str]) -> bool:
+    if not host:
+        return False
+    host = host.strip()
+    if host.count(".") == 3 and all(p.isdigit() for p in host.split(".")):
+        return True
+    return ":" in host
+
+
+def singbox_dial_host_sni(dbnode, cfg, preferred_host: str) -> tuple[str, str]:
+    """Host/SNI for sing-box share links.
+
+    Nodes currently serve self-signed certs whose CN is the server IP. Clients
+    that dial ``hostname`` with ``sni=hostname`` often fail the TLS handshake
+    even with ``insecure=1``. Prefer dialing the IP with matching SNI when the
+    cert is not a public CA.
+    """
+    preferred_host = (preferred_host or "").strip() or (dbnode.address or "")
+    if cfg is not None and getattr(cfg, "tls_trusted", False):
+        return preferred_host, (cfg.sni or preferred_host)
+
+    addr = (getattr(dbnode, "address", None) or "").strip()
+    ip = addr if _looks_like_ip(addr) else None
+    if ip is None and addr:
+        try:
+            import socket
+
+            ip = socket.gethostbyname(addr)
+        except Exception:
+            ip = None
+    if ip:
+        return ip, ip
+    return preferred_host, (cfg.sni if cfg and cfg.sni else preferred_host)
+
+
 def user_hysteria2_link(
     user_settings: dict,
     dbnode,
@@ -162,6 +236,7 @@ def user_hysteria2_link(
         if not dials:
             return None
         host, port = dials[0]
+    host, sni = singbox_dial_host_sni(dbnode, cfg, host)
     from app.singbox.speed import speed_tier
 
     tier = speed_tier(speed_limit_up, speed_limit_down)
@@ -169,7 +244,7 @@ def user_hysteria2_link(
         password=password,
         host=host,
         port=int(port),
-        sni=cfg.sni or host,
+        sni=sni,
         obfs_password=cfg.hysteria2_obfs_password,
         remark=remark,
         insecure=insecure,
@@ -212,12 +287,13 @@ def user_tuic_link(
         if not dials:
             return None
         host, port = dials[0]
+    host, sni = singbox_dial_host_sni(dbnode, cfg, host)
     return tuic_link(
         uuid=str(uuid),
         password=password,
         host=host,
         port=int(port),
-        sni=cfg.sni or host,
+        sni=sni,
         congestion_control=cfg.tuic_congestion_control or "bbr",
         remark=remark,
         insecure=insecure,
@@ -245,11 +321,12 @@ def user_anytls_link(
     from app.singbox.sync import anytls_port_for_user
 
     port = anytls_port_for_user(int(cfg.anytls_port), speed_limit_up, speed_limit_down)
+    host, sni = singbox_dial_host_sni(dbnode, cfg, host)
     return anytls_link(
         password=password,
         host=host,
         port=port,
-        sni=cfg.sni or host,
+        sni=sni,
         remark=remark,
         insecure=insecure,
     )

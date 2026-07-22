@@ -234,6 +234,7 @@ export interface Branding {
   support_url?: string | null;
   sub_profile_title?: string | null;
   domain?: string | null;
+  panel_url?: string | null;
 }
 
 export interface TunnelHealthCheck {
@@ -374,6 +375,9 @@ export interface Invoice {
   amount: number;
   status: string;
   provider?: string | null;
+  description?: string | null;
+  created_at?: string | null;
+  paid_at?: string | null;
 }
 
 export interface Transaction {
@@ -383,6 +387,7 @@ export interface Transaction {
   type: string;
   description?: string | null;
   reference?: string | null;
+  created_at?: string | null;
 }
 
 export interface Wallet {
@@ -429,6 +434,33 @@ export interface UsageSummary {
   wallet_balance: number;
   wallet_low: boolean;
   wallet_low_threshold: number;
+  wallet_blocked?: boolean;
+  currency_label?: string | null;
+  prepaid_traffic_remaining?: number;
+  package_covered_bytes?: number;
+  overflow_owned_bytes?: number;
+  overflow_foreign_bytes?: number;
+}
+
+export interface TrafficPackage {
+  id: number;
+  name: string;
+  bytes: number;
+  price: number;
+  enabled: boolean;
+  created_at?: string | null;
+}
+
+export interface TrafficPurchase {
+  id: number;
+  admin_id: number;
+  package_id?: number | null;
+  bytes: number;
+  price_paid: number;
+  source: string;
+  created_by_admin_id?: number | null;
+  created_at?: string | null;
+  prepaid_traffic_remaining?: number | null;
 }
 
 export interface ResellerWorkspace {
@@ -444,9 +476,22 @@ export interface ResellerWorkspace {
   max_nodes?: number | null;
   wallet_balance?: number | null;
   wallet_low?: boolean;
+  wallet_blocked?: boolean;
   usage_rate_per_gb?: number;
   users_usage: number;
   max_total_traffic?: number | null;
+  traffic_remaining?: number | null;
+  prepaid_traffic_remaining?: number;
+  pending_usage_cost?: number;
+  pending_usage_bytes?: number;
+  capped_users?: number;
+  currency_label?: string | null;
+  last_usage_debit?: {
+    id: number;
+    amount: number;
+    description?: string | null;
+    created_at?: string | null;
+  } | null;
 }
 
 export interface ApiKey {

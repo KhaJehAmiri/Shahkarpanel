@@ -484,17 +484,19 @@ def singbox_socks_port(tunnel) -> int:
 
 
 def build_singbox_bridge_socks_inbound(tunnel) -> Dict:
-    """Local SOCKS inbound on the relay Xray core for sing-box tunnel egress."""
+    """Local SOCKS inbound on the relay Xray core for sing-box tunnel egress.
+
+    Sniffing stays off: with ``domainStrategy: IPIfNonMatch`` and default
+    outbound ``DIRECT``, sniffed domain re-routes can leak sing-box traffic
+    off the tunnel hop.
+    """
     return {
         "tag": f"tunnel-{tunnel.id}-sb-socks",
         "listen": "127.0.0.1",
         "port": singbox_socks_port(tunnel),
         "protocol": "socks",
         "settings": {"auth": "noauth", "udp": True},
-        "sniffing": {
-            "enabled": True,
-            "destOverride": ["http", "tls", "quic"],
-        },
+        "sniffing": {"enabled": False},
     }
 
 

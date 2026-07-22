@@ -38,6 +38,14 @@ interface SubInfo {
   public_subscription_url?: string;
   client_subscription_url?: string;
   subscription_profile_title?: string;
+  branding?: {
+    panel_title?: string | null;
+    logo_url?: string | null;
+    favicon_url?: string | null;
+    primary_color?: string | null;
+    support_url?: string | null;
+    sub_profile_title?: string | null;
+  } | null;
   hysteria2_link?: string | null;
   tuic_link?: string | null;
   anytls_link?: string | null;
@@ -283,7 +291,31 @@ function SubscribeBody() {
     () => resolveClientImportUrl(info, token, apiPrefix) || subUrl,
     [info, token, apiPrefix, subUrl],
   );
-  const profileTitle = info?.subscription_profile_title?.trim() || "NexusPanel";
+  const profileTitle =
+    info?.subscription_profile_title?.trim()
+    || info?.branding?.sub_profile_title?.trim()
+    || info?.branding?.panel_title?.trim()
+    || "NexusPanel";
+
+  useEffect(() => {
+    const b = info?.branding;
+    if (!b) return;
+    if (b.primary_color) {
+      document.documentElement.style.setProperty("--nx-accent", b.primary_color);
+    }
+    if (b.favicon_url) {
+      let link = document.querySelector("link[rel='icon']") as HTMLLinkElement | null;
+      if (!link) {
+        link = document.createElement("link");
+        link.rel = "icon";
+        document.head.appendChild(link);
+      }
+      link.href = b.favicon_url;
+    }
+    if (b.panel_title || b.sub_profile_title) {
+      document.title = (b.sub_profile_title || b.panel_title || profileTitle) as string;
+    }
+  }, [info?.branding, profileTitle]);
 
   const hasWireguard = !!info?.proxies && "wireguard" in info.proxies;
   const hasHysteria2 = !!info?.proxies && "hysteria2" in info.proxies;

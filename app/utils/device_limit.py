@@ -1,19 +1,22 @@
-"""Per-user concurrent device (IP) limiting for subscription access."""
+"""Per-user concurrent device limiting for subscription access."""
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy.orm import Session
 
 from app.db.models import User
 
-# IPs not seen within this window don't count toward the device limit.
+# IPs/fingerprints not seen within this window don't count toward the device limit.
 _ACTIVE_WINDOW = timedelta(hours=24)
+# Subscribe UI "recent devices" window for fingerprint fallback.
+_ONLINE_DISPLAY_WINDOW = timedelta(hours=2)
 
 
-def _parse_ips(raw: Optional[str]) -> dict[str, str]:
+def _parse_ips(raw: Optional[str]) -> dict[str, Any]:
     if not raw:
         return {}
     try:
@@ -23,16 +26,30 @@ def _parse_ips(raw: Optional[str]) -> dict[str, str]:
     return data if isinstance(data, dict) else {}
 
 
-def _prune(ips: dict[str, str], now: datetime) -> dict[str, str]:
-    cutoff = now - _ACTIVE_WINDOW
-    out: dict[str, str] = {}
-    for ip, seen in ips.items():
+def _entry_seen(value: Any) -> Optional[str]:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        seen = value.get("seen")
+        return str(seen) if seen else None
+    return None
+
+
+def _prune(ips: dict[str, Any], now: datetime, window: timedelta = _ACTIVE_WINDOW) -> dict[str, Any]:
+    cutoff = now - window
+    out: dict[str, Any] = {}
+    for key, value in ips.items():
+        seen_raw = _entry_seen(value)
+        if not seen_raw:
+            continue
         try:
-            ts = datetime.fromisoformat(str(seen))
+            ts = datetime.fromisoformat(str(seen_raw))
+            if ts.tzinfo is not None:
+                ts = ts.replace(tzinfo=None)
         except ValueError:
             continue
         if ts >= cutoff:
-            out[ip] = seen
+            out[key] = value
     return out
 
 
@@ -73,42 +90,151 @@ def _is_infrastructure_ip(client_ip: str) -> bool:
     return not client_ip or client_ip in _infrastructure_ips()
 
 
-def _client_device_ips(ips: dict[str, str]) -> dict[str, str]:
+def _client_device_entries(ips: dict[str, Any]) -> dict[str, Any]:
+    """Drop bare infrastructure IP keys; keep fingerprint keys always."""
     infra = _infrastructure_ips()
-    return {ip: seen for ip, seen in ips.items() if ip not in infra}
+    out: dict[str, Any] = {}
+    for key, value in ips.items():
+        if key.startswith(("fp:", "hw:")):
+            out[key] = value
+            continue
+        if key not in infra:
+            out[key] = value
+    return out
 
 
-def record_and_check_device_limit(db: Session, dbuser: User, client_ip: str) -> None:
-    """Track ``client_ip`` and raise if the user exceeds ``device_limit``.
+def device_fingerprint(client_ip: str, user_agent: str = "", hwid: str = "") -> str:
+    """Stable device id: prefer client HWID, else hash(IP + User-Agent)."""
+    hw = (hwid or "").strip()
+    if hw:
+        return "hw:" + hashlib.sha256(hw.encode("utf-8", errors="ignore")).hexdigest()[:20]
+    ua = (user_agent or "").strip()
+    raw = f"{client_ip}|{ua}".encode("utf-8", errors="ignore")
+    return "fp:" + hashlib.sha256(raw).hexdigest()[:20]
 
-    ``device_limit`` of ``None`` or ``0`` means unlimited. An IP already in the
-    active window always passes even when at the cap (returning device).
+
+def count_active_devices(dbuser: User) -> int:
+    """How many distinct devices are currently counted toward the device limit."""
+    now = datetime.utcnow()
+    ips = _client_device_entries(_prune(_parse_ips(getattr(dbuser, "device_ips", None)), now))
+    return len(ips)
+
+
+def account_is_online(dbuser: User, now: Optional[datetime] = None) -> bool:
+    """Same live window as the admin dashboard online counter."""
+    from config import ONLINE_WINDOW_MINUTES
+
+    online_at = getattr(dbuser, "online_at", None)
+    if online_at is None:
+        return False
+    seen = online_at.replace(tzinfo=None) if online_at.tzinfo is not None else online_at
+    now = now or datetime.utcnow()
+    return now - seen <= timedelta(minutes=ONLINE_WINDOW_MINUTES)
+
+
+def _xray_online_device_count(dbuser: User) -> Optional[int]:
+    """Live concurrent IPs from Xray ``statsUserOnline`` (panel + nodes).
+
+    Returns ``None`` when the core cannot be queried (stats disabled / API down).
+    """
+    email = f"{dbuser.id}.{dbuser.username}"
+    total = 0
+    got_any = False
+    try:
+        from app import xray
+
+        apis = []
+        if getattr(xray, "api", None) is not None:
+            apis.append(xray.api)
+        for node in (getattr(xray, "nodes", None) or {}).values():
+            api = getattr(node, "api", None)
+            if api is not None:
+                apis.append(api)
+        for api in apis:
+            try:
+                n = int(api.get_user_online_count(email, timeout=2) or 0)
+            except Exception:
+                continue
+            got_any = True
+            if n > 0:
+                total += n
+    except Exception:
+        return None
+    if not got_any:
+        return None
+    return total
+
+
+def count_online_devices(dbuser: User) -> int:
+    """Devices currently connected for the subscribe overview.
+
+    Prefer live Xray online-IP counters (true concurrent VPN clients). Fall back
+    to distinct subscription fingerprints (HWID / IP+UA) seen recently. When the
+    account is online via traffic but nothing was tracked, return at least ``1``.
+    """
+    now = datetime.utcnow()
+    online = account_is_online(dbuser, now)
+    if not online:
+        return 0
+
+    live = _xray_online_device_count(dbuser)
+    if live is not None and live > 0:
+        return live
+
+    entries = _client_device_entries(
+        _prune(
+            _parse_ips(getattr(dbuser, "device_ips", None)),
+            now,
+            window=_ONLINE_DISPLAY_WINDOW,
+        )
+    )
+    n = len(entries)
+    return max(n, 1)
+
+
+def record_and_check_device_limit(
+    db: Session,
+    dbuser: User,
+    client_ip: str,
+    user_agent: str = "",
+    hwid: str = "",
+) -> None:
+    """Track a device fingerprint and raise if the user exceeds ``device_limit``.
+
+    Keys are ``hw:…`` / ``fp:…`` (not bare IPs) so two phones behind the same NAT
+    count as two devices when their User-Agent or HWID differs. ``device_limit``
+    of ``None`` or ``0`` means unlimited — tracking still runs.
     """
     from fastapi import HTTPException
 
-    limit = getattr(dbuser, "device_limit", None)
-    if not limit or limit <= 0:
-        return
     if _is_infrastructure_ip(client_ip):
         return
 
     now = datetime.utcnow()
-    ips = _client_device_ips(_prune(_parse_ips(getattr(dbuser, "device_ips", None)), now))
+    key = device_fingerprint(client_ip, user_agent=user_agent, hwid=hwid)
+    ips = _client_device_entries(_prune(_parse_ips(getattr(dbuser, "device_ips", None)), now))
 
-    if client_ip in ips:
-        ips[client_ip] = now.isoformat()
+    entry = {
+        "seen": now.isoformat(),
+        "ip": client_ip,
+        "ua": (user_agent or "")[:180],
+    }
+
+    if key in ips:
+        ips[key] = entry
         dbuser.device_ips = json.dumps(ips)
         if db is not None:
             db.commit()
         return
 
-    if len(ips) >= int(limit):
+    limit = getattr(dbuser, "device_limit", None)
+    if limit and limit > 0 and len(ips) >= int(limit):
         raise HTTPException(
             status_code=403,
             detail=f"Device limit reached ({limit} concurrent devices)",
         )
 
-    ips[client_ip] = now.isoformat()
+    ips[key] = entry
     dbuser.device_ips = json.dumps(ips)
     if db is not None:
         db.commit()

@@ -82,11 +82,43 @@ class Stats(XRayBase):
             raise RelatedError(e)
 
         for stat in r.stat:
-            type, name, _, link = stat.name.split('>>>')
-            yield StatResponse(name, type, link, stat.value)
+            parts = stat.name.split(">>>")
+            # traffic: user>>>email>>>traffic>>>uplink  (4)
+            # online:  user>>>email>>>online            (3)
+            if len(parts) == 4:
+                type_, name, _, link = parts
+            elif len(parts) == 3:
+                type_, name, link = parts
+            else:
+                continue
+            yield StatResponse(name, type_, link, stat.value)
+
+    def get_user_online_count(self, email: str, timeout: int = None) -> int:
+        """Concurrent online source IPs for ``email`` (requires statsUserOnline)."""
+        try:
+            stub = command_pb2_grpc.StatsServiceStub(self._channel)
+            r = stub.GetStats(
+                command_pb2.GetStatsRequest(name=f"user>>>{email}>>>online", reset=False),
+                timeout=timeout,
+            )
+        except grpc.RpcError as e:
+            # NotFound / unimplemented when statsUserOnline is off or user idle.
+            details = (e.details() or "").lower()
+            code = e.code()
+            if code in (grpc.StatusCode.NOT_FOUND, grpc.StatusCode.UNKNOWN) or "not found" in details:
+                return 0
+            raise RelatedError(e)
+        if not r.stat:
+            return 0
+        try:
+            return int(r.stat.value or 0)
+        except (TypeError, ValueError):
+            return 0
 
     def get_users_stats(self, reset: bool = False, timeout: int = None) -> typing.Iterable[StatResponse]:
-        return self.query_stats("user>>>", reset=reset, timeout=timeout)
+        for stat in self.query_stats("user>>>", reset=reset, timeout=timeout):
+            if stat.link in ("uplink", "downlink"):
+                yield stat
 
     def get_inbounds_stats(self, reset: bool = False, timeout: int = None) -> typing.Iterable[StatResponse]:
         return self.query_stats("inbound>>>", reset=reset, timeout=timeout)

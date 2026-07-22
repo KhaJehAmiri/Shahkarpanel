@@ -4,7 +4,15 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationInfo,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 from app import xray
 from app.models.admin import Admin
@@ -80,6 +88,19 @@ class User(BaseModel):
     next_plan: Optional[NextPlanModel] = Field(None, nullable=True)
 
     device_limit: Optional[int] = Field(None, nullable=True, ge=0)
+
+    @field_serializer("online_at")
+    def serialize_online_at_utc(self, value: Optional[datetime]) -> Optional[str]:
+        """Emit UTC with a Z suffix so browsers don't treat naive ISO as local time.
+
+        Backend stores naive UTC. Without Z, Iran (UTC+3:30) showed last-online
+        ~3.5 hours in the past even when the account was live.
+        """
+        if value is None:
+            return None
+        if value.tzinfo is not None:
+            value = value.astimezone(timezone.utc).replace(tzinfo=None)
+        return value.isoformat(timespec="seconds") + "Z"
     speed_limit_up: Optional[int] = Field(None, nullable=True, ge=0, description="Upload cap in Mbps")
     speed_limit_down: Optional[int] = Field(None, nullable=True, ge=0, description="Download cap in Mbps")
     routing_preset: Optional[str] = Field(None, nullable=True)
@@ -505,6 +526,9 @@ class SubscriptionUserResponse(UserResponse):
     singbox_nodes: List[SingBoxNodeItem] = []
     link_items: List[SubscriptionLinkItem] = []
     branding: Optional[SubscriptionBranding] = None
+    # Concurrent subscription clients currently online (see count_online_devices).
+    online_devices: int = 0
+    online: bool = False
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -532,6 +556,14 @@ class UserListItem(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+    @field_serializer("online_at")
+    def serialize_list_online_at_utc(self, value: Optional[datetime]) -> Optional[str]:
+        if value is None:
+            return None
+        if value.tzinfo is not None:
+            value = value.astimezone(timezone.utc).replace(tzinfo=None)
+        return value.isoformat(timespec="seconds") + "Z"
+
     @field_validator("proxies", mode="before")
     @classmethod
     def proxies_dict(cls, v):
@@ -554,6 +586,12 @@ class UserListItem(BaseModel):
             from config import ONLINE_WINDOW_MINUTES
 
             seen = self.online_at
+            if isinstance(seen, str):
+                raw = seen[:-1] if seen.endswith("Z") else seen
+                try:
+                    seen = datetime.fromisoformat(raw)
+                except ValueError:
+                    return self
             if seen.tzinfo is not None:
                 seen = seen.replace(tzinfo=None)
             if datetime.utcnow() - seen <= timedelta(minutes=ONLINE_WINDOW_MINUTES):
@@ -597,6 +635,17 @@ class UserUsageResponse(BaseModel):
         if isinstance(v, int):  # Allow integers directly
             return v
         raise ValueError("must be an integer or a float, not a string")  # Reject strings
+
+
+class UserDailyUsageDay(BaseModel):
+    date: str  # YYYY-MM-DD (UTC)
+    used_traffic: int = 0
+
+
+class UserDailyUsagesResponse(BaseModel):
+    username: str
+    days: List[UserDailyUsageDay]
+    total: int = 0
 
 
 class UserUsagesResponse(BaseModel):

@@ -52,6 +52,7 @@ from app.models.proxy import ProxyHost as ProxyHostModify
 from app.models.user import (
     ReminderType,
     UserCreate,
+    UserDailyUsageDay,
     UserDataLimitResetStrategy,
     UserModify,
     UserResponse,
@@ -562,6 +563,46 @@ def get_user_usages(db: Session, dbuser: User, start: datetime, end: datetime) -
             pass
 
     return list(usages.values())
+
+
+def get_user_daily_usages(
+    db: Session,
+    dbuser: User,
+    days: int = 7,
+) -> List[UserDailyUsageDay]:
+    """Aggregate ``NodeUserUsage`` into one bucket per UTC calendar day.
+
+    Returns exactly ``days`` entries ending today (inclusive), with ``0`` for
+    days that have no traffic rows.
+    """
+    days = max(1, min(int(days or 7), 90))
+    today = datetime.utcnow().date()
+    start_date = today - timedelta(days=days - 1)
+    start_dt = datetime.combine(start_date, datetime.min.time())
+    end_dt = datetime.combine(today, datetime.max.time())
+
+    by_day: Dict[str, int] = {}
+    rows = (
+        db.query(NodeUserUsage.created_at, NodeUserUsage.used_traffic)
+        .filter(
+            NodeUserUsage.user_id == dbuser.id,
+            NodeUserUsage.created_at >= start_dt,
+            NodeUserUsage.created_at <= end_dt,
+        )
+        .all()
+    )
+    for created_at, used in rows:
+        if created_at is None:
+            continue
+        key = created_at.date().isoformat()
+        by_day[key] = by_day.get(key, 0) + int(used or 0)
+
+    out: List[UserDailyUsageDay] = []
+    for i in range(days):
+        d = start_date + timedelta(days=i)
+        iso = d.isoformat()
+        out.append(UserDailyUsageDay(date=iso, used_traffic=by_day.get(iso, 0)))
+    return out
 
 
 def get_users_count(db: Session, status: UserStatus = None, admin: Admin = None) -> int:

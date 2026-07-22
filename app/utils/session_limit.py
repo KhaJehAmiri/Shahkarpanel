@@ -26,6 +26,15 @@ def check_session_limit(dbuser: User) -> None:
 
 
 def touch_online(db: Session, dbuser: User) -> None:
-    """Refresh ``online_at`` on subscription fetch (starts/resets session clock)."""
+    """Refresh ``online_at`` only when a session time limit is active.
+
+    This resets the session clock when the client reconnects by fetching
+    subscription material. It must NOT run for every config/share request —
+    otherwise merely opening the subscribe page (which loads WireGuard
+    configs) marks idle users as "online now".
+    """
+    limit_min = getattr(dbuser, "session_limit_minutes", None)
+    if not limit_min or limit_min <= 0:
+        return
     dbuser.online_at = datetime.utcnow()
     db.commit()

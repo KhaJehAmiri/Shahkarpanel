@@ -214,6 +214,19 @@ def _sub_client_ip(request: Request) -> str:
     return "unknown"
 
 
+# Many VPN client apps (V2Box, Happ, some HiddifyNext/v2rayNG builds) send a
+# generic `Accept: text/html, */*` header on their subscription fetch instead
+# of `Accept: application/json` or `text/plain`. If we redirect on Accept
+# alone, these clients get an HTML page (or a 302 to it) instead of their
+# config and "fail to import" with no useful error. Recognize known client
+# UAs up front so they always get their config, regardless of Accept header.
+_KNOWN_CLIENT_UA_RE = re.compile(
+    r'^(Surge|Loon|Quantumult|Quantumult%20X|[Cc]lash-verge|[Cc]lash[-\.]?[Mm]eta|'
+    r'[Ff][Ll][Cc]lash|[Mm]ihomo|[Cc]lash|[Ss]tash|HiddifyNextX|[Vv]2[Bb]ox|'
+    r'v2rayN/|v2rayNG/|Happ/)'
+)
+
+
 def _enforce_export_guards(db: Session, dbuser, request: Request) -> None:
     """Common device/session-limit gate for every route that hands back live
     connection material (config, .conf files, share links).
@@ -228,14 +241,34 @@ def _enforce_export_guards(db: Session, dbuser, request: Request) -> None:
     from app.utils.device_limit import record_and_check_device_limit
     from app.utils.session_limit import check_session_limit, touch_online
 
-    record_and_check_device_limit(db, dbuser, _sub_client_ip(request))
+    ua = request.headers.get("user-agent") or ""
+    # Browser visits to the subscribe UI (or direct .conf downloads in Chrome)
+    # must not count as VPN devices or bump presence — only real clients do.
+    is_browser = bool(re.search(r"(Mozilla|Chrome|Safari|Firefox|Edg)/", ua, re.I)) and not bool(
+        _KNOWN_CLIENT_UA_RE.match(ua)
+    )
+    if not is_browser:
+        hwid = (
+            request.headers.get("x-hwid")
+            or request.headers.get("x-device-id")
+            or request.headers.get("hwid")
+            or ""
+        )
+        record_and_check_device_limit(
+            db,
+            dbuser,
+            _sub_client_ip(request),
+            user_agent=ua,
+            hwid=hwid,
+        )
     # Expired session is renewed by fetching subscription (the client "reconnect").
     try:
         check_session_limit(dbuser)
     except HTTPException as exc:
         if exc.status_code != 403 or "Session time limit" not in str(exc.detail):
             raise
-    touch_online(db, dbuser)
+    if not is_browser:
+        touch_online(db, dbuser)
 
 
 def _proxy_settings(dbuser, proxy_type: ProxyTypes) -> dict | None:
@@ -502,19 +535,6 @@ def _browser_subscribe_redirect_url(
     return f"/subscribe/?{qs}"
 
 
-# Many VPN client apps (V2Box, Happ, some HiddifyNext/v2rayNG builds) send a
-# generic `Accept: text/html, */*` header on their subscription fetch instead
-# of `Accept: application/json` or `text/plain`. If we redirect on Accept
-# alone, these clients get an HTML page (or a 302 to it) instead of their
-# config and "fail to import" with no useful error. Recognize known client
-# UAs up front so they always get their config, regardless of Accept header.
-_KNOWN_CLIENT_UA_RE = re.compile(
-    r'^(Surge|Loon|Quantumult|Quantumult%20X|[Cc]lash-verge|[Cc]lash[-\.]?[Mm]eta|'
-    r'[Ff][Ll][Cc]lash|[Mm]ihomo|[Cc]lash|[Ss]tash|HiddifyNextX|[Vv]2[Bb]ox|'
-    r'v2rayN/|v2rayNG/|Happ/)'
-)
-
-
 @router.get("/{token}/")
 @router.get("/{token}", include_in_schema=False)
 def user_subscription(
@@ -694,7 +714,10 @@ def user_subscription_info(
     payload.update(access)
     from app.subscription.userinfo import format_subscription_profile_title, subscription_client_import_url
     from app.tenant import subscription_brand_title
+    from app.utils.device_limit import account_is_online, count_online_devices
 
+    payload["online_devices"] = count_online_devices(dbuser)
+    payload["online"] = account_is_online(dbuser)
     branding = _subscription_branding(db, dbuser)
     brand = subscription_brand_title(branding) or None
     payload["subscription_profile_title"] = format_subscription_profile_title(user, brand=brand)
@@ -749,6 +772,24 @@ def user_get_usage(
     usages = crud.get_user_usages(db, dbuser, start, end)
 
     return {"usages": usages, "username": dbuser.username}
+
+
+@router.get("/{token}/usage/daily")
+def user_get_daily_usage(
+    dbuser: User = Depends(get_validated_sub),
+    days: int = 7,
+    db: Session = Depends(get_db),
+):
+    """Daily traffic buckets (UTC) for the subscribe usage chart / run-out estimate."""
+    from app.models.user import UserDailyUsagesResponse
+
+    series = crud.get_user_daily_usages(db, dbuser, days=days)
+    total = sum(int(d.used_traffic or 0) for d in series)
+    return UserDailyUsagesResponse(
+        username=dbuser.username,
+        days=series,
+        total=total,
+    )
 
 
 @router.get("/{token}/wireguard/prepare")

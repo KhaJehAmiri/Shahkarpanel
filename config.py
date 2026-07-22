@@ -426,7 +426,7 @@ JOB_RECORD_USER_USAGES_INTERVAL = config("JOB_RECORD_USER_USAGES_INTERVAL", cast
 # "Online now" window: a user counts as online if their ``online_at`` (bumped by
 # the 5s usage job on real traffic, and by subscription refresh) is within this
 # many minutes. Kept short so the count reflects who is actually connected.
-ONLINE_WINDOW_MINUTES = config("ONLINE_WINDOW_MINUTES", cast=int, default=3)
+ONLINE_WINDOW_MINUTES = config("ONLINE_WINDOW_MINUTES", cast=int, default=1)
 # Fail-closed: after this many blind usage cycles, disconnect all active users on local inbounds.
 # 0 disables mass disconnect (logging only). Default 6 cycles ≈ 30s at 5s interval.
 BILLING_BLIND_DISCONNECT_CYCLES = config("BILLING_BLIND_DISCONNECT_CYCLES", cast=int, default=6)

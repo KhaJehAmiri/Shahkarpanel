@@ -70,7 +70,9 @@ class XRayConfig(dict):
             "levels": {
                 "0": {
                     "statsUserUplink": True,
-                    "statsUserDownlink": True
+                    "statsUserDownlink": True,
+                    # Concurrent source-IP count per user (subscribe "online devices").
+                    "statsUserOnline": True,
                 }
             },
             "system": {
@@ -662,6 +664,7 @@ class XRayConfig(dict):
                 policy_levels[level] = {
                     "statsUserUplink": True,
                     "statsUserDownlink": True,
+                    "statsUserOnline": True,
                 }
             if policy_levels:
                 config.setdefault("policy", {})["levels"] = policy_levels

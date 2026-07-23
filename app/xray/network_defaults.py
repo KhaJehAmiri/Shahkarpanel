@@ -76,7 +76,12 @@ def apply_host_network_tuning() -> None:
 
 
 def host_network_tuning_shell() -> str:
-    """Shell snippet for provisioning / entrypoint (idempotent, best-effort)."""
+    """Shell snippet for provisioning scripts (idempotent, best-effort).
+
+    ``docker-entrypoint.sh`` inlines these sysctls on purpose — do not call
+    this from the entrypoint via ``python -c 'from app.xray…'`` (that imports
+    ``app.xray`` package init / XRayCore and delays :8000 by tens of seconds).
+    """
     lines = []
     for key, value in HOST_SYSCTL_TUNING.items():
         lines.append(f"sysctl -w {key}={value} >/dev/null 2>&1 || true")

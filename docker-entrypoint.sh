@@ -161,15 +161,30 @@ start_panel_process() {
 if [ "$(id -u)" -eq 0 ]; then
   fix_runtime_permissions
   fix_docker_socket_group || true
-  # BBR + TCP/UDP buffer tuning on the host (--network=host); best-effort, idempotent.
-  if [ -d /code ]; then
-    eval "$(cd /code && python3 -c 'from app.xray.network_defaults import host_network_tuning_shell; print(host_network_tuning_shell())')" \
-      >/dev/null 2>&1 || true
+  # BBR + TCP/UDP buffer tuning on the host (--network=host); best-effort.
+  # Keep this as plain sysctl — do NOT `import app.xray.*` here. That package
+  # init constructs XRayCore and used to add ~15-20s of dead time before :8000
+  # listened (every restart / in-dashboard update).
+  # Keys must stay in sync with app/xray/network_defaults.py HOST_SYSCTL_TUNING.
+  sysctl -w net.ipv4.tcp_congestion_control=bbr >/dev/null 2>&1 || true
+  sysctl -w net.core.rmem_max=26214400 >/dev/null 2>&1 || true
+  sysctl -w net.core.wmem_max=26214400 >/dev/null 2>&1 || true
+  sysctl -w net.core.netdev_max_backlog=250000 >/dev/null 2>&1 || true
+  sysctl -w net.ipv4.udp_mem="65536 131072 262144" >/dev/null 2>&1 || true
+  # Persist once (idempotent); avoid rewriting sysctl.conf on every boot.
+  if [ -f /etc/sysctl.conf ] && ! grep -q '^net.ipv4.tcp_congestion_control=bbr$' /etc/sysctl.conf 2>/dev/null; then
+    {
+      echo 'net.ipv4.tcp_congestion_control=bbr'
+      echo 'net.core.rmem_max=26214400'
+      echo 'net.core.wmem_max=26214400'
+      echo 'net.core.netdev_max_backlog=250000'
+      echo 'net.ipv4.udp_mem=65536 131072 262144'
+    } >> /etc/sysctl.conf 2>/dev/null || true
   fi
   # Host nginx: stock 502 → friendly restarting page (bind-mounted sites-*).
-  # Runs as root before the panel listens; safe no-op if nginx dirs/binary absent.
-  # Use `bash` (not -x): git checkouts often lack the executable bit.
-  if [ -f /code/scripts/ensure_nginx_restarting_page.sh ]; then
+  # Skip when compose created a stub directory for a missing host nginx binary.
+  if [ -f /usr/sbin/nginx ] && [ ! -d /usr/sbin/nginx ] \
+    && [ -f /code/scripts/ensure_nginx_restarting_page.sh ]; then
     bash /code/scripts/ensure_nginx_restarting_page.sh >>/var/lib/nexuspanel/ensure-nginx-restarting.log 2>&1 || true
   fi
   if [ "${1:-panel}" = "panel" ]; then

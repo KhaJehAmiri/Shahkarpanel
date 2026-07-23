@@ -596,6 +596,17 @@ def _nginx_ensure_sidecar_shell() -> str:
     image = _own_image()
     if not script.is_file() or not image or not Path("/var/run/docker.sock").exists():
         return ""
+    # docker run -v paths are resolved on the *host*. ``script.parent`` is
+    # ``/code/scripts`` in-container and does not exist on the host — that
+    # produced exit 127: ``/nexus-ensure/ensure_nginx_restarting_page.sh: No
+    # such file or directory`` (and noisy one-off containers on every update).
+    host_scripts = str(Path(_host_code_dir()) / "scripts")
+    # Skip when there is no real nginx binary. Fresh installs without
+    # ``nexuspanel https`` often get Docker-created stub *directories* at
+    # ``/usr/sbin/nginx`` from compose bind mounts of a missing host path.
+    nginx_bin = Path("/usr/sbin/nginx")
+    if nginx_bin.is_dir() or not nginx_bin.is_file():
+        return ""
     port = (
         os.environ.get("UVICORN_PORT")
         or os.environ.get("PANEL_PORT")
@@ -611,7 +622,7 @@ def _nginx_ensure_sidecar_shell() -> str:
         "-v", "/usr/sbin/nginx:/usr/sbin/nginx:ro",
         "-v", "/lib:/lib:ro",
         "-v", "/usr/lib:/usr/lib:ro",
-        "-v", f"{script.parent}:/nexus-ensure:ro",
+        "-v", f"{host_scripts}:/nexus-ensure:ro",
     ]
     if Path("/lib64").is_dir():
         vols.extend(["-v", "/lib64:/lib64:ro"])

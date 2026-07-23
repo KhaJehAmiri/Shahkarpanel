@@ -742,7 +742,20 @@ class RPyCXRayNode:
     def upgrade_xray(self, tag: str) -> str:
         if not self.connected:
             self.connect()
-        return self.remote.upgrade_xray(tag)
+        # Download+install of Xray-core (~30MB from GitHub) routinely exceeds the
+        # default 15s RPyC sync timeout and surfaces as
+        # ``EOFError: stream has been closed`` / ``result expired`` — the panel
+        # then reports a failed upgrade even when the node eventually finishes.
+        prev = None
+        conn = getattr(self, "connection", None)
+        try:
+            if conn is not None:
+                prev = conn._config.get("sync_request_timeout")
+                conn._config["sync_request_timeout"] = max(int(prev or 15), 600)
+            return self.remote.upgrade_xray(tag)
+        finally:
+            if conn is not None and prev is not None:
+                conn._config["sync_request_timeout"] = prev
 
     def _prepare_config(self, config: XRayConfig):
         return _inline_tls_certificates(config)

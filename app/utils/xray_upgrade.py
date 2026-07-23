@@ -210,7 +210,13 @@ def install_xray_release(
         timeout=15,
         text=True,
     )
-    return out.strip().splitlines()[0] if out else tag
+    line = out.strip().splitlines()[0] if out else tag
+    try:
+        from app.utils.xray_releases import normalize_xray_version_label
+
+        return normalize_xray_version_label(line) or line
+    except Exception:
+        return line
 
 
 def read_version(executable_path: str = DEFAULT_EXECUTABLE) -> Optional[str]:

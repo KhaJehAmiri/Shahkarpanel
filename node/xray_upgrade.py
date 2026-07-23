@@ -60,7 +60,12 @@ def install_xray_release(
         timeout=15,
         text=True,
     )
-    return out.strip().splitlines()[0] if out else tag
+    line = out.strip().splitlines()[0] if out else tag
+    # Prefer short "X.Y.Z" — panel DB column nodes.xray_version is VARCHAR(32).
+    import re
+
+    m = re.search(r"(\d+\.\d+\.\d+)", line)
+    return m.group(1) if m else line[:32]
 
 
 def read_installed_version(executable_path: str = XRAY_EXECUTABLE_PATH) -> Optional[str]:

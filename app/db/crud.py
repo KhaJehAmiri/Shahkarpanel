@@ -2629,7 +2629,10 @@ def update_node_status(db: Session, dbnode: Node, status: NodeStatus, message: s
     """
     dbnode.status = status
     dbnode.message = message
-    dbnode.xray_version = version
+    if version is not None:
+        from app.utils.xray_releases import normalize_xray_version_label
+
+        dbnode.xray_version = normalize_xray_version_label(version)
     dbnode.last_status_change = datetime.utcnow()
     db.commit()
     db.refresh(dbnode)

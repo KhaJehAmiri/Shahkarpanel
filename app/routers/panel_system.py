@@ -218,40 +218,88 @@ def set_node_xray_version(
     db: Session = Depends(get_db),
     _: Admin = Depends(Admin.check_sudo_admin),
 ):
-    """Record target Xray version and refresh reported version from the node agent."""
+    """Install the requested Xray release on the node agent and refresh status."""
     dbnode = crud.get_node_by_id(db, node_id)
     if not dbnode:
         raise HTTPException(status_code=404, detail="Node not found")
     version = body.version.strip()
     if not version:
         raise HTTPException(status_code=400, detail="version required")
-    from app.models.node import NodeStatus
+    from app.models.node import CoreKind, NodeStatus
+    from app.utils.xray_releases import normalize_xray_version_label
     from app.xray import operations as xray_ops
     from app.xray.node import XRayNode
     from app.xray.operations import get_tls
 
     live_version = version
+    is_wg_node = (dbnode.core_kind or CoreKind.xray.value) == CoreKind.wireguard.value
+    last_exc: Exception | None = None
     try:
         tls = get_tls()
-        remote = XRayNode(
-            address=dbnode.address,
-            port=dbnode.port,
-            api_port=dbnode.api_port,
-            ssl_key=tls["key"],
-            ssl_cert=tls["certificate"],
-            usage_coefficient=dbnode.usage_coefficient or 1,
-        )
-        live_version = remote.upgrade_xray(version)
+        # Prefer the already-connected panel session when present — it keeps
+        # the RPyC/REST channel warm and inherits any control-tunnel dial.
+        from app import xray as xray_pkg
+
+        remote = xray_pkg.nodes.get(node_id)
+        if remote is None or not getattr(remote, "connected", False):
+            remote = XRayNode(
+                address=dbnode.address,
+                port=dbnode.port,
+                api_port=dbnode.api_port,
+                ssl_key=tls["key"],
+                ssl_cert=tls["certificate"],
+                usage_coefficient=dbnode.usage_coefficient or 1,
+            )
+        for attempt in range(3):
+            try:
+                live_version = remote.upgrade_xray(version)
+                last_exc = None
+                break
+            except Exception as exc:
+                last_exc = exc
+                msg = str(exc).lower()
+                if attempt >= 2 or not (
+                    "stream has been closed" in msg
+                    or "eof" in msg
+                    or "result expired" in msg
+                    or "timed out" in msg
+                    or "timeout" in msg
+                ):
+                    break
+                # Same Iran↔abroad mitigation used for large config pushes.
+                forced = xray_ops._force_control_tunnel_session(dbnode, remote)
+                if forced is not None:
+                    remote = forced
+                    continue
+                try:
+                    remote.connect()
+                except Exception:
+                    remote = XRayNode(
+                        address=dbnode.address,
+                        port=dbnode.port,
+                        api_port=dbnode.api_port,
+                        ssl_key=tls["key"],
+                        ssl_cert=tls["certificate"],
+                        usage_coefficient=dbnode.usage_coefficient or 1,
+                    )
+        if last_exc is not None:
+            raise last_exc
         try:
-            xray_ops.restart_node(node_id)
+            if is_wg_node:
+                xray_ops.restart_node(node_id)
+            else:
+                xray_ops.restart_node(node_id, xray_pkg.config.include_db_users())
         except Exception:
             pass
     except Exception as exc:
         crud.update_node_status(
             db, dbnode, dbnode.status or NodeStatus.connected, version=version,
-            message=f"upgrade pending: {exc}",
+            message=f"upgrade pending: {exc}"[:512],
         )
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    crud.update_node_status(db, dbnode, dbnode.status or NodeStatus.connected, version=live_version)
-    return XrayUpgradeResult(version=live_version, scope=f"node:{node_id}")
+    short = normalize_xray_version_label(live_version) or version
+    crud.update_node_status(
+        db, dbnode, dbnode.status or NodeStatus.connected, version=short, message=None,
+    )
+    return XrayUpgradeResult(version=short, scope=f"node:{node_id}")

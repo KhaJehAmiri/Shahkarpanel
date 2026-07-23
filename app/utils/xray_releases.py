@@ -37,6 +37,31 @@ def parse_xray_version(text: str | None) -> tuple[int, int, int] | None:
     return tuple(int(part) for part in match.groups())
 
 
+def normalize_xray_version_label(text: str | None, *, max_len: int = 32) -> str | None:
+    """Shrink ``xray version`` output to something that fits ``nodes.xray_version``.
+
+    Agents historically returned the full banner line::
+
+        Xray 26.3.27 (Xray, Penetrates Everything.) d2758a0 (go1.26.1 linux/amd64)
+
+    which overflows ``VARCHAR(32)`` and made in-dashboard node upgrades look
+    like failures even after the binary was installed.
+    """
+    if text is None:
+        return None
+    raw = str(text).strip()
+    if not raw:
+        return None
+    parsed = parse_xray_version(raw)
+    if parsed:
+        label = f"{parsed[0]}.{parsed[1]}.{parsed[2]}"
+    else:
+        label = raw.splitlines()[0].strip()
+    if len(label) > max_len:
+        label = label[:max_len]
+    return label
+
+
 def version_tuple_from_tag(tag: str | None) -> tuple[int, int, int] | None:
     if not tag:
         return None

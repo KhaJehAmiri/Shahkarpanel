@@ -66,6 +66,8 @@ class BrandingUpdate(BaseModel):
     sub_profile_title: Optional[str] = None
     domain: Optional[str] = None
     panel_url: Optional[str] = None
+    sub_path: Optional[str] = None
+    sub_port: Optional[int] = None
 
     @field_validator("domain")
     @classmethod
@@ -104,6 +106,27 @@ class BrandingUpdate(BaseModel):
             raise ValueError("panel_url must be a valid URL like https://panel.example.com")
         return url.rstrip("/")
 
+    @field_validator("sub_path")
+    @classmethod
+    def validate_sub_path(cls, value: Optional[str]):
+        if value is None:
+            return None
+        raw = str(value).strip()
+        if not raw:
+            return None
+        from app.tenant.subscription_domain import normalize_sub_path
+
+        return normalize_sub_path(raw)
+
+    @field_validator("sub_port", mode="before")
+    @classmethod
+    def validate_sub_port(cls, value):
+        if value is None or value == "":
+            return None
+        from app.tenant.subscription_domain import normalize_sub_port
+
+        return normalize_sub_port(int(value))
+
 
 class BrandingResponse(BaseModel):
     panel_title: Optional[str] = None
@@ -114,6 +137,8 @@ class BrandingResponse(BaseModel):
     sub_profile_title: Optional[str] = None
     domain: Optional[str] = None
     panel_url: Optional[str] = None
+    sub_path: Optional[str] = None
+    sub_port: Optional[int] = None
 
 
 # --------------------------------------------------------------------------- #
@@ -221,6 +246,28 @@ def my_branding(
     return BrandingResponse(**tenant_svc.resolve_branding(db, tenant_id))
 
 
+@router.get("/branding/subscription-ports")
+def branding_subscription_ports(
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(require_permission("system:read")),
+):
+    """Ports blocked for subscription (VPN inbounds etc.) + free suggestions."""
+    _require_white_label_enabled()
+    from app.tenant.subscription_domain import (
+        blocked_subscription_ports,
+        suggested_subscription_ports,
+    )
+
+    blocked = sorted(
+        blocked_subscription_ports(db).values(),
+        key=lambda row: int(row["port"]),
+    )
+    return {
+        "blocked": blocked,
+        "suggested": suggested_subscription_ports(db),
+    }
+
+
 @router.put("/branding/mine", response_model=BrandingResponse)
 def update_my_branding(
     body: BrandingUpdate,
@@ -236,10 +283,26 @@ def update_my_branding(
             status_code=400,
             detail="Reseller has no tenant — contact the platform owner",
         )
-    tenant_svc.set_branding(
-        db,
-        tenant_id,
-        allow_global=bool(admin.is_sudo and tenant_id is None),
-        **body.model_dump(exclude_unset=True),
-    )
-    return BrandingResponse(**tenant_svc.resolve_branding(db, tenant_id))
+    try:
+        tenant_svc.set_branding(
+            db,
+            tenant_id,
+            allow_global=bool(admin.is_sudo and tenant_id is None),
+            **body.model_dump(exclude_unset=True),
+        )
+    except Exception as exc:
+        from app.tenant.subscription_domain import SubscriptionPortConflict
+
+        if isinstance(exc, SubscriptionPortConflict):
+            raise HTTPException(status_code=400, detail=exc.as_detail()) from exc
+        if isinstance(exc, ValueError):
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise
+    branding = BrandingResponse(**tenant_svc.resolve_branding(db, tenant_id))
+    # Surface a sample subscription base for the UI.
+    domain = (branding.domain or "").strip()
+    if domain:
+        from config import XRAY_SUBSCRIPTION_PATH
+
+        branding.panel_url = branding.panel_url or f"https://{domain}"
+    return branding

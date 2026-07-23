@@ -2941,6 +2941,21 @@ def get_subscription_token_alias(
     return q.filter(SubscriptionTokenAlias.endpoint_id.is_(None)).first()
 
 
+def get_subscription_token_alias_any_endpoint(
+    db: Session,
+    token: str,
+) -> Optional[SubscriptionTokenAlias]:
+    """Resolve a legacy subId across any endpoint (reseller branding hosts)."""
+    if not token:
+        return None
+    return (
+        db.query(SubscriptionTokenAlias)
+        .filter(SubscriptionTokenAlias.token == token)
+        .order_by(SubscriptionTokenAlias.id.asc())
+        .first()
+    )
+
+
 def create_subscription_token_alias(
     db: Session, data: dict, *, commit: bool = True
 ) -> SubscriptionTokenAlias:

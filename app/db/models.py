@@ -1109,6 +1109,9 @@ class BrandingSettings(Base):
     domain = Column(String(256), nullable=True, index=True)
     # Public panel login URL for this brand (shown to customers / copied by reseller).
     panel_url = Column(String(512), nullable=True)
+    # Optional subscription URL customization (defaults: path ``sub``, port 443).
+    sub_path = Column(String(64), nullable=True)
+    sub_port = Column(Integer, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     tenant = relationship("Tenant", back_populates="branding")

@@ -241,14 +241,39 @@ def public_subscription_url(
                     break
 
     token = request_token
+    brand_ep = None
     if ep is None and inbound_tag is None and token is None:
         with GetDB() as db:
             ep, auto_token = _primary_serving_and_token(user, db)
             if auto_token:
                 token = auto_token
+            # Reseller branding domain wins for their users' share links.
+            try:
+                from app.tenant.subscription_domain import (
+                    get_reseller_subscription_endpoint,
+                    tenant_id_for_user,
+                )
 
-    if ep:
-        composed = _compose_endpoint_subscription_url(ep, user, token=token)
+                tid = tenant_id_for_user(db, user)
+                brand_ep = get_reseller_subscription_endpoint(db, tid)
+            except Exception:
+                brand_ep = None
+    elif ep is None:
+        with GetDB() as db:
+            try:
+                from app.tenant.subscription_domain import (
+                    get_reseller_subscription_endpoint,
+                    tenant_id_for_user,
+                )
+
+                tid = tenant_id_for_user(db, user)
+                brand_ep = get_reseller_subscription_endpoint(db, tid)
+            except Exception:
+                brand_ep = None
+
+    serve_ep = brand_ep or ep
+    if serve_ep:
+        composed = _compose_endpoint_subscription_url(serve_ep, user, token=token)
         if composed:
             return composed
 
@@ -267,7 +292,13 @@ def public_subscription_url(
     if not token and ep:
         token = _token_for_endpoint(user, ep)
 
-    path_prefix = ep.path_prefix if ep else XRAY_SUBSCRIPTION_PATH
+    path_prefix = (serve_ep.path_prefix if serve_ep else None) or (
+        ep.path_prefix if ep else XRAY_SUBSCRIPTION_PATH
+    )
+
+    # Branding domain without a composed endpoint still wins over global prefix.
+    if brand_ep and brand_ep.host and token:
+        return _compose_endpoint_subscription_url(brand_ep, user, token=token) or ""
 
     prefix = (XRAY_SUBSCRIPTION_URL_PREFIX or "").strip().rstrip("/")
     if prefix:
@@ -336,6 +367,26 @@ def list_user_subscription_urls(user: "UserResponse", request: Optional[Request]
         aliases = (
             crud.list_subscription_token_aliases_for_user(db, user_id) if user_id else []
         )
+        brand_ep = None
+        try:
+            from app.tenant.subscription_domain import (
+                get_reseller_subscription_endpoint,
+                tenant_id_for_user,
+            )
+
+            brand_ep = get_reseller_subscription_endpoint(db, tenant_id_for_user(db, user))
+        except Exception:
+            brand_ep = None
+
+        if brand_ep:
+            token = None
+            if aliases:
+                token = aliases[0].token
+            else:
+                token = _token_for_endpoint(user, brand_ep)
+            _append(brand_ep, token)
+            if urls:
+                return urls
 
         if aliases:
             for alias in aliases:

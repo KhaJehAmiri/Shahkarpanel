@@ -145,6 +145,30 @@ def get_validated_sub(
             alias = crud.get_subscription_token_alias(db, token, endpoint_id=panel_id)
             if alias:
                 break
+    # Reseller branding domains (slug reseller-*) re-host panel aliases under a
+    # custom host — accept the token from any endpoint when the user belongs
+    # to that reseller tenant.
+    if not alias and sub_ctx.endpoint:
+        slug = (sub_ctx.endpoint.slug or "").strip()
+        if slug.startswith("reseller-"):
+            candidate = crud.get_subscription_token_alias_any_endpoint(db, token)
+            if candidate:
+                from app.db.models import Admin, User
+
+                dbuser = db.query(User).filter(User.id == candidate.user_id).first()
+                if dbuser and dbuser.admin_id:
+                    admin = db.query(Admin).filter(Admin.id == dbuser.admin_id).first()
+                    try:
+                        expected_tid = int(slug.split("-", 1)[1])
+                    except (IndexError, ValueError):
+                        expected_tid = None
+                    if (
+                        admin
+                        and admin.tenant_id is not None
+                        and expected_tid is not None
+                        and int(admin.tenant_id) == expected_tid
+                    ):
+                        alias = candidate
     if alias:
         from app.db.models import User
         dbuser = db.query(User).filter(User.id == alias.user_id).first()

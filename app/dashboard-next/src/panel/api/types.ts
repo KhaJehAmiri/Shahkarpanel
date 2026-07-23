@@ -235,6 +235,10 @@ export interface Branding {
   sub_profile_title?: string | null;
   domain?: string | null;
   panel_url?: string | null;
+  /** Subscription URI path (default ``sub``), e.g. ``v2ray``. */
+  sub_path?: string | null;
+  /** Subscription listen port (default ``443``), e.g. ``2096``. */
+  sub_port?: number | null;
 }
 
 export interface TunnelHealthCheck {

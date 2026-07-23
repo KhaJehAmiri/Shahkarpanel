@@ -194,14 +194,47 @@ def set_branding(
     if row is None:
         row = BrandingSettings(tenant_id=tenant_id)
         db.add(row)
+
+    # Validate subscription listen port before commit so a VPN-port clash
+    # (e.g. 2082 Reality) never leaves branding stuck on a broken SSL URL.
+    if "sub_port" in fields or "domain" in fields:
+        from app.tenant.subscription_domain import (
+            assert_subscription_listen_port_available,
+            domain_from_branding,
+            normalize_sub_port,
+        )
+
+        next_port = fields["sub_port"] if "sub_port" in fields else getattr(row, "sub_port", None)
+        next_domain = fields["domain"] if "domain" in fields else getattr(row, "domain", None)
+        probe = {"domain": next_domain, "panel_url": getattr(row, "panel_url", None)}
+        if "panel_url" in fields:
+            probe["panel_url"] = fields["panel_url"]
+        host = domain_from_branding(probe)
+        if host:
+            assert_subscription_listen_port_available(
+                db,
+                normalize_sub_port(next_port, default=443),
+                host=host,
+            )
+
     for key in (
         "panel_title", "logo_url", "favicon_url", "primary_color",
         "support_url", "sub_profile_title", "domain", "panel_url",
+        "sub_path", "sub_port",
     ):
         if key in fields:
             setattr(row, key, fields[key])
     db.commit()
     db.refresh(row)
+    # Keep subscription links + nginx in sync with the branding domain.
+    try:
+        from app.tenant.subscription_domain import sync_branding_subscription_domain
+
+        sync_branding_subscription_domain(db, tenant_id)
+    except ValueError:
+        raise
+    except Exception:
+        pass
     return row
 
 
@@ -217,6 +250,8 @@ def _branding_dict(row: Optional[BrandingSettings]) -> dict:
         "sub_profile_title": row.sub_profile_title,
         "domain": row.domain,
         "panel_url": getattr(row, "panel_url", None),
+        "sub_path": getattr(row, "sub_path", None),
+        "sub_port": getattr(row, "sub_port", None),
     }
 
 
@@ -238,6 +273,8 @@ def resolve_branding(db: Session, tenant_id: Optional[int]) -> dict:
         "sub_profile_title": SUB_PROFILE_TITLE,
         "domain": None,
         "panel_url": None,
+        "sub_path": None,
+        "sub_port": None,
     }
 
     layers = [_branding_dict(get_branding(db, None))]
@@ -246,7 +283,11 @@ def resolve_branding(db: Session, tenant_id: Optional[int]) -> dict:
 
     for layer in layers:
         for key, value in layer.items():
-            if value:
+            # sub_port is an int — treat any non-None as set (including unusual ports).
+            if key == "sub_port":
+                if value is not None:
+                    base[key] = value
+            elif value:
                 base[key] = value
     return base
 

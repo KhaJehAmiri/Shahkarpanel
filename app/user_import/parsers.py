@@ -6,9 +6,15 @@ import csv
 import io
 import json
 import re
+import tempfile
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, unquote, urlparse
+
+_DUMP_SUFFIXES = {".dump", ".sql", ".db", ".sqlite", ".sqlite3"}
+_SQLITE_MAGIC = b"SQLite format 3\x00"
+_PGDMP_MAGIC = b"PGDMP"
 
 USERNAME_RE = re.compile(r"^(?=\w{3,32}\b)[a-zA-Z0-9-_@.]+(?:_[a-zA-Z0-9-_@.]+)*$")
 
@@ -121,6 +127,13 @@ def _normalize_user(u: Dict[str, Any], source: str = "marzban") -> Dict[str, Any
     if not username and u.get("id"):
         username = _sanitize_username(f"uid_{u['id']}", source)
 
+    sub_id, email = _extract_3x_identity(u) if source == "3x-ui" else ("", "")
+    note = (u.get("note") or u.get("comment") or u.get("desc") or "").strip()
+    if email and "3x-ui:" not in note:
+        note = (f"3x-ui: {email}" + (f" | {note}" if note else "")).strip()[:500]
+    else:
+        note = note[:500]
+
     return {
         "username": username,
         "data_limit": _parse_limit_bytes(
@@ -129,39 +142,101 @@ def _normalize_user(u: Dict[str, Any], source: str = "marzban") -> Dict[str, Any
         "expire": _parse_expire(
             u.get("expire") or u.get("expiryTime") or u.get("expiry") or u.get("expired_date")
         ),
-        "note": (u.get("note") or u.get("comment") or u.get("desc") or "").strip()[:500],
+        "note": note,
         "status": _map_status(u.get("status") if "status" in u else u.get("enable")),
         "proxies": _normalize_proxies(u.get("proxies") or _infer_proxies_from_3x(u)),
         "inbounds": _normalize_inbounds(u.get("inbounds") or {}),
+        "sub_id": sub_id or None,
+        "email": email or None,
         "conflict": None,
         "source": source,
     }
 
 
+def _proxies_for_3x_client(client: Dict[str, Any], proto: str) -> Dict[str, Any]:
+    """Keep original 3x-ui UUID / password so configs stay connected after import."""
+    proto = PROTO_ALIASES.get(str(proto or "").lower(), str(proto or "").lower())
+    client_id = client.get("id") or client.get("uuid")
+    password = client.get("password")
+    flow = client.get("flow") or ""
+    if proto == "vless":
+        settings: Dict[str, Any] = {}
+        if client_id:
+            settings["id"] = str(client_id)
+        if flow:
+            settings["flow"] = flow
+        return {"vless": settings}
+    if proto == "vmess":
+        settings = {}
+        if client_id:
+            settings["id"] = str(client_id)
+        return {"vmess": settings}
+    if proto == "trojan":
+        settings = {}
+        if password:
+            settings["password"] = str(password)
+        return {"trojan": settings}
+    if proto == "shadowsocks":
+        settings = {
+            "method": client.get("method") or "chacha20-ietf-poly1305",
+        }
+        if password:
+            settings["password"] = str(password)
+        return {"shadowsocks": settings}
+    return _infer_proxies_from_3x({**client, "protocol": proto})
+
+
 def _infer_proxies_from_3x(u: Dict[str, Any]) -> Dict[str, Any]:
     proxies: Dict[str, Any] = {}
     proto = PROTO_ALIASES.get(str(u.get("protocol") or u.get("type") or "").lower(), "")
+    client_id = u.get("id") or u.get("uuid")
+    password = u.get("password")
+    flow = u.get("flow") or ""
     if proto:
-        proxies[proto] = {}
-    if u.get("flow") or str(u.get("security", "")).lower() == "xtls":
-        proxies["vless"] = {"flow": u.get("flow") or ""}
+        return _proxies_for_3x_client(u, proto)
+    if client_id or flow or str(u.get("security", "")).lower() == "xtls":
+        settings: Dict[str, Any] = {}
+        if client_id:
+            settings["id"] = str(client_id)
+        if flow:
+            settings["flow"] = flow
+        proxies["vless"] = settings
     if u.get("method") or u.get("shadowsocks"):
-        proxies["shadowsocks"] = {"method": u.get("method") or "chacha20-ietf-poly1305"}
-    if u.get("password") and "trojan" in str(u.get("protocol", "")).lower():
-        proxies["trojan"] = {}
-    if u.get("password") and not proxies and not u.get("flow"):
-        proxies.setdefault("trojan", {})
-    if u.get("id") and not proxies:
-        proxies["vless"] = {"flow": u.get("flow") or ""}
+        ss: Dict[str, Any] = {"method": u.get("method") or "chacha20-ietf-poly1305"}
+        if password:
+            ss["password"] = str(password)
+        proxies["shadowsocks"] = ss
+    if password and ("trojan" in str(u.get("protocol", "")).lower() or not proxies):
+        proxies.setdefault("trojan", {"password": str(password)} if password else {})
     return proxies
+
+
+def _extract_3x_identity(client: Dict[str, Any]) -> tuple[str, str]:
+    """Return ``(sub_id, email)`` from a 3x-ui client row — unchanged from source."""
+    sub_id = str(client.get("subId") or client.get("sub_id") or "").strip()
+    email = str(client.get("email") or "").strip()
+    return sub_id, email
 
 
 def parse_upload(filename: str, content: bytes) -> List[Dict[str, Any]]:
     return parse_upload_with_meta(filename, content).rows
 
 
+def is_panel_dump_upload(filename: str, content: bytes) -> bool:
+    """True for 3x-ui SQLite / SQL dump / PostgreSQL pg_dump backups."""
+    if not content:
+        return False
+    if content.startswith(_SQLITE_MAGIC) or content[:5] == _PGDMP_MAGIC:
+        return True
+    suffix = Path(filename or "").suffix.lower()
+    return suffix in _DUMP_SUFFIXES
+
+
 def parse_upload_with_meta(filename: str, content: bytes) -> ParseResult:
     name = (filename or "").lower()
+    if is_panel_dump_upload(filename, content):
+        return _parse_panel_dump(filename, content)
+
     text = content.decode("utf-8", errors="replace").strip()
     if not text:
         raise ValueError("Empty file")
@@ -177,9 +252,112 @@ def parse_upload_with_meta(filename: str, content: bytes) -> ParseResult:
     try:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
-        raise ValueError("Invalid JSON") from exc
+        raise ValueError(
+            "Invalid JSON — for 3x-ui panel restore use a .dump / .db / .sql backup file"
+        ) from exc
 
     return _parse_json(data, name)
+
+
+def _parse_panel_dump(filename: str, content: bytes) -> ParseResult:
+    """Load a 3x-ui panel backup and convert clients into import rows."""
+    from app.migration.three_x_ui import _load_backup
+
+    if not content:
+        raise ValueError("Empty dump file")
+    suffix = Path(filename or "panel.dump").suffix.lower() or ".dump"
+    if suffix not in _DUMP_SUFFIXES:
+        suffix = ".dump"
+    tmp_path: Optional[str] = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
+        backup = _load_backup(tmp_path)
+    except FileNotFoundError as exc:
+        raise ValueError(f"Dump file not found: {filename}") from exc
+    except Exception as exc:
+        raise ValueError(f"Cannot read panel dump: {exc}") from exc
+    finally:
+        if tmp_path:
+            Path(tmp_path).unlink(missing_ok=True)
+
+    if not isinstance(backup, dict):
+        raise ValueError("Unsupported dump contents")
+
+    raw_inbounds = backup.get("inbounds") or backup.get("obj") or []
+    if isinstance(raw_inbounds, dict):
+        inbounds = list(raw_inbounds.values())
+    elif isinstance(raw_inbounds, list):
+        inbounds = raw_inbounds
+    else:
+        inbounds = []
+    if not inbounds:
+        raise ValueError("Dump has no inbounds/clients to import")
+
+    rows = _merge_rows_by_username(
+        _parse_3xui_inbounds_bundle({"inbounds": inbounds})
+    )
+    if not rows:
+        raise ValueError("Dump has no clients to import")
+    return ParseResult(
+        rows=rows,
+        source="3x-ui-dump",
+        format_hint=Path(filename or "").suffix.lower().lstrip(".") or "dump",
+    )
+
+
+def _merge_rows_by_username(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Collapse multi-inbound dump clients into one import row per username."""
+    order: List[str] = []
+    by_name: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        name = (row.get("username") or "").strip()
+        if not name:
+            continue
+        if name not in by_name:
+            by_name[name] = {
+                **row,
+                "proxies": {
+                    k: dict(v) if isinstance(v, dict) else {}
+                    for k, v in (row.get("proxies") or {}).items()
+                },
+                "inbounds": {
+                    k: list(v) for k, v in (row.get("inbounds") or {}).items()
+                },
+                "sub_id": row.get("sub_id"),
+                "email": row.get("email"),
+            }
+            order.append(name)
+            continue
+        dest = by_name[name]
+        if not dest.get("sub_id") and row.get("sub_id"):
+            dest["sub_id"] = row.get("sub_id")
+        if not dest.get("email") and row.get("email"):
+            dest["email"] = row.get("email")
+        for proto, settings in (row.get("proxies") or {}).items():
+            if not isinstance(settings, dict):
+                continue
+            cur = dest["proxies"].setdefault(proto, {})
+            for key, value in settings.items():
+                if value not in (None, "") and not cur.get(key):
+                    cur[key] = value
+        for proto, tags in (row.get("inbounds") or {}).items():
+            dest["inbounds"].setdefault(proto, [])
+            for tag in tags or []:
+                if tag not in dest["inbounds"][proto]:
+                    dest["inbounds"][proto].append(tag)
+        try:
+            if int(row.get("data_limit") or 0) > int(dest.get("data_limit") or 0):
+                dest["data_limit"] = int(row.get("data_limit") or 0)
+        except (TypeError, ValueError):
+            pass
+        try:
+            if int(row.get("expire") or 0) > int(dest.get("expire") or 0):
+                dest["expire"] = int(row.get("expire") or 0)
+        except (TypeError, ValueError):
+            pass
+    return [by_name[name] for name in order]
 
 
 def _looks_like_links(text: str) -> bool:
@@ -307,9 +485,13 @@ def _parse_3xui_clients(clients: List[Dict[str, Any]], root: Dict[str, Any]) -> 
         if not isinstance(c, dict):
             continue
         u = _normalize_user(c, source="3x-ui")
+        u["proxies"] = _proxies_for_3x_client(c, default_proto)
+        sub_id, email = _extract_3x_identity(c)
+        if sub_id:
+            u["sub_id"] = sub_id
+        if email:
+            u["email"] = email
         if default_inbound and not u["inbounds"]:
-            if not u["proxies"]:
-                u["proxies"] = {default_proto: _infer_proxies_from_3x(c).get(default_proto, {})}
             u["inbounds"] = {default_proto: [str(default_inbound)]}
         rows.append(u)
     return rows
@@ -350,8 +532,18 @@ def _parse_3xui_inbounds_bundle(data: Dict[str, Any]) -> List[Dict[str, Any]]:
             u["inbounds"].setdefault(proto, [])
             if tag not in u["inbounds"][proto]:
                 u["inbounds"][proto].append(tag)
-            if not u["proxies"]:
-                u["proxies"] = {proto: _infer_proxies_from_3x(c) or {}}
+            # Prefer this inbound's protocol credentials (keep original UUID/password).
+            proto_proxy = _proxies_for_3x_client(c, proto)
+            for p_name, p_settings in proto_proxy.items():
+                existing = u["proxies"].get(p_name) or {}
+                merged = dict(existing)
+                merged.update({k: v for k, v in (p_settings or {}).items() if v not in (None, "")})
+                u["proxies"][p_name] = merged
+            sub_id, email = _extract_3x_identity(c)
+            if sub_id:
+                u["sub_id"] = sub_id
+            if email:
+                u["email"] = email
             rows.append(u)
     return rows
 

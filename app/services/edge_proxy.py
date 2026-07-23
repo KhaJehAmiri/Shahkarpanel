@@ -1119,26 +1119,38 @@ def subscription_domain_ssl_status(host: str) -> dict[str, Any]:
     }
 
 
-def _grouped_subscription_endpoints(db) -> tuple[dict[tuple[str, int], list[str]], set[str]]:
+def _grouped_subscription_endpoints(
+    db,
+) -> tuple[dict[tuple[str, int], list[str]], set[str], set[str]]:
+    """Return legacy (host,port) groups, all ACME/LE domains, and :443-only hosts.
+
+    Reseller branding endpoints use ``listen_port`` 443 (standard HTTPS). Those
+    must still get ACME + panel ``:443`` vhosts — but not a second legacy
+    listener on 443 (that would collide with the panel HTTPS site).
+    """
     from app.db import crud
 
-    endpoints = [
-        ep
-        for ep in crud.list_subscription_endpoints(db, enabled_only=True)
-        if ep.listen_port and int(ep.listen_port) not in (80, 443) and (ep.host or "").strip()
-    ]
     grouped: dict[tuple[str, int], list[str]] = {}
-    for ep in endpoints:
-        port = int(ep.listen_port)
+    standard_https_hosts: set[str] = set()
+    for ep in crud.list_subscription_endpoints(db, enabled_only=True):
         host = (ep.host or "").strip().lower()
+        if not host or not ep.listen_port:
+            continue
+        port = int(ep.listen_port)
         prefix = (ep.path_prefix or "sub").strip("/")
+        if port in (80, 443):
+            standard_https_hosts.add(host)
+            continue
         grouped.setdefault((host, port), []).append(prefix)
     domains = {host for host, _port in grouped if host and host != "_"}
-    return grouped, domains
+    domains |= {h for h in standard_https_hosts if h and h != "_"}
+    return grouped, domains, standard_https_hosts
 
 
 def _build_subscription_sites(
     grouped: dict[tuple[str, int], list[str]],
+    *,
+    standard_https_hosts: set[str] | None = None,
 ) -> dict[str, str]:
     """Build nginx site map.
 
@@ -1175,6 +1187,16 @@ def _build_subscription_sites(
                 host,
                 port,
             )
+
+    # Branding / standard-HTTPS hosts: ACME on :80, full panel proxy on :443.
+    for host in sorted(standard_https_hosts or ()):
+        if not host or host == "_":
+            continue
+        safe = _DOMAIN_SAFE.sub("-", host).strip("-") or "legacy"
+        site_map[f"nexuspanel-sub-acme-{safe}"] = _render_subscription_acme_site(host)
+        https_body = _render_subscription_panel_https_site(host)
+        if https_body:
+            site_map[f"nexuspanel-sub-https-{safe}"] = https_body
     return site_map
 
 
@@ -1194,10 +1216,12 @@ def _write_subscription_staging(domains: set[str], site_map: dict[str, str]) -> 
 
 
 def sync_subscription_legacy_nginx(db) -> dict[str, Any]:
-    """Write nginx vhosts for subscription endpoints with non-443 listen ports."""
+    """Write nginx vhosts for subscription endpoints (legacy ports + branding :443)."""
     result: dict[str, Any] = {"sites": {}, "applied": False, "message": ""}
-    grouped, domains = _grouped_subscription_endpoints(db)
-    sites = _build_subscription_sites(grouped)
+    grouped, domains, standard_https = _grouped_subscription_endpoints(db)
+    sites = _build_subscription_sites(
+        grouped, standard_https_hosts=standard_https
+    )
 
     try:
         _write_subscription_staging(domains, sites)
@@ -1213,7 +1237,9 @@ def sync_subscription_legacy_nginx(db) -> dict[str, Any]:
     result["applied"] = applied
     result["message"] = message
     # Re-render after certbot may have issued certs during reconcile.
-    sites_tls = _build_subscription_sites(grouped)
+    sites_tls = _build_subscription_sites(
+        grouped, standard_https_hosts=standard_https
+    )
     try:
         _write_subscription_staging(domains, sites_tls)
         applied2, message2 = try_reconcile_subscription_nginx()
@@ -1249,7 +1275,7 @@ def ensure_subscription_domain_ssl(db, host: str | None = None) -> dict[str, Any
             "sites": sorted((sync_result.get("sites") or {}).keys()),
         }
 
-    grouped, domains = _grouped_subscription_endpoints(db)
+    _grouped, domains, _standard = _grouped_subscription_endpoints(db)
     statuses = {d: subscription_domain_ssl_status(d) for d in sorted(domains)}
     ready = all(s.get("https_ready") for s in statuses.values()) if statuses else True
     return {

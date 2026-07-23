@@ -1,7 +1,7 @@
-import { FC, useState } from "react";
+import { FC, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
-import { api } from "../api/client";
+import { ApiError, api } from "../api/client";
 import { Branding, SubResellerAccount, Tenant } from "../api/types";
 import { useApp } from "../context/AppContext";
 import { useFetch } from "../lib/useFetch";
@@ -11,6 +11,7 @@ import {
   Button, Callout, Card, CardHead, EmptyState, Field, Input, Modal, Pager, Pill, SkeletonRows, Tabs, Textarea, usePagedList, useToast,
 } from "../components/ui";
 import { IcPlus, IcTrash, IcServer, IcEdit, IcWallet } from "../components/icons";
+import { UserImportWizard } from "../components/UserImportWizard";
 
 type ResellerAccount = {
   username: string;
@@ -694,14 +695,59 @@ const AddTenant: FC<{ onClose: () => void; onDone: () => void }> = ({ onClose, o
   );
 };
 
+type SubPortBlocked = {
+  port: number;
+  reason: string;
+  inbound_tag?: string | null;
+};
+
+type SubPortInfo = {
+  blocked: SubPortBlocked[];
+  suggested: number[];
+};
+
 const BrandingTab: FC = () => {
   const { t } = useTranslation();
   const { isEnabled } = useApp();
   const toast = useToast();
   const { data, loading, status, reload } = useFetch<Branding>(() => api.get("/branding/mine"), []);
+  const { data: portInfo } = useFetch<SubPortInfo>(
+    () => api.get("/branding/subscription-ports"),
+    [],
+  );
   const [f, setF] = useState<Branding | null>(null);
   const [busy, setBusy] = useState(false);
   const model = f ?? data ?? {};
+
+  const blockedByPort = useMemo(() => {
+    const map = new Map<number, SubPortBlocked>();
+    for (const row of portInfo?.blocked || []) {
+      map.set(Number(row.port), row);
+    }
+    return map;
+  }, [portInfo]);
+
+  const portSuggest = (portInfo?.suggested || [2096]).slice(0, 3);
+  const suggestText = portSuggest.length ? portSuggest.join(", ") : "2096";
+
+  const formatPortConflict = (detail: any, fallback?: string) => {
+    const port = Number(detail?.port);
+    const tag = detail?.inbound_tag || "?";
+    const suggest = Array.isArray(detail?.suggested) && detail.suggested.length
+      ? detail.suggested.slice(0, 3).join(", ")
+      : suggestText;
+    const code = String(detail?.code || "");
+    if (code === "sub_port_inbound") {
+      return t("resellers.subPortBlockedInbound", { port, tag, suggest });
+    }
+    if (code === "sub_port_wireguard") {
+      return t("resellers.subPortBlockedWireguard", { port, suggest });
+    }
+    if (code === "sub_port_busy") {
+      return t("resellers.subPortBlockedBusy", { port, suggest });
+    }
+    return fallback || detail?.message || t("resellers.subPortBlockedBusy", { port: port || "?", suggest });
+  };
 
   if (!isEnabled("white_label") || status === 404)
     return <Callout tone="warn">{t("common.disabledFeature")}</Callout>;
@@ -709,17 +755,56 @@ const BrandingTab: FC = () => {
   const upd = (k: keyof Branding) => (e: any) => setF({ ...model, [k]: e.target.value });
 
   const save = async () => {
+    const checkPort = Number(model.sub_port) > 0 ? Number(model.sub_port) : 443;
+    const blocked = checkPort !== 443 && checkPort !== 80 ? blockedByPort.get(checkPort) : undefined;
+    if (blocked) {
+      toast.push(
+        formatPortConflict({
+          code: `sub_port_${blocked.reason}`,
+          port: blocked.port,
+          inbound_tag: blocked.inbound_tag,
+          suggested: portSuggest,
+        }),
+        "error",
+      );
+      return;
+    }
     setBusy(true);
     try {
       await api.put("/branding/mine", model);
       toast.push(t("common.saved"), "success"); setF(null); reload();
-    } catch (e: any) { toast.push(e.message, "error"); } finally { setBusy(false); }
+    } catch (e: any) {
+      const detail = e instanceof ApiError ? e.body?.detail : e?.body?.detail;
+      if (detail && typeof detail === "object" && String(detail.code || "").startsWith("sub_port_")) {
+        toast.push(formatPortConflict(detail, e.message), "error");
+      } else {
+        toast.push(e.message, "error");
+      }
+    } finally { setBusy(false); }
   };
 
   if (loading) return <Card><SkeletonRows rows={4} cols={2} /></Card>;
 
   const suggestedLogin = model.panel_url
     || (model.domain ? `https://${model.domain}` : "");
+  const subPath = String(model.sub_path || "sub").replace(/^\/+|\/+$/g, "") || "sub";
+  const subPort = Number(model.sub_port) > 0 ? Number(model.sub_port) : 443;
+  const subPortSuffix = subPort === 443 || subPort === 80 ? "" : `:${subPort}`;
+  const subScheme = subPort === 80 ? "http" : "https";
+  const suggestedSub = model.domain
+    ? `${subScheme}://${model.domain}${subPortSuffix}/${subPath}/<token>/`
+    : "";
+  const portConflict = subPort !== 443 && subPort !== 80 ? blockedByPort.get(subPort) : undefined;
+
+  const updPort = (e: any) => {
+    const raw = String(e.target.value ?? "").trim();
+    if (!raw) {
+      setF({ ...model, sub_port: null });
+      return;
+    }
+    const n = parseInt(raw, 10);
+    setF({ ...model, sub_port: Number.isFinite(n) ? n : null });
+  };
 
   return (
     <Card style={{ maxWidth: 640 }}>
@@ -737,8 +822,33 @@ const BrandingTab: FC = () => {
         </div>
         <Field label={t("resellers.subProfileTitle")}><Input value={model.sub_profile_title || ""} onChange={upd("sub_profile_title")} /></Field>
         <Field label={t("resellers.domain")} hint={t("resellers.domainHint")}>
-          <Input value={model.domain || ""} onChange={upd("domain")} placeholder="panel.example.com" />
+          <Input value={model.domain || ""} onChange={upd("domain")} placeholder="sub.example.com" />
         </Field>
+        <div className="nx-row" style={{ gap: 12 }}>
+          <Field label={t("resellers.subPath")} hint={t("resellers.subPathHint")}>
+            <Input value={model.sub_path || ""} onChange={upd("sub_path")} placeholder="sub" />
+          </Field>
+          <Field label={t("resellers.subPort")} hint={t("resellers.subPortHint")}>
+            <Input
+              type="number"
+              min={1}
+              max={65535}
+              value={model.sub_port ?? ""}
+              onChange={updPort}
+              placeholder="443"
+            />
+          </Field>
+        </div>
+        {portConflict && (
+          <Callout tone="danger" title={t("resellers.subPortBlockedTitle")}>
+            {formatPortConflict({
+              code: `sub_port_${portConflict.reason}`,
+              port: portConflict.port,
+              inbound_tag: portConflict.inbound_tag,
+              suggested: portSuggest,
+            })}
+          </Callout>
+        )}
         <Field label={t("resellers.panelUrl")} hint={t("resellers.panelUrlHint")}>
           <Input value={model.panel_url || ""} onChange={upd("panel_url")} placeholder="https://panel.example.com" />
         </Field>
@@ -747,8 +857,13 @@ const BrandingTab: FC = () => {
             {t("resellers.loginLinkHint")}: <code>{suggestedLogin}</code>
           </Callout>
         )}
+        {suggestedSub && !portConflict && (
+          <Callout tone="ok" title={t("resellers.subDomainReadyTitle")}>
+            {t("resellers.subDomainReadyHint")}: <code>{suggestedSub}</code>
+          </Callout>
+        )}
         <div className="nx-row" style={{ justifyContent: "flex-end" }}>
-          <Button variant="primary" disabled={busy} onClick={save}>{t("resellers.saveBranding")}</Button>
+          <Button variant="primary" disabled={busy || !!portConflict} onClick={save}>{t("resellers.saveBranding")}</Button>
         </div>
       </div>
     </Card>
@@ -842,23 +957,38 @@ const AccountTab: FC = () => {
 
 const MigrationTab: FC = () => {
   const { t } = useTranslation();
+  const [showImport, setShowImport] = useState(false);
   return (
-    <Card style={{ maxWidth: 640 }}>
+    <Card style={{ maxWidth: 720 }}>
       <CardHead title={t("resellers.tabMigration")} desc={t("resellers.migrationDesc")} />
       <div className="nx-stack">
+        <Callout tone="ok" title={t("resellers.migrationDumpTitle")}>
+          {t("resellers.migrationDumpBody")}
+        </Callout>
         <Callout tone="info" title={t("resellers.migrationFormatsTitle")}>
+          <div>{t("users.importFmt3xuiDump")}</div>
           <div>{t("users.importFmtMarzban")}</div>
           <div>{t("users.importFmt3xui")}</div>
           <div>{t("users.importFmtCsv")}</div>
           <div>{t("users.importFmtLinks")}</div>
         </Callout>
         <p className="nx-faint" style={{ margin: 0 }}>{t("resellers.migrationHint")}</p>
-        <div className="nx-row" style={{ justifyContent: "flex-start" }}>
+        <div className="nx-row" style={{ justifyContent: "flex-start", gap: 10, flexWrap: "wrap" }}>
+          <Button variant="primary" onClick={() => setShowImport(true)}>
+            {t("resellers.openDumpImport")}
+          </Button>
           <Link to="/users?import=1">
-            <Button variant="primary">{t("resellers.openImport")}</Button>
+            <Button variant="ghost">{t("resellers.openImport")}</Button>
           </Link>
         </div>
       </div>
+      {showImport && (
+        <UserImportWizard
+          dumpFocus
+          onClose={() => setShowImport(false)}
+          onDone={() => setShowImport(false)}
+        />
+      )}
     </Card>
   );
 };

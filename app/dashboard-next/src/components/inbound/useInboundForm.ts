@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useForm, type UseFormReturn } from "react-hook-form";
+import { api } from "@/panel/api/client";
 import { generateRealityKeypair, randomShortId } from "@/panel/lib/xrayHelpers";
 import { buildXrayInbound } from "./buildXrayInbound";
 import {
@@ -186,13 +187,12 @@ export function ssPasswordLength(method: string): number {
 
 async function fetchRealityKeys(): Promise<{ privateKey: string; publicKey: string }> {
   try {
-    const res = await fetch("/api/core/reality/keypair", { method: "POST" });
-    if (res.ok) {
-      const data = (await res.json()) as { privateKey: string; publicKey: string };
-      if (data.privateKey && data.publicKey) return data;
-    }
+    const data = await api.post<{ privateKey: string; publicKey: string }>(
+      "/core/reality/keypair",
+    );
+    if (data?.privateKey && data?.publicKey) return data;
   } catch {
-    /* fallback */
+    /* fall through to browser WebCrypto */
   }
   return generateRealityKeypair();
 }
@@ -429,20 +429,39 @@ export function useInboundForm(
 
   const generateRealityKeysHandler = useCallback(async () => {
     if (!findProtocolDef(protocols, form.getValues().protocol)?.hasSecurity) return;
-    const keys = await fetchRealityKeys();
-    const cur = form.getValues("realitySettings");
-    form.setValue("realitySettings.privateKey", keys.privateKey);
-    form.setValue("realitySettings.publicKey", keys.publicKey);
-    if (!cur.target.trim()) {
-      form.setValue("realitySettings.target", "www.cloudflare.com:443");
+    try {
+      const keys = await fetchRealityKeys();
+      const cur = form.getValues("realitySettings");
+      form.setValue("realitySettings.privateKey", keys.privateKey, {
+        shouldDirty: true,
+        shouldValidate: true,
+      });
+      form.setValue("realitySettings.publicKey", keys.publicKey, {
+        shouldDirty: true,
+        shouldValidate: true,
+      });
+      if (!cur.target.trim()) {
+        form.setValue("realitySettings.target", "www.cloudflare.com:443");
+      }
+      if (!cur.serverNames.length) {
+        form.setValue("realitySettings.serverNames", ["www.cloudflare.com"]);
+      }
+      if (!form.getValues("realitySettings.shortIds").length) {
+        form.setValue("realitySettings.shortIds", [generateShortId()]);
+      }
+      form.setValue("security", "reality");
+      setStepErrors((prev) => {
+        if (!prev["realitySettings.privateKey"]) return prev;
+        const next = { ...prev };
+        delete next["realitySettings.privateKey"];
+        return next;
+      });
+    } catch {
+      setStepErrors((prev) => ({
+        ...prev,
+        "realitySettings.privateKey": "Failed to generate keys",
+      }));
     }
-    if (!cur.serverNames.length) {
-      form.setValue("realitySettings.serverNames", ["www.cloudflare.com"]);
-    }
-    if (!form.getValues("realitySettings.shortIds").length) {
-      form.setValue("realitySettings.shortIds", [generateShortId()]);
-    }
-    form.setValue("security", "reality");
   }, [form, protocols]);
 
   const resetValidation = useCallback(() => {

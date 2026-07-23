@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
@@ -55,6 +56,11 @@ def _prune(ips: dict[str, Any], now: datetime, window: timedelta = _ACTIVE_WINDO
 
 def _infrastructure_ips() -> frozenset[str]:
     """Panel/node addresses must not consume user device slots."""
+    now = time.monotonic()
+    cached = getattr(_infrastructure_ips, "_cache", None)
+    if cached and (now - cached[0]) < 60.0:
+        return cached[1]
+
     from app.utils.system import get_public_ip, get_public_ipv6
 
     ips = {"127.0.0.1", "::1", "unknown"}
@@ -83,7 +89,9 @@ def _infrastructure_ips() -> frozenset[str]:
                     ips.add(str(row[0]))
     except Exception:
         pass
-    return frozenset(ips)
+    result = frozenset(ips)
+    _infrastructure_ips._cache = (now, result)
+    return result
 
 
 def _is_infrastructure_ip(client_ip: str) -> bool:

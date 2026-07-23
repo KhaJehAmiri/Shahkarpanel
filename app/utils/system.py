@@ -11,6 +11,10 @@ import requests
 
 from app import scheduler
 
+# Public IP probes hit external HTTP APIs; cache so hot paths (subscription
+# device-limit) never stall clients for multiple probe timeouts.
+_PUBLIC_IP_CACHE_TTL = 3600.0
+
 
 @dataclass
 class MemoryStat():
@@ -336,15 +340,32 @@ def check_port(port: int) -> bool:
 
 
 def get_public_ip():
+    """Return the panel's public IPv4.
+
+    Cached: subscription device-limit checks call this on every app import.
+    Uncached HTTP probes (ipify ×3, 5s each) made Clash/v2rayN imports hang
+    ~15s and fail on clients with short timeouts.
+    """
+    now = time.monotonic()
+    cached = getattr(get_public_ip, "_cache", None)
+    if cached and (now - cached[0]) < _PUBLIC_IP_CACHE_TTL:
+        return cached[1]
+
+    ip = _detect_public_ipv4()
+    get_public_ip._cache = (now, ip)
+    return ip
+
+
+def _detect_public_ipv4() -> str:
     try:
-        resp = requests.get('http://api4.ipify.org/', timeout=5).text.strip()
+        resp = requests.get('http://api4.ipify.org/', timeout=1.5).text.strip()
         if ipaddress.IPv4Address(resp).is_global:
             return resp
     except Exception:
         pass
 
     try:
-        resp = requests.get('http://ipv4.icanhazip.com/', timeout=5).text.strip()
+        resp = requests.get('http://ipv4.icanhazip.com/', timeout=1.5).text.strip()
         if ipaddress.IPv4Address(resp).is_global:
             return resp
     except Exception:
@@ -352,7 +373,7 @@ def get_public_ip():
 
     try:
         requests.packages.urllib3.util.connection.HAS_IPV6 = False
-        resp = requests.get('https://ifconfig.io/ip', timeout=5).text.strip()
+        resp = requests.get('https://ifconfig.io/ip', timeout=1.5).text.strip()
         if ipaddress.IPv4Address(resp).is_global:
             return resp
     except requests.exceptions.RequestException:
@@ -360,30 +381,44 @@ def get_public_ip():
     finally:
         requests.packages.urllib3.util.connection.HAS_IPV6 = True
 
+    sock = None
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(1.0)
         sock.connect(('8.8.8.8', 80))
         resp = sock.getsockname()[0]
         if ipaddress.IPv4Address(resp).is_global:
             return resp
-    except (socket.error, IndexError):
+    except (socket.error, IndexError, OSError):
         pass
     finally:
-        sock.close()
+        if sock is not None:
+            sock.close()
 
     return '127.0.0.1'
 
 
 def get_public_ipv6():
+    now = time.monotonic()
+    cached = getattr(get_public_ipv6, "_cache", None)
+    if cached and (now - cached[0]) < _PUBLIC_IP_CACHE_TTL:
+        return cached[1]
+
+    ip = _detect_public_ipv6()
+    get_public_ipv6._cache = (now, ip)
+    return ip
+
+
+def _detect_public_ipv6() -> str:
     try:
-        resp = requests.get('http://api6.ipify.org/', timeout=5).text.strip()
+        resp = requests.get('http://api6.ipify.org/', timeout=1.5).text.strip()
         if ipaddress.IPv6Address(resp).is_global:
             return '[%s]' % resp
     except Exception:
         pass
 
     try:
-        resp = requests.get('http://ipv6.icanhazip.com/', timeout=5).text.strip()
+        resp = requests.get('http://ipv6.icanhazip.com/', timeout=1.5).text.strip()
         if ipaddress.IPv6Address(resp).is_global:
             return '[%s]' % resp
     except Exception:

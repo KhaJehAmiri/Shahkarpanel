@@ -24,10 +24,27 @@ from pathlib import Path
 from urllib.parse import quote_plus, urlparse, urlunparse
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
-from app.runtime_env import RUNTIME_ENV_PATH, RUNTIME_SECRET_KEYS, WEAK_POSTGRES_PASSWORDS  # noqa: E402
+
+def _load_runtime_env_constants():
+    """Load app/runtime_env.py without importing the FastAPI ``app`` package.
+
+    Host-side install/update runs this with system Python (no apscheduler /
+    FastAPI). ``import app.runtime_env`` would execute ``app/__init__.py`` and
+    fail with ModuleNotFoundError.
+    """
+    import importlib.util
+
+    path = ROOT / "app" / "runtime_env.py"
+    spec = importlib.util.spec_from_file_location("nexuspanel_runtime_env", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load runtime env constants from {path}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.RUNTIME_ENV_PATH, mod.RUNTIME_SECRET_KEYS, mod.WEAK_POSTGRES_PASSWORDS
+
+
+RUNTIME_ENV_PATH, RUNTIME_SECRET_KEYS, WEAK_POSTGRES_PASSWORDS = _load_runtime_env_constants()
 
 _ENV_LINE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*(.*)$")
 

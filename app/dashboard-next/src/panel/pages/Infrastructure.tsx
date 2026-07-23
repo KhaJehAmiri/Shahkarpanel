@@ -132,8 +132,9 @@ export const NodesTab: FC<{ resellerMode?: boolean }> = ({ resellerMode }) => {
                       <td>{n.latency_ms != null ? `${n.latency_ms.toFixed(0)} ms` : "—"}</td>
                       <td>
                         <div className="nx-row" style={{ justifyContent: "flex-end", gap: 6, flexWrap: "wrap" }}>
-                          {/* Xray version endpoint is sudo-only — hide for resellers. */}
-                          {n.core_kind !== "wireguard" && !resellerMode && (
+                          {/* Xray version endpoint is sudo-only — hide for resellers.
+                              WireGuard/Finalmask nodes also run an Xray core. */}
+                          {!resellerMode && (
                             <Button size="sm" variant="primary" onClick={() => setXrayNode(n)} title={t("infra.xraySetVersion")}>
                               {t("infra.xraySetVersion")}
                             </Button>
@@ -264,9 +265,13 @@ const NodeGroupsPanel: FC = () => {
 const EditNodeModal: FC<{ node: NodeItem; onClose: () => void; onDone: () => void }> = ({ node, onClose, onDone }) => {
   const { t } = useTranslation();
   const toast = useToast();
+  const releases = useFetch<{ tag: string }[]>(() => api.get("/xray/releases"), []);
   const [name, setName] = useState(node.name);
   const [address, setAddress] = useState(node.address);
+  const [tag, setTag] = useState("");
   const [busy, setBusy] = useState(false);
+  const [xrayBusy, setXrayBusy] = useState(false);
+  const [liveVersion, setLiveVersion] = useState(node.xray_version || "");
 
   const submit = async () => {
     setBusy(true);
@@ -284,15 +289,52 @@ const EditNodeModal: FC<{ node: NodeItem; onClose: () => void; onDone: () => voi
     }
   };
 
+  const applyXray = async () => {
+    if (!tag) return;
+    if (!confirm(t("infra.xrayUpgradeConfirm"))) return;
+    setXrayBusy(true);
+    try {
+      const res = await api.post<{ version: string }>(`/nodes/${node.id}/xray/version`, { version: tag });
+      const ver = res.version || tag;
+      setLiveVersion(ver);
+      toast.push(ver, "success");
+    } catch (e: any) {
+      toast.push(e.message, "error");
+    } finally {
+      setXrayBusy(false);
+    }
+  };
+
   return (
     <Modal open title={`${t("infra.editNode")} — ${node.name}`} onClose={onClose}
       footer={<>
         <Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
-        <Button variant="primary" disabled={busy || !name.trim() || !address.trim()} onClick={submit}>{t("common.save")}</Button>
+        <Button variant="primary" disabled={busy || xrayBusy || !name.trim() || !address.trim()} onClick={submit}>{t("common.save")}</Button>
       </>}>
       <div className="nx-stack">
         <Field label={t("common.name")}><Input value={name} onChange={(e: any) => setName(e.target.value)} autoFocus /></Field>
         <Field label={t("infra.address")}><Input value={address} onChange={(e: any) => setAddress(e.target.value)} /></Field>
+
+        <div style={{ borderTop: "1px solid var(--nx-border, rgba(127,127,127,.25))", paddingTop: 12, marginTop: 4 }}>
+          <div className="nx-row" style={{ justifyContent: "space-between", marginBottom: 8 }}>
+            <span style={{ fontWeight: 600 }}>{t("infra.xraySetVersion")}</span>
+            <span className="nx-mono nx-faint" style={{ fontSize: 12 }}>
+              {t("infra.xrayVersion")}: {liveVersion || "—"}
+            </span>
+          </div>
+          <Field label={t("infra.xrayPickRelease")}>
+            <Select value={tag} onChange={(e: any) => setTag(e.target.value)} disabled={releases.loading || xrayBusy}>
+              <option value="">—</option>
+              {(releases.data || []).map((r) => <option key={r.tag} value={r.tag}>{r.tag}</option>)}
+            </Select>
+          </Field>
+          <div className="nx-faint" style={{ fontSize: 12, marginBottom: 8 }}>{t("infra.xrayEditHint")}</div>
+          <div className="nx-row" style={{ justifyContent: "flex-end" }}>
+            <Button variant="primary" size="sm" disabled={xrayBusy || busy || !tag} onClick={applyXray}>
+              {xrayBusy ? t("common.loading") : t("infra.xrayApplyVersion")}
+            </Button>
+          </div>
+        </div>
       </div>
     </Modal>
   );

@@ -292,8 +292,8 @@ const XrayCoreTab: FC = () => {
           <Field label={t("infra.relayNode")}>
             <Select value={nodeId} onChange={(e: any) => setNodeId(e.target.value)}>
               <option value="">—</option>
-              {(nodes.data || []).filter((n) => n.core_kind !== "wireguard").map((n) => (
-                <option key={n.id} value={n.id}>{n.name} (#{n.id})</option>
+              {(nodes.data || []).map((n) => (
+                <option key={n.id} value={n.id}>{n.name} (#{n.id}){n.core_kind === "wireguard" ? " · WG" : ""} · {n.xray_version || "—"}</option>
               ))}
             </Select>
           </Field>

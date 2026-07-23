@@ -215,7 +215,7 @@ const XrayCoreTab: FC = () => {
   const [autoEnabled, setAutoEnabled] = useState(true);
   const [autoIntervalHours, setAutoIntervalHours] = useState("6");
   const [autoPrerelease, setAutoPrerelease] = useState(true);
-  const nodes = useFetch<{ id: number; name: string; core_kind?: string }[]>(() => api.get("/nodes"), []);
+  const nodes = useFetch<{ id: number; name: string; core_kind?: string; xray_version?: string | null }[]>(() => api.get("/nodes"), []);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {

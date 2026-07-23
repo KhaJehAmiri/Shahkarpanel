@@ -179,7 +179,8 @@ xray-core
 # Node / Next.js (dashboard-next)
 node_modules/
 .next/
-app/dashboard-next/out/
+# Keep app/dashboard-next/out/ tracked: fresh installs serve the prebuilt UI
+# without requiring npm on the host. Rebuild with ./build_dashboard.sh.
 *.tsbuildinfo
 next-env.d.ts
 warp_account.json

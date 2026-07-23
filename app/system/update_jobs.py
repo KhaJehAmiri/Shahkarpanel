@@ -618,12 +618,18 @@ def _nginx_ensure_sidecar_shell() -> str:
         "-v", "/var/lib/nexuspanel:/var/lib/nexuspanel",
         "-v", "/var/lib/nginx:/var/lib/nginx",
         "-v", "/var/log/nginx:/var/log/nginx",
-        "-v", "/run/nginx.pid:/run/nginx.pid",
-        "-v", "/usr/sbin/nginx:/usr/sbin/nginx:ro",
-        "-v", "/lib:/lib:ro",
-        "-v", "/usr/lib:/usr/lib:ro",
         "-v", f"{host_scripts}:/nexus-ensure:ro",
     ]
+    # Only bind nginx binary / pid when they are real files. Missing paths become
+    # stub directories on the host and permanently break nginx.
+    if Path("/usr/sbin/nginx").is_file():
+        vols.extend(["-v", "/usr/sbin/nginx:/usr/sbin/nginx:ro"])
+    if Path("/run/nginx.pid").is_file():
+        vols.extend(["-v", "/run/nginx.pid:/run/nginx.pid"])
+    if Path("/lib").is_dir():
+        vols.extend(["-v", "/lib:/lib:ro"])
+    if Path("/usr/lib").is_dir():
+        vols.extend(["-v", "/usr/lib:/usr/lib:ro"])
     if Path("/lib64").is_dir():
         vols.extend(["-v", "/lib64:/lib64:ro"])
     parts = [

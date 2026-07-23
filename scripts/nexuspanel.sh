@@ -1094,6 +1094,13 @@ ensure_nginx_restarting_page() {
   PANEL_PORT="${PANEL_PORT:-8000}" bash "$script" >/dev/null 2>&1 || true
 }
 
+repair_nginx_stub_mounts() {
+  # Docker creates directories for missing *file* bind mounts and breaks nginx.
+  local script="${APP_DIR}/scripts/repair_nginx_stub_mounts.sh"
+  [ -f "$script" ] || return 0
+  bash "$script" || warn "nginx stub-mount repair reported issues (subscription domains may need: nexuspanel https)"
+}
+
 cmd_https() {
   need_root
   [ -d "${APP_DIR}" ] || die "NexusPanel not installed in ${APP_DIR}"
@@ -1170,7 +1177,8 @@ cmd_update()  {
   disable_conflicting_services
   configure_firewall
   install_cli
-  # Before container swap: patch nginx so clients never see stock 502.
+  # Before container swap: repair Docker stub mounts, then patch nginx 502 page.
+  repair_nginx_stub_mounts
   ensure_nginx_restarting_page
   compose up -d --build
   # Autostart policy does not revive a container left stopped by a failed swap.

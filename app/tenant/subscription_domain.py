@@ -399,12 +399,16 @@ def ensure_reseller_subscription_endpoint(
     else:
         ep = crud.update_subscription_endpoint(db, ep, payload)
 
+    nginx_applied = False
+    nginx_message = ""
     try:
         from app.services.edge_proxy import sync_subscription_legacy_nginx
 
-        sync_subscription_legacy_nginx(db)
-    except Exception:
-        pass
+        sync_result = sync_subscription_legacy_nginx(db) or {}
+        nginx_applied = bool(sync_result.get("applied"))
+        nginx_message = str(sync_result.get("message") or "").strip()
+    except Exception as exc:
+        nginx_message = str(exc)
 
     # ACME can take a long time / fail until DNS is ready — never block branding save.
     try:
@@ -433,6 +437,16 @@ def ensure_reseller_subscription_endpoint(
         refresh_subscription_routes(fastapi_app, api_router)
     except Exception:
         pass
+
+    if host and not nginx_applied:
+        detail = nginx_message or "nginx reconcile did not apply"
+        # Strip ANSI color codes from host script output for API clients.
+        detail = re.sub(r"\x1b\[[0-9;]*m", "", detail).strip()
+        raise ValueError(
+            "Domain saved in the database, but host nginx is not serving it yet "
+            f"({detail}). Install/fix nginx (nexuspanel https) then save branding again, "
+            "or run: sudo scripts/reconcile_subscription_nginx.sh --apply"
+        )
 
     return ep
 

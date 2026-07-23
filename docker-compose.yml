@@ -19,20 +19,18 @@ services:
       - "${DOCKER_GID:-988}"
     volumes:
       - /var/lib/nexuspanel:/var/lib/nexuspanel
-      # nginx mounts kept only for optional XRAY_EDGE_PROXY_ENABLED=true (legacy CDN edge).
+      # Directory-only nginx mounts. Never bind individual files (nginx.conf,
+      # mime.types, proxy_params, /run/nginx.pid, /usr/sbin/nginx): if the host
+      # path is missing, Docker creates a *directory* stub and permanently
+      # breaks host nginx / reseller subscription domains.
       - /etc/nginx/sites-available:/etc/nginx/sites-available
       - /etc/nginx/sites-enabled:/etc/nginx/sites-enabled
-      - /etc/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - /etc/nginx/mime.types:/etc/nginx/mime.types:ro
-      - /etc/nginx/proxy_params:/etc/nginx/proxy_params:ro
       - /etc/nginx/conf.d:/etc/nginx/conf.d:ro
       - /etc/nginx/snippets:/etc/nginx/snippets:ro
       - /etc/letsencrypt:/etc/letsencrypt
       - /var/www/letsencrypt:/var/www/letsencrypt
       - /var/lib/nginx:/var/lib/nginx
       - /var/log/nginx:/var/log/nginx
-      - /run/nginx.pid:/run/nginx.pid
-      - /usr/sbin/nginx:/usr/sbin/nginx:ro
       - .:/code
       - /opt/sigmaguard/wire:/opt/sigmaguard/wire:ro
       # Only the socket is host-provided; the docker/compose/buildx CLI now

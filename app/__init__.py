@@ -13,6 +13,7 @@ from fastapi import FastAPI, Request, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.routing import APIRoute
 
@@ -61,10 +62,22 @@ if ALLOWED_ORIGINS:
         allow_headers=["*"],
     )
 app.add_middleware(RequestContextMiddleware)
+# Compress JS/CSS/HTML — dashboard CSR ships ~1.7MB of chunks uncompressed;
+# gzip typically cuts that to ~450KB and dominates first-paint on remote clients.
+app.add_middleware(GZipMiddleware, minimum_size=860, compresslevel=5)
 
 from app.middleware.dashboard_path import hide_default_dashboard_middleware  # noqa: E402
 
 app.middleware("http")(hide_default_dashboard_middleware)
+
+
+def _static_cache_control(path: str) -> str | None:
+    """Long-cache hashed Next assets; short-cache everything else UI-related."""
+    if path.startswith("/_next/static/") or path.startswith("/fonts/"):
+        return "public, max-age=31536000, immutable"
+    if path.startswith("/sub-assets/") or path.startswith("/brand/") or path.startswith("/protocol-icons/"):
+        return "public, max-age=86400"
+    return None
 
 
 @app.middleware("http")
@@ -76,6 +89,9 @@ async def security_headers_middleware(request: Request, call_next):
     response.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
     if request.url.scheme == "https":
         response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    cache = _static_cache_control(request.url.path)
+    if cache and response.status_code == 200:
+        response.headers.setdefault("Cache-Control", cache)
     from config import SECURITY_CSP
 
     if SECURITY_CSP:

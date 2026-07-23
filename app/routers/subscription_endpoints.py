@@ -28,6 +28,25 @@ def list_endpoints(
     db: Session = Depends(get_db),
     _: Admin = Depends(Admin.check_sudo_admin),
 ):
+    # Fresh installs only seed Main (``sub``). Backfill JSON/Clash companions
+    # so the UI matches migrated 3x-ui panels (Main + JSON + Clash tabs).
+    try:
+        from app.subscription.format_companions import ensure_all_format_companions
+
+        n = ensure_all_format_companions(db)
+        if n:
+            from app import app as fastapi_app
+            from app.routers import api_router
+            from app.services.edge_proxy import sync_subscription_legacy_nginx
+            from app.subscription.route_registry import refresh_subscription_routes
+
+            refresh_subscription_routes(fastapi_app, api_router)
+            try:
+                sync_subscription_legacy_nginx(db)
+            except Exception:
+                pass
+    except Exception:
+        pass
     return crud.list_subscription_endpoints(db)
 
 

@@ -152,6 +152,16 @@ def on_startup():
                 n = ensure_reseller_tenants(db)
                 if n:
                     logger.info("Backfilled tenant_id for %s legacy reseller/support admin(s)", n)
+                try:
+                    from app.subscription.format_companions import ensure_all_format_companions
+                    c = ensure_all_format_companions(db)
+                    if c:
+                        logger.info("Backfilled %s JSON/Clash subscription endpoint companion(s)", c)
+                        from app.routers import api_router as _api_router
+                        from app.subscription.route_registry import refresh_subscription_routes
+                        refresh_subscription_routes(app, _api_router)
+                except Exception:
+                    logger.exception("Failed to ensure JSON/Clash subscription companions")
         except Exception:
             logger.exception("Failed to backfill reseller tenants")
         try:

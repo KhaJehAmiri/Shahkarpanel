@@ -371,6 +371,14 @@ def ensure_reseller_subscription_endpoint(
             ep.public_base_url = ""
             db.commit()
             db.refresh(ep)
+            try:
+                from app.subscription.format_companions import (
+                    ensure_format_companions_for_endpoint,
+                )
+
+                ensure_format_companions_for_endpoint(db, ep)
+            except Exception:
+                pass
         return None
 
     assert_subscription_listen_port_available(db, listen_port, host=host)
@@ -398,6 +406,13 @@ def ensure_reseller_subscription_endpoint(
         ep = crud.create_subscription_endpoint(db, payload)
     else:
         ep = crud.update_subscription_endpoint(db, ep, payload)
+
+    try:
+        from app.subscription.format_companions import ensure_format_companions_for_endpoint
+
+        ensure_format_companions_for_endpoint(db, ep)
+    except Exception:
+        pass
 
     nginx_applied = False
     nginx_message = ""

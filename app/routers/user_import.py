@@ -30,6 +30,7 @@ MAX_DUMP_BYTES = 100 * 1024 * 1024
 class ImportRow(BaseModel):
     username: str
     data_limit: int = 0
+    used_traffic: int = 0
     expire: int = 0
     note: str = ""
     status: str = "active"
@@ -90,6 +91,7 @@ def _map_row(row: dict, known_tags: set) -> ImportRow:
     return ImportRow(
         username=row.get("username") or "",
         data_limit=int(row.get("data_limit") or 0),
+        used_traffic=int(row.get("used_traffic") or 0),
         expire=int(row.get("expire") or 0),
         note=row.get("note") or "",
         status=row.get("status") or "active",
@@ -142,6 +144,26 @@ def _bind_sub_id_alias(
     return True
 
 
+def _apply_usage_and_quota(dbuser, row: ImportRow) -> bool:
+    """Restore used traffic + data limit/expiry from the dump onto a DB user."""
+    changed = False
+    used = int(row.used_traffic or 0)
+    if used > 0 and int(getattr(dbuser, "used_traffic", 0) or 0) != used:
+        dbuser.used_traffic = used
+        # Keep split counters coherent when the dump only has a combined meter.
+        if hasattr(dbuser, "used_traffic_up") and hasattr(dbuser, "used_traffic_down"):
+            if not (dbuser.used_traffic_up or dbuser.used_traffic_down):
+                dbuser.used_traffic_down = used
+        changed = True
+    if row.data_limit and int(getattr(dbuser, "data_limit", 0) or 0) != int(row.data_limit):
+        dbuser.data_limit = int(row.data_limit)
+        changed = True
+    if row.expire and int(getattr(dbuser, "expire", 0) or 0) != int(row.expire):
+        dbuser.expire = int(row.expire)
+        changed = True
+    return changed
+
+
 def _repair_existing_from_dump(
     db: Session,
     dbuser,
@@ -150,7 +172,7 @@ def _repair_existing_from_dump(
     inbound_cache: dict,
     alias_endpoint_id: Optional[int],
 ) -> tuple[bool, bool]:
-    """Restore original UUID/password + subId on an already-imported user."""
+    """Restore original UUID/password + subId + traffic on an already-imported user."""
     repaired = False
     proxies_patch: Dict[str, Any] = {}
     for proto, settings in (row.proxies or {}).items():
@@ -170,6 +192,8 @@ def _repair_existing_from_dump(
             repaired = True
         except Exception:
             repaired = False
+    if _apply_usage_and_quota(dbuser, row):
+        repaired = True
     aliased = _bind_sub_id_alias(
         db,
         user_id=dbuser.id,
@@ -516,6 +540,7 @@ def _import_rows(
                         commit=False,
                         inbound_cache=inbound_cache,
                     )
+                _apply_usage_and_quota(dbuser, row)
                 if row.sub_id and alias_endpoint_id:
                     _bind_sub_id_alias(
                         db,

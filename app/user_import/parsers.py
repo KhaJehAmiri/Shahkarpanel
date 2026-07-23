@@ -117,6 +117,20 @@ def _sanitize_username(raw: str, source: str) -> str:
     return s if s and USERNAME_RE.match(s) else ""
 
 
+def _parse_used_bytes(u: Dict[str, Any]) -> int:
+    """3x-ui stores upload/download counters in bytes (``up`` + ``down``)."""
+    try:
+        used = int(u.get("used_traffic") or u.get("used") or 0)
+    except (TypeError, ValueError):
+        used = 0
+    try:
+        up = int(u.get("up") or 0)
+        down = int(u.get("down") or 0)
+    except (TypeError, ValueError):
+        up = down = 0
+    return max(used, up + down)
+
+
 def _normalize_user(u: Dict[str, Any], source: str = "marzban") -> Dict[str, Any]:
     raw_name = (u.get("username") or u.get("email") or u.get("name") or u.get("id") or "").strip()
     if isinstance(raw_name, (int, float)):
@@ -139,6 +153,7 @@ def _normalize_user(u: Dict[str, Any], source: str = "marzban") -> Dict[str, Any
         "data_limit": _parse_limit_bytes(
             u.get("data_limit") or u.get("totalGB") or u.get("total_gb") or u.get("total") or u.get("volume")
         ),
+        "used_traffic": _parse_used_bytes(u),
         "expire": _parse_expire(
             u.get("expire") or u.get("expiryTime") or u.get("expiry") or u.get("expired_date")
         ),
@@ -327,6 +342,7 @@ def _merge_rows_by_username(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 },
                 "sub_id": row.get("sub_id"),
                 "email": row.get("email"),
+                "used_traffic": int(row.get("used_traffic") or 0),
             }
             order.append(name)
             continue
@@ -335,6 +351,14 @@ def _merge_rows_by_username(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             dest["sub_id"] = row.get("sub_id")
         if not dest.get("email") and row.get("email"):
             dest["email"] = row.get("email")
+        # Shared 3x-ui meter is stamped on every inbound copy — take MAX, not SUM.
+        try:
+            dest["used_traffic"] = max(
+                int(dest.get("used_traffic") or 0),
+                int(row.get("used_traffic") or 0),
+            )
+        except (TypeError, ValueError):
+            pass
         for proto, settings in (row.get("proxies") or {}).items():
             if not isinstance(settings, dict):
                 continue

@@ -766,9 +766,10 @@ class BulkNativeProtocolRequest(BaseModel):
     usernames: List[str] = Field(default_factory=list)
     status: Optional[UserStatus] = None
     filters: Optional[UserListFilters] = None
-    # When true (default), block until kernel/sing-box sync (+ Finalmask flush)
-    # finishes so ``applied`` is not confused with “peers are live.”
-    wait_sync: bool = True
+    # Default False: return as soon as DB commits; WG/Finalmask sync runs in
+    # the background (same pattern as bulk create). Set True only when the
+    # caller must know nodes accepted the peer set before responding.
+    wait_sync: bool = False
 
 
 class BulkNativeProtocolPreview(BaseModel):
@@ -1049,6 +1050,23 @@ def apply_bulk_native_protocol(
             from app import xray as xray_mod
 
             xray_mod.operations._sync_wireguard()
+            try:
+                from app.wireguard.finalmask_reload import schedule_finalmask_xray_reload
+
+                schedule_finalmask_xray_reload(bulk=True)
+            except Exception:
+                pass
+            try:
+                from app.singbox.operations import sync_user_change as singbox_sync
+
+                if body.protocol in (
+                    BulkNativeProtocol.hysteria2,
+                    BulkNativeProtocol.tuic,
+                    BulkNativeProtocol.anytls,
+                ):
+                    singbox_sync()
+            except Exception:
+                pass
             sync_meta = pending_sync_meta()
 
     duration_ms = int((time.perf_counter() - started) * 1000)
@@ -1246,6 +1264,7 @@ def apply_bulk_reset_usage(
     applied = skipped = failed = 0
     errors: List[str] = []
     touched_active = False
+    reset_ids: List[int] = []
 
     for user in users:
         try:
@@ -1261,7 +1280,7 @@ def apply_bulk_reset_usage(
             user.used_traffic_up = 0
             user.used_traffic_down = 0
             user.overage_traffic = 0
-            user.node_usages.clear()
+            reset_ids.append(int(user.id))
             if user.status not in (UserStatus.expired, UserStatus.disabled):
                 user.status = UserStatus.active
             if user.next_plan:
@@ -1279,6 +1298,14 @@ def apply_bulk_reset_usage(
                 break
 
     if applied:
+        if reset_ids:
+            from app.db.models import NodeUserUsage
+
+            # Bulk clear per-node counters — ORM ``node_usages.clear()`` was
+            # loading every row into the session for each user.
+            db.query(NodeUserUsage).filter(NodeUserUsage.user_id.in_(reset_ids)).delete(
+                synchronize_session=False
+            )
         db.commit()
         if touched_active:
             xray_mod.operations.schedule_core_sync()
@@ -1415,20 +1442,14 @@ def apply_bulk_delete(
     deleted = 0
 
     if count:
-        from app.db.models import User as DBUser
-
-        step = max(1, int(chunk_size or 200))
+        step = max(1, int(chunk_size or 500))
         for i in range(0, count, step):
             batch_ids = user_ids[i : i + step]
-            batch = (
-                db.query(DBUser).filter(DBUser.id.in_(batch_ids)).all()
-            )
-            if batch:
-                crud.remove_users(db, batch)
-                deleted += len(batch)
+            n = crud.remove_users_by_ids(db, batch_ids)
+            deleted += n
             if progress_cb:
                 try:
-                    progress_cb(len(batch_ids), len(batch))
+                    progress_cb(len(batch_ids), n)
                 except Exception:
                     pass
 

@@ -772,18 +772,17 @@ def _purge_user_dependents(db: Session, user_ids: List[int]) -> None:
 
     from app.db.models import ClientDevice, PaymentIntent
 
-    # Hard-delete pure per-user analytics / logs / orders.
+    # Hard-delete pure per-user analytics / logs / orders / membership rows.
     #
-    # ``SubscriptionTokenAlias`` is included on purpose: although the ORM
-    # relationship declares ``passive_deletes`` (+ the DB FK has ON DELETE
-    # CASCADE), deleting the rows explicitly here makes bulk delete correct
-    # even if the ORM cascade config isn't applied — e.g. a panel still
-    # running an older in-memory build after ``git pull`` but before a real
-    # process restart. Without this the delete raised NotNullViolation trying
-    # to set ``subscription_token_aliases.user_id = NULL`` and rolled back.
+    # ``SubscriptionTokenAlias`` / ``WgPeer`` already have ON DELETE CASCADE at
+    # the DB, but we still clear aliases explicitly so older in-memory builds
+    # (pre-restart) don't try to NULL the NOT NULL column.
     for model in (
         SubscriptionTokenAlias,
         NodeUserProtocolUsage,
+        NodeUserUsage,
+        NotificationReminder,
+        NextPlan,
         ClientProbe,
         ClientTelemetry,
         ClientDevice,
@@ -791,6 +790,21 @@ def _purge_user_dependents(db: Session, user_ids: List[int]) -> None:
         UserUsageResetLogs,
     ):
         db.query(model).filter(model.user_id.in_(user_ids)).delete(
+            synchronize_session=False
+        )
+
+    # Proxies have NO ACTION FK + M2M exclude rows — must go before users.
+    proxy_ids = [
+        int(pid)
+        for (pid,) in db.query(Proxy.id).filter(Proxy.user_id.in_(user_ids)).all()
+    ]
+    if proxy_ids:
+        db.execute(
+            excluded_inbounds_association.delete().where(
+                excluded_inbounds_association.c.proxy_id.in_(proxy_ids)
+            )
+        )
+        db.query(Proxy).filter(Proxy.id.in_(proxy_ids)).delete(
             synchronize_session=False
         )
 
@@ -816,25 +830,62 @@ def remove_user(db: Session, dbuser: User) -> User:
     Returns:
         User: The removed user object.
     """
-    _purge_user_dependents(db, [dbuser.id])
-    db.delete(dbuser)
-    db.commit()
+    uid = int(dbuser.id)
+    remove_users_by_ids(db, [uid])
     return dbuser
+
+
+def remove_users_by_ids(db: Session, user_ids: List[int]) -> int:
+    """Bulk-delete users by primary key (one purge + one DELETE)."""
+    ids = [int(i) for i in user_ids if i is not None]
+    if not ids:
+        return 0
+    _purge_user_dependents(db, ids)
+    deleted = (
+        db.query(User)
+        .filter(User.id.in_(ids))
+        .delete(synchronize_session=False)
+    )
+    db.commit()
+    return int(deleted or 0)
 
 
 def remove_users(db: Session, dbusers: List[User]):
     """
     Removes multiple users from the database.
 
-    Args:
-        db (Session): Database session.
-        dbusers (List[User]): List of user objects to be removed.
+    Uses bulk SQL deletes instead of per-row ORM ``db.delete`` (which was
+    loading cascades and taking ~40ms+/user on flush).
     """
-    _purge_user_dependents(db, [u.id for u in dbusers])
-    for dbuser in dbusers:
-        db.delete(dbuser)
-    db.commit()
-    return
+    return remove_users_by_ids(
+        db, [int(u.id) for u in dbusers if getattr(u, "id", None) is not None]
+    )
+
+
+def ensure_bulk_delete_indexes(db: Session) -> None:
+    """Indexes required for fast FK checks during bulk user/proxy deletes.
+
+    Without ``exclude_inbounds_association(proxy_id)`` and
+    ``node_user_usages(user_id)``, PostgreSQL RI triggers seq-scan hundreds of
+    thousands of rows per deleted proxy/user (~500ms+ for 50 users).
+    """
+    import logging
+
+    from sqlalchemy import text
+
+    log = logging.getLogger("nexuspanel")
+    for stmt in (
+        "CREATE INDEX IF NOT EXISTS ix_exclude_inbounds_association_proxy_id "
+        "ON exclude_inbounds_association (proxy_id)",
+        "CREATE INDEX IF NOT EXISTS ix_node_user_usages_user_id "
+        "ON node_user_usages (user_id)",
+    ):
+        try:
+            db.execute(text(stmt))
+            db.commit()
+        except Exception:
+            db.rollback()
+            log.exception("ensure_bulk_delete_indexes failed: %s", stmt)
 
 
 def update_user(

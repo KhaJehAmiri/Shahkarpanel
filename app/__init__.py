@@ -153,6 +153,12 @@ def on_startup():
                 if n:
                     logger.info("Backfilled tenant_id for %s legacy reseller/support admin(s)", n)
                 try:
+                    from app.db import crud as _crud
+
+                    _crud.ensure_bulk_delete_indexes(db)
+                except Exception:
+                    logger.exception("Failed to ensure bulk-delete indexes")
+                try:
                     from app.subscription.format_companions import ensure_all_format_companions
                     c = ensure_all_format_companions(db)
                     if c:

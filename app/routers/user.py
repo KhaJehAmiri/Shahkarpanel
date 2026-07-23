@@ -621,8 +621,8 @@ def bulk_delete_users(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     count = len(targets)
-    # Keep tiny selected deletions snappy (confirm dialog → immediate toast).
-    sync_ok = body.scope.value == "selected" and count <= 25
+    # Bulk SQL delete is fast now — keep larger selected batches synchronous.
+    sync_ok = body.scope.value == "selected" and count <= 500
     if sync_ok or count == 0:
         try:
             return apply_bulk_delete(db, body, admin=admin)

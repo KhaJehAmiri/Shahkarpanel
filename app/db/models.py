@@ -225,7 +225,7 @@ class User(Base):
 excluded_inbounds_association = Table(
     "exclude_inbounds_association",
     Base.metadata,
-    Column("proxy_id", ForeignKey("proxies.id")),
+    Column("proxy_id", ForeignKey("proxies.id"), index=True),
     Column("inbound_tag", ForeignKey("inbounds.tag")),
 )
 
@@ -650,7 +650,7 @@ class NodeUserUsage(Base):
 
     id = Column(Integer, primary_key=True)
     created_at = Column(DateTime, unique=False, nullable=False)  # one hour per record
-    user_id = Column(Integer, ForeignKey("users.id"))
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
     user = relationship("User", back_populates="node_usages")
     node_id = Column(Integer, ForeignKey("nodes.id"))
     node = relationship("Node", back_populates="user_usages")

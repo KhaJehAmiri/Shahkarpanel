@@ -227,7 +227,7 @@ export const BulkAssignModal: FC<Props> = ({
           ...scopeBody,
           protocol: nativeProto,
           action: nativeAction,
-          wait_sync: true,
+          wait_sync: false,
         });
         if (r.sync_pending) {
           toast.push(

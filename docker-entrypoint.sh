@@ -48,6 +48,24 @@ fix_runtime_permissions() {
     chown nexuspanel:nexuspanel /code/.env 2>/dev/null || true
     chmod 600 /code/.env 2>/dev/null || true
   fi
+  # In-panel Xray upgrade/downgrade runs as nexuspanel (not root).
+  # /usr/local/bin is not writable for that user, so keep a private copy under
+  # /var/lib/nexuspanel/bin (see app/utils/xray_upgrade.py fallback paths).
+  mkdir -p /var/lib/nexuspanel/bin /var/lib/nexuspanel/share/xray
+  if [ -x /usr/local/bin/xray ] && [ ! -x /var/lib/nexuspanel/bin/xray ]; then
+    cp -f /usr/local/bin/xray /var/lib/nexuspanel/bin/xray 2>/dev/null || true
+    chmod 755 /var/lib/nexuspanel/bin/xray 2>/dev/null || true
+  fi
+  if [ -d /usr/local/share/xray ]; then
+    for dat in /usr/local/share/xray/*.dat; do
+      [ -f "$dat" ] || continue
+      base="$(basename "$dat")"
+      if [ ! -f "/var/lib/nexuspanel/share/xray/$base" ]; then
+        cp -f "$dat" "/var/lib/nexuspanel/share/xray/$base" 2>/dev/null || true
+      fi
+    done
+  fi
+  chown -R nexuspanel:nexuspanel /var/lib/nexuspanel/bin /var/lib/nexuspanel/share/xray 2>/dev/null || true
 }
 
 # Skip full ``alembic upgrade`` when already at head — cold upgrade takes ~6s+

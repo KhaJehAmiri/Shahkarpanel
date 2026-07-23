@@ -740,6 +740,9 @@ ALLOWED_ORIGINS=http://${public_ip}:${PANEL_PORT}
 DASHBOARD_PATH=${dash_path}
 
 XRAY_JSON=/var/lib/nexuspanel/xray_config.json
+# Private paths so the non-root panel user can upgrade/downgrade Xray in-dashboard.
+XRAY_EXECUTABLE_PATH=/var/lib/nexuspanel/bin/xray
+XRAY_ASSETS_PATH=/var/lib/nexuspanel/share/xray
 
 # Panel defaults (set by web installer).
 PANEL_DEFAULT_LANG=${PANEL_DEFAULT_LANG:-en}

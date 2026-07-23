@@ -59,20 +59,38 @@ def _stop_running_xray(executable_path: str) -> None:
 
 
 def _atomic_replace_file(src: str, dest: str, *, mode: int = 0o755) -> None:
-    """Replace ``dest`` atomically so a live process never blocks the write."""
+    """Replace ``dest`` safely so a live process never blocks the write.
+
+    Prefers same-directory atomic rename. When the panel runs as a non-root
+    user (Docker ``runuser -u nexuspanel``), ``/usr/local/bin`` is not
+    writable — stage in a temp dir and overwrite ``dest`` in place instead
+    (requires the binary/assets to be owned by the panel user; see
+    ``fix_runtime_permissions`` in docker-entrypoint.sh).
+    """
     dest_dir = os.path.dirname(os.path.abspath(dest)) or "."
-    fd, tmp_path = tempfile.mkstemp(prefix=".xray-install-", dir=dest_dir)
+    os.makedirs(dest_dir, exist_ok=True)
+    staging_dir = dest_dir if os.access(dest_dir, os.W_OK) else None
+    fd, tmp_path = tempfile.mkstemp(prefix=".xray-install-", dir=staging_dir)
     try:
         with os.fdopen(fd, "wb") as out_fh, open(src, "rb") as in_fh:
             shutil.copyfileobj(in_fh, out_fh)
         os.chmod(tmp_path, mode)
-        os.replace(tmp_path, dest)
-    except Exception:
         try:
-            os.unlink(tmp_path)
+            os.replace(tmp_path, dest)
+            tmp_path = ""  # owned by dest now
+            return
         except OSError:
-            pass
+            # Cross-device rename or no write on dest_dir — overwrite in place.
+            shutil.copyfile(tmp_path, dest)
+            os.chmod(dest, mode)
+    except Exception:
         raise
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
 
 def _linux_arch() -> str:
@@ -86,6 +104,50 @@ def _linux_arch() -> str:
     return "64"
 
 
+def _ensure_writable_install_paths(
+    executable_path: str, assets_path: str
+) -> tuple[str, str]:
+    """Fall back to ``/var/lib/nexuspanel/...`` when system paths are root-only.
+
+    Directory write is required (not just file write): replacing a running
+    binary needs unlink/rename in the destination directory. The panel process
+    runs as ``nexuspanel``, so ``/usr/local/bin`` is typically not usable.
+    """
+    exe_dir = os.path.dirname(os.path.abspath(executable_path)) or "/usr/local/bin"
+    if not os.access(exe_dir, os.W_OK):
+        fallback_exe = "/var/lib/nexuspanel/bin/xray"
+        os.makedirs(os.path.dirname(fallback_exe), exist_ok=True)
+        if os.path.isfile(executable_path) and not os.path.isfile(fallback_exe):
+            try:
+                shutil.copy2(executable_path, fallback_exe)
+                os.chmod(fallback_exe, 0o755)
+            except OSError:
+                pass
+        executable_path = fallback_exe
+
+    assets_dir = assets_path if os.path.isdir(assets_path) else (
+        os.path.dirname(os.path.abspath(assets_path)) or "/"
+    )
+    if not os.access(assets_dir, os.W_OK):
+        fallback_assets = "/var/lib/nexuspanel/share/xray"
+        os.makedirs(fallback_assets, exist_ok=True)
+        if os.path.isdir(assets_path):
+            for name in os.listdir(assets_path):
+                if not name.endswith(".dat"):
+                    continue
+                src = os.path.join(assets_path, name)
+                dest = os.path.join(fallback_assets, name)
+                if os.path.isfile(src) and not os.path.isfile(dest):
+                    try:
+                        shutil.copy2(src, dest)
+                    except OSError:
+                        pass
+        assets_path = fallback_assets
+    else:
+        os.makedirs(assets_path, exist_ok=True)
+    return executable_path, assets_path
+
+
 def install_xray_release(
     tag: str,
     executable_path: str = DEFAULT_EXECUTABLE,
@@ -96,8 +158,24 @@ def install_xray_release(
     tag = (tag or "").strip()
     if not tag:
         raise ValueError("tag required")
+    try:
+        from config import XRAY_ASSETS_PATH, XRAY_EXECUTABLE_PATH
+
+        if executable_path == DEFAULT_EXECUTABLE:
+            executable_path = XRAY_EXECUTABLE_PATH
+        if assets_path == DEFAULT_ASSETS:
+            assets_path = XRAY_ASSETS_PATH
+    except Exception:
+        pass
+    requested_exe = executable_path
+    requested_assets = assets_path
+    executable_path, assets_path = _ensure_writable_install_paths(
+        executable_path, assets_path
+    )
     if stop_running:
         _stop_running_xray(executable_path)
+        if executable_path != requested_exe:
+            _stop_running_xray(requested_exe)
     url = f"https://github.com/XTLS/Xray-core/releases/download/{tag}/Xray-linux-{_linux_arch()}.zip"
     os.makedirs(os.path.dirname(executable_path) or "/usr/local/bin", exist_ok=True)
     os.makedirs(assets_path, exist_ok=True)
@@ -115,6 +193,17 @@ def install_xray_release(
             if name.endswith(".dat"):
                 dest_dat = os.path.join(assets_path, name)
                 _atomic_replace_file(os.path.join(tmp, name), dest_dat, mode=0o644)
+    # If we had to install outside the configured path, point the live core at it
+    # so the subsequent restart uses the binary we just wrote.
+    if executable_path != requested_exe or assets_path != requested_assets:
+        try:
+            from app import xray as xray_pkg
+
+            xray_pkg.core.executable_path = executable_path
+            xray_pkg.core.assets_path = assets_path
+            xray_pkg.core._env["XRAY_LOCATION_ASSET"] = assets_path
+        except Exception:
+            pass
     out = subprocess.check_output(
         [executable_path, "version"],
         stderr=subprocess.STDOUT,

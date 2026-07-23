@@ -740,8 +740,11 @@ def modify_user(
         # when speed limits change (otherwise Finalmask keeps disabled peers).
         if speed_changed or status_changed:
             from app.singbox.operations import sync_user_change
+            from app.wireguard.instant_sync import schedule_provision_and_sync_wireguard_user
             from app.wireguard.operations import sync_user_change as wg_sync_user_change
             bg.add_task(sync_user_change)
+            # Instant WG IP + Finalmask push (status enable / recreate path).
+            bg.add_task(schedule_provision_and_sync_wireguard_user, dbuser.id)
             bg.add_task(wg_sync_user_change)
     else:
         xray.operations.remove_user_immediate(dbuser)

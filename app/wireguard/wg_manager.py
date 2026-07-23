@@ -268,12 +268,58 @@ def _find_interface_with_capacity(db: Session, node_id: int) -> Optional[WgInter
     )
 
 
+def _widen_fleet_plain_subnet(db: Session, iface: WgInterface, need: int) -> str:
+    """Widen ``iface.subnet`` (and matching fleet cfg/ifaces) until ``need`` peers fit.
+
+    Finalmask requires fleet-wide unique ``allowedIPs``. All slot-0 interfaces
+    historically share one ``10.10.0.0/24``, so per-iface ``peer_count < max_peers``
+    still leaves the *shared* pool empty once ~253 peers exist. Widen the shared
+    primary (e.g. ``/24`` → ``/16``) and keep sibling interfaces / node cfg in sync.
+    """
+    from app.wireguard.capacity import usable_peer_slots, widen_subnet
+
+    current = iface.subnet
+    if not current or usable_peer_slots(current) >= need:
+        return current
+
+    widened = widen_subnet(current, min_usable=need)
+    if widened == current:
+        return current
+
+    for row in db.query(WgInterface).filter(WgInterface.subnet == current).all():
+        row.subnet = widened
+        row.max_peers = _max_peers_for_subnet(widened)
+
+    for node in db.query(Node).all():
+        cfg = node.wireguard
+        if cfg is not None and cfg.subnet == current:
+            cfg.subnet = widened
+
+    db.flush()
+    logger.info(
+        "Autoscale widened shared plain subnet %s → %s (need=%s peers)",
+        current,
+        widened,
+        need,
+    )
+    return widened
+
+
 def _allocate_ip(db: Session, iface: WgInterface) -> str:
     # Finalmask bakes every peer onto every Iran relay — allowedIPs must be
     # unique fleet-wide, not merely per interface (3x-ui has one inbound).
     used = [row.address for row in db.query(WgPeer.address).all() if row.address]
+    need = len(used) + 1
+    _widen_fleet_plain_subnet(db, iface, need)
+    db.refresh(iface)
     allocator = WireGuardPeerIPAllocator(iface.subnet, used=used)
     address = allocator.allocate()
+    if not address:
+        # Last resort: force another widen step past current usable count.
+        _widen_fleet_plain_subnet(db, iface, need + 256)
+        db.refresh(iface)
+        allocator = WireGuardPeerIPAllocator(iface.subnet, used=used)
+        address = allocator.allocate()
     if not address:
         raise WireGuardAutoScaleError(f"subnet {iface.subnet} exhausted on {iface.name}")
     return address
@@ -497,11 +543,15 @@ def create_peer(
     user_id: int,
     *,
     node_id: Optional[int] = None,
+    sync: bool = True,
 ) -> dict:
     """Main entry point: assign or return a plain WG peer for ``user_id``.
 
     Returns ``{"conf": str, "interface": str, "address": str, "endpoint": str,
     "node_id": int}``. Idempotent — existing peers are returned unchanged.
+
+    ``sync=False`` skips the debounced Finalmask/kernel wake — use when the
+    caller will flush Finalmask immediately (instant user-create path).
     """
     if not autoscale_enabled():
         raise WireGuardAutoScaleError("wg_autoscale feature flag is disabled")
@@ -535,12 +585,13 @@ def create_peer(
                     user_id,
                     exc,
                 )
-        try:
-            from app.wireguard.operations import sync_user_change
+        if sync:
+            try:
+                from app.wireguard.operations import sync_user_change
 
-            sync_user_change()
-        except Exception:
-            pass
+                sync_user_change()
+            except Exception:
+                pass
     else:
         client = _node_client(dbnode)
         if client is None or not hasattr(client, "autoscale_hot_add_peer"):
@@ -553,6 +604,13 @@ def create_peer(
                 user_id,
                 dbnode.id,
             )
+            if sync:
+                try:
+                    from app.wireguard.operations import sync_user_change
+
+                    sync_user_change()
+                except Exception:
+                    pass
         else:
             user = db.query(User).filter(User.id == user_id).first()
             active = bool(user and user.status in SERVED_STATUSES)
@@ -702,14 +760,47 @@ def ensure_all_peers(db: Session) -> int:
     to mark bulk native assign as ``sync_ok=False`` while leaving thousands of
     users without tunnel IPs (Finalmask empty for new members).
     """
+    from app.wireguard.capacity import guard_fleet_subnet_capacity
     from app.wireguard.operations import _all_wg_proxies
 
-    created = 0
-    failed = 0
+    proxies = _all_wg_proxies(db)
     existing_ids = {
         uid for (uid,) in db.query(WgPeer.user_id).all()
     }
-    for proxy in _all_wg_proxies(db):
+    missing = sum(1 for p in proxies if p.user_id not in existing_ids)
+    # Pre-widen before the loop so the first allocate does not thrash / fail
+    # while peer_count still looks "under capacity" on shared /24 pools.
+    try:
+        guard_fleet_subnet_capacity(
+            db, active_peers=len(existing_ids) + missing,
+        )
+        # Keep slot-0 autoscale ifaces aligned with widened node cfg.subnet.
+        for node in db.query(Node).all():
+            cfg = node.wireguard
+            if cfg is None or not cfg.subnet:
+                continue
+            for iface in (
+                db.query(WgInterface)
+                .filter(WgInterface.node_id == node.id, WgInterface.slot_index == 0)
+                .all()
+            ):
+                if iface.subnet != cfg.subnet:
+                    old = iface.subnet
+                    iface.subnet = cfg.subnet
+                    iface.max_peers = _max_peers_for_subnet(cfg.subnet)
+                    logger.info(
+                        "Synced iface %s subnet %s → %s from node cfg",
+                        iface.name,
+                        old,
+                        cfg.subnet,
+                    )
+        db.flush()
+    except Exception:
+        logger.exception("ensure_all_peers capacity pre-widen failed")
+
+    created = 0
+    failed = 0
+    for proxy in proxies:
         if proxy.user_id in existing_ids:
             continue
         try:

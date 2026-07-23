@@ -317,6 +317,53 @@ export interface UpdateJobInfo {
   steps: UpdateStepInfo[];
 }
 
+export interface AgentUpdateNodeInfo {
+  id: number;
+  name: string;
+  host: string;
+  eligible: boolean;
+  reason?: string | null;
+  core_kind?: string | null;
+  region?: string | null;
+  status?: string | null;
+}
+
+export interface AgentUpdateCheck {
+  package_url: string;
+  package_reachable: boolean;
+  package_etag?: string | null;
+  package_last_modified?: string | null;
+  package_error?: string | null;
+  mirror_url?: string | null;
+  mirror_reachable: boolean;
+  agent_image: string;
+  nodes_total: number;
+  nodes_eligible: number;
+  nodes_skipped: number;
+  update_available: boolean;
+  nodes: AgentUpdateNodeInfo[];
+  ssh_available: boolean;
+  checked_at: number;
+}
+
+export interface AgentNodeJobInfo {
+  node_id: number;
+  node_name: string;
+  host: string;
+  status: string;
+  message?: string | null;
+  error?: string | null;
+}
+
+export interface AgentUpdateJobInfo {
+  id: string;
+  status: string;
+  finished: boolean;
+  message?: string | null;
+  error_message?: string | null;
+  nodes: AgentNodeJobInfo[];
+}
+
 export interface ImportPreviewRow {
   username: string;
   data_limit: number;

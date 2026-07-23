@@ -486,6 +486,55 @@ def _sync_finalmask_node(node_id: int, *, generation: int, cursor: int) -> None:
         return
 
     if not ok:
+        # Permanent capability gap: agent has no hot-replace RPC. One full
+        # restart converges every shard; spinning on cursor=0 never serves
+        # newly allocated peers (reseller WG "configs exist but offline").
+        agent_missing_hot = False
+        try:
+            from app import xray as xray_pkg
+
+            node_obj = xray_pkg.nodes.get(int(node_id))
+            remote = getattr(node_obj, "remote", None) if node_obj else None
+            agent_missing_hot = bool(
+                remote is not None
+                and not hasattr(remote, "xray_hot_replace_inbounds_json")
+            )
+        except Exception:
+            agent_missing_hot = False
+
+        if agent_missing_hot:
+            logger.warning(
+                "Finalmask node=%s: agent lacks hot-replace; full Xray restart",
+                node_id,
+            )
+            try:
+                from app.xray.operations import restart_node
+
+                restart_node(int(node_id))
+            except Exception as exc:
+                delay = _note_node_failure(node_id)
+                with GetDB() as db:
+                    cur = db.get(NodeSyncCursor, node_id)
+                    if cur is not None:
+                        cur.status = "paused"
+                        cur.error = f"restart fallback failed: {exc}"[:500]
+                        db.commit()
+                return
+            _note_node_success(node_id)
+            with GetDB() as db:
+                cur = db.get(NodeSyncCursor, node_id)
+                if cur is not None:
+                    max_slot = max((int(s) for s in slots), default=-1)
+                    cur.cursor_user_id = max_slot + 1
+                    cur.peers_done = total_peers
+                    cur.peers_total = total_peers
+                    cur.desired_hash = desired
+                    cur.applied_hash = desired
+                    cur.status = "ok"
+                    cur.error = None
+                    db.commit()
+            return
+
         delay = _note_node_failure(node_id)
         with GetDB() as db:
             cur = db.get(NodeSyncCursor, node_id)

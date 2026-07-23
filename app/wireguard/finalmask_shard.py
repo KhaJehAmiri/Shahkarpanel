@@ -42,11 +42,11 @@ def _env_int(name: str, default: int) -> int:
 # (fast bind, tiny config) yet large enough that most nodes need only a handful
 # of shards. Mirrors the kernel autoscale sizing philosophy (200/iface).
 # Override via FINALMASK_MAX_PEERS_PER_INBOUND for denser packing.
-FINALMASK_MAX_PEERS_PER_INBOUND = _env_int("FINALMASK_MAX_PEERS_PER_INBOUND", 250)
+# Default 400×256 ≈ 102k peers/node (100k-ready out of the box).
+FINALMASK_MAX_PEERS_PER_INBOUND = _env_int("FINALMASK_MAX_PEERS_PER_INBOUND", 400)
 
 # UDP ports to pre-open on the node firewall for Finalmask, counted from the
-# base ``xray_wg_listen_port``. Default 256 shards * 250 = 64k peers/node —
-# enough headroom for large fleets; raise further via env if needed.
+# base ``xray_wg_listen_port``. Default 256 shards * 400 = 102k peers/node.
 FINALMASK_SHARD_PORT_RESERVE = _env_int("FINALMASK_SHARD_PORT_RESERVE", 256)
 
 _SETTINGS_SLOT_KEY = "finalmask_slot"

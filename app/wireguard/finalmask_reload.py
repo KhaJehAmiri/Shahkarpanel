@@ -25,12 +25,41 @@ import logging
 import threading
 from typing import Dict, List, Optional, Set, Tuple
 
+_agent_hot_ok: Dict[int, bool] = {}
+
+
+def _node_supports_hot_replace(node_id: int) -> bool:
+    """Cache whether the connected agent exposes Finalmask hot-replace RPC."""
+    nid = int(node_id)
+    cached = _agent_hot_ok.get(nid)
+    if cached is not None:
+        return cached
+    try:
+        from app import xray as xray_pkg
+
+        node_obj = xray_pkg.nodes.get(nid)
+        if node_obj is None or not getattr(node_obj, "connected", False):
+            return True  # unknown — try hot first
+        conn = getattr(node_obj, "connection", None)
+        root = getattr(conn, "root", None) if conn is not None else None
+        # ``dir(root)`` lists exposed RPyC methods; bare hasattr lies on netrefs.
+        ok = bool(root is not None and "xray_hot_replace_inbounds_json" in dir(root))
+        _agent_hot_ok[nid] = ok
+        return ok
+    except Exception:
+        return True
+
+
+def _mark_agent_hot_unsupported(node_id: int) -> None:
+    _agent_hot_ok[int(node_id)] = False
+
+
 # Use uvicorn's error logger so Finalmask reload lines show in panel docker logs
 # (the dedicated nexus-wg logger is often unconfigured and silent).
 logger = logging.getLogger("uvicorn.error")
 
-DEFAULT_DEBOUNCE_SEC = 5.0
-BULK_DEBOUNCE_SEC = 15.0
+DEFAULT_DEBOUNCE_SEC = 0.25
+BULK_DEBOUNCE_SEC = 2.0
 # Heuristic: if this many shard fingerprints differ at once, prefer the longer
 # coalesce window so a bulk enable lands as one hot-replace per touched shard.
 BULK_DIFF_THRESHOLD = 3
@@ -345,6 +374,10 @@ def hot_replace_finalmask_shards(
     result, err = _do_replace(node_object)
     if err is not None:
         msg = str(err).lower()
+        if "no xray_hot_replace_inbounds_json" in msg or (
+            isinstance(err, AttributeError) and "hot_replace" in msg
+        ):
+            _mark_agent_hot_unsupported(int(node_id))
         # Flaky direct RPyC mid-write — retry once over SSH control tunnel.
         # (Missing agent methods are not fixed by a tunnel; those need a rebuild.)
         stream_dead = (
@@ -426,6 +459,10 @@ def hot_replace_finalmask_shards(
     # Persist per-slot fingerprints as each shard lands so the cache grows
     # with the live peer set instead of staying stuck at a cold-boot snapshot.
     try:
+        _agent_hot_ok[int(node_id)] = True
+    except Exception:
+        pass
+    try:
         from app.wireguard.finalmask_shard import group_peers_by_slot as _gps
 
         slot_fps = _shard_fingerprints(peers)
@@ -437,6 +474,11 @@ def hot_replace_finalmask_shards(
         _save_fp_cache()
     except Exception:
         logger.debug("Finalmask per-slot fingerprint update failed", exc_info=True)
+    logger.info(
+        "Finalmask hot replace ok on node %s slots=%s",
+        node_id,
+        sorted(int(s) for s in changed_slots),
+    )
     return True
 
 
@@ -592,6 +634,27 @@ def _run_finalmask_xray_reload() -> None:
                     continue
 
                 if mode == "hot":
+                    if not _node_supports_hot_replace(int(node_id)):
+                        logger.info(
+                            "Finalmask node %s: agent has no hot-replace — full restart",
+                            node_id,
+                        )
+                        try:
+                            from app.wireguard.finalmask_usage import (
+                                flush_finalmask_node_stats,
+                            )
+
+                            flush_finalmask_node_stats(int(node_id))
+                        except Exception:
+                            pass
+                        restart_node(node_id)
+                        with GetDB() as db:
+                            from app.db import crud
+
+                            live = crud.get_node_by_id(db, node_id)
+                            if live is not None:
+                                _commit_fingerprints(node_id, db, live, peers)
+                        continue
                     try:
                         from app.wireguard.sync_engine import mark_finalmask_rpc_busy
 
@@ -605,9 +668,43 @@ def _run_finalmask_xray_reload() -> None:
                         except Exception:
                             pass
                     if not ok:
-                        # Do not escalate dirty-slot failures into full
-                        # restart_node — that OOMs relays and flaps RPyC.
-                        # The resumable sync worker will retry the shard.
+                        # Old agents lack ``xray_hot_replace_inbounds_json``.
+                        # Retrying hot-replace forever leaves new peers offline.
+                        agent_missing_hot = False
+                        try:
+                            from app import xray as xray_pkg
+
+                            node_obj = xray_pkg.nodes.get(int(node_id))
+                            remote = getattr(node_obj, "remote", None) if node_obj else None
+                            agent_missing_hot = bool(
+                                remote is not None
+                                and not hasattr(remote, "xray_hot_replace_inbounds_json")
+                            )
+                        except Exception:
+                            agent_missing_hot = False
+                        if agent_missing_hot:
+                            _mark_agent_hot_unsupported(int(node_id))
+                            logger.warning(
+                                "Finalmask hot replace unsupported on node %s; "
+                                "falling back to full Xray restart",
+                                node_id,
+                            )
+                            try:
+                                from app.wireguard.finalmask_usage import (
+                                    flush_finalmask_node_stats,
+                                )
+
+                                flush_finalmask_node_stats(int(node_id))
+                            except Exception:
+                                pass
+                            restart_node(node_id)
+                            with GetDB() as db:
+                                from app.db import crud
+
+                                live = crud.get_node_by_id(db, node_id)
+                                if live is not None:
+                                    _commit_fingerprints(node_id, db, live, peers)
+                            continue
                         logger.warning(
                             "Finalmask hot replace failed on node %s; "
                             "deferring to resumable sync (no restart)",

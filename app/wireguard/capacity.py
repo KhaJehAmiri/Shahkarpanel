@@ -271,9 +271,14 @@ def guard_fleet_subnet_capacity(db, *, active_peers: int) -> None:
 
     Prevents the half-synced state seen when nodes stay on ``/24`` (~253 hosts)
     while the panel tries to push tens of thousands of peers.
+
+    Plain pool is also required for Finalmask (``xray_wg_enabled``) even when
+    kernel ``plain_enabled`` is off — subscription / allowedIPs still use
+    ``proxy.settings["address"]``.
     """
     from app.db import crud
     from app.wireguard.sync import amneziawg_enabled, plain_wg_enabled
+    from app.wireguard.xray_native import xray_native_wg_enabled
 
     need = max(0, int(active_peers or 0)) + 64  # headroom
     if need <= 0:
@@ -283,7 +288,10 @@ def guard_fleet_subnet_capacity(db, *, active_peers: int) -> None:
         if cfg is None:
             continue
         try:
-            if plain_wg_enabled(cfg) and cfg.subnet:
+            wants_plain_pool = bool(cfg.subnet) and (
+                plain_wg_enabled(cfg) or xray_native_wg_enabled(cfg)
+            )
+            if wants_plain_pool:
                 ensure_cfg_subnet_capacity(
                     db, cfg, settings_key="address", needed_peers=need
                 )

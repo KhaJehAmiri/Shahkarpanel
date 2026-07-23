@@ -198,14 +198,20 @@ def _run_job(
         with _lock:
             job.progress = 28
             job.step = "image"
-            job.message = "Node will download agent image from GitHub…"
+            job.message = (
+                "Refreshing agent image (force re-download)…"
+                if force_image
+                else "Node will download agent image from GitHub…"
+            )
         _set_node_provision(job.node_id, status="provisioning", message=job.message)
 
-        # Heavy image comes from GitHub (then Iran mirror) — not SSH from the panel.
-        _ = (force_image, use_iran_mirror)
+        # Heavy image comes from GitHub (then Iran mirror). When force_image is
+        # set and the remote fetch fails, fall back to SSH upload from the panel.
+        _ = use_iran_mirror  # mirror URL is already baked into ``command``
         logger.info(
-            "Skipping SSH agent-image upload for node %s (GitHub package URL)",
+            "Agent image for node %s via GitHub package URL (force=%s)",
             job.node_id,
+            force_image,
         )
 
         with _lock:
@@ -213,9 +219,38 @@ def _run_job(
             job.step = "agent"
             job.message = "Starting node agent…"
         _set_node_provision(job.node_id, status="provisioning", message=job.message)
-        provisioning.run_remote_command(
-            creds, command, timeout=ssh_timeout, exec_timeout=exec_timeout,
-        )
+        try:
+            provisioning.run_remote_command(
+                creds, command, timeout=ssh_timeout, exec_timeout=exec_timeout,
+            )
+        except provisioning.ProvisioningError as exc:
+            if not (
+                force_image or provisioning.is_agent_image_fetch_error(exc)
+            ):
+                raise
+            logger.warning(
+                "Remote agent image fetch failed for node %s (%s); uploading via SSH",
+                job.node_id,
+                exc,
+            )
+            with _lock:
+                job.step = "image"
+                job.message = "GitHub/mirror fetch failed — uploading image via SSH…"
+            _set_node_provision(job.node_id, status="provisioning", message=job.message)
+            provisioning.push_agent_image_via_ssh(
+                creds,
+                force=True,
+                timeout=ssh_timeout,
+                transfer_timeout=min(exec_timeout, 1800),
+            )
+            with _lock:
+                job.step = "agent"
+                job.message = "Restarting node agent with uploaded image…"
+            _set_node_provision(job.node_id, status="provisioning", message=job.message)
+            soft = provisioning.soft_restart_agent_command(command)
+            provisioning.run_remote_command(
+                creds, soft, timeout=ssh_timeout, exec_timeout=exec_timeout,
+            )
         stop.set()
         with _lock:
             job.progress = 92

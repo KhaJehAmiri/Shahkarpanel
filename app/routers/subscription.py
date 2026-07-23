@@ -423,7 +423,18 @@ def _attach_subscription_share_links(db: Session, dbuser, payload: dict) -> None
                     "xray_available": bool(xray_uri),
                 }
 
-            preferred = pick_node(wg_nodes)
+            # Prefer nodes that can actually export (Finalmask/plain). Latency
+            # pick alone may land on tun* relays with every mode disabled.
+            exportable = [
+                n for n in wg_nodes
+                if n.wireguard and (
+                    xray_native_wg_enabled(n.wireguard)
+                    or plain_wg_enabled(n.wireguard)
+                    or amneziawg_enabled(n.wireguard)
+                    or direct_wg_enabled(n.wireguard)
+                )
+            ]
+            preferred = pick_node(exportable) or pick_node(wg_nodes)
             node_items = []
             awg_any = False
             direct_any = False

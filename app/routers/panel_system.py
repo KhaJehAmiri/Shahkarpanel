@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from app import logger, xray
 from app.db import Session, crud, get_db
 from app.models.admin import Admin
-from app.system import update_jobs
+from app.system import agent_update_jobs, update_jobs
 from app.utils import responses
 from app.utils.panel_region import deployment_snapshot
 from app.xray.node import XRayNode
@@ -60,6 +60,53 @@ class UpdateJobResponse(BaseModel):
     finished: bool
     error_message: Optional[str] = None
     steps: List[UpdateStepInfo] = []
+
+
+class AgentNodeInfo(BaseModel):
+    id: int
+    name: str
+    host: str = ""
+    eligible: bool = False
+    reason: Optional[str] = None
+    core_kind: Optional[str] = None
+    region: Optional[str] = None
+    status: Optional[str] = None
+
+
+class AgentUpdateCheckResponse(BaseModel):
+    package_url: str = ""
+    package_reachable: bool = False
+    package_etag: Optional[str] = None
+    package_last_modified: Optional[str] = None
+    package_error: Optional[str] = None
+    mirror_url: Optional[str] = None
+    mirror_reachable: bool = False
+    agent_image: str = "nexuspanel/node:latest"
+    nodes_total: int = 0
+    nodes_eligible: int = 0
+    nodes_skipped: int = 0
+    update_available: bool = False
+    nodes: List[AgentNodeInfo] = []
+    ssh_available: bool = False
+    checked_at: int = 0
+
+
+class AgentNodeJobInfo(BaseModel):
+    node_id: int
+    node_name: str
+    host: str = ""
+    status: str
+    message: Optional[str] = None
+    error: Optional[str] = None
+
+
+class AgentUpdateJobResponse(BaseModel):
+    id: str
+    status: str
+    finished: bool
+    message: Optional[str] = None
+    error_message: Optional[str] = None
+    nodes: List[AgentNodeJobInfo] = []
 
 
 class XrayReleaseInfo(BaseModel):
@@ -121,6 +168,45 @@ def get_update_job(job_id: str, _: Admin = Depends(Admin.check_sudo_admin)):
         raise HTTPException(status_code=404, detail="Job not found")
     payload = update_jobs.job_to_api(job)
     return UpdateJobResponse(**payload)
+
+
+@router.get("/system/agent-updates/check", response_model=AgentUpdateCheckResponse)
+def check_agent_updates(force: bool = False, _: Admin = Depends(Admin.check_sudo_admin)):
+    return AgentUpdateCheckResponse(**agent_update_jobs.check_agent_updates(force=force))
+
+
+@router.post("/system/agent-updates/apply", response_model=UpdateApplyResponse)
+def apply_agent_updates(_: Admin = Depends(Admin.check_sudo_admin)):
+    try:
+        job_id = agent_update_jobs.start_fleet_apply()
+    except agent_update_jobs.AgentUpdateInProgress as exc:
+        raise HTTPException(
+            status_code=409, detail="An agent update is already in progress"
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return UpdateApplyResponse(job_id=job_id)
+
+
+@router.post("/system/agent-updates/apply/{node_id}", response_model=UpdateApplyResponse)
+def apply_agent_update_node(node_id: int, _: Admin = Depends(Admin.check_sudo_admin)):
+    try:
+        job_id = agent_update_jobs.start_node_apply(node_id)
+    except agent_update_jobs.AgentUpdateInProgress as exc:
+        raise HTTPException(
+            status_code=409, detail="An agent update is already in progress"
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return UpdateApplyResponse(job_id=job_id)
+
+
+@router.get("/system/agent-updates/jobs/{job_id}", response_model=AgentUpdateJobResponse)
+def get_agent_update_job(job_id: str, _: Admin = Depends(Admin.check_sudo_admin)):
+    job = agent_update_jobs.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return AgentUpdateJobResponse(**agent_update_jobs.job_to_api(job))
 
 
 @router.get("/xray/releases", response_model=List[XrayReleaseInfo])

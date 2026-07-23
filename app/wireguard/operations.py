@@ -42,7 +42,7 @@ _tunnel_restart_kick_lock = threading.Lock()
 # Coalesce user-change WG syncs. Without this, every user edit/status tick
 # spawns ``@threaded_function`` work that holds a DB session through slow
 # node RPC and exhausts SQLAlchemy QueuePool (idle-in-transaction → 500s).
-_WG_SYNC_DEBOUNCE_SEC = 3.0
+_WG_SYNC_DEBOUNCE_SEC = 0.35
 _wg_sync_lock = threading.Lock()
 _wg_sync_timer: Optional[threading.Timer] = None
 _wg_sync_in_flight = False
@@ -912,7 +912,7 @@ def prepare_awg_peer_for_connect(dbnode, public_key: str) -> bool:
     return True
 
 
-def sync_user_change() -> None:
+def sync_user_change(*, immediate: bool = False) -> None:
     """Lifecycle hook: re-sync WG nodes after any user add/update/remove.
 
     Schedules a resumable per-node batch sync (outbox + cursor) so large fleets
@@ -921,19 +921,27 @@ def sync_user_change() -> None:
 
     Also schedules a debounced Finalmask shard hot-replace on enabled nodes so
     the baked-in peer list matches membership without restarting Reality.
+
+    ``immediate=True`` flushes Finalmask now (single-user create / enable).
     """
     global _wg_sync_timer, _wg_sync_queued
     try:
-        from app.wireguard.finalmask_reload import schedule_finalmask_xray_reload
+        from app.wireguard.finalmask_reload import (
+            flush_finalmask_xray_reload,
+            schedule_finalmask_xray_reload,
+        )
 
-        schedule_finalmask_xray_reload()
+        schedule_finalmask_xray_reload(delay=0.1 if immediate else None)
+        if immediate:
+            flush_finalmask_xray_reload()
     except Exception as exc:
         logger.warning("Finalmask reload schedule failed: %s", exc)
     with _wg_sync_lock:
         _wg_sync_queued = True
         if _wg_sync_timer is not None:
             _wg_sync_timer.cancel()
-        timer = threading.Timer(_WG_SYNC_DEBOUNCE_SEC, _run_coalesced_wg_sync)
+        delay = 0.1 if immediate else _WG_SYNC_DEBOUNCE_SEC
+        timer = threading.Timer(delay, _run_coalesced_wg_sync)
         timer.daemon = True
         _wg_sync_timer = timer
         timer.start()

@@ -155,6 +155,20 @@ def add_user(dbuser: "DBUser"):
     """Register user on main core (DB rebuild) and push to connected nodes."""
     schedule_core_sync()
     _push_user_to_nodes(dbuser)
+    # WireGuard / Finalmask: allocate IP+slot and push to relays immediately
+    # (do not wait for the core-sync debounce chain).
+    try:
+        has_wg = any(
+            getattr(p, "type", None) == ProxyTypes.WireGuard
+            or str(getattr(p, "type", "")) == "WireGuard"
+            for p in (getattr(dbuser, "proxies", None) or [])
+        )
+        if has_wg and getattr(dbuser, "id", None) is not None:
+            from app.wireguard.instant_sync import schedule_provision_and_sync_wireguard_user
+
+            schedule_provision_and_sync_wireguard_user(int(dbuser.id))
+    except Exception:
+        logger.exception("WireGuard instant sync schedule failed for new user")
 
 
 def _remove_user_from_inbound_sync(api: XRayAPI, inbound_tag: str, email: str):

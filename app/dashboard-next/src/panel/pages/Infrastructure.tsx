@@ -59,6 +59,36 @@ export const NodesTab: FC<{ resellerMode?: boolean }> = ({ resellerMode }) => {
     try { await api.post(`/node/${n.id}/reconnect`); toast.push(t("infra.reconnecting"), "success"); }
     catch (e: any) { toast.push(e.message, "error"); }
   };
+  const updateAgent = async (n: NodeItem) => {
+    if (!confirm(t("infra.updateAgentConfirm", { name: n.name }))) return;
+    try {
+      const res = await api.post<{ job_id: string }>(`/system/agent-updates/apply/${n.id}`);
+      toast.push(t("infra.updateAgentStarted"), "success");
+      const jobId = res.job_id;
+      const tick = async () => {
+        try {
+          const job = await api.get<{
+            finished: boolean;
+            status: string;
+            error_message?: string;
+            message?: string;
+          }>(`/system/agent-updates/jobs/${jobId}`);
+          if (!job.finished) {
+            setTimeout(tick, 2000);
+            return;
+          }
+          if (job.status === "success") toast.push(t("infra.updateAgentDone", { name: n.name }), "success");
+          else toast.push(job.error_message || job.message || t("infra.updateAgentFailed"), "error");
+          reload();
+        } catch {
+          setTimeout(tick, 3000);
+        }
+      };
+      setTimeout(tick, 1500);
+    } catch (e: any) {
+      toast.push(e.message, "error");
+    }
+  };
   const remove = async (n: NodeItem) => {
     if (!confirm(t("common.confirmDelete"))) return;
     try { await api.del(`/node/${n.id}`); toast.push(t("common.deleted"), "success"); reload(); }
@@ -147,6 +177,11 @@ export const NodesTab: FC<{ resellerMode?: boolean }> = ({ resellerMode }) => {
                           {!resellerMode && (
                             <Button size="sm" variant="ghost" onClick={() => setEditNode(n)} title={t("infra.editNode")}>
                               <IcEdit className="nx-ico" />
+                            </Button>
+                          )}
+                          {!resellerMode && n.provision_status !== "provisioning" && n.provision_status !== "failed" && (
+                            <Button size="sm" variant="ghost" onClick={() => updateAgent(n)} title={t("infra.updateAgent")}>
+                              {t("infra.updateAgent")}
                             </Button>
                           )}
                           {n.provision_status === "failed" && (

@@ -826,7 +826,16 @@ class RPyCXRayNode:
         import json
 
         remote = self.remote
-        if not hasattr(remote, "xray_hot_replace_inbounds_json"):
+        # RPyC netrefs make bare ``hasattr`` unreliable (often True for any
+        # name, then the real call burns the full sync_request_timeout).
+        # ``dir(root)`` lists actually-exposed methods.
+        try:
+            root = self.connection.root if self.connection else None
+            exposed = dir(root) if root is not None else []
+            has_rpc = "xray_hot_replace_inbounds_json" in exposed
+        except Exception:
+            has_rpc = False
+        if not has_rpc:
             raise AttributeError("node agent has no xray_hot_replace_inbounds_json")
         payload = json.dumps(
             {

@@ -2,7 +2,7 @@ import { FC, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
-import { ApiKey, DeploymentInfo, FeatureFlag, SystemStats } from "../api/types";
+import { ApiKey, AgentUpdateCheck, AgentUpdateJobInfo, DeploymentInfo, FeatureFlag, SystemStats } from "../api/types";
 import { useApp } from "../context/AppContext";
 import { usePanelUpdate } from "../context/UpdateContext";
 import { useFetch, useLiveReload } from "../lib/useFetch";
@@ -111,7 +111,12 @@ export const System: FC = () => {
       <Tabs active={tab} onChange={setTab} tabs={activeGroup?.tabs || []} />
       {tab === "flags" && <FlagsTab />}
       {tab === "commercial" && <CommercialSettings />}
-      {tab === "updates" && <UpdatesTab />}
+      {tab === "updates" && (
+        <div className="nx-stack" style={{ gap: 16 }}>
+          <UpdatesTab />
+          <AgentAgentsTab />
+        </div>
+      )}
       {tab === "deployment" && <DeploymentTab />}
       {tab === "migration" && admin?.is_sudo && <MigrationWizard />}
       {tab === "xray" && <XrayCoreTab />}
@@ -415,6 +420,165 @@ const UpdatesTab: FC = () => {
         </div>
       )}
     </Card>
+  );
+};
+
+const AgentAgentsTab: FC = () => {
+  const { t } = useTranslation();
+  const toast = useToast();
+  const [check, setCheck] = useState<AgentUpdateCheck | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [job, setJob] = useState<AgentUpdateJobInfo | null>(null);
+  const [jobOpen, setJobOpen] = useState(false);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopPoll = () => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  };
+
+  useEffect(() => () => stopPoll(), []);
+
+  const runCheck = async () => {
+    setBusy(true);
+    try {
+      const res = await api.get<AgentUpdateCheck>("/system/agent-updates/check?force=true");
+      setCheck(res);
+    } catch (e: any) {
+      toast.push(e.message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    runCheck();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const pollJob = (jobId: string) => {
+    stopPoll();
+    pollRef.current = setInterval(async () => {
+      try {
+        const j = await api.get<AgentUpdateJobInfo>(`/system/agent-updates/jobs/${jobId}`);
+        setJob(j);
+        if (j.finished) {
+          stopPoll();
+          setBusy(false);
+          if (j.status === "success") toast.push(t("system.agentUpdateDone"), "success");
+          else if (j.status === "partial") toast.push(j.message || t("system.agentUpdatePartial"), "info");
+          else toast.push(j.error_message || t("system.agentUpdateFailed"), "error");
+          runCheck();
+        }
+      } catch {
+        /* keep polling */
+      }
+    }, 1500);
+  };
+
+  const applyAll = async () => {
+    if (!check?.nodes_eligible) return;
+    if (!confirm(t("system.agentUpdateConfirm", { count: check.nodes_eligible }))) return;
+    setBusy(true);
+    setJobOpen(true);
+    setJob(null);
+    try {
+      const res = await api.post<{ job_id: string }>("/system/agent-updates/apply");
+      pollJob(res.job_id);
+      const j = await api.get<AgentUpdateJobInfo>(`/system/agent-updates/jobs/${res.job_id}`);
+      setJob(j);
+    } catch (e: any) {
+      setBusy(false);
+      toast.push(e.message, "error");
+    }
+  };
+
+  const running = busy && jobOpen && job && !job.finished;
+
+  return (
+    <>
+      <Card>
+        <CardHead
+          title={t("system.agentUpdatesTitle")}
+          actions={<>
+            <Button variant="ghost" disabled={busy} onClick={runCheck}>{t("system.agentUpdatesCheck")}</Button>
+            <Button
+              variant="primary"
+              disabled={busy || !check?.nodes_eligible || !check?.ssh_available}
+              onClick={applyAll}
+            >
+              {t("system.agentUpdatesApply")}
+            </Button>
+          </>}
+        />
+        <div className="nx-stack" style={{ marginTop: 12, gap: 10 }}>
+          <p className="nx-muted" style={{ fontSize: 13, margin: 0 }}>{t("system.agentUpdatesHint")}</p>
+          {check && (
+            <>
+              <div className="nx-row" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+                <div>
+                  <div className="nx-muted" style={{ fontSize: 12 }}>{t("system.agentEligible")}</div>
+                  <div className="nx-code" style={{ fontSize: 18, fontWeight: 600 }}>
+                    {check.nodes_eligible} / {check.nodes_total}
+                  </div>
+                </div>
+                <div style={{ textAlign: "end" }}>
+                  <div className="nx-muted" style={{ fontSize: 12 }}>{t("system.agentPackage")}</div>
+                  <Pill tone={check.package_reachable || check.mirror_reachable ? "ok" : "danger"} dot>
+                    {check.package_reachable || check.mirror_reachable
+                      ? t("system.agentPackageOk")
+                      : t("system.agentPackageDown")}
+                  </Pill>
+                </div>
+              </div>
+              {!check.ssh_available && (
+                <Callout tone="warn">{t("system.agentSshUnavailable")}</Callout>
+              )}
+              {check.nodes_skipped > 0 && (
+                <Callout tone="info">{t("system.agentSkipped", { count: check.nodes_skipped })}</Callout>
+              )}
+              {check.package_error && !check.package_reachable && !check.mirror_reachable && (
+                <Callout tone="warn">{check.package_error}</Callout>
+              )}
+            </>
+          )}
+        </div>
+      </Card>
+
+      <Modal
+        open={jobOpen}
+        title={t("system.agentUpdatesTitle")}
+        onClose={running ? () => {} : () => { setJobOpen(false); stopPoll(); }}
+        footer={running ? undefined : (
+          <Button variant="ghost" onClick={() => { setJobOpen(false); stopPoll(); }}>{t("common.close")}</Button>
+        )}
+      >
+        {!job ? (
+          <p className="nx-muted">{t("common.loading")}</p>
+        ) : (
+          <div className="nx-stack" style={{ gap: 8 }}>
+            {job.message && <p className="nx-muted" style={{ margin: 0 }}>{job.message}</p>}
+            {job.nodes.map((n) => {
+              const tone = n.status === "success" ? "ok"
+                : n.status === "failed" ? "danger"
+                  : n.status === "running" ? "accent"
+                    : n.status === "skipped" ? "default" : "default";
+              return (
+                <div key={n.node_id} className="nx-row" style={{ gap: 8, fontSize: 13, alignItems: "flex-start" }}>
+                  <Pill tone={tone} dot>{n.node_name}</Pill>
+                  <span className="nx-muted" style={{ flex: 1 }}>{n.message || n.error || n.status}</span>
+                </div>
+              );
+            })}
+            {job.error_message && job.status === "failed" && (
+              <Callout tone="danger">{job.error_message}</Callout>
+            )}
+          </div>
+        )}
+      </Modal>
+    </>
   );
 };
 

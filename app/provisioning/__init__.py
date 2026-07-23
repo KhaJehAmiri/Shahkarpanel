@@ -30,11 +30,14 @@ __all__ = [
     "ProvisioningUnavailable",
     "SSHCredentials",
     "build_install_command",
+    "build_agent_refresh_command",
+    "soft_restart_agent_command",
     "install_docker_shell",
     "push_agent_image_via_ssh",
     "resolve_panel_public_url",
     "ssh_available",
     "run_remote_command",
+    "is_agent_image_fetch_error",
 ]
 
 
@@ -271,7 +274,7 @@ def build_install_command(
 
     # Prefer image already on the node. Otherwise: GitHub URL up to 3 times
     # (short timeouts so blocked routes fail fast), then Iran HTTP mirror.
-    _ = force_image_rebuild
+    # When force_image_rebuild: always re-download (rmi local tag first).
     if mirror_url and mirror_url != primary_url:
         mirror_branch = (
             "echo 'GitHub image fetch failed after 3 attempts — trying Iran mirror…'; "
@@ -287,9 +290,7 @@ def build_install_command(
             "echo 'fatal: could not load node agent image from GitHub after 3 attempts' >&2; "
             "exit 1; "
         )
-    ensure_image = (
-        f"NP_IMG={q(image)}; "
-        "if ! docker image inspect \"$NP_IMG\" >/dev/null 2>&1; then "
+    fetch_image = (
         "_np_ok=0; "
         "for _np_try in 1 2 3; do "
         "echo \"Downloading node image from GitHub (attempt $_np_try/3)…\"; "
@@ -302,12 +303,29 @@ def build_install_command(
         "if [ \"$_np_ok\" != 1 ]; then "
         f"{mirror_branch}"
         "fi; "
-        "fi; "
+    )
+    inspect_ok = (
         "if ! docker image inspect \"$NP_IMG\" >/dev/null 2>&1; then "
         "echo 'fatal: node agent image not tagged as '\"$NP_IMG\"' after docker load' >&2; "
         "exit 1; "
         "fi; "
     )
+    if force_image_rebuild:
+        ensure_image = (
+            f"NP_IMG={q(image)}; "
+            "echo 'Forcing agent image re-download…'; "
+            "docker rmi -f \"$NP_IMG\" >/dev/null 2>&1 || true; "
+            f"{fetch_image}"
+            f"{inspect_ok}"
+        )
+    else:
+        ensure_image = (
+            f"NP_IMG={q(image)}; "
+            "if ! docker image inspect \"$NP_IMG\" >/dev/null 2>&1; then "
+            f"{fetch_image}"
+            "fi; "
+            f"{inspect_ok}"
+        )
 
     return (
         "set -e; "
@@ -339,6 +357,59 @@ def build_install_command(
         f"{bootstrap_curl}"
         "echo 'Node agent started.'; "
     )
+
+
+def build_agent_refresh_command(
+    *args,
+    force_image_rebuild: bool = True,
+    **kwargs,
+) -> str:
+    """Rebuild agent container without re-installing Docker (existing nodes).
+
+    Same as :func:`build_install_command` from sysctl / ``docker rm`` onward.
+    Bootstrap failures (e.g. already registered) are non-fatal.
+    """
+    kwargs["force_image_rebuild"] = force_image_rebuild
+    full = build_install_command(*args, **kwargs)
+    marker = "sysctl -w net.ipv4.ip_forward"
+    if marker in full:
+        body = full[full.index(marker) :]
+    else:
+        body = full[full.index("docker rm -f nexusnode") :]
+    return "set -e; " + body
+
+
+def soft_restart_agent_command(
+    command: str,
+    image: Optional[str] = None,
+) -> str:
+    """``docker rm`` + ``docker run`` + bootstrap, assuming the image tag exists.
+
+    Used after :func:`push_agent_image_via_ssh` so we do not ``rmi``/re-download
+    the image we just uploaded.
+    """
+    from config import NODE_AGENT_IMAGE
+
+    ref = (image or NODE_AGENT_IMAGE).strip() or "nexuspanel/node:latest"
+    rm_at = command.index("docker rm -f nexusnode")
+    run_at = command.index("docker run -d --name nexusnode")
+    mid = command[rm_at:run_at]
+    if "NP_IMG=" in mid:
+        mid = mid[: mid.index("NP_IMG=")]
+    return f"set -e; NP_IMG={shlex.quote(ref)}; {mid}{command[run_at:]}"
+
+
+def is_agent_image_fetch_error(exc: BaseException) -> bool:
+    msg = str(exc).lower()
+    needles = (
+        "could not load node agent image",
+        "could not download node agent image",
+        "forcing agent image re-download",
+        "node agent image not tagged",
+        "docker load",
+        "github image fetch failed",
+    )
+    return any(n in msg for n in needles)
 
 
 def ssh_available() -> bool:

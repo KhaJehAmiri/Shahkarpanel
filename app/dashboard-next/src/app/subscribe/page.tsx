@@ -817,6 +817,14 @@ function SubscribeBody() {
 
   const selected = filtered.find((c) => c.id === selectedId) || filtered[0] || null;
 
+  // Must stay above early returns (err / !info) — Rules of Hooks.
+  const uniqueServerCount = useMemo(() => {
+    const keys = new Set(
+      configs.map((c) => `${(c.flag || "").trim()}|${String(c.title || "").trim().toLowerCase()}`),
+    );
+    return keys.size;
+  }, [configs]);
+
   const pickServer = useCallback((id: string) => {
     setSelectedId(id);
     if (filtered.length > 1) setPickingServer(false);
@@ -1657,15 +1665,6 @@ function SubscribeBody() {
       </div>
     </section>
   ) : null;
-
-  // Unique locations (not sum of every protocol card — WG plain+Xray used to
-  // double-count the same 7 exits → badge "27" for 13+7+7).
-  const uniqueServerCount = useMemo(() => {
-    const keys = new Set(
-      configs.map((c) => `${(c.flag || "").trim()}|${c.title.trim().toLowerCase()}`),
-    );
-    return keys.size;
-  }, [configs]);
 
   return (
     <DashShell

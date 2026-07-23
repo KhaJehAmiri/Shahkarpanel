@@ -514,8 +514,14 @@ def bulk_create_users(
     admin: Optional[Admin] = None,
 ) -> BulkUserCreateResult:
     from app import xray as xray_mod
-    from app.models.user import UserResponse
-    from app.subscription.public_url import public_subscription_url
+    from app.routers.user import _ensure_protocol_enabled
+    from app.subscription.panel_balance import (
+        alias_token_for_username,
+        bind_user_to_panel,
+        ensure_panel_username,
+        list_balance_panels,
+        panel_user_count,
+    )
 
     started = time.perf_counter()
     prefix = body.username_prefix or ""
@@ -523,60 +529,123 @@ def bulk_create_users(
     alphabet = string.ascii_lowercase + string.digits
     dbadmin = crud.get_admin(db, admin.username) if admin else None
 
-    from app.subscription.panel_balance import bind_user_to_panel, resolve_panel_for_create
+    # Validate reseller quotas once — create_user would otherwise COUNT users
+    # on every iteration (~500ms×N on large tables).
+    if dbadmin is not None and dbadmin.max_users is not None:
+        current = crud.get_users_count(db, admin=dbadmin)
+        if current + int(body.count) > int(dbadmin.max_users):
+            raise ValueError(
+                f"Reseller user limit reached ({dbadmin.max_users}); "
+                f"have {current}, requested {body.count}"
+            )
+    if (
+        dbadmin is not None
+        and not dbadmin.is_sudo
+        and dbadmin.max_total_traffic is not None
+        and int(dbadmin.users_usage or 0) >= int(dbadmin.max_total_traffic)
+    ):
+        raise ValueError(
+            f"Reseller total-traffic limit reached ({dbadmin.max_total_traffic} bytes)"
+        )
 
-    # Optional pin: when set, every user goes to that panel. When omitted,
-    # each user is placed on the current least-loaded p1…p9 endpoint.
     pinned_ep = None
     if body.subscription_endpoint_id is not None:
         pinned_ep = crud.get_subscription_endpoint(db, body.subscription_endpoint_id)
         if pinned_ep is None or not pinned_ep.enabled:
             raise ValueError("Selected subscription panel endpoint was not found or is disabled")
 
-    created: List[str] = []
-    errors: List[str] = []
+    # Snapshot panel loads once, then assign locally (round-robin on least-loaded).
+    # Old path called pick_least_loaded_panel → N COUNT queries *per user*.
+    panel_counts: Dict[int, int] = {}
+    balance_panels: List[Any] = []
+    if pinned_ep is None:
+        balance_panels = list_balance_panels(db)
+        panel_counts = {ep.id: panel_user_count(db, ep.id) for ep in balance_panels}
 
-    for _ in range(body.count):
+    def _next_panel():
+        if pinned_ep is not None:
+            return pinned_ep
+        if not balance_panels:
+            return None
+        ep = min(balance_panels, key=lambda e: (panel_counts.get(e.id, 0), e.id))
+        panel_counts[ep.id] = int(panel_counts.get(ep.id, 0)) + 1
+        return ep
+
+    # Probe protocols once (was get_wireguard_nodes / get_singbox_nodes per user).
+    sample_username = f"{prefix}probe{suffix}" or "bulkprobe"
+    try:
+        sample = _user_create_from_bulk_body(body, username=sample_username, db=db)
+        for ptype in sample.proxies:
+            _ensure_protocol_enabled(ptype, db)
+        enabled_proxies = list(sample.proxies.keys())
+    except Exception:
+        raise
+
+    inbound_cache: Dict[str, Any] = {}
+    created: List[str] = []
+    created_rows: List[Tuple[Any, Any, Optional[str]]] = []  # (db_user, panel_ep, alias_token)
+    errors: List[str] = []
+    COMMIT_EVERY = 50
+    since_commit = 0
+
+    for i in range(body.count):
         core = "".join(secrets.choice(alphabet) for _ in range(8))
         username = f"{prefix}{core}{suffix}"
         try:
-            if pinned_ep is not None:
-                panel_ep, username = resolve_panel_for_create(
-                    db,
-                    endpoint_id=pinned_ep.id,
-                    username=username,
-                    username_prefix=prefix or None,
-                )
-            else:
-                panel_ep, username = resolve_panel_for_create(
-                    db, username=username, username_prefix=prefix or None
-                )
+            panel_ep = _next_panel()
+            if panel_ep is not None:
+                username = ensure_panel_username(username, panel_ep.slug)
             new_user = _user_create_from_bulk_body(body, username=username, db=db)
-            for ptype in new_user.proxies:
-                from app.routers.user import _ensure_protocol_enabled
-
-                _ensure_protocol_enabled(ptype, db)
-            db_user = crud.create_user(db, new_user, admin=dbadmin)
-            if panel_ep is not None and db_user is not None:
-                bind_user_to_panel(
+            if enabled_proxies:
+                new_user.proxies = {
+                    k: v for k, v in new_user.proxies.items() if k in enabled_proxies
+                } or new_user.proxies
+            # Savepoint so a duplicate username does not wipe the open batch.
+            with db.begin_nested():
+                db_user = crud.create_user(
                     db,
-                    user_id=db_user.id,
-                    username=db_user.username,
-                    endpoint=panel_ep,
-                    source="bulk-create" if pinned_ep is not None else "auto-balance",
-                    commit=True,
+                    new_user,
+                    admin=dbadmin,
+                    commit=False,
+                    inbound_cache=inbound_cache,
+                    skip_admin_limits=True,
                 )
+                alias_token = None
+                if panel_ep is not None and db_user is not None:
+                    alias = bind_user_to_panel(
+                        db,
+                        user_id=db_user.id,
+                        username=db_user.username,
+                        endpoint=panel_ep,
+                        source="bulk-create" if pinned_ep is not None else "auto-balance",
+                        commit=False,
+                    )
+                    alias_token = getattr(alias, "token", None) or alias_token_for_username(
+                        db_user.username, panel_ep.slug
+                    )
             created.append(db_user.username if db_user else username)
+            created_rows.append((db_user, panel_ep, alias_token))
+            since_commit += 1
+            if since_commit >= COMMIT_EVERY:
+                db.commit()
+                since_commit = 0
         except IntegrityError:
-            db.rollback()
             errors.append(f"{username}: already exists")
         except Exception as exc:
             errors.append(f"{username}: {exc}")
+
+    if since_commit:
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
 
     if created:
         needs_full = bool(body.speed_limit_up or body.speed_limit_down)
         if needs_full:
             from app.xray.serving import force_full_core_restart
+
             force_full_core_restart()
         else:
             xray_mod.operations.schedule_core_sync()
@@ -585,35 +654,38 @@ def bulk_create_users(
         except Exception:
             pass
 
+    # Build share links without UserResponse / generate_v2ray_links (was ~100ms+/user).
+    from types import SimpleNamespace
+
+    from app.subscription.public_url import _compose_endpoint_subscription_url
+    from config import XRAY_SUBSCRIPTION_PATH, XRAY_SUBSCRIPTION_URL_PREFIX
+
     users_out: List[BulkCreatedUserLink] = []
-    for username in created:
+    for db_user, panel_ep, alias_token in created_rows:
+        username = getattr(db_user, "username", None) or ""
         try:
-            db_user = crud.get_user(db, username)
-            if db_user is None:
-                continue
-            ur = UserResponse.model_validate(db_user)
-            # Prefer the panel endpoint the admin picked (not inbound Listen Domain
-            # overrides), so the results popup matches the selected p/sr panel.
-            token = None
-            if panel_ep is not None:
-                for alias in crud.list_subscription_token_aliases_for_user(db, db_user.id):
-                    if alias.endpoint_id == panel_ep.id:
-                        token = alias.token
-                        break
-                pub = public_subscription_url(ur, endpoint=panel_ep, request_token=token) or ""
-            else:
-                pub = public_subscription_url(ur) or ""
-            sub = (ur.subscription_url or pub or "").strip()
+            sub_token = getattr(db_user, "sub_token", None)
+            token = alias_token or sub_token
+            mini = SimpleNamespace(
+                id=getattr(db_user, "id", None),
+                username=username,
+                sub_token=sub_token,
+            )
+            pub = ""
+            if panel_ep is not None and token:
+                pub = _compose_endpoint_subscription_url(panel_ep, mini, token=token) or ""
+            if not pub and token:
+                prefix = (XRAY_SUBSCRIPTION_URL_PREFIX or "").strip().rstrip("/")
+                if prefix:
+                    pub = f"{prefix}/{XRAY_SUBSCRIPTION_PATH}/{token}/"
             if pub and not pub.endswith("/"):
                 pub = f"{pub}/"
-            if sub and not sub.endswith("/") and sub.startswith("http"):
-                sub = f"{sub}/"
             users_out.append(
                 BulkCreatedUserLink(
                     username=username,
-                    subscription_url=sub or pub,
-                    public_subscription_url=pub or sub,
-                    sub_token=token or getattr(ur, "sub_token", None),
+                    subscription_url=pub,
+                    public_subscription_url=pub,
+                    sub_token=token,
                 )
             )
         except Exception as exc:

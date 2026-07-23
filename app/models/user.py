@@ -441,7 +441,8 @@ class UserResponse(User):
         return self
 
     @model_validator(mode="after")
-    def validate_subscription_url(self):
+    def validate_subscription_url(self, info: ValidationInfo):
+        skip_heavy = bool(info.context and info.context.get("skip_default_links"))
         if not self.subscription_url:
             salt = secrets.token_hex(8)
             url_prefix = (XRAY_SUBSCRIPTION_URL_PREFIX).replace('*', salt)
@@ -474,6 +475,11 @@ class UserResponse(User):
         else:
             # Ensure fragment stays aligned when only the title was pre-set.
             pass
+        if skip_heavy:
+            # Bulk create only needs the share URL — skip enumerating every
+            # format (json/clash/…) which fans out DB + link generation.
+            self.subscription_urls = []
+            return self
         try:
             self.subscription_urls = list_user_subscription_urls(self)
         except Exception:

@@ -632,6 +632,7 @@ def create_user(
     *,
     commit: bool = True,
     inbound_cache: Optional[Dict[str, ProxyInbound]] = None,
+    skip_admin_limits: bool = False,
 ) -> User:
     """
     Creates a new user with provided details.
@@ -642,24 +643,27 @@ def create_user(
         admin (Admin, optional): Admin associated with the user.
         inbound_cache: Optional shared tag->ProxyInbound cache (see
             ``get_or_create_inbound``) to speed up bulk imports.
+        skip_admin_limits: When True, skip per-call max_users /
+            max_total_traffic checks (caller already validated capacity).
 
     Returns:
         User: The created user object.
     """
-    if admin is not None and admin.max_users is not None:
-        current = get_users_count(db, admin=admin)
-        if current >= admin.max_users:
-            raise ValueError(f"Reseller user limit reached ({admin.max_users})")
+    if not skip_admin_limits:
+        if admin is not None and admin.max_users is not None:
+            current = get_users_count(db, admin=admin)
+            if current >= admin.max_users:
+                raise ValueError(f"Reseller user limit reached ({admin.max_users})")
 
-    if (
-        admin is not None
-        and not admin.is_sudo
-        and admin.max_total_traffic is not None
-        and int(admin.users_usage or 0) >= int(admin.max_total_traffic)
-    ):
-        raise ValueError(
-            f"Reseller total-traffic limit reached ({admin.max_total_traffic} bytes)"
-        )
+        if (
+            admin is not None
+            and not admin.is_sudo
+            and admin.max_total_traffic is not None
+            and int(admin.users_usage or 0) >= int(admin.max_total_traffic)
+        ):
+            raise ValueError(
+                f"Reseller total-traffic limit reached ({admin.max_total_traffic} bytes)"
+            )
 
     excluded_inbounds_tags = user.excluded_inbounds
     proxies = []

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.22.4 — 2026-07-23
+
+- In-panel node agent updates: System → Updates and per-node “Update agent” refresh the agent image over stored SSH (force re-download from GitHub/mirror, SSH upload fallback).
+- Fix `refresh_agent` / `force_image_rebuild` so re-provision actually pulls a new agent image when the local tag already exists.
+- WireGuard: fleet subnet auto-widen, faster Finalmask/peer sync on user create, and preferred export nodes when Finalmask lives on `wir*` hosts.
+
 ## 0.23.0 — 2026-07-20
 
 - Scale: WireGuard peer cache (joinedload + in-process TTL) so usage/sync no longer N+1 scan tens of thousands of proxies every few seconds.

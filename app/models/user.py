@@ -357,6 +357,8 @@ class SubscriptionLinkItem(BaseModel):
     region_flag: str = ""
     region_name: str = ""
     address_hint: str = ""
+    # Panel→node health probe RTT (ms). Same source as WireGuard cards.
+    latency_ms: float | None = None
 
 
 class WireGuardNodeItem(BaseModel):

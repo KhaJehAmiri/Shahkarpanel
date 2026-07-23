@@ -57,6 +57,7 @@ class V2rayShareLink(str):
         region_flag: str = "",
         region_name: str = "",
         address: str = "",
+        latency_ms: float | None = None,
     ):
         self.links.append(link)
         self.link_items.append(
@@ -67,6 +68,7 @@ class V2rayShareLink(str):
                 "region_flag": region_flag,
                 "region_name": region_name,
                 "address_hint": _mask_address_hint(address),
+                "latency_ms": latency_ms,
             }
         )
 
@@ -86,6 +88,7 @@ class V2rayShareLink(str):
         *,
         region_flag: str = "",
         region_name: str = "",
+        latency_ms: float | None = None,
     ):
         net = inbound["network"]
         multi_mode = inbound.get("multiMode", False)
@@ -240,6 +243,7 @@ class V2rayShareLink(str):
             region_flag=region_flag,
             region_name=region_name,
             address=address,
+            latency_ms=latency_ms,
         )
 
 

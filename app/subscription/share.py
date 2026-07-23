@@ -569,6 +569,20 @@ def process_inbounds_and_tags(
     refresh_for_subscription()
     export_format = conf_export_format(conf)
 
+    # One DB pass for node health so VLESS/vmess cards can show the same
+    # latency as WireGuard (panel→node probe RTT in ms).
+    node_latency_ms: dict[int, float] = {}
+    try:
+        from app.db import GetDB
+        from app.db.models import Node
+
+        with GetDB() as db:
+            for nid, lat in db.query(Node.id, Node.latency_ms).all():
+                if nid is not None and lat is not None:
+                    node_latency_ms[int(nid)] = float(lat)
+    except Exception:
+        node_latency_ms = {}
+
     # Deterministic per-user selection: a subscription refresh must resolve to
     # the SAME SNI / host / address / wildcard subdomain for a given user so
     # long-lived client configs keep working, while still distributing users
@@ -755,6 +769,10 @@ def process_inbounds_and_tags(
                                 "region_flag": local_vars.get("REGION_FLAG") or "",
                                 "region_name": local_vars.get("REGION_NAME") or "",
                             }
+                            if _node_id is not None:
+                                lat = node_latency_ms.get(int(_node_id))
+                                if lat is not None:
+                                    add_kwargs["latency_ms"] = lat
 
                         conf.add(
                             remark=remark,

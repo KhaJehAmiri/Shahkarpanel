@@ -23,6 +23,7 @@ interface LinkItem {
   region_flag?: string;
   region_name?: string;
   address_hint?: string;
+  latency_ms?: number | null;
 }
 
 interface SubInfo {
@@ -78,6 +79,7 @@ interface SubInfo {
     name: string;
     region_flag?: string | null;
     region_name?: string | null;
+    latency_ms?: number | null;
     hysteria2_link?: string | null;
     tuic_link?: string | null;
     anytls_link?: string | null;
@@ -275,6 +277,12 @@ function ProtoIcon({ proto, size = 18 }: { proto: string; size?: number }) {
 function protoServersLabel(lang: SubLang, n: number): string | null {
   if (n <= 1) return null;
   return subT(lang, "protoServersN").replace("{n}", String(n));
+}
+
+/** Panel health RTT is a float; show whole milliseconds only. */
+function formatLatencyMs(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "—";
+  return String(Math.max(0, Math.round(ms)));
 }
 
 function protoFromLink(link: string): string {
@@ -610,6 +618,7 @@ function SubscribeBody() {
           remark: "",
           region_flag: "",
           region_name: "",
+          latency_ms: null as number | null,
         }));
 
     items.forEach((item, i) => {
@@ -621,7 +630,7 @@ function SubscribeBody() {
         title: friendlyTitle({ ...item, protocol }, lang),
         flag: item.region_flag,
         value: item.link,
-        latencyMs: null,
+        latencyMs: item.latency_ms ?? null,
       });
     });
 
@@ -690,14 +699,15 @@ function SubscribeBody() {
     if (quic.length) {
       quic.forEach((n) => {
         const title = n.region_name || n.name;
+        const latencyMs = n.latency_ms ?? null;
         if (hasHysteria2 && n.hysteria2_link) {
-          out.push({ id: `hy2-${n.id}`, protocol: "hysteria2", title, flag: n.region_flag || undefined, value: n.hysteria2_link, latencyMs: null });
+          out.push({ id: `hy2-${n.id}`, protocol: "hysteria2", title, flag: n.region_flag || undefined, value: n.hysteria2_link, latencyMs });
         }
         if (hasTuic && n.tuic_link) {
-          out.push({ id: `tuic-${n.id}`, protocol: "tuic", title, flag: n.region_flag || undefined, value: n.tuic_link, latencyMs: null });
+          out.push({ id: `tuic-${n.id}`, protocol: "tuic", title, flag: n.region_flag || undefined, value: n.tuic_link, latencyMs });
         }
         if (hasAnytls && n.anytls_link) {
-          out.push({ id: `any-${n.id}`, protocol: "anytls", title, flag: n.region_flag || undefined, value: n.anytls_link, latencyMs: null });
+          out.push({ id: `any-${n.id}`, protocol: "anytls", title, flag: n.region_flag || undefined, value: n.anytls_link, latencyMs });
         }
       });
     } else {
@@ -785,9 +795,13 @@ function SubscribeBody() {
 
   const bestServer = useMemo(() => {
     if (!filtered.length) return null;
-    return [...filtered].sort((a, b) => {
-      const la = a.latencyMs != null && a.latencyMs >= 0 ? a.latencyMs : Number.POSITIVE_INFINITY;
-      const lb = b.latencyMs != null && b.latencyMs >= 0 ? b.latencyMs : Number.POSITIVE_INFINITY;
+    const withLatency = filtered.filter((c) => c.latencyMs != null && c.latencyMs >= 0);
+    // Without probe data, "lowest latency" would just pick alphabetical first —
+    // hide the Auto card so we don't pretend.
+    if (!withLatency.length) return null;
+    return [...withLatency].sort((a, b) => {
+      const la = a.latencyMs as number;
+      const lb = b.latencyMs as number;
       if (la !== lb) return la - lb;
       return a.title.localeCompare(b.title);
     })[0] || null;
@@ -795,8 +809,11 @@ function SubscribeBody() {
 
   useEffect(() => {
     if (!filtered.length) { setSelectedId(""); return; }
-    if (!filtered.some((c) => c.id === selectedId)) setSelectedId(filtered[0].id);
-  }, [filtered, selectedId]);
+    if (!filtered.some((c) => c.id === selectedId)) {
+      const pick = serverSort === "recommended" && bestServer ? bestServer.id : filtered[0].id;
+      setSelectedId(pick);
+    }
+  }, [filtered, selectedId, serverSort, bestServer]);
 
   const selected = filtered.find((c) => c.id === selectedId) || filtered[0] || null;
 
@@ -904,7 +921,6 @@ function SubscribeBody() {
   const otherApps = proxyApps.filter((a) => a.id !== primaryApp?.id);
   // Official WireGuard + AmneziaWG only (skip duplicate store variants).
   const wgApps = wgAppsFor(platform).filter((a) => a.id === "wireguard" || a.id === "amneziawg");
-  const isPlainWireguard = selected?.protocol === "wireguard";
   const pasteFallback = (n: string) => subT(lang, "pasteFallback").replace("{app}", n);
 
   async function connectPrimary() {
@@ -1027,7 +1043,8 @@ function SubscribeBody() {
         <span className="s-qr-hint">{subT(lang, "scanHere")}</span>
       </button>
       <div className="s-qr-side">
-        {!isPlainWireguard || selected.value ? (
+        {/* Plain WireGuard uses Download .conf — copy is for share links (VLESS / WG Xray). */}
+        {selected.protocol !== "wireguard" && selected.value ? (
           <>
             <button type="button" className="s-btn s-btn-main s-btn-xl" onClick={() => copyValue(selected.value)}>
               {copied ? subT(lang, "copied") : subT(lang, "copyConfig")}
@@ -1406,7 +1423,7 @@ function SubscribeBody() {
                     <span className="s-server-auto-meta">
                       {bestServer.flag} {bestServer.title}
                       {bestServer.latencyMs != null && bestServer.latencyMs >= 0
-                        ? ` · ${subT(lang, "latencyMs").replace("{n}", String(bestServer.latencyMs))}`
+                        ? ` · ${subT(lang, "latencyMs").replace("{n}", formatLatencyMs(bestServer.latencyMs))}`
                         : ""}
                     </span>
                     <span className="s-server-auto-hint">{subT(lang, "autoBestHint")}</span>
@@ -1438,7 +1455,7 @@ function SubscribeBody() {
                                 </span>
                                 <span className={`s-lat s-lat-${tone}`}>
                                   {c.latencyMs != null && c.latencyMs >= 0
-                                    ? subT(lang, "latencyMs").replace("{n}", String(c.latencyMs))
+                                    ? subT(lang, "latencyMs").replace("{n}", formatLatencyMs(c.latencyMs))
                                     : subT(lang, "latencyUnknown")}
                                 </span>
                               </button>
@@ -1641,6 +1658,15 @@ function SubscribeBody() {
     </section>
   ) : null;
 
+  // Unique locations (not sum of every protocol card — WG plain+Xray used to
+  // double-count the same 7 exits → badge "27" for 13+7+7).
+  const uniqueServerCount = useMemo(() => {
+    const keys = new Set(
+      configs.map((c) => `${(c.flag || "").trim()}|${c.title.trim().toLowerCase()}`),
+    );
+    return keys.size;
+  }, [configs]);
+
   return (
     <DashShell
       rtl={rtl}
@@ -1650,7 +1676,7 @@ function SubscribeBody() {
       brandLogo={brandLogo}
       view={view}
       onView={goView}
-      serverCount={configs.length}
+      serverCount={uniqueServerCount}
       chip={chip}
       configAvailable={configAvailable}
     >

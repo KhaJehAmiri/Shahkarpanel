@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from contextlib import contextmanager
-from typing import Any, Iterator, Optional
+from typing import Any, Callable, Iterator, List, Optional, Sequence
 
 logger = logging.getLogger("nexus-wg")
 
@@ -28,6 +29,107 @@ class WireGuardTransportError(Exception):
 _APPLY_TIMEOUT_FLOOR_SEC = 120
 _APPLY_TIMEOUT_CEILING_SEC = 900
 _APPLY_TIMEOUT_BASE_SEC = 90
+
+# Above this peer count, a single RPyC ``syncconf`` payload routinely dies with
+# ``stream has been closed`` on flaky Iran↔abroad links. Empty iface bring-up
+# + ``wg_apply_batch`` chunks keeps membership automatic and resumable.
+WG_APPLY_RPC_CHUNK = 150
+WG_APPLY_BATCH_TIMEOUT_SEC = 90
+
+
+def wg_apply_timeout_sec(peer_count: int, *, minimum: int = 30) -> int:
+    """Seconds to wait for a full peer-set apply (REST or RPyC).
+
+    ``peer_count`` should be the sum of peers across all specs in one call
+    (e.g. plain + Amnezia).
+    """
+    n = max(0, int(peer_count or 0))
+    scaled = _APPLY_TIMEOUT_BASE_SEC + (n // 8)
+    return int(
+        max(
+            _APPLY_TIMEOUT_FLOOR_SEC,
+            min(_APPLY_TIMEOUT_CEILING_SEC, max(int(minimum), scaled)),
+        )
+    )
+
+
+def _spec_to_batch_rows(peers: Sequence[dict]) -> List[dict]:
+    """Convert declarative apply-spec peers into ``wg_apply_batch`` rows."""
+    rows: List[dict] = []
+    for p in peers or []:
+        if not isinstance(p, dict):
+            continue
+        pk = p.get("public_key")
+        if not pk:
+            continue
+        allowed = p.get("allowed_ips") or []
+        if isinstance(allowed, (list, tuple)):
+            allowed_s = ",".join(str(a) for a in allowed if a)
+        else:
+            allowed_s = str(allowed or "")
+        if not allowed_s:
+            continue
+        rows.append(
+            {
+                "public_key": pk,
+                "allowed_ips": allowed_s,
+                "preshared_key": p.get("preshared_key"),
+                "active": True,
+                "user_id": int(p.get("user_id") or 0),
+            }
+        )
+    return rows
+
+
+def _apply_specs_chunked(
+    *,
+    apply_direct: Callable[[list, int], None],
+    apply_batch: Callable[..., Any],
+    specs: list,
+    timeout: int,
+    chunk_size: int = WG_APPLY_RPC_CHUNK,
+) -> None:
+    """Bring each interface up, then stream peers in small ``apply_batch`` calls.
+
+    ``apply_direct`` receives ``(specs, timeout)`` and must perform a normal
+    full ``syncconf`` (used for empty/small specs). Large peer sets never go
+    through one RPyC payload — that is what dropped tunnel-exit membership.
+    """
+    for raw in specs or []:
+        spec = dict(raw or {})
+        peers = list(spec.get("peers") or [])
+        iface = spec.get("interface") or ""
+        if not iface:
+            continue
+        if len(peers) <= chunk_size:
+            apply_direct([spec], timeout)
+            continue
+
+        empty = dict(spec)
+        empty["peers"] = []
+        # Empty syncconf creates/resets the iface. Brief membership gap is
+        # acceptable vs permanently empty exits after agent recreate.
+        apply_direct([empty], max(60, int(timeout)))
+        rows = _spec_to_batch_rows(peers)
+        generation = int(time.time())
+        total = len(rows)
+        for i in range(0, total, chunk_size):
+            chunk = rows[i : i + chunk_size]
+            cursor = i + len(chunk)
+            apply_batch(
+                interface=iface,
+                generation=generation,
+                cursor=cursor,
+                peers=chunk,
+                removes=[],
+                timeout=WG_APPLY_BATCH_TIMEOUT_SEC,
+            )
+            logger.info(
+                "WG chunked apply iface=%s progress=%s/%s",
+                iface,
+                cursor,
+                total,
+            )
 
 
 def wg_apply_timeout_sec(peer_count: int, *, minimum: int = 30) -> int:
@@ -117,14 +219,27 @@ class RESTWireGuardClient(AutoScaleWireGuardMixin):
         logger.debug("REST wg/apply peers=%s timeout=%ss", peer_n, timeout)
         self._node.make_request("/wg/apply", timeout, spec=spec)
 
-    def apply_specs(self, specs: list, timeout: int = 30) -> None:
+    def _apply_specs_direct(self, specs: list, timeout: int = 30) -> None:
         peer_n = sum(len((s or {}).get("peers") or []) for s in (specs or []))
         timeout = wg_apply_timeout_sec(peer_n, minimum=timeout)
-        logger.debug("REST wg/apply-specs peers=%s specs=%s timeout=%ss", peer_n, len(specs or []), timeout)
         if len(specs) == 1:
             self.apply(specs[0], timeout=timeout)
             return
         self._node.make_request("/wg/apply-specs", timeout, specs=specs)
+
+    def apply_specs(self, specs: list, timeout: int = 30) -> None:
+        peer_n = sum(len((s or {}).get("peers") or []) for s in (specs or []))
+        timeout = wg_apply_timeout_sec(peer_n, minimum=timeout)
+        logger.debug("REST wg/apply-specs peers=%s specs=%s timeout=%ss", peer_n, len(specs or []), timeout)
+        if peer_n > WG_APPLY_RPC_CHUNK:
+            _apply_specs_chunked(
+                apply_direct=self._apply_specs_direct,
+                apply_batch=self.apply_batch,
+                specs=list(specs or []),
+                timeout=timeout,
+            )
+            return
+        self._apply_specs_direct(list(specs or []), timeout)
 
     def open_udp_ports(self, ports: list, timeout: int = 15) -> int:
         try:
@@ -332,7 +447,7 @@ class RPyCWireGuardClient(AutoScaleWireGuardMixin):
         timeout = wg_apply_timeout_sec(peer_n, minimum=timeout)
         self.apply_specs([spec], timeout=timeout)
 
-    def apply_specs(self, specs: list, timeout: int = 30) -> None:
+    def _apply_specs_direct(self, specs: list, timeout: int = 30) -> None:
         peer_n = sum(len((s or {}).get("peers") or []) for s in (specs or []))
         timeout = wg_apply_timeout_sec(peer_n, minimum=timeout)
         plain_specs = [_plain_tree(s) for s in specs]
@@ -368,6 +483,22 @@ class RPyCWireGuardClient(AutoScaleWireGuardMixin):
                     exc,
                 )
                 raise
+
+    def apply_specs(self, specs: list, timeout: int = 30) -> None:
+        peer_n = sum(len((s or {}).get("peers") or []) for s in (specs or []))
+        timeout = wg_apply_timeout_sec(peer_n, minimum=timeout)
+        plain_specs = [_plain_tree(s) for s in (specs or [])]
+        # Large single-shot syncconf over RPyC fails on flaky links; stream
+        # automatically so tunnel exits / reconnect heal without manual wg set.
+        if peer_n > WG_APPLY_RPC_CHUNK:
+            _apply_specs_chunked(
+                apply_direct=self._apply_specs_direct,
+                apply_batch=self.apply_batch,
+                specs=plain_specs,
+                timeout=timeout,
+            )
+            return
+        self._apply_specs_direct(plain_specs, timeout)
 
     def open_udp_ports(self, ports: list, timeout: int = 15) -> int:
         remote = getattr(self._node, "remote", None)

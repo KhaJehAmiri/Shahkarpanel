@@ -159,6 +159,30 @@ def node_delegates_wireguard_to_tunnel(db, node_id: int) -> bool:
     return relay_wireguard_tunnel_port(db, node_id) is not None
 
 
+def node_is_tunnel_exit(db, node_id: int) -> bool:
+    """True when an enabled tunnel terminates WireGuard on this node.
+
+    Tunnel exits often keep ``plain_enabled=False`` (Finalmask lives on the
+    relay) but still must run kernel ``wg0`` for ``params.wireguard_port``.
+    Without this check, sync tears the interface down and never re-pushes
+    peers after an agent recreate.
+    """
+    if node_id is None:
+        return False
+    from app.db.models import Tunnel
+
+    tunnels = (
+        db.query(Tunnel)
+        .filter(Tunnel.enabled.is_(True), Tunnel.exit_node_id == int(node_id))
+        .all()
+    )
+    for tunnel in tunnels:
+        params = tunnel.params or {}
+        if params.get("wireguard_port") or params.get("wireguard_target_port"):
+            return True
+    return False
+
+
 def relay_tunnel_outbound_tag(db, node_id: int, config=None) -> Optional[str]:
     """Outbound tag that carries this relay's user traffic through the tunnel.
 

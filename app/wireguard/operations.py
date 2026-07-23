@@ -572,10 +572,24 @@ def sync_node(db, dbnode, *, peers: Optional[List[WGUserPeer]] = None, node_obje
         except Exception:
             pass
 
+    from app.tunnel.relay import (
+        node_delegates_wireguard_to_tunnel,
+        node_is_tunnel_exit,
+        relay_tunnel_xray_ready,
+    )
+
+    tunnel_exit = False
+    try:
+        tunnel_exit = bool(node_is_tunnel_exit(db, dbnode.id))
+    except Exception:
+        tunnel_exit = False
+
     # Tear down kernel interfaces that are no longer enabled (partial or full
     # disable). apply_specs only brings up listed interfaces and will not
     # remove a sibling that was turned off.
-    if not plain_wg_enabled(cfg):
+    # Tunnel exits keep kernel WG even when plain_enabled is False — that flag
+    # only means "don't expose plain WG on the relay / subscription path".
+    if not plain_wg_enabled(cfg) and not tunnel_exit:
         try:
             if cfg.interface:
                 client.down(cfg.interface)
@@ -589,11 +603,6 @@ def sync_node(db, dbnode, *, peers: Optional[List[WGUserPeer]] = None, node_obje
             pass
 
     try:
-        from app.tunnel.relay import (
-            node_delegates_wireguard_to_tunnel,
-            relay_tunnel_xray_ready,
-        )
-
         tunnel_plain_delegated = False
         if node_delegates_wireguard_to_tunnel(db, dbnode.id):
             # Tunnel owns the plain WG UDP port on this relay. Never bring
@@ -674,10 +683,13 @@ def sync_node(db, dbnode, *, peers: Optional[List[WGUserPeer]] = None, node_obje
                 amnezia=awg_params_from_cfg(cfg) or None,
             )
             specs = [awg_spec]
-        elif autoscale_enabled() and plain_wg_enabled(cfg):
+        elif autoscale_enabled() and (plain_wg_enabled(cfg) or tunnel_exit):
             # Autoscale still needs the kernel interface(s) brought up on the
             # node. bootstrap_legacy_interfaces only writes DB rows; without an
             # apply here a fresh node stays silent on listen_port.
+            # Tunnel exits keep plain_enabled=False (Finalmask is on the relay)
+            # but still terminate kernel WG for params.wireguard_port — apply
+            # their WgInterface peers the same way.
             from app.db.models import WgInterface, WgPeer
             from app.wireguard.sync import build_node_spec
 
@@ -706,8 +718,25 @@ def sync_node(db, dbnode, *, peers: Optional[List[WGUserPeer]] = None, node_obje
                         subnet=iface.subnet,
                         peers=iface_peers,
                         mtu=cfg.mtu or 1420,
+                        interface_host=getattr(cfg, "interface_host", None),
                     )
                 )
+            if not specs and tunnel_exit and cfg.interface:
+                # No autoscale rows yet — still bring up empty wg0 so the
+                # tunnel's wireguard_port has somewhere to land.
+                from app.wireguard.sync import build_node_spec
+
+                specs = [
+                    build_node_spec(
+                        interface=cfg.interface,
+                        listen_port=cfg.listen_port,
+                        private_key=cfg.private_key,
+                        subnet=cfg.subnet,
+                        peers=[],
+                        mtu=cfg.mtu or 1420,
+                        interface_host=getattr(cfg, "interface_host", None),
+                    )
+                ]
             if not specs:
                 # Fall back to the node config row when autoscale tables are empty.
                 specs = build_node_specs(cfg, peers)
@@ -716,7 +745,12 @@ def sync_node(db, dbnode, *, peers: Optional[List[WGUserPeer]] = None, node_obje
             if not specs:
                 open_node_listen_ports(dbnode, node_object=node_object, client=client)
                 return True
-            client.apply_specs(specs)
+            _apply_specs_with_retries(
+                client,
+                specs,
+                node_id=dbnode.id,
+                tunnel_exit=tunnel_exit,
+            )
             open_node_listen_ports(dbnode, node_object=node_object, client=client)
             try:
                 from app.services.warp_node_sync import sync_node_warp_tproxy
@@ -739,7 +773,12 @@ def sync_node(db, dbnode, *, peers: Optional[List[WGUserPeer]] = None, node_obje
             # down above; still refresh firewall for any remaining UDP ports.
             open_node_listen_ports(dbnode, node_object=node_object, client=client)
             return True
-        client.apply_specs(specs)
+        _apply_specs_with_retries(
+            client,
+            specs,
+            node_id=dbnode.id,
+            tunnel_exit=tunnel_exit,
+        )
         open_node_listen_ports(dbnode, node_object=node_object, client=client)
         try:
             from app.services.warp_node_sync import sync_node_warp_tproxy
@@ -755,6 +794,44 @@ def sync_node(db, dbnode, *, peers: Optional[List[WGUserPeer]] = None, node_obje
         except Exception:
             pass
         return False
+
+
+def _apply_specs_with_retries(client, specs, *, node_id: int, tunnel_exit: bool) -> None:
+    """Apply WG specs; tunnel exits retry on flaky RPyC ``stream has been closed``."""
+    attempts = 4 if tunnel_exit else 1
+    last_exc: Optional[Exception] = None
+    for attempt in range(attempts):
+        try:
+            client.apply_specs(specs)
+            return
+        except Exception as exc:
+            last_exc = exc
+            msg = str(exc).lower()
+            flaky = "stream has been closed" in msg or "timeout" in msg
+            if attempt + 1 >= attempts or not (tunnel_exit and flaky):
+                raise
+            delay = 2.0 + float(attempt) * 2.5
+            logger.warning(
+                "WireGuard apply node=%s attempt=%s/%s failed (%s); retry in %.1fs",
+                node_id,
+                attempt + 1,
+                attempts,
+                exc,
+                delay,
+            )
+            time.sleep(delay)
+            # Refresh the RPyC client in case the session died mid-apply.
+            try:
+                from app.xray import operations as xray_ops
+
+                xray_ops.connect_node(int(node_id))
+            except Exception:
+                pass
+            refreshed = client_for_node(_node_object(int(node_id), connect=True))
+            if refreshed is not None:
+                client = refreshed
+    if last_exc is not None:
+        raise last_exc
 
 
 def _prepare_wg_sync(session) -> tuple[List[int], List[WGUserPeer]]:

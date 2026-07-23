@@ -308,7 +308,7 @@ class WireGuardManager:
         peers = list(peers or [])
         removes = list(removes or [])
         with self._lock:
-            wg = "awg" if self._interface_is_userspace_awg(interface) or shutil.which("awg") else "wg"
+            wg = self._wg_bin_for_iface(interface)
             if not self.interface_exists(interface):
                 raise RuntimeError(f"interface {interface} does not exist; full apply required first")
             applied = 0
@@ -422,13 +422,20 @@ class WireGuardManager:
         return False
 
     def _interface_is_userspace_awg(self, interface: str) -> bool:
-        if self._awg_daemon_running(interface):
-            return True
-        wg = "awg" if shutil.which("awg") else "wg"
-        result = self._run([wg, "show", interface, "listen-port"], check=False)
-        if getattr(result, "returncode", 1) != 0:
-            return False
-        return bool((getattr(result, "stdout", "") or "").strip())
+        """True only when ``amneziawg-go`` is actually managing this iface.
+
+        Do **not** treat a successful ``wg show … listen-port`` as AWG — every
+        plain kernel WireGuard interface answers that, which previously made
+        ``apply_batch`` pick the ``awg`` binary (often missing) and abort peer
+        sync on tunnel exits.
+        """
+        return self._awg_daemon_running(interface)
+
+    def _wg_bin_for_iface(self, interface: str) -> str:
+        """``awg`` only for live userspace-AWG ifaces; otherwise plain ``wg``."""
+        if self._interface_is_userspace_awg(interface) and shutil.which("awg"):
+            return "awg"
+        return "wg"
 
     def interface_exists(self, interface: str) -> bool:
         result = self._run(["ip", "link", "show", interface], check=False)
@@ -499,7 +506,7 @@ class WireGuardManager:
 
     def _peer_handshakes(self, interface: str) -> dict:
         """Return ``public_key -> unix_timestamp`` from ``awg/wg show … handshakes``."""
-        wg = "awg" if self._interface_is_userspace_awg(interface) or shutil.which("awg") else "wg"
+        wg = self._wg_bin_for_iface(interface)
         result = self._run([wg, "show", interface, "latest-handshakes"], check=False)
         if getattr(result, "returncode", 1) != 0:
             return {}
@@ -516,7 +523,7 @@ class WireGuardManager:
 
     def _peer_endpoints(self, interface: str) -> dict:
         """Return ``public_key -> endpoint`` from ``awg/wg show … endpoints``."""
-        wg = "awg" if self._interface_is_userspace_awg(interface) or shutil.which("awg") else "wg"
+        wg = self._wg_bin_for_iface(interface)
         result = self._run([wg, "show", interface, "endpoints"], check=False)
         if getattr(result, "returncode", 1) != 0:
             return {}
@@ -530,7 +537,7 @@ class WireGuardManager:
 
     def _peer_dump_rows(self, interface: str) -> dict:
         """Return ``public_key -> {psk, allowed_ips}`` from ``wg show … dump``."""
-        wg = "awg" if self._interface_is_userspace_awg(interface) or shutil.which("awg") else "wg"
+        wg = self._wg_bin_for_iface(interface)
         result = self._run([wg, "show", interface, "dump"], check=False)
         if getattr(result, "returncode", 1) != 0:
             return {}
@@ -563,7 +570,7 @@ class WireGuardManager:
         return self._add_peer(wg, interface, pubkey, row)
 
     def _peer_present(self, interface: str, pubkey: str) -> bool:
-        wg = "awg" if self._interface_is_userspace_awg(interface) or shutil.which("awg") else "wg"
+        wg = self._wg_bin_for_iface(interface)
         result = self._run([wg, "show", interface, "peers"], check=False)
         if getattr(result, "returncode", 1) != 0:
             return False
@@ -593,7 +600,7 @@ class WireGuardManager:
         import time
 
         with self._lock:
-            wg = "awg" if self._interface_is_userspace_awg(interface) or shutil.which("awg") else "wg"
+            wg = self._wg_bin_for_iface(interface)
             now = int(time.time())
             handshakes = self._peer_handshakes(interface)
             endpoints = self._peer_endpoints(interface)
@@ -679,7 +686,7 @@ class WireGuardManager:
         import time
 
         with self._lock:
-            wg = "awg" if self._interface_is_userspace_awg(interface) or shutil.which("awg") else "wg"
+            wg = self._wg_bin_for_iface(interface)
             now = int(time.time())
             mono = time.monotonic()
             handshakes = self._peer_handshakes(interface)
@@ -763,7 +770,7 @@ class WireGuardManager:
             logger.info("Applied %s spec to %s (%d peers)", mode, spec.interface, len(spec.peers))
 
     def get_transfer(self, interface: str) -> Dict[str, dict]:
-        wg = "awg" if self._interface_is_userspace_awg(interface) or shutil.which("awg") else "wg"
+        wg = self._wg_bin_for_iface(interface)
         result = self._run([wg, "show", interface, "transfer"], check=False)
         if getattr(result, "returncode", 1) != 0:
             return {}

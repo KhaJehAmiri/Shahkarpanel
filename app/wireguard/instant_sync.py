@@ -84,6 +84,19 @@ def _provision_and_sync(user_id: int, *, immediate: bool) -> bool:
             )
             return False
 
+        # Wake resumable sync so tunnel-exit kernel WG (and other nodes) pick
+        # up the new peer without waiting for the next churn event.
+        try:
+            from app.wireguard.operations import sync_user_change
+
+            sync_user_change()
+        except Exception:
+            logger.debug(
+                "sync_user_change after instant WG provision failed for user %s",
+                user_id,
+                exc_info=True,
+            )
+
         try:
             ensure_finalmask_slots(db)
         except Exception:

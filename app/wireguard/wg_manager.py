@@ -574,6 +574,44 @@ def create_peer(
         db.commit()
         db.refresh(peer)
         db.refresh(iface)
+
+        # Tunnel *exits* keep plain_enabled=False but still run kernel WG for
+        # the tunnel's wireguard_port — hot-add the peer onto that exit now.
+        tunnel_exit = False
+        try:
+            from app.tunnel.relay import node_is_tunnel_exit
+
+            tunnel_exit = bool(node_is_tunnel_exit(db, dbnode.id))
+        except Exception:
+            tunnel_exit = False
+        if tunnel_exit and not delegates_tunnel:
+            client = _node_client(dbnode)
+            if client is not None and hasattr(client, "autoscale_hot_add_peer"):
+                user = db.query(User).filter(User.id == user_id).first()
+                active = bool(user and user.status in SERVED_STATUSES)
+                allowed = _normalize_allowed(peer.address) if active else "127.0.0.1/32"
+                try:
+                    client.autoscale_hot_add_peer(
+                        iface.name,
+                        peer.public_key,
+                        allowed,
+                        preshared_key=peer.preshared_key,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "tunnel-exit hot-add failed on %s for user %s: %s",
+                        iface.name,
+                        user_id,
+                        exc,
+                    )
+                    # Fall through to fleet sync so apply_specs can catch up.
+                    try:
+                        from app.wireguard.operations import sync_user_change
+
+                        sync_user_change()
+                    except Exception:
+                        pass
+
         if delegates_tunnel:
             try:
                 from app.wireguard.host_sync import sync_panel_exit_wireguard

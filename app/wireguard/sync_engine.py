@@ -422,8 +422,61 @@ def _sync_finalmask_node(node_id: int, *, generation: int, cursor: int) -> None:
 
     with GetDB() as db:
         dbnode = crud.get_node_by_id(db, node_id)
-        if dbnode is None or not xray_native_wg_enabled(getattr(dbnode, "wireguard", None)):
+        if dbnode is None:
+            return
+        if not xray_native_wg_enabled(getattr(dbnode, "wireguard", None)):
+            # Not a Finalmask node. Tunnel exits still need kernel WG peers —
+            # never mark them converged with peers_done=0 (that left exits
+            # empty after every agent recreate / panel reconnect).
+            from app.tunnel.relay import node_is_tunnel_exit
+            from app.wireguard.operations import sync_node
+
             cur = db.get(NodeSyncCursor, node_id)
+            try:
+                is_exit = bool(node_is_tunnel_exit(db, node_id))
+            except Exception:
+                is_exit = False
+            if is_exit:
+                # Chunked apply_specs (transport) pushes WgInterface peers
+                # automatically — never mark converged with peers_done=0.
+                ok = False
+                try:
+                    ok = bool(sync_node(db, dbnode))
+                except Exception as exc:
+                    logger.warning(
+                        "Tunnel-exit WG sync node=%s failed: %s", node_id, exc,
+                    )
+                    delay = _note_node_failure(int(node_id))
+                    if cur is not None:
+                        cur.status = "paused"
+                        cur.error = f"tunnel-exit sync: {exc}"[:500]
+                        db.commit()
+                    logger.info(
+                        "Tunnel-exit node=%s will retry in %ss", node_id, int(delay),
+                    )
+                    return
+                if cur is not None:
+                    from app.db.models import WgInterface, WgPeer
+
+                    peer_n = (
+                        db.query(WgPeer)
+                        .join(WgInterface, WgPeer.interface_id == WgInterface.id)
+                        .filter(WgInterface.node_id == node_id)
+                        .count()
+                    )
+                    cur.status = "converged" if ok else "paused"
+                    cur.peers_done = int(peer_n) if ok else int(cur.peers_done or 0)
+                    cur.peers_total = int(peer_n)
+                    cur.applied_hash = cur.desired_hash if ok else ""
+                    cur.error = None if ok else "tunnel-exit apply_specs failed"
+                    if ok:
+                        _set_node_cooldown(int(node_id), _NODE_COOLDOWN_OK_SEC)
+                        with _worker_lock:
+                            _node_fail_streak.pop(int(node_id), None)
+                    else:
+                        _note_node_failure(int(node_id))
+                    db.commit()
+                return
             if cur is not None:
                 cur.status = "converged"
                 cur.applied_hash = cur.desired_hash

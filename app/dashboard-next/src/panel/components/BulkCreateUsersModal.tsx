@@ -80,8 +80,15 @@ function isPanelEndpoint(ep: SubEndpointRow): boolean {
   return true;
 }
 
+/** p1 / p2 … — panel-prefixed inbound tags. Branding endpoints share global tags. */
+function isPnPanelSlug(slug: string): boolean {
+  return /^p\d+$/i.test((slug || "").trim());
+}
+
 function tagMatchesPanel(tag: string, slug: string): boolean {
-  return tag === slug || tag.startsWith(`${slug}-`);
+  // Shared tags like ``in1`` are valid for every panel, including reseller domains.
+  if (!isPnPanelSlug(slug)) return true;
+  return tag === slug || tag.startsWith(`${slug}-`) || tag === "in1" || !tag.includes("-");
 }
 
 async function copyText(text: string): Promise<boolean> {
@@ -687,6 +694,9 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
             ) : (
               <>
                 <h4 className="nx-bulk-create-section-title">{t("bulkCreate.sectionProtocols")}</h4>
+                {availableProtos.length === 0 ? (
+                  <div className="nx-faint">{t("users.noProtocolsAvailableHint")}</div>
+                ) : (
                 <div className="nx-proto-pick">
                   {availableProtos.map((p) => {
                     const vis = PROTO_VISUAL[p] || { icon: "🔗", hue: "var(--nx-accent)" };
@@ -711,6 +721,7 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
                     );
                   })}
                 </div>
+                )}
 
                 {enabledProtoRows.length > 0 && (
                   <div className="nx-bulk-create-proto-config">

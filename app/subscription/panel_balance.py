@@ -65,6 +65,54 @@ def panel_counts(db: Session) -> list[dict]:
     ]
 
 
+def reseller_branding_panel(db: Session, admin) -> Optional[SubscriptionEndpoint]:
+    """Reseller branding subscription endpoint (``reseller-{tenant_id}``), if any."""
+    if admin is None or getattr(admin, "is_sudo", False):
+        return None
+    tenant_id = getattr(admin, "tenant_id", None)
+    if tenant_id is None:
+        return None
+    try:
+        from app.tenant.subscription_domain import get_reseller_subscription_endpoint
+
+        return get_reseller_subscription_endpoint(db, int(tenant_id))
+    except Exception:
+        return None
+
+
+def panels_for_create(db: Session, admin=None) -> list[dict]:
+    """Panels shown in create/bulk-create pickers for this admin.
+
+    Owner installs use ``p1…p9``. Resellers on branding-only installs (no pN
+    panels) still need their domain endpoint listed — otherwise the UI says
+    «no panels / no inbound» and new users never bind to the reseller domain.
+    """
+    rows = panel_counts(db)
+    brand = reseller_branding_panel(db, admin)
+    if brand is None:
+        return rows
+    if any(int(r["id"]) == int(brand.id) for r in rows):
+        return rows
+    return [
+        {
+            "id": brand.id,
+            "slug": brand.slug,
+            "host": brand.host,
+            "legacy_panel_id": brand.legacy_panel_id,
+            "user_count": panel_user_count(db, brand.id),
+        },
+        *rows,
+    ]
+
+
+def default_panel_for_create(db: Session, admin=None) -> Optional[SubscriptionEndpoint]:
+    """Least-loaded pN panel, else the reseller branding endpoint."""
+    ep = pick_least_loaded_panel(db)
+    if ep is not None:
+        return ep
+    return reseller_branding_panel(db, admin)
+
+
 def endpoint_for_panel_slug(db: Session, slug: str) -> Optional[SubscriptionEndpoint]:
     slug = (slug or "").strip()
     if not slug:
@@ -108,13 +156,15 @@ def resolve_panel_for_create(
     endpoint_id: Optional[int] = None,
     username: Optional[str] = None,
     username_prefix: Optional[str] = None,
+    admin=None,
 ) -> Tuple[Optional[SubscriptionEndpoint], str]:
     """Pick panel + final username for a new account.
 
     Priority:
       1. Explicit ``endpoint_id``
       2. ``pN_`` already present in username / prefix
-      3. Least-loaded enabled panel
+      3. Least-loaded enabled pN panel
+      4. Reseller branding domain (when admin is a reseller)
     """
     username = (username or "").strip()
 
@@ -122,7 +172,9 @@ def resolve_panel_for_create(
         ep = crud.get_subscription_endpoint(db, endpoint_id)
         if ep is None or not ep.enabled:
             raise ValueError("Selected subscription panel endpoint was not found or is disabled")
-        return ep, ensure_panel_username(username, ep.slug)
+        if _PANEL_SLUG_RE.match((ep.slug or "").strip()):
+            return ep, ensure_panel_username(username, ep.slug)
+        return ep, username
 
     m = _USERNAME_PANEL_RE.match(username or "")
     if not m and username_prefix:
@@ -132,10 +184,12 @@ def resolve_panel_for_create(
         if ep is not None:
             return ep, ensure_panel_username(username, ep.slug)
 
-    ep = pick_least_loaded_panel(db)
+    ep = default_panel_for_create(db, admin)
     if ep is None:
         return None, username
-    return ep, ensure_panel_username(username, ep.slug)
+    if _PANEL_SLUG_RE.match((ep.slug or "").strip()):
+        return ep, ensure_panel_username(username, ep.slug)
+    return ep, username
 
 
 def bind_user_to_panel(

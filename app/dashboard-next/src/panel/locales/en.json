@@ -416,7 +416,7 @@
     "panelHint": "Choose which panel (p1…p9) these users’ subscription links should use.",
     "panelRequired": "Select a subscription panel first",
     "panelNone": "no panel",
-    "noPanels": "No panel endpoints found. Configure them under Connection → Subscription.",
+    "noPanels": "No p1… panel endpoints found. Your branding domain is used when set; otherwise configure Connection → Subscription.",
     "resultsTitle": "{{n}} users created",
     "resultsDesc": "Copy subscription links below, or copy all at once.",
     "resultsSummary": "{{n}} links · {{panel}}",

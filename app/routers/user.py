@@ -212,9 +212,10 @@ def add_user(
 
     from app.subscription.panel_balance import bind_user_to_panel, resolve_panel_for_create
 
+    dbadmin = crud.get_admin(db, admin.username)
     try:
         panel_ep, balanced_username = resolve_panel_for_create(
-            db, username=new_user.username
+            db, username=new_user.username, admin=dbadmin
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -225,7 +226,7 @@ def add_user(
         dbuser = crud.create_user(
             db,
             new_user,
-            admin=crud.get_admin(db, admin.username),
+            admin=dbadmin,
         )
     except ValueError as exc:
         if "limit reached" in str(exc).lower():
@@ -284,9 +285,10 @@ def add_user_from_template(
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    dbadmin = crud.get_admin(db, admin.username)
     try:
         panel_ep, balanced_username = resolve_panel_for_create(
-            db, username=new_user.username
+            db, username=new_user.username, admin=dbadmin
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -297,7 +299,7 @@ def add_user_from_template(
         _ensure_protocol_enabled(ptype, db)
 
     try:
-        dbuser = crud.create_user(db, new_user, admin=crud.get_admin(db, admin.username))
+        dbuser = crud.create_user(db, new_user, admin=dbadmin)
     except ValueError as exc:
         if "limit reached" in str(exc).lower():
             raise HTTPException(status_code=403, detail=str(exc))

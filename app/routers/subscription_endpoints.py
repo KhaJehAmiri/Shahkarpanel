@@ -53,13 +53,21 @@ def list_endpoints(
 @router.get("/balance")
 def panel_balance(
     db: Session = Depends(get_db),
-    _: Admin = Depends(Admin.get_current),
+    admin: Admin = Depends(Admin.get_current),
 ):
-    """Least-loaded panel picker stats (p1…p9) for owner + reseller create flows."""
-    from app.subscription.panel_balance import panel_counts, pick_least_loaded_panel
+    """Panel picker stats for owner + reseller create/bulk-create flows.
 
-    rows = panel_counts(db)
-    next_ep = pick_least_loaded_panel(db)
+    Includes ``p1…p9`` when present. For resellers on branding-only installs
+    (no pN panels), also exposes their ``reseller-{tenant}`` domain endpoint so
+    the UI can bind new users to the correct subscription host.
+    """
+    from app.subscription.panel_balance import (
+        default_panel_for_create,
+        panels_for_create,
+    )
+
+    rows = panels_for_create(db, admin)
+    next_ep = default_panel_for_create(db, admin)
     return {
         "panels": rows,
         "next": (

@@ -516,11 +516,14 @@ def bulk_create_users(
     from app import xray as xray_mod
     from app.routers.user import _ensure_protocol_enabled
     from app.subscription.panel_balance import (
+        _PANEL_SLUG_RE,
         alias_token_for_username,
         bind_user_to_panel,
+        default_panel_for_create,
         ensure_panel_username,
         list_balance_panels,
         panel_user_count,
+        reseller_branding_panel,
     )
 
     started = time.perf_counter()
@@ -556,10 +559,18 @@ def bulk_create_users(
 
     # Snapshot panel loads once, then assign locally (round-robin on least-loaded).
     # Old path called pick_least_loaded_panel → N COUNT queries *per user*.
+    # Branding-only reseller installs have no pN panels — fall back to the
+    # reseller's subscription domain so links use su1.… not the owner host.
     panel_counts: Dict[int, int] = {}
     balance_panels: List[Any] = []
     if pinned_ep is None:
         balance_panels = list_balance_panels(db)
+        if not balance_panels:
+            brand = reseller_branding_panel(db, dbadmin) or default_panel_for_create(
+                db, dbadmin
+            )
+            if brand is not None:
+                balance_panels = [brand]
         panel_counts = {ep.id: panel_user_count(db, ep.id) for ep in balance_panels}
 
     def _next_panel():
@@ -593,7 +604,9 @@ def bulk_create_users(
         username = f"{prefix}{core}{suffix}"
         try:
             panel_ep = _next_panel()
-            if panel_ep is not None:
+            # Only pN panels force the ``p1_…`` username shape; branding
+            # endpoints (reseller-2, …) keep the generated username as-is.
+            if panel_ep is not None and _PANEL_SLUG_RE.match((panel_ep.slug or "").strip()):
                 username = ensure_panel_username(username, panel_ep.slug)
             new_user = _user_create_from_bulk_body(body, username=username, db=db)
             if enabled_proxies:

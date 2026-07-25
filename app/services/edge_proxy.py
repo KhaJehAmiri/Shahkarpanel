@@ -1082,6 +1082,106 @@ def finalize_subscription_ssl_after_migration(
     return result
 
 
+def panel_listen_ipv4s() -> list[str]:
+    """IPv4 addresses that count as «this panel» for subscription DNS checks."""
+    found: list[str] = []
+    try:
+        from app.utils.system import get_public_ip
+
+        pub = (get_public_ip() or "").strip()
+        if pub and pub != "127.0.0.1":
+            found.append(pub)
+    except Exception:
+        pass
+    try:
+        import socket
+
+        hostname = socket.gethostname()
+        for info in socket.getaddrinfo(hostname, None, socket.AF_INET):
+            ip = info[4][0]
+            if ip and not str(ip).startswith("127.") and ip not in found:
+                found.append(ip)
+    except Exception:
+        pass
+    try:
+        import socket as _socket
+
+        sock = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+        try:
+            sock.connect(("8.8.8.8", 80))
+            ip = sock.getsockname()[0]
+            if ip and not str(ip).startswith("127.") and ip not in found:
+                found.append(ip)
+        finally:
+            sock.close()
+    except Exception:
+        pass
+    return found
+
+
+def check_subscription_domain_dns(host: str) -> dict[str, Any]:
+    """Resolve ``host`` and check whether its A records include this panel."""
+    import socket
+
+    domain = (host or "").strip().lower().split(":")[0]
+    expected = panel_listen_ipv4s()
+    if not domain or domain == "_":
+        return {
+            "host": domain,
+            "dns_ok": False,
+            "resolved_ips": [],
+            "expected_ips": expected,
+            "message": "No domain configured",
+        }
+    resolved: list[str] = []
+    try:
+        for info in socket.getaddrinfo(domain, None, socket.AF_INET):
+            ip = info[4][0]
+            if ip and ip not in resolved:
+                resolved.append(ip)
+    except socket.gaierror:
+        tip = expected[0] if expected else "this panel IP"
+        return {
+            "host": domain,
+            "dns_ok": False,
+            "resolved_ips": [],
+            "expected_ips": expected,
+            "message": (
+                f"DNS for {domain} does not resolve. Create an A record pointing to {tip}."
+            ),
+        }
+    except Exception as exc:
+        return {
+            "host": domain,
+            "dns_ok": False,
+            "resolved_ips": [],
+            "expected_ips": expected,
+            "message": f"DNS lookup failed: {exc}",
+        }
+
+    overlap = sorted(set(resolved) & set(expected))
+    dns_ok = bool(overlap)
+    if dns_ok:
+        message = f"DNS OK — {domain} → {', '.join(overlap)}"
+    elif not resolved:
+        tip = expected[0] if expected else "this panel IP"
+        message = f"DNS for {domain} has no A record. Point it to {tip}."
+    else:
+        tip = expected[0] if expected else "this panel IP"
+        message = (
+            f"DNS for {domain} points to {', '.join(resolved)} — not this panel "
+            f"({tip}). Point the A record directly to {tip} "
+            f"(disable CDN/proxy) then save again."
+        )
+    return {
+        "host": domain,
+        "dns_ok": dns_ok,
+        "resolved_ips": resolved,
+        "expected_ips": expected,
+        "message": message,
+    }
+
+
 def subscription_domain_ssl_status(host: str) -> dict[str, Any]:
     """Return whether a subscription domain has a usable LE cert + HTTPS vhost."""
     domain = (host or "").strip().lower().split(":")[0]
@@ -1090,8 +1190,12 @@ def subscription_domain_ssl_status(host: str) -> dict[str, Any]:
             "host": domain,
             "cert_present": False,
             "https_ready": False,
+            "dns_ok": False,
+            "resolved_ips": [],
+            "expected_ips": panel_listen_ipv4s(),
             "message": "No domain configured",
         }
+    dns = check_subscription_domain_dns(domain)
     cert_present = _subscription_tls_cert_paths(domain) is not None
     safe = _DOMAIN_SAFE.sub("-", domain).strip("-") or "legacy"
     https_key = f"nexuspanel-sub-https-{safe}"
@@ -1106,16 +1210,23 @@ def subscription_domain_ssl_status(host: str) -> dict[str, Any]:
     # A live LE cert is the readiness gate; reconcile always ensures the :443
     # vhost when the cert exists (subscription https site or panel vhost).
     ready = bool(cert_present)
+    if ready:
+        message = "SSL active"
+    elif not dns.get("dns_ok"):
+        message = dns.get("message") or (
+            "DNS must point to this panel before SSL can activate"
+        )
+    else:
+        message = "DNS OK — certificate pending (save branding again or click Enable SSL)"
     return {
         "host": domain,
         "cert_present": cert_present,
         "https_ready": ready,
         "https_vhost_staged": https_staged,
-        "message": (
-            "SSL active"
-            if ready
-            else "No certificate — click Enable SSL (DNS A record must point here)"
-        ),
+        "dns_ok": bool(dns.get("dns_ok")),
+        "resolved_ips": list(dns.get("resolved_ips") or []),
+        "expected_ips": list(dns.get("expected_ips") or []),
+        "message": message,
     }
 
 
@@ -1261,6 +1372,24 @@ def ensure_subscription_domain_ssl(db, host: str | None = None) -> dict[str, Any
     covers every subscription endpoint so shared listen ports stay consistent).
     """
     target = (host or "").strip().lower().split(":")[0] or None
+    # Skip ACME spam when DNS clearly does not point here (Let's Encrypt
+    # rate-limits failed authorizations after a handful of tries).
+    if target:
+        dns = check_subscription_domain_dns(target)
+        if not dns.get("dns_ok") and not _subscription_tls_cert_paths(target):
+            return {
+                "ok": False,
+                "host": target,
+                "cert_present": False,
+                "https_ready": False,
+                "dns_ok": False,
+                "resolved_ips": list(dns.get("resolved_ips") or []),
+                "expected_ips": list(dns.get("expected_ips") or []),
+                "message": dns.get("message") or "DNS must point to this panel",
+                "sync_applied": False,
+                "sync_message": "skipped certbot — DNS not pointing at panel",
+                "sites": [],
+            }
     sync_result = sync_subscription_legacy_nginx(db)
     if target:
         status = subscription_domain_ssl_status(target)
@@ -1269,6 +1398,9 @@ def ensure_subscription_domain_ssl(db, host: str | None = None) -> dict[str, Any
             "host": target,
             "cert_present": status["cert_present"],
             "https_ready": status["https_ready"],
+            "dns_ok": bool(status.get("dns_ok")),
+            "resolved_ips": list(status.get("resolved_ips") or []),
+            "expected_ips": list(status.get("expected_ips") or []),
             "message": status["message"],
             "sync_applied": sync_result.get("applied"),
             "sync_message": sync_result.get("message") or "",

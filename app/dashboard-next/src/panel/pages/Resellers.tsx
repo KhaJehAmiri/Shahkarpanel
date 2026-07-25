@@ -706,6 +706,17 @@ type SubPortInfo = {
   suggested: number[];
 };
 
+type SubSslStatus = {
+  host?: string | null;
+  https_ready?: boolean;
+  dns_ok?: boolean;
+  cert_present?: boolean;
+  message?: string;
+  resolved_ips?: string[];
+  expected_ips?: string[];
+  panel_ip?: string | null;
+};
+
 const BrandingTab: FC = () => {
   const { t } = useTranslation();
   const { isEnabled } = useApp();
@@ -715,8 +726,14 @@ const BrandingTab: FC = () => {
     () => api.get("/branding/subscription-ports"),
     [],
   );
+  const {
+    data: sslStatus,
+    loading: sslLoading,
+    reload: reloadSsl,
+  } = useFetch<SubSslStatus>(() => api.get("/branding/mine/subscription-ssl"), []);
   const [f, setF] = useState<Branding | null>(null);
   const [busy, setBusy] = useState(false);
+  const [sslBusy, setSslBusy] = useState(false);
   const model = f ?? data ?? {};
 
   const blockedByPort = useMemo(() => {
@@ -773,6 +790,10 @@ const BrandingTab: FC = () => {
     try {
       await api.put("/branding/mine", model);
       toast.push(t("common.saved"), "success"); setF(null); reload();
+      // SSL runs in the background after save — refresh status so the UI
+      // never shows a green "ready" while DNS/cert are still broken.
+      setTimeout(() => reloadSsl(), 800);
+      setTimeout(() => reloadSsl(), 4000);
     } catch (e: any) {
       const detail = e instanceof ApiError ? e.body?.detail : e?.body?.detail;
       if (detail && typeof detail === "object" && String(detail.code || "").startsWith("sub_port_")) {
@@ -781,6 +802,26 @@ const BrandingTab: FC = () => {
         toast.push(e.message, "error");
       }
     } finally { setBusy(false); }
+  };
+
+  const enableSsl = async () => {
+    setSslBusy(true);
+    try {
+      const res = await api.post<SubSslStatus>("/branding/mine/subscription-ssl", {});
+      reloadSsl();
+      if (res?.https_ready) {
+        toast.push(t("resellers.subSslActive"), "success");
+      } else {
+        toast.push(res?.message || t("resellers.subSslDnsBad", {
+          resolved: (res?.resolved_ips || []).join(", ") || "?",
+          ip: res?.panel_ip || "?",
+        }), "error");
+      }
+    } catch (e: any) {
+      toast.push(e.message, "error");
+    } finally {
+      setSslBusy(false);
+    }
   };
 
   if (loading) return <Card><SkeletonRows rows={4} cols={2} /></Card>;
@@ -810,7 +851,11 @@ const BrandingTab: FC = () => {
     <Card style={{ maxWidth: 640 }}>
       <CardHead title={t("resellers.tabBranding")} desc={t("resellers.brandingDesc")} />
       <div className="nx-stack">
-        <Callout tone="info">{t("resellers.domainDnsHint")}</Callout>
+        <Callout tone="info">
+          {sslStatus?.panel_ip
+            ? t("resellers.domainDnsHintWithIp", { ip: sslStatus.panel_ip })
+            : t("resellers.domainDnsHint")}
+        </Callout>
         <Field label={t("resellers.panelTitle")}><Input value={model.panel_title || ""} onChange={upd("panel_title")} /></Field>
         <div className="nx-row" style={{ gap: 12 }}>
           <Field label={t("resellers.logoUrl")}><Input value={model.logo_url || ""} onChange={upd("logo_url")} /></Field>
@@ -858,8 +903,40 @@ const BrandingTab: FC = () => {
           </Callout>
         )}
         {suggestedSub && !portConflict && (
-          <Callout tone="ok" title={t("resellers.subDomainReadyTitle")}>
-            {t("resellers.subDomainReadyHint")}: <code>{suggestedSub}</code>
+          <Callout
+            tone={sslStatus?.https_ready ? "ok" : sslStatus?.dns_ok ? "warn" : "danger"}
+            title={t("resellers.subDomainReadyTitle")}
+          >
+            <div className="nx-stack" style={{ gap: 8 }}>
+              <div>
+                {t("resellers.subDomainReadyHint")}: <code>{suggestedSub}</code>
+              </div>
+              {sslLoading && !sslStatus ? (
+                <div>{t("resellers.subSslChecking")}</div>
+              ) : sslStatus?.https_ready ? (
+                <div>{t("resellers.subSslActive")}</div>
+              ) : sslStatus?.dns_ok ? (
+                <div>{t("resellers.subSslPending")}</div>
+              ) : model.domain ? (
+                <div>
+                  {t("resellers.subSslDnsBad", {
+                    resolved: (sslStatus?.resolved_ips || []).join(", ") || "—",
+                    ip: sslStatus?.panel_ip || (sslStatus?.expected_ips || [])[0] || "—",
+                  })}
+                </div>
+              ) : null}
+              {model.domain && !sslStatus?.https_ready && (
+                <div className="nx-row" style={{ justifyContent: "flex-start" }}>
+                  <Button
+                    variant="ghost"
+                    disabled={busy || sslBusy || !!portConflict}
+                    onClick={enableSsl}
+                  >
+                    {t("resellers.subSslEnable")}
+                  </Button>
+                </div>
+              )}
+            </div>
           </Callout>
         )}
         <div className="nx-row" style={{ justifyContent: "flex-end" }}>

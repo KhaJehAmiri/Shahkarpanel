@@ -268,6 +268,61 @@ def branding_subscription_ports(
     }
 
 
+@router.get("/branding/mine/subscription-ssl")
+def my_branding_subscription_ssl(
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(require_permission("system:read")),
+):
+    """DNS + Let's Encrypt readiness for the reseller branding domain."""
+    _require_white_label_enabled()
+    from app.services.edge_proxy import (
+        panel_listen_ipv4s,
+        subscription_domain_ssl_status,
+    )
+    from app.tenant.subscription_domain import domain_from_branding
+
+    tenant_id = tenant_svc.admin_tenant_id(db, admin)
+    branding = tenant_svc.resolve_branding(db, tenant_id)
+    host = domain_from_branding(branding)
+    if not host:
+        return {
+            "host": None,
+            "cert_present": False,
+            "https_ready": False,
+            "dns_ok": False,
+            "resolved_ips": [],
+            "expected_ips": panel_listen_ipv4s(),
+            "message": "No domain configured",
+            "panel_ip": (panel_listen_ipv4s() or [None])[0],
+        }
+    status = subscription_domain_ssl_status(host)
+    status["panel_ip"] = (status.get("expected_ips") or panel_listen_ipv4s() or [None])[0]
+    return status
+
+
+@router.post("/branding/mine/subscription-ssl")
+def enable_my_branding_subscription_ssl(
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(require_permission("users:write")),
+):
+    """Retry Let's Encrypt for the saved branding domain (after DNS is fixed)."""
+    _require_white_label_enabled()
+    from app.services.edge_proxy import (
+        ensure_subscription_domain_ssl,
+        panel_listen_ipv4s,
+    )
+    from app.tenant.subscription_domain import domain_from_branding
+
+    tenant_id = tenant_svc.admin_tenant_id(db, admin)
+    branding = tenant_svc.resolve_branding(db, tenant_id)
+    host = domain_from_branding(branding)
+    if not host:
+        raise HTTPException(status_code=400, detail="No branding domain configured")
+    result = ensure_subscription_domain_ssl(db, host)
+    result["panel_ip"] = (result.get("expected_ips") or panel_listen_ipv4s() or [None])[0]
+    return result
+
+
 @router.put("/branding/mine", response_model=BrandingResponse)
 def update_my_branding(
     body: BrandingUpdate,

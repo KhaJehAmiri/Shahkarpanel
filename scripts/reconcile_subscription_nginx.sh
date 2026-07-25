@@ -95,12 +95,60 @@ print("\n".join(seen))
 PY
 )
 
+panel_ipv4s() {
+  # Public/panel IPv4s used to gate ACME (avoid LE rate-limits on bad DNS).
+  python3 - <<'PY'
+import socket
+ips = []
+try:
+    import urllib.request
+    for url in ("http://api4.ipify.org/", "http://ipv4.icanhazip.com/"):
+        try:
+            v = urllib.request.urlopen(url, timeout=2).read().decode().strip()
+            if v and v not in ips and not v.startswith("127."):
+                ips.append(v)
+                break
+        except Exception:
+            pass
+except Exception:
+    pass
+try:
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.connect(("8.8.8.8", 80))
+    v = s.getsockname()[0]
+    s.close()
+    if v and v not in ips and not v.startswith("127."):
+        ips.append(v)
+except Exception:
+    pass
+print(" ".join(ips))
+PY
+}
+
+dns_points_here() {
+  local domain="$1"
+  local resolved panel_ips
+  resolved="$(getent ahostsv4 "$domain" 2>/dev/null | awk '{print $1}' | sort -u | tr '\n' ' ')"
+  [ -n "$resolved" ] || return 1
+  panel_ips="$(panel_ipv4s)"
+  [ -n "$panel_ips" ] || return 0
+  local ip
+  for ip in $resolved; do
+    for p in $panel_ips; do
+      [ "$ip" = "$p" ] && return 0
+    done
+  done
+  warn "Skip certbot for ${domain}: DNS→${resolved} (panel=${panel_ips}). Point A record to panel IP first."
+  return 1
+}
+
 issue_cert() {
   local domain="$1"
   [ -n "$domain" ] || return 0
   if [ -f "/etc/letsencrypt/live/${domain}/fullchain.pem" ]; then
     return 0
   fi
+  dns_points_here "$domain" || return 1
   [ -n "$CERTBOT" ] && [ -x "$CERTBOT" ] || {
     warn "certbot missing — create cert for ${domain} manually."
     return 1

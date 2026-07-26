@@ -566,7 +566,7 @@ html[data-sub-theme="dark"] .s-rail-btn.on {
 /* Mobile bottom dock */
 .s-mobile-nav {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 4px;
   padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px));
   background: color-mix(in srgb, var(--s-surface-solid) 86%, transparent);

@@ -6,13 +6,15 @@ import {
 } from "lucide-react";
 import { SubAppTile } from "@/components/subscribe/SubAppTile";
 import { SubWgAppTile } from "@/components/subscribe/SubWgAppTile";
+import { SubQuicAppTile } from "@/components/subscribe/SubQuicAppTile";
 import { QR } from "@/components/QR";
 import { PLATFORMS, type Platform, type ClientApp, appsFor, detectPlatform } from "@/lib/apps";
 import { wgAppsFor } from "@/lib/wg-apps";
+import { quicAppsFor, type QuicProtocol } from "@/lib/quic-apps";
 import { copyToClipboard } from "@/lib/clipboard";
 import { bytes, formatDate, relativeDays } from "@/lib/format";
 import { SUB_LANGS, SubLang, detectSubLang, rememberSubLang, t as subT } from "@/lib/subscribe-i18n";
-import { resolveClientImportUrl, resolvePublicSubUrl, resolveWgUrl } from "@/lib/subscribe-url";
+import { resolveClientImportUrl, resolvePublicSubUrl, resolveSingboxSubUrl, resolveWgUrl } from "@/lib/subscribe-url";
 import { applySubTheme, detectSubTheme, type SubTheme } from "@/lib/sub-theme";
 import { openDeepLink } from "@/lib/deepLink";
 
@@ -382,6 +384,13 @@ function recommendedApp(platform: Platform, apps: ClientApp[]): ClientApp | null
   return apps[0];
 }
 
+/** Which app catalog belongs to a config protocol. */
+function appsKindForProto(proto: string): "proxy" | "wireguard" | "quic" {
+  if (proto === "wireguard") return "wireguard";
+  if (proto === "hysteria2" || proto === "tuic" || proto === "anytls") return "quic";
+  return "proxy";
+}
+
 function platformLabel(lang: SubLang, id: Platform): string {
   const key =
     id === "android" ? "platformAndroid" :
@@ -448,13 +457,9 @@ function SubscribeBody() {
   const [copied, setCopied] = useState(false);
   const [qrModal, setQrModal] = useState(false);
   const [busyConnect, setBusyConnect] = useState(false);
-  const [view, setView] = useState<"overview" | "servers" | "import" | "apps">("overview");
+  const [view, setView] = useState<"overview" | "servers" | "import">("overview");
   const [wgConfByNode, setWgConfByNode] = useState<Record<number, string>>({});
   const wgFetchStarted = useRef<Set<number>>(new Set());
-  const [stepsDone, setStepsDone] = useState<{ apps: boolean; import: boolean; servers: boolean }>({
-    apps: false, import: false, servers: false,
-  });
-  const [setupExpanded, setSetupExpanded] = useState(false);
   const [serverQuery, setServerQuery] = useState("");
   const [serverSort, setServerSort] = useState<"recommended" | "name">("recommended");
   const [pickingServer, setPickingServer] = useState(true);
@@ -462,15 +467,14 @@ function SubscribeBody() {
   const [usageOpen, setUsageOpen] = useState(false);
   const [usageLoading, setUsageLoading] = useState(false);
 
-  const goView = useCallback((next: "overview" | "servers" | "import" | "apps") => {
-    if (next === "apps" || next === "import" || next === "servers") {
-      setStepsDone((prev) => {
-        const updated = { ...prev, [next]: true };
-        try { localStorage.setItem("nx_sub_steps_done", JSON.stringify(updated)); } catch { /* ignore */ }
-        return updated;
-      });
-    }
+  const goView = useCallback((next: "overview" | "servers" | "import") => {
     setView(next);
+  }, []);
+
+  const openProtocol = useCallback((id: string) => {
+    setProtoFilter(id);
+    setPickingServer(true);
+    setView("servers");
   }, []);
 
   const loadInfo = useCallback((tok: string) => {
@@ -506,17 +510,6 @@ function SubscribeBody() {
     const tok = getToken();
     setToken(tok);
     setPlatform(detectPlatform(typeof navigator !== "undefined" ? navigator.userAgent : ""));
-    try {
-      const raw = localStorage.getItem("nx_sub_steps_done");
-      if (raw) {
-        const parsed = JSON.parse(raw) as { apps?: boolean; import?: boolean; servers?: boolean };
-        setStepsDone({
-          apps: !!parsed.apps,
-          import: !!parsed.import,
-          servers: !!parsed.servers,
-        });
-      }
-    } catch { /* ignore */ }
     loadInfo(tok);
     loadDailyUsage(tok);
   }, [loadInfo, loadDailyUsage]);
@@ -929,6 +922,22 @@ function SubscribeBody() {
   const otherApps = proxyApps.filter((a) => a.id !== primaryApp?.id);
   // Official WireGuard + AmneziaWG only (skip duplicate store variants).
   const wgApps = wgAppsFor(platform).filter((a) => a.id === "wireguard" || a.id === "amneziawg");
+  const quicApps = quicAppsFor(
+    platform,
+    protoFilter === "hysteria2" || protoFilter === "tuic" || protoFilter === "anytls"
+      ? [protoFilter as QuicProtocol]
+      : ["hysteria2", "tuic", "anytls"],
+  );
+  const appsKind = protoFilter !== "all" ? appsKindForProto(protoFilter) : null;
+  const singboxSubUrl = resolveSingboxSubUrl(subUrl);
+  const protocolShareUrl =
+    (selected?.protocol === protoFilter ? selected.value : "")
+    || filtered.find((c) => c.protocol === protoFilter)?.value
+    || (protoFilter === "hysteria2" ? info?.hysteria2_link : null)
+    || (protoFilter === "tuic" ? info?.tuic_link : null)
+    || (protoFilter === "anytls" ? info?.anytls_link : null)
+    || importUrl
+    || "";
   const pasteFallback = (n: string) => subT(lang, "pasteFallback").replace("{app}", n);
 
   async function connectPrimary() {
@@ -1040,7 +1049,6 @@ function SubscribeBody() {
       ? rawPlan
       : subT(lang, "personalSub");
   const accountId = (info.username || "").trim();
-  const allStepsDone = stepsDone.apps && stepsDone.import && stepsDone.servers;
 
   const configActions = selected ? (
     <div className="s-qr-bundle">
@@ -1251,56 +1259,33 @@ function SubscribeBody() {
       </section>
 
       {configAvailable ? (
-        <section className="s-ov-actions s-surface">
-          {allStepsDone && !setupExpanded ? (
-            <div className="s-allset">
-              <div className="s-allset-head">
-                <h3 className="s-ov-protos-title">{subT(lang, "allSetTitle")} ✓</h3>
-                <button type="button" className="s-linkish" onClick={() => setSetupExpanded(true)}>
-                  {subT(lang, "showSteps")}
-                </button>
-              </div>
-              <button type="button" className="s-btn s-btn-main s-btn-xl" onClick={() => goView("servers")}>
-                {subT(lang, "manageServers")}
-              </button>
-            </div>
+        <section className="s-ov-actions s-surface s-ov-protos">
+          <div className="s-ov-protos-head">
+            <h3 className="s-ov-protos-title">{subT(lang, "protocolsSummary")}</h3>
+            <span className="s-count">{protocolTabs.length}</span>
+          </div>
+          <p className="s-hint">{subT(lang, "pickProtocolHint")}</p>
+          {!protocolTabs.length ? (
+            <p className="s-empty">{subT(lang, "noConfigs")}</p>
           ) : (
-            <>
-              <div className="s-ov-actions-head">
-                <h3 className="s-ov-protos-title">
-                  {allStepsDone ? subT(lang, "setupDoneTitle") : subT(lang, "quickSetup")}
-                </h3>
-                {allStepsDone ? (
-                  <button type="button" className="s-linkish" onClick={() => setSetupExpanded(false)}>
-                    {subT(lang, "hideSteps")}
+            <div className="s-proto-grid" role="listbox" aria-label={subT(lang, "pickProtocol")}>
+              {protocolTabs.map((p) => {
+                const countLabel = protoServersLabel(lang, p.count);
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    role="option"
+                    className="s-proto-card"
+                    onClick={() => openProtocol(p.id)}
+                  >
+                    <span className="s-proto-card-ico"><ProtoIcon proto={p.id} size={22} /></span>
+                    <span className="s-proto-card-name">{protoLabel(lang, p.id)}</span>
+                    {countLabel ? <span className="s-proto-card-count">{countLabel}</span> : null}
                   </button>
-                ) : (
-                  <span className="s-setup-hint">{subT(lang, "setupTapHint")}</span>
-                )}
-              </div>
-              <div className="s-setup-steps">
-                <button type="button" className={`s-setup-step ${stepsDone.apps ? "done" : ""}`} onClick={() => goView("apps")}>
-                  <span className="s-setup-num">{stepsDone.apps ? "✓" : "1"}</span>
-                  <span className="s-setup-label">{subT(lang, "quickSetupApps")}</span>
-                  <span className="s-setup-go" aria-hidden>›</span>
-                </button>
-                <button type="button" className={`s-setup-step ${stepsDone.import ? "done" : ""}`} onClick={() => goView("import")}>
-                  <span className="s-setup-num">{stepsDone.import ? "✓" : "2"}</span>
-                  <span className="s-setup-label">{subT(lang, "quickSetupImport")}</span>
-                  <span className="s-setup-go" aria-hidden>›</span>
-                </button>
-                <button type="button" className={`s-setup-step ${stepsDone.servers ? "done" : ""}`} onClick={() => goView("servers")}>
-                  <span className="s-setup-num">{stepsDone.servers ? "✓" : "3"}</span>
-                  <span className="s-setup-label">{subT(lang, "quickSetupServers")}</span>
-                  <span className="s-setup-go" aria-hidden>›</span>
-                </button>
-              </div>
-              {allStepsDone ? (
-                <button type="button" className="s-btn s-btn-main s-btn-xl" onClick={() => goView("servers")}>
-                  {subT(lang, "manageServers")}
-                </button>
-              ) : null}
-            </>
+                );
+              })}
+            </div>
           )}
           {supportUrl ? (
             <a className="s-support" href={supportUrl} target="_blank" rel="noopener noreferrer">
@@ -1531,6 +1516,119 @@ function SubscribeBody() {
               </div>
             </section>
           ) : null}
+
+          <section className="s-panel">
+            <div className="s-panel-head">
+              <h2 className="s-panel-title">{subT(lang, "protoAppsTitle")}</h2>
+            </div>
+            <div className="s-panel-body">
+              <p className="s-hint">{subT(lang, "protoAppsHint")}</p>
+              <div className="s-apps-grid">
+                <div>
+                  <p className="s-label">{subT(lang, "yourPhone")}</p>
+                  <div className="s-devices" role="group" aria-label={subT(lang, "yourPhone")}>
+                    {PLATFORMS.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        className={platform === p.id ? "on" : ""}
+                        aria-pressed={platform === p.id}
+                        onClick={() => setPlatform(p.id)}
+                      >
+                        {platformLabel(lang, p.id)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  {appsKind === "proxy" && primaryApp && importUrl ? (
+                    <div className="s-apps-block">
+                      <div className="s-app s-app-primary">
+                        <div className="s-app-ico" style={{ background: primaryApp.color }}>{primaryApp.short}</div>
+                        <div className="s-app-meta">
+                          <div className="s-app-name">{primaryApp.name}</div>
+                          <div className="s-app-tag">{subT(lang, "recommended")}</div>
+                          <div className="s-app-actions">
+                            {primaryApp.download?.[platform] && (
+                              <a href={primaryApp.download[platform]} target="_blank" rel="noopener noreferrer" className="sub-btn-action">
+                                {subT(lang, "downloadApp")}
+                              </a>
+                            )}
+                            <button type="button" className="sub-btn-action sub-btn-action-main" disabled={busyConnect} onClick={connectPrimary}>
+                              {busyConnect ? "…" : subT(lang, "importApp")}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                      {otherApps.length > 0 && (
+                        <div className="s-more-apps">
+                          <p className="s-label">{subT(lang, "otherApps")}</p>
+                          {otherApps.map((a) => (
+                            <SubAppTile
+                              key={a.id}
+                              app={a}
+                              platform={platform}
+                              subUrl={importUrl}
+                              profileName={profileTitle}
+                              importLabel={subT(lang, "importApp")}
+                              downloadLabel={subT(lang, "downloadApp")}
+                              pasteFallback={pasteFallback}
+                              streisandHint={subT(lang, "streisandHint")}
+                              clipboardHint={subT(lang, "clipboardHint")}
+                              noResponse={subT(lang, "noAppResponse")}
+                              onToast={showToast}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
+
+                  {appsKind === "wireguard" && wgApps.length > 0 ? (
+                    <div className="s-apps-block">
+                      <div className="s-more-apps">
+                        {wgApps.map((a) => (
+                          <SubWgAppTile key={a.id} app={a} platform={platform} downloadLabel={subT(lang, "downloadApp")} />
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {appsKind === "quic" && protocolShareUrl ? (
+                    <div className="s-apps-block">
+                      <div className="s-more-apps">
+                        {quicApps.map((a) => (
+                          <SubQuicAppTile
+                            key={a.id}
+                            app={a}
+                            platform={platform}
+                            shareUrl={protocolShareUrl}
+                            singboxSubUrl={singboxSubUrl}
+                            importLabel={subT(lang, "importApp")}
+                            downloadLabel={subT(lang, "downloadApp")}
+                            pasteFallback={pasteFallback}
+                            clipboardHint={subT(lang, "clipboardHint")}
+                            noResponse={subT(lang, "noAppResponse")}
+                            onToast={showToast}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {appsKind === "proxy" && !importUrl ? (
+                    <p className="s-empty">{subT(lang, "noConfigs")}</p>
+                  ) : null}
+                  {appsKind === "wireguard" && !wgApps.length ? (
+                    <p className="s-empty">{subT(lang, "noConfigs")}</p>
+                  ) : null}
+                  {appsKind === "quic" && !quicApps.length ? (
+                    <p className="s-empty">{subT(lang, "noConfigs")}</p>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          </section>
         </>
       ) : protocolTabs.length ? (
         <p className="s-hint s-servers-hint">{subT(lang, "serversEmptyPick")}</p>
@@ -1545,9 +1643,6 @@ function SubscribeBody() {
           <h2 className="s-panel-title">{subT(lang, "sectionImport")}</h2>
           <p className="s-hint" style={{ marginTop: 8 }}>{subT(lang, "sectionImportHint")}</p>
         </div>
-        <button type="button" className="s-apps-cta" onClick={() => goView("apps")}>
-          {subT(lang, "goToApps")}
-        </button>
         <div className="s-linkblock">
           <p className="s-label">{subT(lang, "oneLink")}</p>
           <div className="s-linkrow">
@@ -1574,93 +1669,6 @@ function SubscribeBody() {
             <QR value={importUrl} size={180} />
           </div>
           <span className="s-qr-hint">{subT(lang, "oneLinkHint")}</span>
-        </div>
-      </div>
-    </section>
-  ) : null;
-
-  const appsPanel = importUrl ? (
-    <section className="s-panel">
-      <div className="s-panel-head">
-        <h2 className="s-panel-title">{subT(lang, "sectionApps")}</h2>
-      </div>
-      <div className="s-panel-body">
-        <p className="s-hint">{subT(lang, "sectionAppsHint")}</p>
-        <div className="s-apps-grid">
-          <div>
-            <p className="s-label">{subT(lang, "yourPhone")}</p>
-            <div className="s-devices" role="group" aria-label={subT(lang, "yourPhone")}>
-              {PLATFORMS.map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  className={platform === p.id ? "on" : ""}
-                  aria-pressed={platform === p.id}
-                  onClick={() => setPlatform(p.id)}
-                >
-                  {platformLabel(lang, p.id)}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div>
-            {primaryApp && (
-              <div className="s-apps-block">
-                <div className="s-app s-app-primary">
-                  <div className="s-app-ico" style={{ background: primaryApp.color }}>{primaryApp.short}</div>
-                  <div className="s-app-meta">
-                    <div className="s-app-name">{primaryApp.name}</div>
-                    <div className="s-app-tag">{subT(lang, "recommended")}</div>
-                    <div className="s-app-actions">
-                      {primaryApp.download?.[platform] && (
-                        <a href={primaryApp.download[platform]} target="_blank" rel="noopener noreferrer" className="sub-btn-action">
-                          {subT(lang, "downloadApp")}
-                        </a>
-                      )}
-                      <button type="button" className="sub-btn-action sub-btn-action-main" disabled={busyConnect} onClick={connectPrimary}>
-                        {busyConnect ? "…" : subT(lang, "importApp")}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-                {otherApps.length > 0 && (
-                  <div className="s-more-apps">
-                    <p className="s-label">{subT(lang, "otherApps")}</p>
-                    {otherApps.map((a) => (
-                      <SubAppTile
-                        key={a.id}
-                        app={a}
-                        platform={platform}
-                        subUrl={importUrl}
-                        profileName={profileTitle}
-                        importLabel={subT(lang, "importApp")}
-                        downloadLabel={subT(lang, "downloadApp")}
-                        pasteFallback={pasteFallback}
-                        streisandHint={subT(lang, "streisandHint")}
-                        clipboardHint={subT(lang, "clipboardHint")}
-                        noResponse={subT(lang, "noAppResponse")}
-                        onToast={showToast}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-            {wgApps.length > 0 && (
-              <div className="s-apps-block s-apps-wg">
-                <p className="s-label">{subT(lang, "wgAppsSection")}</p>
-                <p className="s-hint">{subT(lang, "wgAppsSectionHint")}</p>
-                <div className="s-more-apps">
-                  {wgApps.map((a) => (
-                    <SubWgAppTile key={a.id} app={a} platform={platform} downloadLabel={subT(lang, "downloadApp")} />
-                  ))}
-                </div>
-              </div>
-            )}
-            <button type="button" className="s-btn s-btn-soft" style={{ marginTop: 12 }} onClick={() => goView("import")}>
-              {subT(lang, "quickSetupImport")}
-            </button>
-          </div>
         </div>
       </div>
     </section>
@@ -1705,9 +1713,6 @@ function SubscribeBody() {
           <div className={`s-view ${view === "import" ? "on" : ""}`}>
             {importPanel || <p className="s-empty">{subT(lang, "noConfigs")}</p>}
           </div>
-          <div className={`s-view ${view === "apps" ? "on" : ""}`}>
-            {appsPanel || <p className="s-empty">{subT(lang, "noConfigs")}</p>}
-          </div>
         </>
       )}
 
@@ -1730,14 +1735,13 @@ function SubscribeBody() {
   );
 }
 
-type DashView = "overview" | "servers" | "import" | "apps";
+type DashView = "overview" | "servers" | "import";
 
 function NavIcon({ name }: { name: DashView }) {
   const props = { width: 16, height: 16, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.75, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
   if (name === "overview") return <svg {...props}><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1z"/></svg>;
   if (name === "servers") return <svg {...props}><rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/><path d="M7 7h.01M7 17h.01"/></svg>;
-  if (name === "import") return <svg {...props}><path d="M12 3v12"/><path d="m8 11 4 4 4-4"/><path d="M5 19h14"/></svg>;
-  return <svg {...props}><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M12 18h.01"/></svg>;
+  return <svg {...props}><path d="M12 3v12"/><path d="m8 11 4 4 4-4"/><path d="M5 19h14"/></svg>;
 }
 
 function DashShell({ children, rtl, lang, onPick, brandName = "NexusPanel", brandLogo, view, onView, serverCount, chip, configAvailable }: {
@@ -1763,9 +1767,8 @@ function DashShell({ children, rtl, lang, onPick, brandName = "NexusPanel", bran
 
   const navItems: { id: DashView; label: string; badge?: number }[] = [
     { id: "overview", label: subT(lang, "navOverview") },
-    { id: "apps", label: subT(lang, "navApps") },
-    { id: "import", label: subT(lang, "navImport") },
     { id: "servers", label: subT(lang, "navServers"), badge: serverCount },
+    { id: "import", label: subT(lang, "navImport") },
   ];
 
   return (

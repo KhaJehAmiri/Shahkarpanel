@@ -49,7 +49,7 @@
 |--------------|---------------------|
 | ارائه‌دهنده سرویس | چند نود، مانیتورینگ، failover، تونل مناسب ایران |
 | فروشنده / ریسلر | وایت‌لیبل، کیف پول، نود اختصاصی با تخفیف |
-| تیم فنی | API v2، Client API، Rule Engine، Workflow، پلاگین |
+| تیم فنی | API v2 (ربات/نمایندگی)، Client API، Rule Engine، Workflow، پلاگین |
 
 > قابلیت‌های پیشرفته پیش‌فرض **خاموش** هستند — از **System → Feature flags** روشن کنید.  
 > پیش‌فرض روشن: `tunneling`، `smart_routing`، `setup_wizard`.
@@ -134,7 +134,8 @@ flowchart TB
 | **مقیاس** | Smart Routing، Workflow، شاردینگ Finalmask + hot-replace | پایدار / فلگ |
 | **هوشمندی** | تشخیص مصرف غیرعادی، پیش‌بینی اتمام حجم، Marketplace | با فلگ |
 | **وایت‌لیبل** | Tenant، برند، نود نماینده، تونل، نصب یک‌خطی | با فلگ |
-| **Client API** | مذاکره/کانفیگ SigmaGuard (`/api/v2/client/*`) | با فلگ |
+| **Developer API** | ربات تلگرام / نمایندگی با API Key (`/api/v2`) — [مستندات](./docs/DEVELOPER_API.md) | با فلگ `api_v2` |
+| **Client API** | مذاکره/کانفیگ SigmaGuard (`/api/v2/client/*`) — [مستندات](./docs/CLIENT_API.md) | با فلگ |
 
 ---
 

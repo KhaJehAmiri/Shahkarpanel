@@ -296,6 +296,7 @@ See [`.env.example`](.env.example).
 | Public deployment | [`docs/PUBLIC_DEPLOYMENT.md`](docs/PUBLIC_DEPLOYMENT.md) |
 | HTTPS setup | [`docs/HTTPS_SETUP.md`](docs/HTTPS_SETUP.md) |
 | Client API (SigmaGuard) | [`docs/CLIENT_API.md`](docs/CLIENT_API.md) |
+| Developer API (bots / resellers) | [`docs/DEVELOPER_API.md`](docs/DEVELOPER_API.md) |
 | Security / secrets layout | [`SECURITY.md`](SECURITY.md) |
 | Changelog | [`CHANGELOG.md`](CHANGELOG.md) |
 

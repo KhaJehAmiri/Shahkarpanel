@@ -43,6 +43,14 @@ def _admin_id(db: Session, admin: Admin) -> int:
     return dbadmin.id
 
 
+@router.get("/scopes", response_model=List[str])
+def list_allowed_scopes(
+    admin: Admin = Depends(Admin.get_current),
+):
+    """Scopes the current admin may attach to a new API key."""
+    return api_keys.allowed_scopes_for_admin(admin)
+
+
 @router.get("", response_model=List[ApiKeyResponse])
 def list_api_keys(
     db: Session = Depends(get_db),
@@ -62,11 +70,16 @@ def list_api_keys(
 def create_api_key(
     body: ApiKeyCreate,
     db: Session = Depends(get_db),
-    admin: Admin = Depends(Admin.check_sudo_admin),
+    admin: Admin = Depends(Admin.get_current),
 ):
-    """Create a new API key. The raw key is returned once and never again."""
+    """Create a new API key for the current admin (sudo or reseller).
+
+    The raw key is returned once and never again. Scopes are clamped to the
+    caller's role; omitted scopes default to every scope that role may hold.
+    """
+    scopes = api_keys.clamp_scopes_for_admin(admin, body.scopes)
     record, raw = api_keys.create_api_key(
-        db, _admin_id(db, admin), body.name, scopes=body.scopes
+        db, _admin_id(db, admin), body.name, scopes=scopes
     )
     return ApiKeyCreated(
         id=record.id,

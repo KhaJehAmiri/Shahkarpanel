@@ -6,12 +6,42 @@ creation. Keys carry optional scopes for fine-grained access.
 import hashlib
 import secrets
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import List, Optional, Set, Tuple
 
 from fastapi import Depends, HTTPException, Request, status
 
 from app.db import Session, get_db
 from app.db.models import ApiKey
+
+# Developer / bot API scopes (independent of dashboard RBAC names where needed).
+V2_SCOPES: Set[str] = {
+    "users:read",
+    "users:write",
+    "templates:read",
+    "plans:read",
+    "plans:write",
+    "billing:read",
+    "billing:write",
+    "reseller:read",
+    "branding:read",
+    "branding:write",
+    "*",
+}
+
+# Map each v2 scope to the dashboard RBAC permission required to mint it.
+V2_SCOPE_RBAC: dict[str, str] = {
+    "users:read": "users:read",
+    "users:write": "users:write",
+    "templates:read": "users:read",
+    "plans:read": "billing:read",
+    "plans:write": "billing:write",
+    "billing:read": "billing:read",
+    "billing:write": "billing:write",
+    "reseller:read": "system:read",
+    # Matches dashboard branding: read via system:read, write via users:write.
+    "branding:read": "system:read",
+    "branding:write": "users:write",
+}
 
 
 def _hash(raw: str) -> str:
@@ -24,6 +54,55 @@ def generate_key() -> Tuple[str, str, str]:
     secret = secrets.token_urlsafe(32)
     raw = f"nxp_{prefix}_{secret}"
     return raw, prefix, _hash(raw)
+
+
+def allowed_scopes_for_admin(admin) -> List[str]:
+    """Return v2 scopes the admin may attach to a new API key."""
+    from app.rbac import has_permission
+
+    if getattr(admin, "is_sudo", False):
+        return sorted(V2_SCOPES)
+
+    out: List[str] = []
+    for scope, rbac in V2_SCOPE_RBAC.items():
+        if has_permission(admin, rbac):
+            out.append(scope)
+    return sorted(out)
+
+
+def clamp_scopes_for_admin(admin, scopes: Optional[list]) -> List[str]:
+    """Filter requested scopes to those the admin is allowed to hold.
+
+    Empty / omitted scopes expand to every scope the role may mint (so a
+    reseller key is usable out of the box). Unknown scopes are dropped.
+    ``*`` is sudo-only.
+    """
+    allowed = set(allowed_scopes_for_admin(admin))
+    if not scopes:
+        return sorted(s for s in allowed if s != "*")
+
+    cleaned: List[str] = []
+    for raw in scopes:
+        scope = str(raw).strip()
+        if not scope or scope not in V2_SCOPES:
+            continue
+        if scope == "*" and not getattr(admin, "is_sudo", False):
+            continue
+        if scope in allowed:
+            cleaned.append(scope)
+    # De-dupe while preserving order
+    seen: Set[str] = set()
+    unique: List[str] = []
+    for s in cleaned:
+        if s not in seen:
+            seen.add(s)
+            unique.append(s)
+    if not unique:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No valid scopes for your role — request scopes you are allowed to hold",
+        )
+    return unique
 
 
 def create_api_key(
@@ -108,3 +187,4 @@ def require_v2_scope(scope: str):
         return admin
 
     return dependency
+

@@ -801,7 +801,7 @@ const CreateKey: FC<{ onClose: () => void; onDone: () => void }> = ({ onClose, o
       ) : (
         <div className="nx-stack">
           <Field label={t("system.keyName")}><Input value={name} onChange={(e: any) => setName(e.target.value)} autoFocus /></Field>
-          <Field label={`${t("system.scopes")} (${t("common.optional")})`}><Input value={scopes} onChange={(e: any) => setScopes(e.target.value)} placeholder="users:read, nodes:read" /></Field>
+          <Field label={`${t("system.scopes")} (${t("common.optional")})`}><Input value={scopes} onChange={(e: any) => setScopes(e.target.value)} placeholder="users:read, users:write, branding:read, branding:write, reseller:read" /></Field>
         </div>
       )}
     </Modal>

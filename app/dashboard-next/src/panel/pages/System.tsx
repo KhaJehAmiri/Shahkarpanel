@@ -865,7 +865,7 @@ const AboutTab: FC = () => {
   );
 };
 
-type AdminRow = { username: string; is_sudo: boolean; role?: string; max_users?: number | null };
+type AdminRow = { username: string; is_sudo: boolean; role?: string; max_users?: number | null; users_count?: number | null };
 
 const AdminsTab: FC = () => {
   const { t } = useTranslation();
@@ -921,7 +921,7 @@ const AdminsTab: FC = () => {
             <table className="nx-table">
               <thead><tr>
                 <th>{t("common.username")}</th><th>{t("common.status")}</th><th>{t("system.role")}</th>
-                <th>{t("system.maxUsers")}</th><th style={{ textAlign: "end" }}>{t("common.actions")}</th>
+                <th>{t("resellers.usersCount")}</th><th style={{ textAlign: "end" }}>{t("common.actions")}</th>
               </tr></thead>
               <tbody>
                 {(data || []).map((a) => (
@@ -929,7 +929,13 @@ const AdminsTab: FC = () => {
                     <td><code>{a.username}</code></td>
                     <td>{a.is_sudo ? t("system.roleSudo") : t("system.roleAdmin")}</td>
                     <td>{a.role || "—"}</td>
-                    <td>{a.max_users ?? "—"}</td>
+                    <td>
+                      {(a.users_count ?? 0).toLocaleString()}
+                      <span className="nx-faint">
+                        {" / "}
+                        {a.max_users != null ? a.max_users.toLocaleString() : "∞"}
+                      </span>
+                    </td>
                     <td>
                       <div className="nx-row" style={{ justifyContent: "flex-end", gap: 6 }}>
                         {!a.is_sudo && (

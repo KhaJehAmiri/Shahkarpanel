@@ -38,7 +38,19 @@ def reseller_endpoint_slug(tenant_id: Optional[int]) -> str:
 
 
 def _normalize_domain(domain: Optional[str]) -> Optional[str]:
-    host = (domain or "").strip().lower().split(":")[0].strip(".")
+    raw = (domain or "").strip().lower()
+    if not raw:
+        return None
+    # Allow pasting a URL; never treat path/query as part of the hostname.
+    if "://" in raw:
+        try:
+            raw = (urlparse(raw).hostname or "").strip().lower()
+        except Exception:
+            raw = raw.split("://", 1)[-1]
+    # Strip credentials, port, path, query leftovers from bare host input.
+    raw = raw.split("@")[-1]
+    raw = raw.split("/")[0].split("?")[0].split("#")[0]
+    host = raw.split(":")[0].strip(".")
     return host or None
 
 
@@ -252,7 +264,18 @@ def assert_subscription_listen_port_available(
             ) from exc
 
 
-def domain_from_branding(branding: dict | BrandingSettings | None) -> Optional[str]:
+def domain_from_branding(
+    branding: dict | BrandingSettings | None,
+    *,
+    allow_panel_url: bool = True,
+) -> Optional[str]:
+    """Resolve the custom subscription hostname from branding.
+
+    ``allow_panel_url=False`` uses only the explicit ``domain`` field — used when
+    creating/updating the reseller subscription endpoint so a marketing
+    ``panel_url`` (or another panel's host) cannot steal/collide with an
+    existing endpoint while the reseller only wanted a brand title.
+    """
     if branding is None:
         return None
     if isinstance(branding, BrandingSettings):
@@ -264,6 +287,8 @@ def domain_from_branding(branding: dict | BrandingSettings | None) -> Optional[s
     host = _normalize_domain(domain)
     if host:
         return host
+    if not allow_panel_url:
+        return None
     url = (panel_url or "").strip()
     if not url:
         return None
@@ -482,7 +507,10 @@ def sync_branding_subscription_domain(
     return ensure_reseller_subscription_endpoint(
         db,
         tenant_id,
-        domain_from_branding(row),
+        # Only the explicit branding.domain claims a subscription host.
+        # panel_url must not invent a domain claim (resellers without a custom
+        # domain still save panel_title / sub_profile_title).
+        domain_from_branding(row, allow_panel_url=False),
         sub_path=getattr(row, "sub_path", None) if row else None,
         sub_port=getattr(row, "sub_port", None) if row else None,
     )

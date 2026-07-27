@@ -372,12 +372,22 @@ def get_admins(
     admin: Admin = Depends(Admin.check_sudo_admin),
 ):
     """Fetch a list of admins with optional filters for pagination and username."""
+    from sqlalchemy import func
+
     from app import billing, feature_flags
+    from app.db.models import User
 
     rows = crud.get_admins(db, offset, limit, username)
+    user_counts = dict(
+        db.query(User.admin_id, func.count(User.id))
+        .filter(User.admin_id.isnot(None))
+        .group_by(User.admin_id)
+        .all()
+    )
     out: List[Admin] = []
     for row in rows:
         item = Admin.model_validate(row)
+        item.users_count = int(user_counts.get(row.id, 0) or 0)
         if feature_flags.is_enabled("billing") and not row.is_sudo:
             try:
                 item.wallet_balance = billing.get_or_create_wallet(db, row.id).balance

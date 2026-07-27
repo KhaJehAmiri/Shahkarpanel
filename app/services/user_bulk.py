@@ -1054,6 +1054,27 @@ def apply_bulk_native_protocol(
 
     if applied:
         db.commit()
+        if body.protocol in (
+            BulkNativeProtocol.wireguard,
+            BulkNativeProtocol.amneziawg,
+            BulkNativeProtocol.both,
+        ) and body.action == BulkNativeAction.enable:
+            # Bulk enable only inserts Proxy rows; without ensure_all_peers the
+            # resumable sync pushes an empty/stale peer set and new users never
+            # appear on Finalmask nodes until a manual backfill.
+            try:
+                from app.wireguard.wg_manager import autoscale_enabled, ensure_all_peers
+
+                if autoscale_enabled():
+                    created = ensure_all_peers(db)
+                    db.commit()
+                    if created:
+                        logger.info(
+                            "bulk native: ensure_all_peers created=%s before sync",
+                            created,
+                        )
+            except Exception:
+                logger.exception("bulk native: ensure_all_peers failed")
         if body.wait_sync:
             sync_meta = converge_after_bulk_native(
                 protocol=body.protocol.value,

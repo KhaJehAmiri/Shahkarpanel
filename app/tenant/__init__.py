@@ -206,10 +206,8 @@ def set_branding(
 
         next_port = fields["sub_port"] if "sub_port" in fields else getattr(row, "sub_port", None)
         next_domain = fields["domain"] if "domain" in fields else getattr(row, "domain", None)
-        probe = {"domain": next_domain, "panel_url": getattr(row, "panel_url", None)}
-        if "panel_url" in fields:
-            probe["panel_url"] = fields["panel_url"]
-        host = domain_from_branding(probe)
+        probe = {"domain": next_domain}
+        host = domain_from_branding(probe, allow_panel_url=False)
         if host:
             assert_subscription_listen_port_available(
                 db,
@@ -226,15 +224,19 @@ def set_branding(
             setattr(row, key, fields[key])
     db.commit()
     db.refresh(row)
-    # Keep subscription links + nginx in sync with the branding domain.
-    try:
-        from app.tenant.subscription_domain import sync_branding_subscription_domain
+    # Keep subscription links + nginx in sync only when domain routing fields
+    # change. Title/logo/color updates must succeed for resellers with no
+    # custom domain (and must not collide with another endpoint via panel_url).
+    domain_touch = bool({"domain", "sub_path", "sub_port"} & fields.keys())
+    if domain_touch:
+        try:
+            from app.tenant.subscription_domain import sync_branding_subscription_domain
 
-        sync_branding_subscription_domain(db, tenant_id)
-    except ValueError:
-        raise
-    except Exception:
-        pass
+            sync_branding_subscription_domain(db, tenant_id)
+        except ValueError:
+            raise
+        except Exception:
+            pass
     return row
 
 

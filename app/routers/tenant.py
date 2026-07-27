@@ -80,6 +80,10 @@ class BrandingUpdate(BaseModel):
         if "://" in host:
             from urllib.parse import urlparse
             host = (urlparse(host).hostname or "").strip().lower()
+        # Drop accidental path/port (e.g. panel.example.com/sub).
+        host = host.split("/")[0].split("?")[0].split("#")[0].split(":")[0].strip(".")
+        if not host:
+            return None
         # Custom panel hostname only — not a free-text label.
         if " " in host or not re.fullmatch(
             r"[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+",

@@ -18,6 +18,7 @@ type ResellerAccount = {
   is_sudo: boolean;
   role?: string;
   max_users?: number | null;
+  users_count?: number | null;
   max_nodes?: number | null;
   max_total_traffic?: number | null;
   users_usage?: number | null;
@@ -273,10 +274,10 @@ const ResellerAccountsTab: FC = () => {
                 <thead><tr>
                   <th>{t("common.username")}</th>
                   <th>{t("system.role")}</th>
+                  <th>{t("resellers.usersCount")}</th>
                   <th>{t("billing.wallet")}</th>
                   <th>{t("billing.prepaidRemaining")}</th>
                   <th>{t("resellers.trafficUsed")}</th>
-                  <th>{t("system.maxUsers")}</th>
                   <th style={{ textAlign: "end" }}>{t("common.actions")}</th>
                 </tr></thead>
                 <tbody>
@@ -284,6 +285,13 @@ const ResellerAccountsTab: FC = () => {
                     <tr key={a.username}>
                       <td><code>{a.username}</code></td>
                       <td><Pill tone="default">{a.role || "reseller"}</Pill></td>
+                      <td>
+                        {(a.users_count ?? 0).toLocaleString()}
+                        <span className="nx-faint">
+                          {" / "}
+                          {a.max_users != null ? a.max_users.toLocaleString() : "∞"}
+                        </span>
+                      </td>
                       <td>{billingOn ? (a.wallet_balance ?? 0).toLocaleString() : "—"}</td>
                       <td>{billingOn ? formatBytes(a.prepaid_traffic_remaining ?? 0) : "—"}</td>
                       <td>
@@ -296,7 +304,6 @@ const ResellerAccountsTab: FC = () => {
                             : ""}
                         </span>
                       </td>
-                      <td>{a.max_users ?? "∞"}</td>
                       <td>
                         <div className="nx-row" style={{ justifyContent: "flex-end", gap: 6 }}>
                           {billingOn && (

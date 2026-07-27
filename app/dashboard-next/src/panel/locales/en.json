@@ -1607,6 +1607,7 @@
     "commissionHint": "Share of your sub-reseller's wallet charges credited to you.",
     "addAccount": "Add reseller account",
     "noAccounts": "No reseller accounts yet",
+    "usersCount": "Users",
     "accountsHintTitle": "How resellers sign in",
     "accountsHint": "Each account gets a username and password. The reseller opens the same panel URL as you, signs in, and can create users under their quota.",
     "loginUsernameHint": "Used at the panel login screen",

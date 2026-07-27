@@ -40,6 +40,7 @@ class Admin(BaseModel):
     # Populated by sudo list endpoints (not a DB column).
     wallet_balance: Optional[int] = None
     prepaid_traffic_remaining: Optional[int] = None
+    users_count: Optional[int] = None
     model_config = ConfigDict(from_attributes=True)
 
     @property

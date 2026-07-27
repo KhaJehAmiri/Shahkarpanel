@@ -246,6 +246,23 @@ def schedule_resumable_sync() -> None:
     Replaces the old ``sync_all_nodes`` full ``syncconf`` push on every user
     touch. Finalmask still has its own debounce path.
     """
+    # Allocate any missing autoscale peers before hashing/pushing — bulk
+    # Proxy(WireGuard) inserts otherwise leave users offline until a manual
+    # ensure_all_peers / subscription touch.
+    try:
+        from app.wireguard.wg_manager import autoscale_enabled, ensure_all_peers
+
+        if autoscale_enabled():
+            with GetDB() as db:
+                created = ensure_all_peers(db)
+                if created:
+                    db.commit()
+                    logger.info("resumable sync: ensure_all_peers created=%s", created)
+                else:
+                    db.rollback()
+    except Exception:
+        logger.exception("resumable sync: ensure_all_peers failed")
+
     peer_cache.invalidate()
     gen = bump_generation()
     peers = peer_cache.get_peers()

@@ -20,6 +20,8 @@ const SECTIONS: { id: string; keys: string[] }[] = [
     keys: [
       "billing.currency_label",
       "billing.usage_rate_per_gb",
+      "billing.default_package_price",
+      "billing.default_package_bytes",
       "billing.wallet_low_threshold",
       "billing.job_interval_seconds",
     ],

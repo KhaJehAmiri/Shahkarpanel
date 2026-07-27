@@ -315,8 +315,8 @@ class UsageSummaryResponse(BaseModel):
 
 class TrafficPackageCreate(BaseModel):
     name: str
-    bytes: int
-    price: int = 0
+    bytes: Optional[int] = None
+    price: Optional[int] = None
     enabled: bool = True
 
 
@@ -334,7 +334,47 @@ class TrafficPackageResponse(BaseModel):
     price: int
     enabled: bool
     created_at: Optional[datetime] = None
+    catalog_price: Optional[int] = None
+    catalog_bytes: Optional[int] = None
+    overridden: Optional[bool] = None
+    price_overridden: Optional[bool] = None
+    bytes_overridden: Optional[bool] = None
     model_config = ConfigDict(from_attributes=True)
+
+
+class PackageOverrideItem(BaseModel):
+    package_id: int
+    price: Optional[int] = None
+    bytes: Optional[int] = None
+
+
+class ResellerPricingUpdate(BaseModel):
+    """null usage_rate_per_gb clears the admin override (use platform default)."""
+
+    usage_rate_per_gb: Optional[int] = None
+    packages: Optional[List[PackageOverrideItem]] = None
+
+
+class ResellerPricingPackage(BaseModel):
+    id: int
+    name: str
+    enabled: bool
+    catalog_price: int
+    catalog_bytes: int
+    price: int
+    bytes: int
+    price_overridden: bool = False
+    bytes_overridden: bool = False
+    overridden: bool = False
+    created_at: Optional[datetime] = None
+
+
+class ResellerPricingResponse(BaseModel):
+    username: str
+    usage_rate_per_gb: Optional[int] = None
+    effective_usage_rate_per_gb: int
+    platform_usage_rate_per_gb: int
+    packages: List[ResellerPricingPackage]
 
 
 class TrafficCreditRequest(BaseModel):
@@ -376,12 +416,81 @@ def list_traffic_packages(
     admin: Admin = Depends(require_permission("billing:read")),
 ):
     _require_billing_enabled()
-    from app.billing.traffic_packages import list_packages
+    from app.billing.traffic_packages import list_packages, list_packages_for_admin
 
-    # Resellers only see enabled catalog entries.
+    # Resellers only see enabled catalog entries with effective price/bytes.
     if not admin.is_sudo:
-        enabled_only = True
+        dbadmin = crud.get_admin(db, admin.username)
+        if dbadmin is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Billing requires a database-backed admin",
+            )
+        offers = list_packages_for_admin(db, dbadmin, enabled_only=True)
+        return [
+            TrafficPackageResponse(
+                id=o["id"],
+                name=o["name"],
+                bytes=o["bytes"],
+                price=o["price"],
+                enabled=o["enabled"],
+                created_at=o.get("created_at"),
+                catalog_price=o["catalog_price"],
+                catalog_bytes=o["catalog_bytes"],
+                overridden=o["overridden"],
+                price_overridden=o["price_overridden"],
+                bytes_overridden=o["bytes_overridden"],
+            )
+            for o in offers
+        ]
     return list_packages(db, enabled_only=enabled_only)
+
+
+@router.get("/reseller-pricing/{username}", response_model=ResellerPricingResponse)
+def get_reseller_traffic_pricing(
+    username: str,
+    db: Session = Depends(get_db),
+    _: Admin = Depends(Admin.check_sudo_admin),
+):
+    _require_billing_enabled()
+    from app.billing.traffic_packages import get_reseller_pricing
+
+    target = crud.get_admin(db, username)
+    if target is None or target.is_sudo:
+        raise HTTPException(status_code=404, detail="Reseller not found")
+    return get_reseller_pricing(db, target)
+
+
+@router.put("/reseller-pricing/{username}", response_model=ResellerPricingResponse)
+def put_reseller_traffic_pricing(
+    username: str,
+    body: ResellerPricingUpdate,
+    db: Session = Depends(get_db),
+    _: Admin = Depends(Admin.check_sudo_admin),
+):
+    _require_billing_enabled()
+    from app.billing.traffic_packages import TrafficPackageError, set_reseller_pricing
+
+    target = crud.get_admin(db, username)
+    if target is None or target.is_sudo:
+        raise HTTPException(status_code=404, detail="Reseller not found")
+
+    dumped = body.model_dump(exclude_unset=True)
+    clear_usage_rate = "usage_rate_per_gb" in dumped and dumped["usage_rate_per_gb"] is None
+    packages = None
+    if "packages" in dumped and body.packages is not None:
+        packages = [p.model_dump() for p in body.packages]
+
+    try:
+        return set_reseller_pricing(
+            db,
+            target,
+            usage_rate_per_gb=dumped.get("usage_rate_per_gb"),
+            clear_usage_rate=clear_usage_rate,
+            packages=packages,
+        )
+    except TrafficPackageError as exc:
+        raise _map_package_error(exc) from exc
 
 
 @router.post("/traffic-packages", response_model=TrafficPackageResponse)

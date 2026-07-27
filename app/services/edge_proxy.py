@@ -1207,11 +1207,32 @@ def subscription_domain_ssl_status(host: str) -> dict[str, Any]:
             https_staged = https_key in (data.get("sites") or {})
         except (OSError, json.JSONDecodeError, TypeError):
             pass
-    # A live LE cert is the readiness gate; reconcile always ensures the :443
-    # vhost when the cert exists (subscription https site or panel vhost).
-    ready = bool(cert_present)
+    # Prefer the live host nginx sites-enabled link. Cert-only is not enough:
+    # LE can finish while the :443 vhost is still missing, which made the UI
+    # show "SSL active" while browsers got the default_server cert (wrong name).
+    enabled_dir = Path("/etc/nginx/sites-enabled")
+    https_live = False
+    if enabled_dir.is_dir():
+        if (enabled_dir / https_name).exists():
+            https_live = True
+        else:
+            # Panel dashboard vhosts use nexuspanel-panel-https-<domain>.conf
+            for path in enabled_dir.glob("nexuspanel-*-https-*.conf"):
+                if safe in path.name:
+                    https_live = True
+                    break
+    if enabled_dir.is_dir():
+        vhost_ok = https_live
+    else:
+        vhost_ok = https_staged
+    ready = bool(cert_present and vhost_ok)
     if ready:
         message = "SSL active"
+    elif cert_present and not vhost_ok:
+        message = (
+            "Certificate present — nginx HTTPS vhost not installed yet "
+            "(click Enable SSL / save branding again)"
+        )
     elif not dns.get("dns_ok"):
         message = dns.get("message") or (
             "DNS must point to this panel before SSL can activate"
@@ -1223,6 +1244,7 @@ def subscription_domain_ssl_status(host: str) -> dict[str, Any]:
         "cert_present": cert_present,
         "https_ready": ready,
         "https_vhost_staged": https_staged,
+        "https_vhost_live": https_live,
         "dns_ok": bool(dns.get("dns_ok")),
         "resolved_ips": list(dns.get("resolved_ips") or []),
         "expected_ips": list(dns.get("expected_ips") or []),

@@ -480,14 +480,43 @@ const TrafficPackageModal: FC<{
   const { t } = useTranslation();
   const toast = useToast();
   const [busy, setBusy] = useState(false);
-  const unit0 = initial ? detectDataLimitUnit(initial.bytes) : "GB" as DataLimitUnit;
+  const defaults = useFetch<{ key: string; value: string | number | boolean | null }[]>(
+    () => (initial ? Promise.resolve([]) : api.get("/platform-settings")),
+    [initial?.id],
+  );
+  const defaultPrice = !initial
+    ? Number(defaults.data?.find((s) => s.key === "billing.default_package_price")?.value ?? 0) || 0
+    : 0;
+  const defaultBytes = !initial
+    ? Number(defaults.data?.find((s) => s.key === "billing.default_package_bytes")?.value ?? 0) || 0
+    : 0;
+  const unit0 = initial
+    ? detectDataLimitUnit(initial.bytes)
+    : (defaultBytes > 0 ? detectDataLimitUnit(defaultBytes) : "GB" as DataLimitUnit);
   const [f, setF] = useState({
     name: initial?.name || "",
     price: String(initial?.price ?? ""),
-    trafficValue: initial ? String(bytesToDataLimitValue(initial.bytes, unit0)) : "100",
+    trafficValue: initial
+      ? String(bytesToDataLimitValue(initial.bytes, unit0))
+      : (defaultBytes > 0 ? String(bytesToDataLimitValue(defaultBytes, unit0)) : "100"),
     trafficUnit: unit0,
     enabled: initial?.enabled ?? true,
   });
+  const [defaultsApplied, setDefaultsApplied] = useState(!!initial);
+
+  useEffect(() => {
+    if (initial || defaultsApplied || defaults.loading) return;
+    setF((s) => ({
+      ...s,
+      price: defaultPrice > 0 ? String(defaultPrice) : s.price,
+      trafficValue: defaultBytes > 0
+        ? String(bytesToDataLimitValue(defaultBytes, unit0))
+        : s.trafficValue,
+      trafficUnit: unit0,
+    }));
+    setDefaultsApplied(true);
+  }, [initial, defaultsApplied, defaults.loading, defaultPrice, defaultBytes, unit0]);
+
   const upd = (k: string) => (e: any) => setF((s) => ({
     ...s,
     [k]: e?.target ? (e.target.type === "checkbox" ? e.target.checked : e.target.value) : e,

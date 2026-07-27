@@ -1127,6 +1127,8 @@
     },
     "keys": {
       "billing.usage_rate_per_gb": "Rate per GB (minor units)",
+      "billing.default_package_price": "Default package price (minor units)",
+      "billing.default_package_bytes": "Default package traffic (bytes)",
       "billing.wallet_low_threshold": "Low wallet threshold",
       "billing.job_interval_seconds": "Usage billing job interval (seconds)",
       "payment.demo_enabled": "Enable demo gateway",
@@ -1142,6 +1144,8 @@
     },
     "hints": {
       "billing.usage_rate_per_gb": "0 disables automatic GB usage billing.",
+      "billing.default_package_price": "Pre-fills the create-package form.",
+      "billing.default_package_bytes": "Pre-fills the create-package form (bytes).",
       "billing.wallet_low_threshold": "Show low-balance warning on the overview when balance falls below this.",
       "payment.stripe_secret_key": "Leave blank to keep the current secret.",
       "payment.stripe_webhook_secret": "Leave blank to keep the current secret.",

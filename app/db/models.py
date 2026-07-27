@@ -59,6 +59,8 @@ class Admin(Base):
     max_total_traffic = Column(BigInteger, nullable=True)
     # Prepaid GB pool from traffic packages (consumed before wallet pay-as-you-go).
     prepaid_traffic_remaining = Column(BigInteger, nullable=False, default=0, server_default=text("0"))
+    # Optional PAYG override (minor units / GB). NULL = platform billing.usage_rate_per_gb.
+    usage_rate_per_gb = Column(BigInteger, nullable=True, default=None)
     max_nodes = Column(Integer, nullable=True)
 
     # White-label reseller (phase 6). An admin that belongs to a tenant is a
@@ -831,6 +833,26 @@ class ResellerTrafficPackage(Base):
     price = Column(BigInteger, nullable=False, default=0)        # minor units
     enabled = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ResellerTrafficPackageOverride(Base):
+    """Per-reseller price/bytes override for a global traffic package."""
+
+    __tablename__ = "reseller_traffic_package_overrides"
+    __table_args__ = (
+        UniqueConstraint("admin_id", "package_id", name="uq_reseller_pkg_override"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    admin_id = Column(Integer, ForeignKey("admins.id"), index=True, nullable=False)
+    package_id = Column(
+        Integer, ForeignKey("reseller_traffic_packages.id"), index=True, nullable=False
+    )
+    price = Column(BigInteger, nullable=True)   # null = catalog price
+    bytes = Column(BigInteger, nullable=True)   # null = catalog bytes
+
+    admin = relationship("Admin", foreign_keys=[admin_id])
+    package = relationship("ResellerTrafficPackage")
 
 
 class ResellerTrafficPurchase(Base):

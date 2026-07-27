@@ -500,6 +500,33 @@ export interface TrafficPackage {
   price: number;
   enabled: boolean;
   created_at?: string | null;
+  catalog_price?: number | null;
+  catalog_bytes?: number | null;
+  overridden?: boolean | null;
+  price_overridden?: boolean | null;
+  bytes_overridden?: boolean | null;
+}
+
+export interface ResellerPricingPackage {
+  id: number;
+  name: string;
+  enabled: boolean;
+  catalog_price: number;
+  catalog_bytes: number;
+  price: number;
+  bytes: number;
+  price_overridden: boolean;
+  bytes_overridden: boolean;
+  overridden: boolean;
+  created_at?: string | null;
+}
+
+export interface ResellerPricing {
+  username: string;
+  usage_rate_per_gb?: number | null;
+  effective_usage_rate_per_gb: number;
+  platform_usage_rate_per_gb: number;
+  packages: ResellerPricingPackage[];
 }
 
 export interface TrafficPurchase {

@@ -1,8 +1,8 @@
-import { FC, useMemo, useState } from "react";
+import { FC, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { ApiError, api } from "../api/client";
-import { Branding, SubResellerAccount, Tenant } from "../api/types";
+import { Branding, ResellerPricing, SubResellerAccount, Tenant } from "../api/types";
 import { useApp } from "../context/AppContext";
 import { useFetch } from "../lib/useFetch";
 import { formatBytes } from "../lib/format";
@@ -217,6 +217,7 @@ const ResellerAccountsTab: FC = () => {
   const [edit, setEdit] = useState<ResellerAccount | null>(null);
   const [credit, setCredit] = useState<ResellerAccount | null>(null);
   const [trafficCredit, setTrafficCredit] = useState<ResellerAccount | null>(null);
+  const [pricing, setPricing] = useState<ResellerAccount | null>(null);
   const { data, loading, error, reload, status } = useFetch<ResellerAccount[]>(() => api.get("/admins"), []);
   const billingOn = isEnabled("billing");
 
@@ -306,6 +307,9 @@ const ResellerAccountsTab: FC = () => {
                               <Button size="sm" variant="ghost" title={t("resellers.creditTraffic")} onClick={() => setTrafficCredit(a)}>
                                 {t("resellers.creditTraffic")}
                               </Button>
+                              <Button size="sm" variant="ghost" title={t("resellers.trafficPricing")} onClick={() => setPricing(a)}>
+                                {t("resellers.trafficPricing")}
+                              </Button>
                             </>
                           )}
                           <Button size="sm" variant="ghost" title={t("common.edit")} onClick={() => setEdit(a)}><IcEdit className="nx-ico" /></Button>
@@ -330,7 +334,156 @@ const ResellerAccountsTab: FC = () => {
           onDone={() => { setTrafficCredit(null); reload(); }}
         />
       )}
+      {pricing && (
+        <ResellerTrafficPricingModal
+          account={pricing}
+          onClose={() => setPricing(null)}
+          onDone={() => { setPricing(null); reload(); }}
+        />
+      )}
     </>
+  );
+};
+
+const ResellerTrafficPricingModal: FC<{ account: ResellerAccount; onClose: () => void; onDone: () => void }> = ({
+  account, onClose, onDone,
+}) => {
+  const { t } = useTranslation();
+  const toast = useToast();
+  const { data, loading, error } = useFetch<ResellerPricing>(
+    () => api.get(`/billing/reseller-pricing/${encodeURIComponent(account.username)}`),
+    [account.username],
+  );
+  const [rate, setRate] = useState("");
+  const [rows, setRows] = useState<Record<number, { price: string; bytesGb: string }>>({});
+  const [busy, setBusy] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    if (!data || hydrated) return;
+    setRate(data.usage_rate_per_gb != null ? String(data.usage_rate_per_gb) : "");
+    const next: Record<number, { price: string; bytesGb: string }> = {};
+    for (const pkg of data.packages) {
+      next[pkg.id] = {
+        price: pkg.price_overridden ? String(pkg.price) : "",
+        bytesGb: pkg.bytes_overridden ? String(+(pkg.bytes / (1024 ** 3)).toFixed(4)) : "",
+      };
+    }
+    setRows(next);
+    setHydrated(true);
+  }, [data, hydrated]);
+
+  const setRow = (id: number, key: "price" | "bytesGb", value: string) => {
+    setRows((prev) => ({ ...prev, [id]: { ...(prev[id] || { price: "", bytesGb: "" }), [key]: value } }));
+  };
+
+  const submit = async () => {
+    if (!data) return;
+    setBusy(true);
+    try {
+      const rateTrim = rate.trim();
+      const packages = data.packages.map((pkg) => {
+        const row = rows[pkg.id] || { price: "", bytesGb: "" };
+        const priceRaw = row.price.trim();
+        const bytesRaw = row.bytesGb.trim();
+        let bytes: number | null = null;
+        if (bytesRaw !== "") {
+          const gb = parseFloat(bytesRaw);
+          if (!Number.isFinite(gb) || gb <= 0) throw new Error(t("billing.packageTrafficRequired"));
+          bytes = Math.round(gb * (1024 ** 3));
+        }
+        return {
+          package_id: pkg.id,
+          price: priceRaw === "" ? null : (parseInt(priceRaw, 10) || 0),
+          bytes,
+        };
+      });
+      await api.put(`/billing/reseller-pricing/${encodeURIComponent(account.username)}`, {
+        usage_rate_per_gb: rateTrim === "" ? null : (parseInt(rateTrim, 10) || 0),
+        packages,
+      });
+      toast.push(t("common.saved"), "success");
+      onDone();
+    } catch (e: any) {
+      toast.push(e.message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      open
+      title={`${t("resellers.trafficPricing")} — ${account.username}`}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
+          <Button variant="primary" disabled={busy || loading || !!error} onClick={submit}>{t("common.save")}</Button>
+        </>
+      }
+    >
+      <div className="nx-stack" style={{ gap: 14 }}>
+        <Callout tone="info">{t("resellers.trafficPricingHint")}</Callout>
+        {loading ? <SkeletonRows rows={4} cols={2} />
+          : error ? <EmptyState title={t("common.error")} desc={error} />
+          : data && (
+            <>
+              <Field
+                label={t("resellers.usageRatePerGb")}
+                hint={t("resellers.usageRatePerGbHint", { rate: data.platform_usage_rate_per_gb.toLocaleString() })}
+              >
+                <Input type="number" value={rate} onChange={(e: any) => setRate(e.target.value)} placeholder={String(data.platform_usage_rate_per_gb)} />
+              </Field>
+              {!data.packages.length ? (
+                <EmptyState title={t("common.noData")} desc={t("billing.noTrafficPackages")} />
+              ) : (
+                <div className="nx-table-wrap">
+                  <table className="nx-table">
+                    <thead>
+                      <tr>
+                        <th>{t("common.name")}</th>
+                        <th>{t("resellers.packageCatalogPrice")}</th>
+                        <th>{t("resellers.packageOverridePrice")}</th>
+                        <th>{t("resellers.packageCatalogBytes")}</th>
+                        <th>{t("resellers.packageOverrideBytes")}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.packages.map((pkg) => {
+                        const row = rows[pkg.id] || { price: "", bytesGb: "" };
+                        return (
+                          <tr key={pkg.id}>
+                            <td>{pkg.name}</td>
+                            <td>{pkg.catalog_price.toLocaleString()}</td>
+                            <td>
+                              <Input
+                                type="number"
+                                value={row.price}
+                                placeholder={t("resellers.overrideBlankHint")}
+                                onChange={(e: any) => setRow(pkg.id, "price", e.target.value)}
+                              />
+                            </td>
+                            <td>{formatBytes(pkg.catalog_bytes)}</td>
+                            <td>
+                              <Input
+                                type="number"
+                                value={row.bytesGb}
+                                placeholder={t("resellers.overrideBlankHint")}
+                                onChange={(e: any) => setRow(pkg.id, "bytesGb", e.target.value)}
+                              />
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          )}
+      </div>
+    </Modal>
   );
 };
 

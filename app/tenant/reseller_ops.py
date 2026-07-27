@@ -202,10 +202,10 @@ def workspace_summary(db: Session, admin) -> Dict[str, Any]:
     if feature_flags.is_enabled("billing") and dbadmin and wallet_balance is not None:
         from app.billing.usage_billing import usage_summary_for_admin, wallet_is_low
 
-        usage_rate_per_gb = ps.get_int("billing.usage_rate_per_gb", 0)
         wallet_low = wallet_is_low(wallet_balance)
         currency_label = (ps.get_setting("billing.currency_label") or "").strip() or None
-        summary = usage_summary_for_admin(db, dbadmin, rate_per_gb=usage_rate_per_gb)
+        summary = usage_summary_for_admin(db, dbadmin)
+        usage_rate_per_gb = int(summary.get("rate_per_gb") or 0)
         pending_usage_cost = int(summary.get("estimated_cost") or 0)
         pending_usage_bytes = int(summary.get("owned_bytes") or 0) + int(
             summary.get("foreign_bytes") or 0

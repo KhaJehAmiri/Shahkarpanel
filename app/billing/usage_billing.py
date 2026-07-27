@@ -219,13 +219,22 @@ def unbilled_usage_split(db: Session, dbadmin: Admin) -> Tuple[UsageSplit, int, 
     return ownership_ratio_split(db, dbadmin.id, dbadmin.tenant_id, delta), current, last
 
 
+def resolve_usage_rate_per_gb(dbadmin: Admin, rate_per_gb: Optional[int] = None) -> int:
+    """Effective PAYG rate for a reseller (override or platform default)."""
+    if rate_per_gb is not None:
+        return int(rate_per_gb)
+    from app.billing.traffic_packages import effective_usage_rate_per_gb
+
+    return effective_usage_rate_per_gb(dbadmin)
+
+
 def usage_summary_for_admin(
     db: Session,
     dbadmin: Admin,
     *,
     rate_per_gb: Optional[int] = None,
 ) -> dict:
-    rate = int(rate_per_gb if rate_per_gb is not None else ps.get_int("billing.usage_rate_per_gb", 0))
+    rate = resolve_usage_rate_per_gb(dbadmin, rate_per_gb)
     checkpoint = get_or_create_checkpoint(db, dbadmin.id)
     until = align_billing_tick(datetime.utcnow())
     split, current_usage, last_usage = unbilled_usage_split(db, dbadmin)
@@ -287,7 +296,7 @@ def bill_reseller_usage(
     records (panel Xray, nodes, Finalmask, WG, sing-box), so pay-as-you-go
     no longer depends on hourly NodeUserUsage timestamps.
     """
-    rate = int(rate_per_gb if rate_per_gb is not None else ps.get_int("billing.usage_rate_per_gb", 0))
+    rate = resolve_usage_rate_per_gb(dbadmin, rate_per_gb)
     if rate <= 0:
         return None, UsageSplit()
 
@@ -370,13 +379,13 @@ def resellers_with_unpaid_usage(db: Session) -> set[int]:
 
     if not feature_flags.is_enabled("billing"):
         return set()
-    rate = ps.get_int("billing.usage_rate_per_gb", 0)
-    if rate <= 0:
-        return set()
 
     blocked: set[int] = set()
     admins = db.query(Admin).filter(Admin.is_sudo.is_(False)).all()
     for dbadmin in admins:
+        rate = resolve_usage_rate_per_gb(dbadmin)
+        if rate <= 0:
+            continue
         split, _, _ = unbilled_usage_split(db, dbadmin)
         if split.total_bytes <= 0:
             continue
@@ -399,13 +408,13 @@ def run_usage_billing() -> int:
 
     if not feature_flags.is_enabled("billing"):
         return 0
-    if ps.get_int("billing.usage_rate_per_gb", 0) <= 0:
-        return 0
 
     charged = 0
     with GetDB() as db:
         admins = db.query(Admin).filter(Admin.is_sudo.is_(False)).all()
         for dbadmin in admins:
+            if resolve_usage_rate_per_gb(dbadmin) <= 0:
+                continue
             tx, _ = bill_reseller_usage(db, dbadmin)
             if tx is not None:
                 charged += 1

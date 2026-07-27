@@ -20,6 +20,9 @@ SETTING_SPECS: Dict[str, tuple] = {
     "billing.job_interval_seconds": ("JOB_BILL_USAGE_INTERVAL", "int"),
     # Display label for prices in the portal/panel (e.g. "تومان", "USD").
     "billing.currency_label": ("", "str"),
+    # Defaults for the create-package form / optional POST body fields.
+    "billing.default_package_price": ("", "int"),
+    "billing.default_package_bytes": ("", "int"),
     "payment.demo_enabled": ("PAYMENT_DEMO_ENABLED", "bool"),
     "payment.min_amount": ("PAYMENT_MIN_AMOUNT", "int"),
     "payment.max_amount": ("PAYMENT_MAX_AMOUNT", "int"),
@@ -43,6 +46,8 @@ def _env_default(key: str) -> Any:
         if key == "payment.stripe_enabled":
             return False
         if key == "reseller.default_commission_percent":
+            return 0
+        if key in ("billing.default_package_price", "billing.default_package_bytes"):
             return 0
         return None
     import config as cfg

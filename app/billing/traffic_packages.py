@@ -1,14 +1,16 @@
 """Reseller prepaid traffic packages: catalog, purchase, and manual credit."""
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
 from app import billing
+from app import platform_settings as ps
 from app.db.models import (
     Admin,
     ResellerTrafficPackage,
+    ResellerTrafficPackageOverride,
     ResellerTrafficPurchase,
     Transaction,
     Wallet,
@@ -43,24 +45,138 @@ def get_package(db: Session, package_id: int) -> Optional[ResellerTrafficPackage
     )
 
 
+def get_override(
+    db: Session,
+    *,
+    admin_id: int,
+    package_id: int,
+) -> Optional[ResellerTrafficPackageOverride]:
+    return (
+        db.query(ResellerTrafficPackageOverride)
+        .filter(
+            ResellerTrafficPackageOverride.admin_id == admin_id,
+            ResellerTrafficPackageOverride.package_id == package_id,
+        )
+        .first()
+    )
+
+
+def effective_usage_rate_per_gb(admin: Optional[Admin] = None) -> int:
+    """PAYG rate: admin override if set, else platform billing.usage_rate_per_gb."""
+    if admin is not None and getattr(admin, "usage_rate_per_gb", None) is not None:
+        return int(admin.usage_rate_per_gb)
+    return int(ps.get_int("billing.usage_rate_per_gb", 0) or 0)
+
+
+def effective_package_offer(
+    db: Session,
+    admin: Admin,
+    pkg: ResellerTrafficPackage,
+) -> Dict[str, Any]:
+    """Resolve catalog package with optional per-reseller price/bytes overrides."""
+    ov = get_override(db, admin_id=admin.id, package_id=pkg.id)
+    catalog_price = int(pkg.price or 0)
+    catalog_bytes = int(pkg.bytes or 0)
+    price = catalog_price
+    bytes_ = catalog_bytes
+    price_overridden = False
+    bytes_overridden = False
+    if ov is not None:
+        if ov.price is not None:
+            price = int(ov.price)
+            price_overridden = True
+        if ov.bytes is not None:
+            bytes_ = int(ov.bytes)
+            bytes_overridden = True
+    return {
+        "id": pkg.id,
+        "name": pkg.name,
+        "enabled": bool(pkg.enabled),
+        "created_at": pkg.created_at,
+        "catalog_price": catalog_price,
+        "catalog_bytes": catalog_bytes,
+        "price": price,
+        "bytes": bytes_,
+        "price_overridden": price_overridden,
+        "bytes_overridden": bytes_overridden,
+        "overridden": price_overridden or bytes_overridden,
+    }
+
+
+def list_packages_for_admin(
+    db: Session,
+    admin: Admin,
+    *,
+    enabled_only: bool = False,
+) -> List[Dict[str, Any]]:
+    packages = list_packages(db, enabled_only=enabled_only)
+    return [effective_package_offer(db, admin, pkg) for pkg in packages]
+
+
+def upsert_package_override(
+    db: Session,
+    *,
+    admin_id: int,
+    package_id: int,
+    price: Optional[int],
+    bytes: Optional[int],
+    commit: bool = False,
+) -> Optional[ResellerTrafficPackageOverride]:
+    """Set or clear override fields. Both null removes the row."""
+    if price is not None and int(price) < 0:
+        raise TrafficPackageError("Override price cannot be negative")
+    if bytes is not None and int(bytes) <= 0:
+        raise TrafficPackageError("Override bytes must be positive")
+
+    ov = get_override(db, admin_id=admin_id, package_id=package_id)
+    if price is None and bytes is None:
+        if ov is not None:
+            db.delete(ov)
+            if commit:
+                db.commit()
+        return None
+
+    if ov is None:
+        ov = ResellerTrafficPackageOverride(
+            admin_id=admin_id,
+            package_id=package_id,
+            price=int(price) if price is not None else None,
+            bytes=int(bytes) if bytes is not None else None,
+        )
+        db.add(ov)
+    else:
+        ov.price = int(price) if price is not None else None
+        ov.bytes = int(bytes) if bytes is not None else None
+    if commit:
+        db.commit()
+        db.refresh(ov)
+    return ov
+
+
 def create_package(
     db: Session,
     *,
     name: str,
-    bytes: int,
-    price: int,
+    bytes: Optional[int] = None,
+    price: Optional[int] = None,
     enabled: bool = True,
 ) -> ResellerTrafficPackage:
     if not name or not name.strip():
         raise TrafficPackageError("Package name is required")
-    if int(bytes) <= 0:
+    resolved_bytes = int(bytes) if bytes is not None else int(
+        ps.get_int("billing.default_package_bytes", 0) or 0
+    )
+    resolved_price = int(price) if price is not None else int(
+        ps.get_int("billing.default_package_price", 0) or 0
+    )
+    if resolved_bytes <= 0:
         raise TrafficPackageError("Package bytes must be positive")
-    if int(price) < 0:
+    if resolved_price < 0:
         raise TrafficPackageError("Package price cannot be negative")
     pkg = ResellerTrafficPackage(
         name=name.strip(),
-        bytes=int(bytes),
-        price=int(price),
+        bytes=resolved_bytes,
+        price=resolved_price,
         enabled=bool(enabled),
     )
     db.add(pkg)
@@ -108,6 +224,11 @@ def delete_package(db: Session, pkg: ResellerTrafficPackage) -> None:
         pkg.enabled = False
         db.commit()
         return
+    (
+        db.query(ResellerTrafficPackageOverride)
+        .filter(ResellerTrafficPackageOverride.package_id == pkg.id)
+        .delete(synchronize_session=False)
+    )
     db.delete(pkg)
     db.commit()
 
@@ -151,7 +272,12 @@ def purchase_package(
     if wallet is None:
         raise TrafficPackageError("Wallet not found", 404)
 
-    price = int(pkg.price or 0)
+    offer = effective_package_offer(db, admin, pkg)
+    price = int(offer["price"])
+    granted_bytes = int(offer["bytes"])
+    if granted_bytes <= 0:
+        raise TrafficPackageError("Package bytes must be positive")
+
     if wallet.balance < price:
         raise TrafficPackageError(
             f"Insufficient wallet balance (need {price}, have {wallet.balance})"
@@ -162,17 +288,17 @@ def purchase_package(
             admin_id=admin_id,
             amount=-price,
             type="traffic_package",
-            description=f"Traffic package: {pkg.name} ({pkg.bytes} bytes)",
+            description=f"Traffic package: {pkg.name} ({granted_bytes} bytes)",
             reference=f"traffic_package:{pkg.id}",
         )
         db.add(tx)
         wallet.balance -= price
 
-    admin.prepaid_traffic_remaining = int(admin.prepaid_traffic_remaining or 0) + int(pkg.bytes)
+    admin.prepaid_traffic_remaining = int(admin.prepaid_traffic_remaining or 0) + granted_bytes
     purchase = ResellerTrafficPurchase(
         admin_id=admin_id,
         package_id=pkg.id,
-        bytes=int(pkg.bytes),
+        bytes=granted_bytes,
         price_paid=price,
         source="purchase",
         created_by_admin_id=created_by_admin_id or admin_id,
@@ -240,3 +366,51 @@ def list_purchases(
     if admin_id is not None:
         q = q.filter(ResellerTrafficPurchase.admin_id == admin_id)
     return q.limit(max(1, min(int(limit), 500))).all()
+
+
+def get_reseller_pricing(db: Session, admin: Admin) -> Dict[str, Any]:
+    """Sudo view: effective rate + packages with catalog vs effective fields."""
+    platform_rate = int(ps.get_int("billing.usage_rate_per_gb", 0) or 0)
+    admin_rate = getattr(admin, "usage_rate_per_gb", None)
+    return {
+        "username": admin.username,
+        "usage_rate_per_gb": int(admin_rate) if admin_rate is not None else None,
+        "effective_usage_rate_per_gb": effective_usage_rate_per_gb(admin),
+        "platform_usage_rate_per_gb": platform_rate,
+        "packages": list_packages_for_admin(db, admin, enabled_only=False),
+    }
+
+
+def set_reseller_pricing(
+    db: Session,
+    admin: Admin,
+    *,
+    usage_rate_per_gb: Optional[int] = None,
+    clear_usage_rate: bool = False,
+    packages: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Apply PAYG rate and/or package overrides for one reseller."""
+    if clear_usage_rate:
+        admin.usage_rate_per_gb = None
+    elif usage_rate_per_gb is not None:
+        if int(usage_rate_per_gb) < 0:
+            raise TrafficPackageError("usage_rate_per_gb cannot be negative")
+        admin.usage_rate_per_gb = int(usage_rate_per_gb)
+
+    for item in packages or []:
+        package_id = int(item["package_id"])
+        pkg = get_package(db, package_id)
+        if pkg is None:
+            raise TrafficPackageError(f"Traffic package {package_id} not found", 404)
+        upsert_package_override(
+            db,
+            admin_id=admin.id,
+            package_id=package_id,
+            price=item.get("price"),
+            bytes=item.get("bytes"),
+            commit=False,
+        )
+
+    db.commit()
+    db.refresh(admin)
+    return get_reseller_pricing(db, admin)

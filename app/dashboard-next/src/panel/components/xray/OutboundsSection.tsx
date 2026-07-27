@@ -21,6 +21,7 @@ import {
 } from "../../lib/outboundCrud";
 import { Button, Callout, Card, EmptyState, Field, Pill, Select, useToast } from "../ui";
 import { IcBolt, IcEdit, IcPlus, IcRefresh, IcShare, IcTrash } from "../icons";
+import { TableRowMenu } from "../TableRowMenu";
 import { OutboundModal } from "./OutboundModal";
 import { OutboundPoolDialog } from "./OutboundPoolDialog";
 import { WarpDialog } from "./WarpDialog";
@@ -262,7 +263,7 @@ export const OutboundsSection: FC<{
                   <th>{t("infra.transport")}</th>
                   <th>{t("outbounds.ping")}</th>
                   <th>{t("outbounds.extra")}</th>
-                  <th style={{ textAlign: "end" }}>{t("common.actions")}</th>
+                  <th className="nx-actions">{t("common.actions")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -274,10 +275,10 @@ export const OutboundsSection: FC<{
                   return (
                     <tr key={`${o.tag}-${idx}`}>
                       <td className="nx-faint">{idx + 1}</td>
-                      <td style={{ fontWeight: 600 }}>{String(o.tag)}</td>
-                      <td><Pill tone="accent">{String(o.protocol)}</Pill></td>
-                      <td className="nx-mono" style={{ fontSize: 12 }}>{sum.address}</td>
-                      <td><Pill tone="default">{sum.transport}</Pill></td>
+                      <td><span className="nx-proto-name-main">{String(o.tag)}</span></td>
+                      <td><span className="nx-proto-chip">{String(o.protocol)}</span></td>
+                      <td className="nx-mono nx-proto-meta" dir="ltr">{sum.address}</td>
+                      <td className="nx-proto-meta">{sum.transport}</td>
                       <td>
                         <div className="nx-outbound-ping">
                           {ping?.loading ? (
@@ -301,36 +302,54 @@ export const OutboundsSection: FC<{
                               {t("outbounds.pingFailedShort")}
                             </button>
                           ) : (
-                            <Button size="sm" title={t("outbounds.ping")} onClick={() => runPing(idx)}>
+                            <button type="button" className="nx-ra-icon-btn" title={t("outbounds.ping")} onClick={() => runPing(idx)}>
                               <IcBolt className="nx-ico" />
-                            </Button>
+                            </button>
                           )}
                         </div>
                       </td>
-                      <td style={{ fontSize: 12, color: "var(--nx-muted)" }}>{sum.extra}</td>
-                      <td>
-                        <div className="nx-row" style={{ justifyContent: "flex-end", gap: 4 }}>
-                          <Button size="sm" title={t("outbounds.moveUp")} disabled={busy || idx === 0} onClick={() => void move(idx, -1)}>↑</Button>
-                          <Button size="sm" title={t("outbounds.moveDown")} disabled={busy || idx === outbounds.length - 1} onClick={() => void move(idx, 1)}>↓</Button>
-                          <Button size="sm" title={t("outbounds.clone")} disabled={busy} onClick={() => clone(idx)}>
-                            <IcShare className="nx-ico" />
-                          </Button>
-                          {!sys && (
-                            <>
-                              <Button size="sm" disabled={busy} onClick={() => openEdit(idx)}>
-                                <IcEdit className="nx-ico" />
-                              </Button>
-                              <Button variant="danger" size="sm" disabled={busy} onClick={() => remove(idx)}>
-                                <IcTrash className="nx-ico" />
-                              </Button>
-                            </>
-                          )}
-                          {sys && (
-                            <Button size="sm" disabled={busy} onClick={() => openEdit(idx)}>
-                              <IcEdit className="nx-ico" />
-                            </Button>
-                          )}
-                        </div>
+                      <td className="nx-proto-meta">{sum.extra || "—"}</td>
+                      <td className="nx-actions">
+                        <TableRowMenu
+                          items={[
+                            {
+                              id: "up",
+                              label: t("outbounds.moveUp"),
+                              disabled: busy || idx === 0,
+                              onClick: () => void move(idx, -1),
+                            },
+                            {
+                              id: "down",
+                              label: t("outbounds.moveDown"),
+                              disabled: busy || idx === outbounds.length - 1,
+                              onClick: () => void move(idx, 1),
+                            },
+                            {
+                              id: "clone",
+                              label: t("outbounds.clone"),
+                              icon: <IcShare className="nx-ico" />,
+                              disabled: busy,
+                              onClick: () => clone(idx),
+                            },
+                            {
+                              id: "edit",
+                              label: t("common.edit"),
+                              icon: <IcEdit className="nx-ico" />,
+                              disabled: busy,
+                              onClick: () => openEdit(idx),
+                            },
+                            ...(!sys
+                              ? [{
+                                  id: "del",
+                                  label: t("common.delete"),
+                                  icon: <IcTrash className="nx-ico" />,
+                                  danger: true,
+                                  disabled: busy,
+                                  onClick: () => remove(idx),
+                                }]
+                              : []),
+                          ]}
+                        />
                       </td>
                     </tr>
                   );

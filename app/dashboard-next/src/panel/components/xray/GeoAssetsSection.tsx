@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { api } from "../../api/client";
 import { Button, Callout, Card, EmptyState, Field, useToast } from "../ui";
 import { IcDownload, IcRefresh, IcTrash } from "../icons";
+import { TableRowMenu } from "../TableRowMenu";
 
 type GeoAsset = {
   name: string;
@@ -141,24 +142,29 @@ export const GeoAssetsSection: FC = () => {
                   <th>{t("xray.geoSize")}</th>
                   <th>{t("xray.geoModified")}</th>
                   <th>SHA256</th>
-                  <th style={{ textAlign: "end" }}>{t("common.actions")}</th>
+                  <th className="nx-actions">{t("common.actions")}</th>
                 </tr>
               </thead>
               <tbody>
                 {assets.map((a) => (
                   <tr key={a.name}>
-                    <td className="nx-mono">{a.name}</td>
-                    <td>{formatBytes(a.size)}</td>
-                    <td>{new Date(a.modified_at * 1000).toLocaleString()}</td>
-                    <td className="nx-mono" style={{ fontSize: 11 }}>
-                      {a.sha256.slice(0, 16)}…
-                    </td>
-                    <td>
-                      <div className="nx-row" style={{ justifyContent: "flex-end" }}>
-                        <Button variant="danger" size="sm" disabled={busy} onClick={() => remove(a.name)}>
-                          <IcTrash className="nx-ico" />
-                        </Button>
-                      </div>
+                    <td><span className="nx-proto-name-main nx-mono">{a.name}</span></td>
+                    <td className="nx-num">{formatBytes(a.size)}</td>
+                    <td className="nx-proto-meta">{new Date(a.modified_at * 1000).toLocaleString()}</td>
+                    <td className="nx-mono nx-proto-meta">{a.sha256.slice(0, 16)}…</td>
+                    <td className="nx-actions">
+                      <TableRowMenu
+                        items={[
+                          {
+                            id: "del",
+                            label: t("common.delete"),
+                            icon: <IcTrash className="nx-ico" />,
+                            danger: true,
+                            disabled: busy,
+                            onClick: () => remove(a.name),
+                          },
+                        ]}
+                      />
                     </td>
                   </tr>
                 ))}

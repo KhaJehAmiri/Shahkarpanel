@@ -404,3 +404,55 @@
   font-size: 12px;
   line-height: 1.45;
 }
+
+.nx-bulk-create-limits {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+.nx-bulk-create-limits .nx-uc-plan {
+  gap: 16px;
+}
+.nx-bulk-create-limits .nx-ue-grid {
+  margin-top: 2px;
+}
+.nx-bulk-create-shell .nx-modal-subtitle {
+  max-width: 52ch;
+}
+.nx-bulk-create-tabs {
+  margin: 16px 20px 0;
+  padding: 3px;
+  border-radius: 12px;
+}
+.nx-bulk-create-tab {
+  border-radius: 9px;
+  font-size: 12.5px;
+  font-weight: 650;
+  padding: 9px 10px;
+}
+.nx-bulk-create-panel {
+  padding: 18px 22px 24px;
+}
+
+.nx-bulk-create-panel-picker {
+  max-width: 420px;
+}
+.nx-bulk-create-panel-locked {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--nx-accent) 35%, var(--nx-border));
+  background: color-mix(in srgb, var(--nx-accent) 8%, var(--nx-surface-2));
+  max-width: 420px;
+}
+.nx-bulk-create-panel-locked b {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--nx-text);
+}
+.nx-bulk-create-panel-locked small {
+  font-size: 12px;
+  color: var(--nx-text-dim);
+}

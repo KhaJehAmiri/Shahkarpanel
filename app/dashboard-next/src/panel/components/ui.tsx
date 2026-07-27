@@ -289,9 +289,9 @@ function useOverlayDismissGuard(open: boolean) {
 export const Modal: FC<{
   open: boolean; title: ReactNode; onClose: () => void; children: ReactNode; footer?: ReactNode;
   wide?: boolean; formWide?: boolean; hideHead?: boolean; className?: string;
-  dismissOnOverlay?: boolean; overlayClassName?: string;
+  dismissOnOverlay?: boolean; overlayClassName?: string; subtitle?: ReactNode;
 }> = ({ open, title, onClose, children, footer, wide, formWide, hideHead, className,
-  dismissOnOverlay = true, overlayClassName = "",
+  dismissOnOverlay = true, overlayClassName = "", subtitle,
 }) => {
   const guardedDismiss = useOverlayDismissGuard(open);
   useEffect(() => {
@@ -316,7 +316,10 @@ export const Modal: FC<{
       <div className={modalCls} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
         {!hideHead && (
         <div className="nx-modal-head">
-          <div className="nx-card-title">{title}</div>
+          <div className="nx-modal-head-text">
+            <div className="nx-modal-title">{title}</div>
+            {subtitle ? <div className="nx-modal-subtitle">{subtitle}</div> : null}
+          </div>
           <CloseButton onClose={onClose} />
         </div>
         )}

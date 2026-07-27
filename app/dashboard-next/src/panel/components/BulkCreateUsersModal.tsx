@@ -17,6 +17,7 @@ import {
 } from "../lib/userHelpers";
 import { UserTemplateRow } from "./UserTemplates";
 import { Button, Checkbox, Field, Input, Modal, Select, useToast } from "./ui";
+import { useApp } from "../context/AppContext";
 import "./bulk-create-modal.css";
 
 const NATIVE_PROTOCOLS = ["wireguard", "amneziawg", "hysteria2", "tuic", "anytls"] as const;
@@ -26,29 +27,19 @@ const PROTO_LABEL: Record<string, string> = {
   wireguard: "WireGuard", amneziawg: "AmneziaWG", hysteria2: "Hysteria2", tuic: "TUIC", anytls: "AnyTLS",
 };
 const PROTO_VISUAL: Record<string, { icon: string; hue: string }> = {
-  vless: { icon: "⚡", hue: "#2ee0c4" },
-  vmess: { icon: "◆", hue: "#6366f1" },
-  trojan: { icon: "🔒", hue: "#f59e0b" },
-  shadowsocks: { icon: "🛡", hue: "#38bdf8" },
-  wireguard: { icon: "⬡", hue: "#a78bfa" },
-  amneziawg: { icon: "🛡", hue: "#22d3ee" },
-  hysteria2: { icon: "🚀", hue: "#f472b6" },
-  tuic: { icon: "◉", hue: "#34d399" },
-  anytls: { icon: "🛡", hue: "#a78bfa" },
+  vless: { icon: "VL", hue: "#2ee0c4" },
+  vmess: { icon: "VM", hue: "#818cf8" },
+  trojan: { icon: "TR", hue: "#f59e0b" },
+  shadowsocks: { icon: "SS", hue: "#38bdf8" },
+  wireguard: { icon: "WG", hue: "#94a3b8" },
+  amneziawg: { icon: "AW", hue: "#22d3ee" },
+  hysteria2: { icon: "H2", hue: "#f472b6" },
+  tuic: { icon: "TU", hue: "#34d399" },
+  anytls: { icon: "AT", hue: "#a78bfa" },
 };
 
 type TabId = "basic" | "protocols" | "limits";
 type ProtoState = { enabled: boolean; tags: string[]; flow: string; method: string };
-
-interface SubEndpointRow {
-  id: number;
-  slug: string;
-  host: string | null;
-  path_prefix: string;
-  listen_port: number | null;
-  inbound_tag: string | null;
-  enabled: boolean;
-}
 
 interface CreatedUserLink {
   username: string;
@@ -72,19 +63,19 @@ interface Props {
   templates: UserTemplateRow[];
 }
 
-function isPanelEndpoint(ep: SubEndpointRow): boolean {
-  if (!ep.enabled) return false;
-  if (ep.inbound_tag) return false;
-  if (ep.slug === "default") return false;
-  if (ep.slug.endsWith("-json") || ep.slug.endsWith("-clash")) return false;
-  return true;
-}
-
-/** p1 / p2 … — panel-prefixed inbound tags. Branding endpoints share global tags. */
 function isPnPanelSlug(slug: string): boolean {
   return /^p\d+$/i.test((slug || "").trim());
 }
 
+type BalancePanel = {
+  id: number;
+  slug: string;
+  host: string | null;
+  user_count: number;
+  legacy_panel_id?: string | null;
+};
+
+/** p1 / p2 … — panel-prefixed inbound tags. Branding endpoints share global tags. */
 function tagMatchesPanel(tag: string, slug: string): boolean {
   // Shared tags like ``in1`` are valid for every panel, including reseller domains.
   if (!isPnPanelSlug(slug)) return true;
@@ -118,13 +109,14 @@ async function copyText(text: string): Promise<boolean> {
 export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templates }) => {
   const { t } = useTranslation();
   const toast = useToast();
+  const { admin } = useApp();
+  const isSudo = !!admin?.is_sudo;
   const inbounds = useFetch<InboundsByProtocol>(() => api.get("/inbounds"), []);
   const nodes = useFetch<NodeItem[]>(() => api.get("/nodes"), []);
   const nativeCaps = useFetch<AssignableNativeProtocols>(
     () => api.get("/assignable-native-protocols"),
     [],
   );
-  const endpoints = useFetch<SubEndpointRow[]>(() => api.get("/subscription-endpoints"), []);
   const routingPresets = useFetch<{ presets: Record<string, { label: string }> }>(
     () => api.get("/routing/presets"),
     [],
@@ -142,13 +134,13 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
   const [suffix, setSuffix] = useState("");
   const [status, setStatus] = useState("active");
   const [note, setNote] = useState("");
-  /** null = auto-balance to least-loaded p panel; number = pinned panel id */
+  /** null = auto-balance (owner) / own domain (reseller); number = pinned panel id */
   const [panelId, setPanelId] = useState<number | null>(null);
+  const [panelSearch, setPanelSearch] = useState("");
   const balance = useFetch<{
-    panels: Array<{ id: number; slug: string; host: string | null; user_count: number }>;
-    next: { id: number; slug: string; host: string | null; user_count: number } | null;
+    panels: BalancePanel[];
+    next: BalancePanel | null;
   }>(() => api.get("/subscription-endpoints/balance"), []);
-  const [unlimited, setUnlimited] = useState(true);
   const [dataLimitUnit, setDataLimitUnit] = useState<DataLimitUnit>("GB");
   const [dataLimitValue, setDataLimitValue] = useState("");
   const [noExpire, setNoExpire] = useState(true);
@@ -165,41 +157,45 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<BulkCreateResult | null>(null);
 
+  /** Only what /balance returns — never the full endpoint dump (reseller-*). */
   const panels = useMemo(() => {
-    const fromApi = (endpoints.data || [])
-      .filter(isPanelEndpoint)
-      .sort((a, b) => a.slug.localeCompare(b.slug));
-    if (fromApi.length) return fromApi;
-    // Resellers cannot list full endpoints — use balance rows for pin cards.
     return (balance.data?.panels || [])
       .slice()
-      .sort((a, b) => a.slug.localeCompare(b.slug))
-      .map((p) => ({
-        id: p.id,
-        slug: p.slug,
-        host: p.host,
-        path_prefix: "sub",
-        listen_port: 2096,
-        enabled: true,
-        inbound_tag: null,
-      })) as SubEndpointRow[];
-  }, [endpoints.data, balance.data]);
+      .sort((a, b) => a.slug.localeCompare(b.slug));
+  }, [balance.data]);
+
+  const filteredPanels = useMemo(() => {
+    const q = panelSearch.trim().toLowerCase();
+    if (!q) return panels;
+    return panels.filter((p) =>
+      `${p.slug} ${p.host || ""} ${p.user_count}`.toLowerCase().includes(q),
+    );
+  }, [panels, panelSearch]);
+
   const selectedPanel = panels.find((p) => p.id === panelId) || null;
+  const resellerOnly = !isSudo && panels.length === 1 && !isPnPanelSlug(panels[0]?.slug || "");
+  const showAutoBalance = isSudo && panels.some((p) => isPnPanelSlug(p.slug));
 
   useEffect(() => {
     if (!open) return;
     setTab("basic");
     setResult(null);
-    setPanelId(null); // default: auto-balance
+    setPanelId(null);
+    setPanelSearch("");
     inbounds.reload();
     nodes.reload();
     nativeCaps.reload();
-    endpoints.reload();
     balance.reload();
     routingPresets.reload();
     dnsPresets.reload();
     if (templates.length) setTemplateId(templates[0].id);
   }, [open]);
+
+  // Reseller with a dedicated branding domain: lock to that endpoint.
+  useEffect(() => {
+    if (!open || !resellerOnly) return;
+    setPanelId(panels[0].id);
+  }, [open, resellerOnly, panels]);
 
   useEffect(() => {
     if (!open || !inbounds.data) return;
@@ -275,10 +271,9 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
   const selectPanel = (id: number | null) => {
     setPanelId(id);
     const panel = panels.find((p) => p.id === id) || null;
-    if (panel) {
+    if (panel && isPnPanelSlug(panel.slug)) {
       const want = `${panel.slug}_`;
-      setPrefix((prev) => (!prev || /^[a-z0-9]+_$/i.test(prev) ? want : prev));
-      // Re-filter already-enabled protocol tags to the chosen panel.
+      setPrefix((prev) => (!prev || /^p\d+_$/i.test(prev) ? want : prev));
       setProtos((s) => {
         const next = { ...s };
         for (const [p, v] of Object.entries(next)) {
@@ -289,6 +284,8 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
         }
         return next;
       });
+    } else if (id == null) {
+      setPrefix((prev) => (/^p\d+_$/i.test(prev) ? "" : prev));
     }
   };
 
@@ -379,7 +376,11 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
         username_suffix: suffix || null,
         status,
         note: note || "",
-        data_limit: unlimited || !dataLimitValue ? 0 : dataLimitToBytes(dataLimitValue, dataLimitUnit),
+        data_limit: (() => {
+          const raw = dataLimitValue.trim();
+          if (!raw || Number(raw) <= 0) return 0;
+          return dataLimitToBytes(raw, dataLimitUnit);
+        })(),
         expire: noExpire || !expireDate ? 0 : Math.floor(new Date(expireDate).getTime() / 1000),
         data_limit_reset_strategy: reset,
         client_profile: clientProfile,
@@ -528,6 +529,7 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
       className="nx-bulk-create-shell"
       overlayClassName="nx-bulk-create-overlay"
       title={t("bulkCreate.title")}
+      subtitle={t("bulkCreate.descFull")}
       onClose={onClose}
       footer={
         <div className="nx-bulk-create-foot">
@@ -554,8 +556,6 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
         </div>
       }
     >
-      <p className="nx-bulk-create-intro">{t("bulkCreate.descFull")}</p>
-
       <div className="nx-bulk-create-tabs" role="tablist">
         {tabs.map(({ id, label, skip }) => (
           <button
@@ -582,51 +582,68 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
           <>
             <h4 className="nx-bulk-create-section-title">{t("bulkCreate.sectionPanel")}</h4>
             <p className="nx-faint" style={{ fontSize: 12.5, margin: "0 0 12px" }}>
-              {t("bulkCreate.panelBalanceHint", "Auto picks the p-panel with the fewest users (srw1…srw9). Pin one only if you need a fixed host.")}
+              {resellerOnly
+                ? t("bulkCreate.panelResellerHint", {
+                    defaultValue: "Users are bound to your subscription domain only.",
+                  })
+                : t("bulkCreate.panelBalanceHint", {
+                    defaultValue: "Auto picks the p-panel with the fewest users. Pin one only if you need a fixed host.",
+                  })}
             </p>
-            {!endpoints.data && !balance.data ? (
+            {balance.loading && !balance.data ? (
               <span className="nx-faint">{t("common.loading")}</span>
-            ) : panels.length === 0 && !balance.data?.panels?.length ? (
+            ) : panels.length === 0 ? (
               <div className="nx-faint">{t("bulkCreate.noPanels")}</div>
+            ) : resellerOnly ? (
+              <div className="nx-bulk-create-panel-locked">
+                <b dir="ltr">{panels[0].slug}</b>
+                <small dir="ltr">
+                  {panels[0].host || "—"}
+                  {panels[0].user_count != null ? ` · ${panels[0].user_count}` : ""}
+                </small>
+              </div>
             ) : (
-              <div className="nx-bulk-create-panels">
-                <button
-                  type="button"
-                  className={`nx-bulk-create-panel-card ${panelId == null ? "selected" : ""}`}
-                  onClick={() => setPanelId(null)}
+              <div className="nx-bulk-create-panel-picker">
+                {panels.length > 8 && (
+                  <Input
+                    value={panelSearch}
+                    onChange={(e: ChangeEvent<HTMLInputElement>) => setPanelSearch(e.target.value)}
+                    placeholder={t("common.search")}
+                    style={{ marginBottom: 10 }}
+                    dir="ltr"
+                  />
+                )}
+                <Select
+                  value={panelId == null ? "" : String(panelId)}
+                  onChange={(e: ChangeEvent<HTMLSelectElement>) => {
+                    const v = e.target.value;
+                    selectPanel(v ? Number(v) : null);
+                  }}
                 >
-                  <span className="nx-bulk-create-panel-check">✓</span>
-                  <b dir="ltr">{t("bulkCreate.autoBalance", "Auto balance")}</b>
-                  <small dir="ltr">
-                    {balance.data?.next
-                      ? t("bulkCreate.nextPanel", "Next → {{slug}} ({{n}} users)", {
-                        slug: balance.data.next.slug,
-                        n: balance.data.next.user_count,
-                      })
-                      : t("bulkCreate.autoBalanceHint", "Least-loaded panel")}
-                  </small>
-                </button>
-                {panels.map((p) => {
-                  const on = panelId === p.id;
-                  const count = balance.data?.panels?.find((b) => b.id === p.id)?.user_count;
-                  return (
-                    <button
-                      key={p.id}
-                      type="button"
-                      className={`nx-bulk-create-panel-card ${on ? "selected" : ""}`}
-                      onClick={() => selectPanel(p.id)}
-                    >
-                      <span className="nx-bulk-create-panel-check">✓</span>
-                      <b dir="ltr">{p.slug}</b>
-                      <small dir="ltr">
-                        {p.host || "—"}
-                        {p.listen_port ? `:${p.listen_port}` : ""}
-                        {" · /"}{p.path_prefix}/
-                        {count != null ? ` · ${count}` : ""}
-                      </small>
-                    </button>
-                  );
-                })}
+                  {showAutoBalance && (
+                    <option value="">
+                      {balance.data?.next
+                        ? t("bulkCreate.nextPanel", {
+                            defaultValue: "Auto balance → {{slug}} ({{n}} users)",
+                            slug: balance.data.next.slug,
+                            n: balance.data.next.user_count,
+                          })
+                        : t("bulkCreate.autoBalance", { defaultValue: "Auto balance" })}
+                    </option>
+                  )}
+                  {filteredPanels.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.slug}
+                      {p.host ? ` · ${p.host}` : ""}
+                      {` · ${p.user_count}`}
+                    </option>
+                  ))}
+                </Select>
+                {!showAutoBalance && panels.length > 1 && panelId == null && (
+                  <p className="nx-ue-help" style={{ marginTop: 8 }}>
+                    {t("bulkCreate.pickPanelHint", { defaultValue: "Select a panel for these users." })}
+                  </p>
+                )}
               </div>
             )}
 
@@ -699,8 +716,11 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
                 ) : (
                 <div className="nx-proto-pick">
                   {availableProtos.map((p) => {
-                    const vis = PROTO_VISUAL[p] || { icon: "🔗", hue: "var(--nx-accent)" };
+                    const vis = PROTO_VISUAL[p] || { icon: "·", hue: "var(--nx-accent)" };
                     const selected = !!protos[p]?.enabled;
+                    const meta = NATIVE_PROTOCOLS.includes(p as typeof NATIVE_PROTOCOLS[number])
+                      ? t("users.wgNativePeer")
+                      : t("users.inboundCount", { n: inbounds.data?.[p]?.length || 0 });
                     return (
                       <button
                         key={p}
@@ -708,15 +728,14 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
                         className={`nx-proto-pick-card ${selected ? "selected" : ""}`}
                         style={{ "--proto-hue": vis.hue } as React.CSSProperties}
                         onClick={() => toggleProto(p)}
+                        aria-pressed={selected}
                       >
-                        <span className="nx-proto-pick-check">✓</span>
                         <span className="nx-proto-icon">{vis.icon}</span>
-                        <b>{PROTO_LABEL[p] || p}</b>
-                        <small>
-                          {NATIVE_PROTOCOLS.includes(p as typeof NATIVE_PROTOCOLS[number])
-                            ? t("users.wgNativePeer")
-                            : t("users.inboundCount", { n: inbounds.data?.[p]?.length || 0 })}
-                        </small>
+                        <span className="nx-proto-pick-copy">
+                          <b>{PROTO_LABEL[p] || p}</b>
+                          <small>{meta}</small>
+                        </span>
+                        <span className="nx-proto-pick-check" aria-hidden>{selected ? "✓" : ""}</span>
                       </button>
                     );
                   })}
@@ -796,21 +815,19 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
         )}
 
         {tab === "limits" && (
-          <>
-            <h4 className="nx-bulk-create-section-title">{t("bulkCreate.sectionLimits")}</h4>
-            <div className="nx-bulk-create-limits-row">
-              <label className="nx-bulk-create-check">
-                <Checkbox checked={unlimited} onChange={() => setUnlimited((x) => !x)} />
-                <span>{t("users.unlimited")}</span>
-              </label>
-              {!unlimited && (
-                <>
+          <div className="nx-bulk-create-limits">
+            <section className="nx-uc-plan">
+              <div className="nx-ue-field">
+                <div className="nx-ue-label">{t("users.dataLimit")}</div>
+                <div className="nx-ue-inline">
                   <Input
                     type="number"
                     min={0}
+                    step={dataLimitUnit === "MB" ? "1" : "0.001"}
                     value={dataLimitValue}
+                    placeholder={t("users.unlimited")}
                     onChange={(e: ChangeEvent<HTMLInputElement>) => setDataLimitValue(e.target.value)}
-                    style={{ maxWidth: 100 }}
+                    dir="ltr"
                   />
                   <Select
                     value={dataLimitUnit}
@@ -819,86 +836,98 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
                     <option value="MB">MB</option>
                     <option value="GB">GB</option>
                   </Select>
-                </>
-              )}
-            </div>
-
-            <div className="nx-bulk-create-grid">
-              <Field label={t("users.resetStrategy")}>
-                <Select value={reset} onChange={(e: ChangeEvent<HTMLSelectElement>) => setReset(e.target.value)}>
-                  {["no_reset", "day", "week", "month", "year"].map((r) => (
-                    <option key={r} value={r}>{t(`users.resetStrategies.${r}`, r)}</option>
-                  ))}
-                </Select>
-              </Field>
-              <Field label={t("users.clientProfile")}>
-                <Select value={clientProfile} onChange={(e: ChangeEvent<HTMLSelectElement>) => setClientProfile(e.target.value)}>
-                  <option value="normal">{t("users.profile.normal")}</option>
-                  <option value="gamer">{t("users.profile.gamer")}</option>
-                  <option value="trader">{t("users.profile.trader")}</option>
-                </Select>
-              </Field>
-              <Field label={t("bulkCreate.speedUp")}>
-                <Input
-                  type="number"
-                  min={0}
-                  placeholder="Mbps"
-                  value={speedUp}
-                  onChange={(e: ChangeEvent<HTMLInputElement>) => setSpeedUp(e.target.value)}
-                  dir="ltr"
-                />
-              </Field>
-              <Field label={t("bulkCreate.speedDown")}>
-                <Input
-                  type="number"
-                  min={0}
-                  placeholder="Mbps"
-                  value={speedDown}
-                  onChange={(e: ChangeEvent<HTMLInputElement>) => setSpeedDown(e.target.value)}
-                  dir="ltr"
-                />
-              </Field>
-              <Field label={t("bulkCreate.deviceLimit")}>
-                <Input
-                  type="number"
-                  min={0}
-                  value={deviceLimit}
-                  onChange={(e: ChangeEvent<HTMLInputElement>) => setDeviceLimit(e.target.value)}
-                />
-              </Field>
-              <Field label={t("bulkCreate.sessionLimit")}>
-                <Input
-                  type="number"
-                  min={0}
-                  value={sessionLimit}
-                  onChange={(e: ChangeEvent<HTMLInputElement>) => setSessionLimit(e.target.value)}
-                />
-              </Field>
-            </div>
-
-            <h4 className="nx-bulk-create-section-title">{t("users.expire")}</h4>
-            <label className="nx-bulk-create-check">
-              <Checkbox checked={noExpire} onChange={() => setNoExpire((x) => !x)} />
-              <span>{t("users.never")}</span>
-            </label>
-            {!noExpire && (
-              <>
-                <Input
-                  type="date"
-                  value={expireDate}
-                  onChange={(e: ChangeEvent<HTMLInputElement>) => setExpireDate(e.target.value)}
-                  style={{ marginTop: 10, maxWidth: 220 }}
-                />
-                <div className="nx-bulk-create-expire-presets">
-                  {[7, 30, 90, 365].map((d) => (
-                    <Button key={d} size="sm" variant="ghost" onClick={() => presetExpire(d)}>{d}d</Button>
-                  ))}
                 </div>
-              </>
-            )}
+                <p className="nx-ue-help">{t("users.dataLimitHint")}</p>
+              </div>
 
-            {(routingPresets.data || dnsPresets.data) && (
-              <div className="nx-bulk-create-grid" style={{ marginTop: 16 }}>
+              <div className="nx-ue-grid">
+                <Field label={t("users.resetStrategy")}>
+                  <Select value={reset} onChange={(e: ChangeEvent<HTMLSelectElement>) => setReset(e.target.value)}>
+                    {["no_reset", "day", "week", "month", "year"].map((r) => (
+                      <option key={r} value={r}>{t(`users.resetStrategies.${r}`, r)}</option>
+                    ))}
+                  </Select>
+                </Field>
+                <Field label={t("users.clientProfile")}>
+                  <Select value={clientProfile} onChange={(e: ChangeEvent<HTMLSelectElement>) => setClientProfile(e.target.value)}>
+                    <option value="normal">{t("users.profile.normal")}</option>
+                    <option value="gamer">{t("users.profile.gamer")}</option>
+                    <option value="trader">{t("users.profile.trader")}</option>
+                  </Select>
+                </Field>
+                <Field label={t("bulkCreate.speedUp")}>
+                  <Input
+                    type="number"
+                    min={0}
+                    placeholder="Mbps"
+                    value={speedUp}
+                    onChange={(e: ChangeEvent<HTMLInputElement>) => setSpeedUp(e.target.value)}
+                    dir="ltr"
+                  />
+                </Field>
+                <Field label={t("bulkCreate.speedDown")}>
+                  <Input
+                    type="number"
+                    min={0}
+                    placeholder="Mbps"
+                    value={speedDown}
+                    onChange={(e: ChangeEvent<HTMLInputElement>) => setSpeedDown(e.target.value)}
+                    dir="ltr"
+                  />
+                </Field>
+                <Field label={t("bulkCreate.deviceLimit")}>
+                  <Input
+                    type="number"
+                    min={0}
+                    value={deviceLimit}
+                    onChange={(e: ChangeEvent<HTMLInputElement>) => setDeviceLimit(e.target.value)}
+                    placeholder={t("common.none")}
+                    dir="ltr"
+                  />
+                </Field>
+                <Field label={t("bulkCreate.sessionLimit")}>
+                  <Input
+                    type="number"
+                    min={0}
+                    value={sessionLimit}
+                    onChange={(e: ChangeEvent<HTMLInputElement>) => setSessionLimit(e.target.value)}
+                    placeholder={t("common.none")}
+                    dir="ltr"
+                  />
+                </Field>
+              </div>
+            </section>
+
+            <section className="nx-uc-plan">
+              <div className="nx-ue-field">
+                <div className="nx-ue-label">{t("users.expire")}</div>
+                <label className="nx-ue-check">
+                  <Checkbox checked={noExpire} onChange={() => setNoExpire((x) => !x)} />
+                  <span>{t("users.never")}</span>
+                </label>
+                {!noExpire && (
+                  <>
+                    <Input
+                      type="date"
+                      className="nx-input-date"
+                      value={expireDate}
+                      onChange={(e: ChangeEvent<HTMLInputElement>) => setExpireDate(e.target.value)}
+                      dir="ltr"
+                      inputMode="none"
+                    />
+                    <div className="nx-ue-chips">
+                      {[7, 30, 90, 365].map((d) => (
+                        <button key={d} type="button" className="nx-ue-chip" onClick={() => presetExpire(d)}>
+                          +{d}d
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {(routingPresets.data || dnsPresets.data) && (
+                <div className="nx-ue-grid">
                   {routingPresets.data && (
                     <Field label={t("users.routingPreset", { defaultValue: "Routing preset" })}>
                       <Select value={routingPreset} onChange={(e: ChangeEvent<HTMLSelectElement>) => setRoutingPreset(e.target.value)}>
@@ -920,8 +949,9 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
                     </Field>
                   )}
                 </div>
-            )}
-          </>
+              )}
+            </section>
+          </div>
         )}
       </div>
     </Modal>

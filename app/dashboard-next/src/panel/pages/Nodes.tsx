@@ -2,7 +2,6 @@ import { FC } from "react";
 import { useTranslation } from "react-i18next";
 import { useApp } from "../context/AppContext";
 import { SudoGate } from "../components/SudoGate";
-import { Callout } from "../components/ui";
 import { NodesTab } from "./Infrastructure";
 
 export const Nodes: FC = () => {
@@ -18,11 +17,12 @@ export const Nodes: FC = () => {
   }
 
   return (
-    <div>
+    <div className="nx-stack nx-hub-panel">
       {!admin?.is_sudo && (
-        <Callout tone="info" title={t("resellers.myNodesTitle")}>
+        <p className="nx-hub-lede">
+          <strong>{t("resellers.myNodesTitle")}. </strong>
           {t("resellers.myNodesHint")}
-        </Callout>
+        </p>
       )}
       <NodesTab resellerMode={!admin?.is_sudo} />
     </div>

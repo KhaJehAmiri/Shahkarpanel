@@ -11,8 +11,9 @@ import { useFetch, useLiveReload } from "../lib/useFetch";
 import { formatBytes } from "../lib/format";
 import { PageHeader } from "../components/Shell";
 import {
-  Button, Callout, Card, EmptyState, Field, Input, Modal, Pager, Pill, Select, SkeletonRows, Stat, Tabs, usePagedList, useToast,
+  Button, Callout, Card, EmptyState, Field, Input, Modal, Pager, Pill, Select, SkeletonRows, Stat, usePagedList, useToast,
 } from "../components/ui";
+import { SectionRail, type RailGroup } from "../components/SectionRail";
 import { CommercialSettings } from "../components/CommercialSettings";
 import { IcPlus, IcTrash, IcWallet, IcEdit } from "../components/icons";
 
@@ -21,7 +22,6 @@ const BILLING_TABS = ["plans", "packages", "usage", "invoices", "transactions", 
 export const Billing: FC<{ embedded?: boolean }> = ({ embedded }) => {
   const { t } = useTranslation();
   const { admin, isEnabled } = useApp();
-  const toast = useToast();
   const [search, setSearch] = useSearchParams();
   const tabFromUrl = search.get("billingTab");
   const initialTab = tabFromUrl && (BILLING_TABS as readonly string[]).includes(tabFromUrl)
@@ -48,46 +48,98 @@ export const Billing: FC<{ embedded?: boolean }> = ({ embedded }) => {
     setSearch(next, { replace: true });
   };
 
-  if (!isEnabled("billing"))
-    return (<div>{!embedded && <PageHeader title={t("billing.title")} subtitle={t("billing.subtitle")} />}<Callout tone="warn">{t("billing.billingDisabled")}</Callout></div>);
+  const railGroups: RailGroup[] = [
+    {
+      id: "commerce",
+      label: t("billing.groupCommerce"),
+      items: [
+        { id: "plans", label: t("billing.tabPlans") },
+        { id: "packages", label: t("billing.tabTrafficPackages") },
+      ],
+    },
+    {
+      id: "ledger",
+      label: t("billing.groupLedger"),
+      items: [
+        { id: "usage", label: t("billing.tabUsage") },
+        { id: "invoices", label: t("billing.tabInvoices") },
+        { id: "transactions", label: t("billing.tabTransactions") },
+      ],
+    },
+    ...(admin?.is_sudo
+      ? [{
+          id: "config",
+          label: t("billing.groupConfig"),
+          items: [{ id: "settings", label: t("billing.tabSettings") }],
+        }]
+      : []),
+  ];
+
+  if (!isEnabled("billing")) {
+    return (
+      <div className="nx-page nx-biz">
+        {!embedded && <PageHeader title={t("billing.title")} subtitle={t("billing.subtitle")} />}
+        <Callout tone="warn">{t("billing.billingDisabled")}</Callout>
+      </div>
+    );
+  }
 
   return (
-    <div>
-      {!embedded && <PageHeader title={t("billing.title")} subtitle={t("billing.subtitle")} description={t("billing.description")} />}
-      {wallet.loading ? (
-        <div style={{ marginBottom: 16, maxWidth: 280 }}><SkeletonRows rows={1} cols={1} /></div>
-      ) : wallet.data && (
-        <div className="nx-row" style={{ marginBottom: 16, gap: 12, alignItems: "flex-end" }}>
-          <div style={{ maxWidth: 280, flex: 1 }}>
-            <Stat label={t("billing.wallet")} value={wallet.data.balance.toLocaleString()} icon={<IcWallet className="nx-stat-ico" />} />
+    <div className="nx-page nx-biz">
+      {!embedded && (
+        <PageHeader
+          title={t("billing.title")}
+          subtitle={t("billing.subtitle")}
+          description={t("billing.description")}
+        />
+      )}
+
+      <div className="nx-money-bar">
+        <div className="nx-money-bar-main">
+          <span className="nx-money-bar-ico" aria-hidden><IcWallet className="nx-ico" /></span>
+          <div className="nx-money-bar-copy">
+            <span className="nx-money-bar-label">{t("billing.wallet")}</span>
+            {wallet.loading ? (
+              <span className="nx-money-bar-value nx-faint">…</span>
+            ) : (
+              <span className="nx-money-bar-value">
+                {(wallet.data?.balance ?? 0).toLocaleString()}
+              </span>
+            )}
           </div>
+        </div>
+        <div className="nx-money-bar-actions">
           {admin?.is_sudo ? (
             <Button variant="primary" size="sm" onClick={() => setCreditOpen(true)}>{t("billing.addCredit")}</Button>
           ) : canTopUp ? (
             <Button variant="primary" size="sm" onClick={() => setTopupOpen(true)}>{t("billing.topUp")}</Button>
           ) : (
-            <Callout tone="info">{t("billing.resellerWalletHint")}</Callout>
+            <span className="nx-money-bar-hint">{t("billing.resellerWalletHint")}</span>
           )}
         </div>
-      )}
+      </div>
+
       {creditOpen && <CreditModal onClose={() => setCreditOpen(false)} onDone={() => { setCreditOpen(false); wallet.reload(); }} />}
       {topupOpen && providers.data && (
         <TopUpModal providers={providers.data} onClose={() => setTopupOpen(false)} onDone={() => { setTopupOpen(false); wallet.reload(); }} />
       )}
-      <Tabs active={tab} onChange={onTabChange} tabs={[
-        { id: "plans", label: t("billing.tabPlans") },
-        { id: "packages", label: t("billing.tabTrafficPackages") },
-        { id: "usage", label: t("billing.tabUsage") },
-        { id: "invoices", label: t("billing.tabInvoices") },
-        { id: "transactions", label: t("billing.tabTransactions") },
-        ...(admin?.is_sudo ? [{ id: "settings", label: t("billing.tabSettings") }] : []),
-      ]} />
-      {tab === "plans" && <PlansTab canWrite={!!admin?.is_sudo || admin?.role === "reseller"} />}
-      {tab === "packages" && <TrafficPackagesTab onPurchased={() => wallet.reload()} />}
-      {tab === "usage" && <UsageTab />}
-      {tab === "settings" && admin?.is_sudo && <CommercialSettings />}
-      {tab === "invoices" && <InvoicesTab />}
-      {tab === "transactions" && <TransactionsTab />}
+
+      <div className="nx-biz-layout">
+        <SectionRail
+          groups={railGroups}
+          active={tab}
+          onChange={onTabChange}
+          label={t("billing.title")}
+        />
+        <div className="nx-section-panel">
+          {tab === "plans" && <PlansTab canWrite={!!admin?.is_sudo || admin?.role === "reseller"} />}
+          {tab === "packages" && <TrafficPackagesTab onPurchased={() => wallet.reload()} />}
+          {tab === "usage" && <UsageTab />}
+          {tab === "settings" && admin?.is_sudo && <CommercialSettings />}
+          {tab === "invoices" && <InvoicesTab />}
+          {tab === "transactions" && <TransactionsTab />}
+        </div>
+      </div>
     </div>
   );
 };
@@ -123,16 +175,23 @@ const PlansTab: FC<{ canWrite?: boolean }> = ({ canWrite = false }) => {
           : !data?.length ? <EmptyState title={t("common.noData")} desc={t("billing.plansReadOnly")} />
           : (
             <div className="nx-table-wrap"><table className="nx-table">
-              <thead><tr><th>{t("common.name")}</th><th>{t("billing.price")}</th><th>{t("users.dataLimit")}</th><th>{t("billing.duration")}</th><th>{t("common.status")}</th><th style={{ textAlign: "end" }}>{t("common.actions")}</th></tr></thead>
+              <thead><tr>
+                <th>{t("common.name")}</th>
+                <th className="nx-num">{t("billing.price")}</th>
+                <th className="nx-num">{t("users.dataLimit")}</th>
+                <th className="nx-num">{t("billing.duration")}</th>
+                <th>{t("common.status")}</th>
+                <th className="nx-actions">{t("common.actions")}</th>
+              </tr></thead>
               <tbody>
                 {data.map((p) => (
                   <tr key={p.id}>
                     <td style={{ fontWeight: 600 }}>{p.name}</td>
-                    <td>{p.price.toLocaleString()}</td>
-                    <td>{p.data_limit ? formatBytes(p.data_limit) : t("users.unlimited")}</td>
-                    <td>{p.duration_days ? t("users.unitDays", { n: p.duration_days }) : t("users.unlimited")}</td>
+                    <td className="nx-num">{p.price.toLocaleString()}</td>
+                    <td className="nx-num">{p.data_limit ? formatBytes(p.data_limit) : t("users.unlimited")}</td>
+                    <td className="nx-num">{p.duration_days ? t("users.unitDays", { n: p.duration_days }) : t("users.unlimited")}</td>
                     <td><Pill tone={p.enabled ? "ok" : "default"} dot>{p.enabled ? t("common.enabled") : t("common.disabled")}</Pill></td>
-                    <td>{canWrite ? (
+                    <td className="nx-actions">{canWrite ? (
                       <div className="nx-row" style={{ justifyContent: "flex-end", gap: 6 }}>
                         <Button size="sm" variant="ghost" onClick={() => setEdit(p)}><IcEdit className="nx-ico" /></Button>
                         <Button variant="danger" size="sm" onClick={() => remove(p.id)}><IcTrash className="nx-ico" /></Button>
@@ -184,14 +243,14 @@ const TopUpModal: FC<{ providers: string[]; onClose: () => void; onDone: () => v
     <Modal open title={t("billing.topUp")} onClose={onClose}
       footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
         <Button variant="primary" disabled={busy || !amount} onClick={submit}>{t("billing.topUpPay")}</Button></>}>
-      <div className="nx-stack">
+      <div className="nx-stack nx-modal-stack">
         <Field label={t("billing.creditAmount")}><Input type="number" value={amount} onChange={(e: any) => setAmount(e.target.value)} autoFocus /></Field>
         <Field label={t("billing.provider")}>
           <Select value={provider} onChange={(e: any) => setProvider(e.target.value)}>
             {providers.map((p) => <option key={p} value={p}>{p}</option>)}
           </Select>
         </Field>
-        <Callout tone="info">{t("billing.topUpHint")}</Callout>
+        <p className="nx-modal-lede">{t("billing.topUpHint")}</p>
       </div>
     </Modal>
   );
@@ -221,7 +280,7 @@ const CreditModal: FC<{ onClose: () => void; onDone: () => void }> = ({ onClose,
     <Modal open title={t("resellers.adjustWallet")} onClose={onClose}
       footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
         <Button variant="primary" disabled={busy || !username || amount === ""} onClick={submit}>{t("common.save")}</Button></>}>
-      <div className="nx-stack">
+      <div className="nx-stack nx-modal-stack">
         <Field label={t("common.username")}><Input value={username} onChange={(e: any) => setUsername(e.target.value)} /></Field>
         <Field label={t("resellers.adjustMode")}>
           <select className="nx-select" value={mode} onChange={(e: any) => setMode(e.target.value)}>
@@ -396,19 +455,19 @@ const TrafficPackagesTab: FC<{ onPurchased?: () => void }> = ({ onPurchased }) =
               <table className="nx-table">
                 <thead><tr>
                   <th>{t("common.name")}</th>
-                  <th>{t("billing.packageTraffic")}</th>
-                  <th>{t("billing.price")}</th>
+                  <th className="nx-num">{t("billing.packageTraffic")}</th>
+                  <th className="nx-num">{t("billing.price")}</th>
                   <th>{t("common.status")}</th>
-                  <th style={{ textAlign: "end" }}>{t("common.actions")}</th>
+                  <th className="nx-actions">{t("common.actions")}</th>
                 </tr></thead>
                 <tbody>
                   {packages.data.map((pkg) => (
                     <tr key={pkg.id}>
                       <td>{pkg.name}</td>
-                      <td>{formatBytes(pkg.bytes)}</td>
-                      <td>{pkg.price.toLocaleString()}</td>
+                      <td className="nx-num">{formatBytes(pkg.bytes)}</td>
+                      <td className="nx-num">{pkg.price.toLocaleString()}</td>
                       <td><Pill tone={pkg.enabled ? "ok" : "default"}>{pkg.enabled ? t("common.enabled") : t("common.disabled")}</Pill></td>
-                      <td>
+                      <td className="nx-actions">
                         <div className="nx-row" style={{ justifyContent: "flex-end", gap: 6 }}>
                           {!isSudo && pkg.enabled && (
                             <Button size="sm" variant="primary" onClick={() => buy(pkg)}>{t("billing.buyPackage")}</Button>
@@ -437,16 +496,16 @@ const TrafficPackagesTab: FC<{ onPurchased?: () => void }> = ({ onPurchased }) =
             <table className="nx-table">
               <thead><tr>
                 <th>{t("billing.date")}</th>
-                <th>{t("billing.packageTraffic")}</th>
-                <th>{t("billing.price")}</th>
+                <th className="nx-num">{t("billing.packageTraffic")}</th>
+                <th className="nx-num">{t("billing.price")}</th>
                 <th>{t("billing.purchaseSource")}</th>
               </tr></thead>
               <tbody>
                 {purchases.data!.map((p) => (
                   <tr key={p.id}>
                     <td>{p.created_at ? new Date(p.created_at).toLocaleString() : "—"}</td>
-                    <td>{formatBytes(p.bytes)}</td>
-                    <td>{p.price_paid.toLocaleString()}</td>
+                    <td className="nx-num">{formatBytes(p.bytes)}</td>
+                    <td className="nx-num">{p.price_paid.toLocaleString()}</td>
                     <td>{p.source === "manual" ? t("billing.sourceManual") : t("billing.sourcePurchase")}</td>
                   </tr>
                 ))}
@@ -596,7 +655,7 @@ const UsageTab: FC = () => {
           <div className="nx-stack" style={{ gap: 10 }}>
             <span>{t("billing.packageExhaustedHint")}</span>
             <div>
-              <Link to="/business?tab=billing&billingTab=packages">
+              <Link to="/billing?billingTab=packages">
                 <Button variant="primary" size="sm">{t("overview.buyPackageCta")}</Button>
               </Link>
             </div>
@@ -693,21 +752,21 @@ const InvoicesTab: FC = () => {
           <div className="nx-table-wrap"><table className="nx-table">
             <thead><tr>
               <th>#</th>
-              <th>{t("billing.amount")}</th>
+              <th className="nx-num">{t("billing.amount")}</th>
               <th>{t("billing.description")}</th>
               <th>{t("billing.invoiceStatus")}</th>
               <th>{t("billing.provider")}</th>
-              <th style={{ textAlign: "end" }}>{t("common.actions")}</th>
+              <th className="nx-actions">{t("common.actions")}</th>
             </tr></thead>
             <tbody>
               {pager.slice.map((inv) => (
                 <tr key={inv.id}>
                   <td className="nx-faint">#{inv.id}</td>
-                  <td style={{ fontWeight: 600 }}>{inv.amount.toLocaleString()}</td>
+                  <td className="nx-num" style={{ fontWeight: 600 }}>{inv.amount.toLocaleString()}</td>
                   <td className="nx-muted" style={{ maxWidth: 280 }}>{inv.description || "—"}</td>
                   <td><Pill tone={inv.status === "paid" ? "ok" : "warn"} dot>{t(`billing.status.${inv.status}`, inv.status)}</Pill></td>
                   <td>{inv.provider || "—"}</td>
-                  <td><div className="nx-row" style={{ justifyContent: "flex-end" }}>
+                  <td className="nx-actions"><div className="nx-row" style={{ justifyContent: "flex-end" }}>
                     {inv.status === "pending" && (
                       <Button size="sm" variant="primary" onClick={() => pay(inv.id)}>
                         {t("billing.payFromWallet")}
@@ -786,7 +845,7 @@ const TransactionsTab: FC = () => {
                 <th>#</th>
                 <th>{t("billing.date")}</th>
                 <th>{t("billing.type")}</th>
-                <th>{t("billing.amount")}</th>
+                <th className="nx-num">{t("billing.amount")}</th>
                 <th>{t("billing.description")}</th>
               </tr>
             </thead>
@@ -798,7 +857,7 @@ const TransactionsTab: FC = () => {
                     {tx.created_at ? new Date(tx.created_at).toLocaleString() : "—"}
                   </td>
                   <td><Pill tone={tx.amount >= 0 ? "ok" : "danger"}>{tx.type}</Pill></td>
-                  <td style={{ fontWeight: 600, color: tx.amount >= 0 ? "var(--nx-ok)" : "var(--nx-danger)" }}>
+                  <td className="nx-num" style={{ fontWeight: 600, color: tx.amount >= 0 ? "var(--nx-ok)" : "var(--nx-danger)" }}>
                     {tx.amount >= 0 ? "+" : ""}{tx.amount.toLocaleString()}
                   </td>
                   <td className="nx-muted">{tx.description || "—"}</td>

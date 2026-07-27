@@ -144,13 +144,6 @@ function regionBucketLabel(lang: SubLang, bucket: RegionBucket): string {
   return subT(lang, map[bucket]);
 }
 
-function latencyTone(ms: number | null | undefined): "ok" | "warn" | "danger" | "unknown" {
-  if (ms == null || !Number.isFinite(ms) || ms < 0) return "unknown";
-  if (ms < 80) return "ok";
-  if (ms < 180) return "warn";
-  return "danger";
-}
-
 function getToken(): string {
   if (typeof window === "undefined") return "";
   const q = new URLSearchParams(window.location.search).get("token");
@@ -279,12 +272,6 @@ function ProtoIcon({ proto, size = 18 }: { proto: string; size?: number }) {
 function protoServersLabel(lang: SubLang, n: number): string | null {
   if (n <= 1) return null;
   return subT(lang, "protoServersN").replace("{n}", String(n));
-}
-
-/** Panel health RTT is a float; show whole milliseconds only. */
-function formatLatencyMs(ms: number): string {
-  if (!Number.isFinite(ms) || ms < 0) return "—";
-  return String(Math.max(0, Math.round(ms)));
 }
 
 function protoFromLink(link: string): string {
@@ -1415,9 +1402,6 @@ function SubscribeBody() {
                     <span className="s-server-auto-title">{subT(lang, "autoBestServer")}</span>
                     <span className="s-server-auto-meta">
                       {bestServer.flag} {bestServer.title}
-                      {bestServer.latencyMs != null && bestServer.latencyMs >= 0
-                        ? ` · ${subT(lang, "latencyMs").replace("{n}", formatLatencyMs(bestServer.latencyMs))}`
-                        : ""}
                     </span>
                     <span className="s-server-auto-hint">{subT(lang, "autoBestHint")}</span>
                   </button>
@@ -1431,9 +1415,7 @@ function SubscribeBody() {
                       <div key={group.bucket} className="s-server-group">
                         <h3 className="s-server-group-title">{regionBucketLabel(lang, group.bucket)}</h3>
                         <div className="s-server-list" role="listbox" aria-label={regionBucketLabel(lang, group.bucket)}>
-                          {group.items.map((c) => {
-                            const tone = latencyTone(c.latencyMs);
-                            return (
+                          {group.items.map((c) => (
                               <button
                                 key={c.id}
                                 type="button"
@@ -1446,14 +1428,8 @@ function SubscribeBody() {
                                   {c.flag ? <span className="s-flag">{c.flag}</span> : null}
                                   <span className="s-td-name">{c.title}</span>
                                 </span>
-                                <span className={`s-lat s-lat-${tone}`}>
-                                  {c.latencyMs != null && c.latencyMs >= 0
-                                    ? subT(lang, "latencyMs").replace("{n}", formatLatencyMs(c.latencyMs))
-                                    : subT(lang, "latencyUnknown")}
-                                </span>
                               </button>
-                            );
-                          })}
+                          ))}
                         </div>
                       </div>
                     ))}

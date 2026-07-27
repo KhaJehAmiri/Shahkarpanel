@@ -1,8 +1,9 @@
 import { FC, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { isManageableInbound, inboundDisplayProtocol, inboundTransportLabel } from "../../lib/xrayHelpers";
-import { Button, Callout, Card, EmptyState, Pill, Toggle, useToast } from "../ui";
+import { Button, Card, EmptyState, Pill, Toggle, useToast } from "../ui";
 import { IcDownload, IcEdit, IcGlobe, IcPlus, IcTrash } from "../icons";
+import { TableRowMenu, type TableMenuItem } from "../TableRowMenu";
 import { BulkInboundModal } from "../BulkInboundModal";
 import { InboundModal } from "@/components/inbound/AddInboundModal";
 import { CoreHealthBanner } from "./CoreHealthBanner";
@@ -197,33 +198,35 @@ export const InboundsSection: FC<{
   const hasAny = inbounds.length > 0 || sbRows.length > 0;
 
   return (
-    <div className="nx-stack">
+    <div className="nx-stack nx-hub-panel">
       <CoreHealthBanner />
-      <Callout tone="info">{t("inbounds.autoPersistHint")}</Callout>
-      <Callout tone="info">{t("inbounds.allProtocolsBody")}</Callout>
+      <p className="nx-hub-lede">{t("inbounds.autoPersistHint")}</p>
 
-      {singboxPresets.length > 0 && !readOnly && (
-        <div className="nx-row nx-page-actions" style={{ flexWrap: "wrap", gap: 8 }}>
-          <Button size="sm" disabled={busy} onClick={() => setSingboxModal({ presetId: "tuic-inbound" })}>
-            + TUIC
-          </Button>
-          <Button size="sm" disabled={busy} onClick={() => setSingboxModal({ presetId: "anytls-inbound" })}>
-            + AnyTLS
-          </Button>
+      <div className="nx-proto-toolbar">
+        <div className="nx-proto-toolbar-start">
+          {singboxPresets.length > 0 && !readOnly && (
+            <>
+              <Button size="sm" variant="ghost" disabled={busy} onClick={() => setSingboxModal({ presetId: "tuic-inbound" })}>
+                + TUIC
+              </Button>
+              <Button size="sm" variant="ghost" disabled={busy} onClick={() => setSingboxModal({ presetId: "anytls-inbound" })}>
+                + AnyTLS
+              </Button>
+            </>
+          )}
         </div>
-      )}
-
-      <div className="nx-row" style={{ justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
-        {!readOnly && (
-          <Button onClick={() => openImportPicker(null)} disabled={busy}>
-            {t("inbounds.importInbound")}
-          </Button>
-        )}
-        {!readOnly && (
-          <Button variant="primary" onClick={openAdd} disabled={busy}>
-            <IcPlus className="nx-ico" /> {t("infra.addInbound")}
-          </Button>
-        )}
+        <div className="nx-proto-toolbar-end">
+          {!readOnly && (
+            <Button size="sm" variant="ghost" onClick={() => openImportPicker(null)} disabled={busy}>
+              {t("inbounds.importInbound")}
+            </Button>
+          )}
+          {!readOnly && (
+            <Button size="sm" variant="primary" onClick={openAdd} disabled={busy}>
+              <IcPlus className="nx-ico" /> {t("infra.addInbound")}
+            </Button>
+          )}
+        </div>
       </div>
 
       <input
@@ -257,47 +260,50 @@ export const InboundsSection: FC<{
                 <tr>
                   <th>{t("infra.remark")}</th>
                   <th>{t("inbounds.protocol")}</th>
-                  <th>{t("infra.port")}</th>
+                  <th className="nx-num">{t("infra.port")}</th>
                   <th>{t("infra.transport")}</th>
                   <th>{t("xray.security")}</th>
                   <th>{t("common.status")}</th>
-                  <th style={{ textAlign: "end" }}>{t("common.actions")}</th>
+                  <th className="nx-actions" />
                 </tr>
               </thead>
               <tbody>
                 {sbRows.map((row) => (
                   <tr key={row.id}>
-                    <td style={{ fontWeight: 600 }}>
-                      {row.tag}
-                      <div className="nx-faint" style={{ fontSize: 11 }}>{row.node_name}</div>
-                    </td>
                     <td>
-                      <span className="nx-row" style={{ gap: 4 }}>
-                        <Pill tone="accent">{row.protocol.toUpperCase()}</Pill>
-                        <Pill tone="default">sing-box</Pill>
-                      </span>
-                    </td>
-                    <td className="nx-mono">{row.port}</td>
-                    <td><Pill tone="default">{row.transport}</Pill></td>
-                    <td>
-                      <Pill tone={row.tls_trusted ? "ok" : "warn"}>
-                        {row.tls_trusted ? "TLS" : "TLS?"}
-                      </Pill>
-                    </td>
-                    <td><Pill tone={row.node_status === "connected" ? "ok" : "default"}>{row.node_status}</Pill></td>
-                    <td>
-                      <div className="nx-row" style={{ justifyContent: "flex-end", gap: 6 }}>
-                        <Button
-                          size="sm"
-                          disabled={busy}
-                          onClick={() => setSingboxModal({ presetId: row.preset_id as "tuic-inbound" | "anytls-inbound", edit: row })}
-                        >
-                          <IcEdit className="nx-ico" />
-                        </Button>
-                        <Button variant="danger" size="sm" disabled={busy} onClick={() => disableSingbox(row)}>
-                          <IcTrash className="nx-ico" />
-                        </Button>
+                      <div className="nx-proto-name">
+                        <span className="nx-proto-name-main">{row.tag}</span>
+                        <span className="nx-proto-name-sub">{row.node_name}</span>
                       </div>
+                    </td>
+                    <td>
+                      <span className="nx-proto-chip">{row.protocol.toUpperCase()}</span>
+                      <span className="nx-proto-chip is-muted">sing-box</span>
+                    </td>
+                    <td className="nx-num nx-mono">{row.port}</td>
+                    <td className="nx-proto-meta">{row.transport}</td>
+                    <td className="nx-proto-meta">{row.tls_trusted ? "TLS" : "TLS?"}</td>
+                    <td><Pill tone={row.node_status === "connected" ? "ok" : "default"} dot>{row.node_status}</Pill></td>
+                    <td className="nx-actions">
+                      <TableRowMenu
+                        items={[
+                          {
+                            id: "edit",
+                            label: t("common.edit"),
+                            icon: <IcEdit className="nx-ico" />,
+                            disabled: busy,
+                            onClick: () => setSingboxModal({ presetId: row.preset_id as "tuic-inbound" | "anytls-inbound", edit: row }),
+                          },
+                          {
+                            id: "del",
+                            label: t("common.delete"),
+                            icon: <IcTrash className="nx-ico" />,
+                            danger: true,
+                            disabled: busy,
+                            onClick: () => disableSingbox(row),
+                          },
+                        ]}
+                      />
                     </td>
                   </tr>
                 ))}
@@ -305,61 +311,76 @@ export const InboundsSection: FC<{
                   const ss = (i.streamSettings || {}) as Record<string, unknown>;
                   const displayProto = inboundDisplayProtocol(i);
                   const enabled = i.enable !== false;
+                  const sec = String(ss.security || "none");
                   return (
                     <tr key={String(i.tag)} className={enabled ? undefined : "is-muted"}>
-                      <td style={{ fontWeight: 600 }}>{String(i.tag)}</td>
-                      <td><Pill tone="accent">{displayProto}</Pill></td>
-                      <td className="nx-mono">{String(i.port)}</td>
-                      <td><Pill tone="default">{inboundTransportLabel(i)}</Pill></td>
                       <td>
-                        <Pill tone={ss.security === "reality" ? "warn" : "default"}>
-                          {String(ss.security || "none")}
-                        </Pill>
+                        <span className="nx-proto-name-main">{String(i.tag)}</span>
+                      </td>
+                      <td><span className="nx-proto-chip">{displayProto}</span></td>
+                      <td className="nx-num nx-mono">{String(i.port)}</td>
+                      <td className="nx-proto-meta">{inboundTransportLabel(i)}</td>
+                      <td>
+                        <span className={`nx-proto-meta${sec === "reality" ? " is-warn" : ""}`}>{sec}</span>
                       </td>
                       <td>
-                        <div className="nx-row" style={{ gap: 8, alignItems: "center" }}>
-                          <Toggle
-                            on={enabled}
-                            disabled={busy || readOnly}
-                            label={enabled ? t("common.disable") : t("common.enable")}
-                            onChange={() => toggleEnable(i)}
-                          />
-                          <Pill tone={enabled ? "ok" : "default"}>
-                            {enabled ? "Xray" : t("common.disabled")}
-                          </Pill>
-                        </div>
+                        <Toggle
+                          on={enabled}
+                          disabled={busy || readOnly}
+                          label={enabled ? t("common.disable") : t("common.enable")}
+                          onChange={() => toggleEnable(i)}
+                        />
                       </td>
-                      <td>
-                        <div className="nx-row" style={{ justifyContent: "flex-end", gap: 6 }}>
-                          <Button size="sm" onClick={() => exportInbound(String(i.tag))} disabled={saving || persisting} title={t("inbounds.exportInbound")}>
-                            <IcDownload className="nx-ico" />
-                          </Button>
-                          {!readOnly && (
-                            <Button size="sm" onClick={() => openImportPicker(String(i.tag))} disabled={busy} title={t("inbounds.importInbound")}>
-                              {t("inbounds.importShort")}
-                            </Button>
-                          )}
-                          {!readOnly && (
-                            <Button size="sm" onClick={() => setBulkInboundTag(String(i.tag))} disabled={busy} title={t("bulkInbound.assignFromInbound")}>
-                              {t("bulkInbound.assignShort")}
-                            </Button>
-                          )}
-                          {!readOnly && (
-                            <Button size="sm" onClick={() => setSubInboundTag(String(i.tag))} disabled={busy} title={t("inboundSub.openModal")}>
-                              <IcGlobe className="nx-ico" />
-                            </Button>
-                          )}
-                          {!readOnly && (
-                            <Button size="sm" onClick={() => openEdit(i)} disabled={busy}>
-                              <IcEdit className="nx-ico" />
-                            </Button>
-                          )}
-                          {!readOnly && (
-                            <Button variant="danger" size="sm" onClick={() => remove(String(i.tag))} disabled={busy}>
-                              <IcTrash className="nx-ico" />
-                            </Button>
-                          )}
-                        </div>
+                      <td className="nx-actions">
+                        <TableRowMenu
+                          items={([
+                            {
+                              id: "export",
+                              label: t("inbounds.exportInbound"),
+                              icon: <IcDownload className="nx-ico" />,
+                              disabled: saving || persisting,
+                              onClick: () => exportInbound(String(i.tag)),
+                            },
+                            ...(readOnly
+                              ? []
+                              : [
+                                  {
+                                    id: "import",
+                                    label: t("inbounds.importInbound"),
+                                    disabled: busy,
+                                    onClick: () => openImportPicker(String(i.tag)),
+                                  },
+                                  {
+                                    id: "users",
+                                    label: t("bulkInbound.assignShort"),
+                                    disabled: busy,
+                                    onClick: () => setBulkInboundTag(String(i.tag)),
+                                  },
+                                  {
+                                    id: "sub",
+                                    label: t("inboundSub.openModal"),
+                                    icon: <IcGlobe className="nx-ico" />,
+                                    disabled: busy,
+                                    onClick: () => setSubInboundTag(String(i.tag)),
+                                  },
+                                  {
+                                    id: "edit",
+                                    label: t("common.edit"),
+                                    icon: <IcEdit className="nx-ico" />,
+                                    disabled: busy,
+                                    onClick: () => openEdit(i),
+                                  },
+                                  {
+                                    id: "del",
+                                    label: t("common.delete"),
+                                    icon: <IcTrash className="nx-ico" />,
+                                    danger: true,
+                                    disabled: busy,
+                                    onClick: () => remove(String(i.tag)),
+                                  },
+                                ]),
+                          ] as TableMenuItem[])}
+                        />
                       </td>
                     </tr>
                   );

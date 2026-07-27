@@ -5,8 +5,9 @@ import { useTranslation } from "react-i18next";
 import { useApp } from "../../context/AppContext";
 import { api } from "../../api/client";
 import { useFetch } from "../../lib/useFetch";
-import { Button, Callout, EmptyState, Pill, SkeletonRows, Stat, Toggle, useToast } from "../ui";
+import { Button, Callout, EmptyState, SkeletonRows, Stat, Toggle, useToast } from "../ui";
 import { IcCheck, IcEdit, IcGlobe, IcPlus, IcTrash } from "../icons";
+import { TableRowMenu } from "../TableRowMenu";
 import { HostEditorModal } from "./HostEditorModal";
 import { HostCloneModal } from "./HostCloneModal";
 import { emptyHost } from "./types";
@@ -217,12 +218,12 @@ export const HostsTab: FC = () => {
             <table className="nx-table">
               <thead>
                 <tr>
-                  <th>{t("common.actions")}</th>
-                  <th>{t("common.enable")}</th>
                   <th>{t("infra.remark")}</th>
                   <th>{t("infra.hostEndpoint")}</th>
                   <th>{t("infra.hostInbound")}</th>
                   <th>{t("infra.hostTls")}</th>
+                  <th>{t("common.enable")}</th>
+                  <th className="nx-actions" />
                 </tr>
               </thead>
               <tbody>
@@ -232,50 +233,12 @@ export const HostsTab: FC = () => {
                   const canDown = row.index < listLen - 1;
                   return (
                     <tr key={`${row.tag}-${row.index}`} className={row.host.is_disabled ? "is-muted" : ""}>
-                      <td>
-                        {!readOnly ? (
-                          <div className="nx-hosts-row-actions">
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              disabled={busy || !canUp}
-                              title={t("infra.hostMoveUp")}
-                              onClick={() => moveHost(row, -1)}
-                            >
-                              ↑
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              disabled={busy || !canDown}
-                              title={t("infra.hostMoveDown")}
-                              onClick={() => moveHost(row, 1)}
-                            >
-                              ↓
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              disabled={busy}
-                              title={t("common.edit")}
-                              onClick={() => openEdit(row)}
-                            >
-                              <IcEdit className="nx-ico" />
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="danger"
-                              disabled={busy}
-                              title={t("common.delete")}
-                              onClick={() => removeHost(row)}
-                            >
-                              <IcTrash className="nx-ico" />
-                            </Button>
-                          </div>
-                        ) : (
-                          <span className="nx-muted">—</span>
-                        )}
+                      <td><span className="nx-proto-name-main">{row.host.remark || "—"}</span></td>
+                      <td className="nx-hosts-mono nx-proto-meta" dir="ltr">
+                        {formatEndpoint(row.host)}
                       </td>
+                      <td><span className="nx-proto-chip">{hostTagLabel(row.tag)}</span></td>
+                      <td className="nx-proto-meta">{securityLabel(row.host.security)}</td>
                       <td>
                         <Toggle
                           on={!row.host.is_disabled}
@@ -284,15 +247,42 @@ export const HostsTab: FC = () => {
                           onChange={() => toggleEnable(row)}
                         />
                       </td>
-                      <td className="nx-hosts-remark">{row.host.remark || "—"}</td>
-                      <td className="nx-hosts-mono" dir="ltr">
-                        {formatEndpoint(row.host)}
-                      </td>
-                      <td>
-                        <Pill tone="accent">{hostTagLabel(row.tag)}</Pill>
-                      </td>
-                      <td>
-                        <Pill>{securityLabel(row.host.security)}</Pill>
+                      <td className="nx-actions">
+                        {!readOnly ? (
+                          <TableRowMenu
+                            items={[
+                              {
+                                id: "up",
+                                label: t("infra.hostMoveUp"),
+                                disabled: busy || !canUp,
+                                onClick: () => moveHost(row, -1),
+                              },
+                              {
+                                id: "down",
+                                label: t("infra.hostMoveDown"),
+                                disabled: busy || !canDown,
+                                onClick: () => moveHost(row, 1),
+                              },
+                              {
+                                id: "edit",
+                                label: t("common.edit"),
+                                icon: <IcEdit className="nx-ico" />,
+                                disabled: busy,
+                                onClick: () => openEdit(row),
+                              },
+                              {
+                                id: "del",
+                                label: t("common.delete"),
+                                icon: <IcTrash className="nx-ico" />,
+                                danger: true,
+                                disabled: busy,
+                                onClick: () => removeHost(row),
+                              },
+                            ]}
+                          />
+                        ) : (
+                          <span className="nx-muted">—</span>
+                        )}
                       </td>
                     </tr>
                   );

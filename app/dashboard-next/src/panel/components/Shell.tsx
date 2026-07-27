@@ -10,9 +10,9 @@ import { IcGlobe, IcLogout, IcMenu, IcMoon, IcSun, navIcon } from "./icons";
 import { UpdateProvider } from "../context/UpdateContext";
 import { PanelVersionStrip } from "./PanelVersionStrip";
 
-/** Simplified 5-item navigation + settings footer. */
+/** Main nav: finance + resellers are first-class; Business = analytics/automation. */
 const NAV_SUDO = [
-  { group: "main", items: ["home", "users", "servers", "connection", "business"] },
+  { group: "main", items: ["home", "users", "servers", "connection", "billing", "resellers", "business"] },
 ];
 
 const PATHS: Record<string, string> = {
@@ -21,6 +21,8 @@ const PATHS: Record<string, string> = {
   users: "/users",
   servers: "/servers",
   connection: "/connection",
+  billing: "/billing",
+  resellers: "/resellers",
   business: "/business",
   system: "/system",
   // Legacy redirects handled in DashboardRoot
@@ -34,8 +36,6 @@ const PATHS: Record<string, string> = {
   hosts: "/connection",
   analytics: "/business",
   automation: "/business",
-  resellers: "/business",
-  billing: "/business",
   infrastructure: "/servers",
 };
 
@@ -67,7 +67,7 @@ export const Shell: FC = () => {
     if (admin?.is_sudo) return NAV_SUDO;
     const role = admin?.role || "reseller";
     const items = ["home", "users"];
-    if (role !== "support") items.push("servers", "business");
+    if (role !== "support") items.push("servers", "billing", "resellers", "business");
     else items.push("business");
     return [{ group: "main", items }];
   }, [admin?.is_sudo, admin?.role]);
@@ -77,6 +77,8 @@ export const Shell: FC = () => {
     if (loc.pathname.startsWith("/users")) return "users";
     if (loc.pathname.startsWith("/servers")) return "servers";
     if (loc.pathname.startsWith("/connection")) return "connection";
+    if (loc.pathname.startsWith("/billing")) return "billing";
+    if (loc.pathname.startsWith("/resellers")) return "resellers";
     if (loc.pathname.startsWith("/business")) return "business";
     if (loc.pathname.startsWith("/system")) return "system";
     return "home";

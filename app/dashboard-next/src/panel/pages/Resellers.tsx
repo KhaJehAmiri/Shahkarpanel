@@ -1,6 +1,7 @@
-import { FC, useEffect, useMemo, useState } from "react";
+import { FC, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { ApiError, api } from "../api/client";
 import { Branding, ResellerPricing, SubResellerAccount, Tenant } from "../api/types";
 import { useApp } from "../context/AppContext";
@@ -8,9 +9,10 @@ import { useFetch } from "../lib/useFetch";
 import { formatBytes } from "../lib/format";
 import { PageHeader } from "../components/Shell";
 import {
-  Button, Callout, Card, CardHead, EmptyState, Field, Input, Modal, Pager, Pill, SkeletonRows, Tabs, Textarea, usePagedList, useToast,
+  Button, Callout, Card, CardHead, EmptyState, Field, Input, Modal, Pager, Pill, SkeletonRows, Textarea, usePagedList, useToast,
 } from "../components/ui";
-import { IcPlus, IcTrash, IcServer, IcEdit, IcWallet } from "../components/icons";
+import { SectionRail, type RailGroup } from "../components/SectionRail";
+import { IcPlus, IcTrash, IcServer, IcEdit, IcWallet, IcMore } from "../components/icons";
 import { UserImportWizard } from "../components/UserImportWizard";
 
 type ResellerAccount = {
@@ -29,30 +31,96 @@ type ResellerAccount = {
 export const Resellers: FC<{ embedded?: boolean }> = ({ embedded }) => {
   const { t } = useTranslation();
   const { admin } = useApp();
-  const [tab, setTab] = useState(admin?.is_sudo ? "accounts" : "branding");
-  const tabs = [
-    ...(admin?.is_sudo ? [
-      { id: "accounts", label: t("resellers.tabAccounts") },
-      { id: "tenants", label: t("resellers.tabTenants") },
-    ] : [
-      { id: "subaccounts", label: t("resellers.tabSubAccounts") },
-      { id: "account", label: t("resellers.tabAccount") },
-      { id: "migration", label: t("resellers.tabMigration") },
-    ]),
-    { id: "branding", label: t("resellers.tabBranding") },
-    { id: "provision", label: t("infra.addNode") },
-  ];
+  const [search, setSearch] = useSearchParams();
+  const isSudo = !!admin?.is_sudo;
+
+  const railGroups: RailGroup[] = isSudo
+    ? [
+        {
+          id: "org",
+          label: t("resellers.groupOrg"),
+          items: [
+            { id: "accounts", label: t("resellers.tabAccounts") },
+            { id: "tenants", label: t("resellers.tabTenants") },
+          ],
+        },
+        {
+          id: "brand",
+          label: t("resellers.groupBrand"),
+          items: [
+            { id: "branding", label: t("resellers.tabBranding") },
+            { id: "provision", label: t("infra.addNode") },
+          ],
+        },
+      ]
+    : [
+        {
+          id: "org",
+          label: t("resellers.groupOrg"),
+          items: [{ id: "subaccounts", label: t("resellers.tabSubAccounts") }],
+        },
+        {
+          id: "brand",
+          label: t("resellers.groupBrand"),
+          items: [
+            { id: "branding", label: t("resellers.tabBranding") },
+            { id: "provision", label: t("infra.addNode") },
+          ],
+        },
+        {
+          id: "account",
+          label: t("resellers.groupAccount"),
+          items: [
+            { id: "account", label: t("resellers.tabAccount") },
+            { id: "migration", label: t("resellers.tabMigration") },
+          ],
+        },
+      ];
+
+  const allIds = railGroups.flatMap((g) => g.items.map((i) => i.id));
+  const defaultTab = isSudo ? "accounts" : "subaccounts";
+  const tabFromUrl = search.get("tab");
+  const [tab, setTab] = useState(
+    tabFromUrl && allIds.includes(tabFromUrl) ? tabFromUrl : defaultTab,
+  );
+
+  useEffect(() => {
+    if (tabFromUrl && allIds.includes(tabFromUrl) && tabFromUrl !== tab) setTab(tabFromUrl);
+  }, [tabFromUrl]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const onTabChange = (id: string) => {
+    setTab(id);
+    const next = new URLSearchParams(search);
+    next.set("tab", id);
+    setSearch(next, { replace: true });
+  };
+
   return (
-    <div>
-      {!embedded && <PageHeader title={t("resellers.title")} subtitle={t("resellers.subtitle")} description={t("resellers.description")} />}
-      <Tabs active={tab} onChange={setTab} tabs={tabs} />
-      {tab === "accounts" && <ResellerAccountsTab />}
-      {tab === "subaccounts" && <SubResellersTab />}
-      {tab === "tenants" && <TenantsTab />}
-      {tab === "branding" && <BrandingTab />}
-      {tab === "account" && <AccountTab />}
-      {tab === "migration" && <MigrationTab />}
-      {tab === "provision" && <ProvisionTab />}
+    <div className="nx-page nx-biz">
+      {!embedded && (
+        <PageHeader
+          title={t("resellers.title")}
+          subtitle={t("resellers.subtitle")}
+          description={t("resellers.description")}
+        />
+      )}
+      <div className="nx-biz-layout">
+        <SectionRail
+          groups={railGroups}
+          active={tab}
+          onChange={onTabChange}
+          label={t("resellers.title")}
+        />
+        <div className="nx-section-panel">
+          {tab === "accounts" && <ResellerAccountsTab />}
+          {tab === "subaccounts" && <SubResellersTab />}
+          {tab === "tenants" && <TenantsTab />}
+          {tab === "branding" && <BrandingTab />}
+          {tab === "account" && <AccountTab />}
+          {tab === "migration" && <MigrationTab />}
+          {tab === "provision" && <ProvisionTab />}
+        </div>
+      </div>
     </div>
   );
 };
@@ -80,19 +148,19 @@ const SubResellersTab: FC = () => {
               <table className="nx-table">
                 <thead><tr>
                   <th>{t("common.username")}</th>
-                  <th>{t("system.maxUsers")}</th>
-                  <th>{t("system.maxNodes")}</th>
-                  <th>{t("resellers.commission")}</th>
-                  <th style={{ textAlign: "end" }}>{t("common.actions")}</th>
+                  <th className="nx-num">{t("system.maxUsers")}</th>
+                  <th className="nx-num">{t("system.maxNodes")}</th>
+                  <th className="nx-num">{t("resellers.commission")}</th>
+                  <th className="nx-actions">{t("common.actions")}</th>
                 </tr></thead>
                 <tbody>
                   {data.map((a) => (
                     <tr key={a.username}>
                       <td><code>{a.username}</code></td>
-                      <td>{a.max_users ?? "∞"}</td>
-                      <td>{a.max_nodes ?? "∞"}</td>
-                      <td>{a.commission_percent ?? 0}%</td>
-                      <td>
+                      <td className="nx-num">{a.max_users ?? "∞"}</td>
+                      <td className="nx-num">{a.max_nodes ?? "∞"}</td>
+                      <td className="nx-num">{a.commission_percent ?? 0}%</td>
+                      <td className="nx-actions">
                         <div className="nx-row" style={{ justifyContent: "flex-end" }}>
                           <Button size="sm" variant="ghost" onClick={() => setEdit(a)}><IcEdit className="nx-ico" /></Button>
                         </div>
@@ -139,10 +207,19 @@ const EditSubReseller: FC<{ account: SubResellerAccount; onClose: () => void; on
   };
 
   return (
-    <Modal open title={`${t("common.edit")} — ${account.username}`} onClose={onClose}
-      footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
-        <Button variant="primary" disabled={busy} onClick={save}>{t("common.save")}</Button></>}>
-      <div className="nx-stack">
+    <Modal
+      open
+      title={t("common.edit")}
+      subtitle={account.username}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
+          <Button variant="primary" disabled={busy} onClick={save}>{t("common.save")}</Button>
+        </>
+      }
+    >
+      <div className="nx-stack nx-modal-stack">
         <Field label={t("system.maxUsers")} hint={t("common.optional")}>
           <Input type="number" value={maxUsers} onChange={(e: any) => setMaxUsers(e.target.value)} placeholder="∞" />
         </Field>
@@ -210,6 +287,110 @@ const AddSubReseller: FC<{ onClose: () => void; onDone: () => void }> = ({ onClo
   );
 };
 
+const ResellerRowMenu: FC<{
+  billingOn: boolean;
+  onWallet: () => void;
+  onTraffic: () => void;
+  onPricing: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}> = ({ billingOn, onWallet, onTraffic, onPricing, onEdit, onDelete }) => {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number; openUp: boolean } | null>(null);
+
+  const place = () => {
+    const btn = btnRef.current;
+    if (!btn) return;
+    const r = btn.getBoundingClientRect();
+    const menuW = 208;
+    const menuH = billingOn ? 220 : 100;
+    const pad = 8;
+    const openUp = r.bottom + menuH + pad > window.innerHeight && r.top > menuH + pad;
+    const left = Math.min(
+      Math.max(pad, r.right - menuW),
+      window.innerWidth - menuW - pad,
+    );
+    const top = openUp ? r.top - pad : r.bottom + pad;
+    setPos({ top, left, openUp });
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    place();
+    const onDoc = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (btnRef.current?.contains(t) || menuRef.current?.contains(t)) return;
+      setOpen(false);
+    };
+    const onReposition = () => place();
+    document.addEventListener("mousedown", onDoc);
+    window.addEventListener("resize", onReposition);
+    window.addEventListener("scroll", onReposition, true);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      window.removeEventListener("resize", onReposition);
+      window.removeEventListener("scroll", onReposition, true);
+    };
+  }, [open, billingOn]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const menu = open && pos && typeof document !== "undefined"
+    ? createPortal(
+        <div
+          ref={menuRef}
+          className={`nx-reseller-menu nx-reseller-menu--fixed${pos.openUp ? " is-up" : ""}`}
+          role="menu"
+          style={{
+            top: pos.openUp ? undefined : pos.top,
+            bottom: pos.openUp ? window.innerHeight - pos.top : undefined,
+            left: pos.left,
+          }}
+        >
+          <button type="button" role="menuitem" className="nx-reseller-menu-item" onClick={() => { setOpen(false); onEdit(); }}>
+            <IcEdit className="nx-ico" /> {t("common.edit")}
+          </button>
+          {billingOn && (
+            <>
+              <button type="button" role="menuitem" className="nx-reseller-menu-item" onClick={() => { setOpen(false); onWallet(); }}>
+                <IcWallet className="nx-ico" /> {t("resellers.adjustWallet")}
+              </button>
+              <button type="button" role="menuitem" className="nx-reseller-menu-item" onClick={() => { setOpen(false); onTraffic(); }}>
+                {t("resellers.creditTraffic")}
+              </button>
+              <button type="button" role="menuitem" className="nx-reseller-menu-item" onClick={() => { setOpen(false); onPricing(); }}>
+                {t("resellers.trafficPricing")}
+              </button>
+              <div className="nx-reseller-menu-sep" />
+            </>
+          )}
+          <button type="button" role="menuitem" className="nx-reseller-menu-item is-danger" onClick={() => { setOpen(false); onDelete(); }}>
+            <IcTrash className="nx-ico" /> {t("common.delete")}
+          </button>
+        </div>,
+        document.body,
+      )
+    : null;
+
+  return (
+    <div className="nx-ra-menu">
+      <button
+        ref={btnRef}
+        type="button"
+        className="nx-ra-icon-btn"
+        title={t("common.actions")}
+        aria-label={t("common.actions")}
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <IcMore className="nx-ico" />
+      </button>
+      {menu}
+    </div>
+  );
+};
+
 const ResellerAccountsTab: FC = () => {
   const { t } = useTranslation();
   const { isEnabled } = useApp();
@@ -242,95 +423,94 @@ const ResellerAccountsTab: FC = () => {
   };
 
   return (
-    <>
-      <div style={{ marginBottom: 14 }}>
-        <Callout tone="info" title={t("resellers.accountsHintTitle")}>
-          {t("resellers.accountsHint")}
-        </Callout>
-        {!billingOn && (
-          <div style={{ marginTop: 10 }}>
-            <Callout tone="warn">{t("resellers.billingDisabledHint")}</Callout>
-          </div>
-        )}
+    <div className="nx-reseller-accounts">
+      <div className="nx-reseller-toolbar">
+        <p className="nx-reseller-hint">{t("resellers.accountsHint")}</p>
+        <div className="nx-reseller-toolbar-actions">
+          <Input
+            value={search}
+            onChange={(e: any) => { setSearch(e.target.value); pager.setPage(0); }}
+            placeholder={t("common.search")}
+            className="nx-reseller-search"
+          />
+          <Button variant="primary" size="sm" onClick={() => setShow(true)}>
+            <IcPlus className="nx-ico" /> {t("resellers.addAccount")}
+          </Button>
+        </div>
       </div>
-      <div className="nx-row" style={{ justifyContent: "flex-end", marginBottom: 14, gap: 8 }}>
-        {(data?.length ?? 0) > 8 && (
-          <Input value={search} onChange={(e: any) => { setSearch(e.target.value); pager.setPage(0); }} placeholder={t("common.search")} style={{ maxWidth: 220 }} />
-        )}
-        <Button variant="primary" onClick={() => setShow(true)}><IcPlus className="nx-ico" /> {t("resellers.addAccount")}</Button>
-      </div>
-      <Card pad0>
-        {loading ? <div style={{ padding: 20 }}><SkeletonRows rows={4} cols={5} /></div>
-          : error ? <EmptyState title={t("common.error")} desc={error} />
-          : !accounts.length ? (
-            <EmptyState
-              title={t("resellers.noAccounts")}
-              desc={t("resellers.accountsHint")}
-              action={<Button variant="primary" onClick={() => setShow(true)}><IcPlus className="nx-ico" /> {t("resellers.addAccount")}</Button>}
-            />
-          ) : (
-            <div className="nx-table-wrap">
+
+      {!billingOn && <Callout tone="warn">{t("resellers.billingDisabledHint")}</Callout>}
+
+      {loading ? (
+        <div className="nx-table-wrap" style={{ padding: 16 }}><SkeletonRows rows={5} cols={6} /></div>
+      ) : error ? (
+        <EmptyState title={t("common.error")} desc={error} />
+      ) : !accounts.length ? (
+        <EmptyState
+          title={t("resellers.noAccounts")}
+          desc={t("resellers.accountsHint")}
+          action={<Button variant="primary" size="sm" onClick={() => setShow(true)}><IcPlus className="nx-ico" /> {t("resellers.addAccount")}</Button>}
+        />
+      ) : (
+        <>
+          <div className="nx-table-wrap">
               <table className="nx-table">
-                <thead><tr>
-                  <th>{t("common.username")}</th>
-                  <th>{t("system.role")}</th>
-                  <th>{t("resellers.usersCount")}</th>
-                  <th>{t("billing.wallet")}</th>
-                  <th>{t("billing.prepaidRemaining")}</th>
-                  <th>{t("resellers.trafficUsed")}</th>
-                  <th style={{ textAlign: "end" }}>{t("common.actions")}</th>
-                </tr></thead>
+                <thead>
+                  <tr>
+                    <th>{t("common.username")}</th>
+                    <th className="nx-num">{t("resellers.usersCount")}</th>
+                    <th className="nx-num">{t("billing.wallet")}</th>
+                    <th className="nx-num">{t("billing.prepaidRemaining")}</th>
+                    <th className="nx-num">{t("resellers.trafficUsed")}</th>
+                    <th className="nx-actions" />
+                  </tr>
+                </thead>
                 <tbody>
-                  {pager.slice.map((a) => (
-                    <tr key={a.username}>
-                      <td><code>{a.username}</code></td>
-                      <td><Pill tone="default">{a.role || "reseller"}</Pill></td>
-                      <td>
-                        {(a.users_count ?? 0).toLocaleString()}
-                        <span className="nx-faint">
-                          {" / "}
-                          {a.max_users != null ? a.max_users.toLocaleString() : "∞"}
-                        </span>
-                      </td>
-                      <td>{billingOn ? (a.wallet_balance ?? 0).toLocaleString() : "—"}</td>
-                      <td>{billingOn ? formatBytes(a.prepaid_traffic_remaining ?? 0) : "—"}</td>
-                      <td>
-                        {formatBytes(a.users_usage ?? 0)}
-                        <span className="nx-faint">
-                          {" / "}
-                          {a.max_total_traffic != null ? formatBytes(a.max_total_traffic) : "∞"}
-                          {a.max_total_traffic != null
-                            ? ` (${formatBytes(Math.max(0, (a.max_total_traffic ?? 0) - (a.users_usage ?? 0)))} left)`
-                            : ""}
-                        </span>
-                      </td>
-                      <td>
-                        <div className="nx-row" style={{ justifyContent: "flex-end", gap: 6 }}>
-                          {billingOn && (
-                            <>
-                              <Button size="sm" variant="primary" title={t("resellers.adjustWallet")} onClick={() => setCredit(a)}>
-                                <IcWallet className="nx-ico" /> {t("resellers.adjustWallet")}
-                              </Button>
-                              <Button size="sm" variant="ghost" title={t("resellers.creditTraffic")} onClick={() => setTrafficCredit(a)}>
-                                {t("resellers.creditTraffic")}
-                              </Button>
-                              <Button size="sm" variant="ghost" title={t("resellers.trafficPricing")} onClick={() => setPricing(a)}>
-                                {t("resellers.trafficPricing")}
-                              </Button>
-                            </>
-                          )}
-                          <Button size="sm" variant="ghost" title={t("common.edit")} onClick={() => setEdit(a)}><IcEdit className="nx-ico" /></Button>
-                          <Button size="sm" variant="danger" title={t("common.delete")} onClick={() => remove(a)}><IcTrash className="nx-ico" /></Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                  {pager.slice.map((a) => {
+                    const usersMax = a.max_users != null ? a.max_users.toLocaleString() : "∞";
+                    const trafficCap = a.max_total_traffic != null ? formatBytes(a.max_total_traffic) : "∞";
+                    return (
+                      <tr key={a.username}>
+                        <td>
+                          <div className="nx-ra-user">
+                            <span className="nx-ra-user-name">{a.username}</span>
+                            <span className="nx-ra-user-role">{a.role || "reseller"}</span>
+                          </div>
+                        </td>
+                        <td className="nx-num">
+                          {(a.users_count ?? 0).toLocaleString()}
+                          <span className="nx-muted">/{usersMax}</span>
+                        </td>
+                        <td className="nx-num">
+                          {billingOn ? (a.wallet_balance ?? 0).toLocaleString() : "—"}
+                        </td>
+                        <td className="nx-num">
+                          {billingOn ? formatBytes(a.prepaid_traffic_remaining ?? 0) : "—"}
+                        </td>
+                        <td className="nx-num">
+                          {formatBytes(a.users_usage ?? 0)}
+                          <span className="nx-muted">/{trafficCap}</span>
+                        </td>
+                        <td className="nx-actions">
+                          <ResellerRowMenu
+                            billingOn={billingOn}
+                            onWallet={() => setCredit(a)}
+                            onTraffic={() => setTrafficCredit(a)}
+                            onPricing={() => setPricing(a)}
+                            onEdit={() => setEdit(a)}
+                            onDelete={() => remove(a)}
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
-            </div>
-          )}
-      </Card>
-      <Pager page={pager.page} pages={pager.pages} onPage={pager.setPage} />
+          </div>
+          <Pager page={pager.page} pages={pager.pages} onPage={pager.setPage} />
+        </>
+      )}
+
       {show && <AddResellerAccount onClose={() => setShow(false)} onDone={() => { setShow(false); reload(); }} />}
       {edit && <EditResellerAccount account={edit} onClose={() => setEdit(null)} onDone={() => { setEdit(null); reload(); }} />}
       {credit && <CreditResellerAccount account={credit} onClose={() => setCredit(null)} onDone={() => { setCredit(null); reload(); }} />}
@@ -348,7 +528,7 @@ const ResellerAccountsTab: FC = () => {
           onDone={() => { setPricing(null); reload(); }}
         />
       )}
-    </>
+    </div>
   );
 };
 
@@ -421,7 +601,9 @@ const ResellerTrafficPricingModal: FC<{ account: ResellerAccount; onClose: () =>
   return (
     <Modal
       open
-      title={`${t("resellers.trafficPricing")} — ${account.username}`}
+      wide
+      title={t("resellers.trafficPricing")}
+      subtitle={account.username}
       onClose={onClose}
       footer={
         <>
@@ -430,61 +612,58 @@ const ResellerTrafficPricingModal: FC<{ account: ResellerAccount; onClose: () =>
         </>
       }
     >
-      <div className="nx-stack" style={{ gap: 14 }}>
-        <Callout tone="info">{t("resellers.trafficPricingHint")}</Callout>
+      <div className="nx-price-modal">
+        <p className="nx-price-hint">{t("resellers.trafficPricingHint")}</p>
         {loading ? <SkeletonRows rows={4} cols={2} />
           : error ? <EmptyState title={t("common.error")} desc={error} />
           : data && (
             <>
-              <Field
-                label={t("resellers.usageRatePerGb")}
-                hint={t("resellers.usageRatePerGbHint", { rate: data.platform_usage_rate_per_gb.toLocaleString() })}
-              >
-                <Input type="number" value={rate} onChange={(e: any) => setRate(e.target.value)} placeholder={String(data.platform_usage_rate_per_gb)} />
-              </Field>
+              <div className="nx-price-rate">
+                <Field
+                  label={t("resellers.usageRatePerGb")}
+                  hint={t("resellers.usageRatePerGbHint", { rate: data.platform_usage_rate_per_gb.toLocaleString() })}
+                >
+                  <Input type="number" value={rate} onChange={(e: any) => setRate(e.target.value)} placeholder={String(data.platform_usage_rate_per_gb)} />
+                </Field>
+              </div>
               {!data.packages.length ? (
                 <EmptyState title={t("common.noData")} desc={t("billing.noTrafficPackages")} />
               ) : (
-                <div className="nx-table-wrap">
-                  <table className="nx-table">
-                    <thead>
-                      <tr>
-                        <th>{t("common.name")}</th>
-                        <th>{t("resellers.packageCatalogPrice")}</th>
-                        <th>{t("resellers.packageOverridePrice")}</th>
-                        <th>{t("resellers.packageCatalogBytes")}</th>
-                        <th>{t("resellers.packageOverrideBytes")}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {data.packages.map((pkg) => {
-                        const row = rows[pkg.id] || { price: "", bytesGb: "" };
-                        return (
-                          <tr key={pkg.id}>
-                            <td>{pkg.name}</td>
-                            <td>{pkg.catalog_price.toLocaleString()}</td>
-                            <td>
-                              <Input
-                                type="number"
-                                value={row.price}
-                                placeholder={t("resellers.overrideBlankHint")}
-                                onChange={(e: any) => setRow(pkg.id, "price", e.target.value)}
-                              />
-                            </td>
-                            <td>{formatBytes(pkg.catalog_bytes)}</td>
-                            <td>
-                              <Input
-                                type="number"
-                                value={row.bytesGb}
-                                placeholder={t("resellers.overrideBlankHint")}
-                                onChange={(e: any) => setRow(pkg.id, "bytesGb", e.target.value)}
-                              />
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                <div className="nx-price-pkgs">
+                  <div className="nx-price-pkgs-label">{t("billing.tabTrafficPackages")}</div>
+                  {data.packages.map((pkg) => {
+                    const row = rows[pkg.id] || { price: "", bytesGb: "" };
+                    return (
+                      <div key={pkg.id} className="nx-price-pkg">
+                        <div className="nx-price-pkg-top">
+                          <strong className="nx-price-pkg-name">{pkg.name}</strong>
+                          <span className="nx-price-pkg-meta">
+                            {pkg.catalog_price.toLocaleString()}
+                            <span aria-hidden> · </span>
+                            {formatBytes(pkg.catalog_bytes)}
+                          </span>
+                        </div>
+                        <div className="nx-price-pkg-fields">
+                          <Field label={t("resellers.packageOverridePrice")}>
+                            <Input
+                              type="number"
+                              value={row.price}
+                              placeholder={t("resellers.overrideBlankHint")}
+                              onChange={(e: any) => setRow(pkg.id, "price", e.target.value)}
+                            />
+                          </Field>
+                          <Field label={t("resellers.packageOverrideBytes")}>
+                            <Input
+                              type="number"
+                              value={row.bytesGb}
+                              placeholder={t("resellers.overrideBlankHint")}
+                              onChange={(e: any) => setRow(pkg.id, "bytesGb", e.target.value)}
+                            />
+                          </Field>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </>
@@ -516,13 +695,22 @@ const CreditResellerTraffic: FC<{ account: ResellerAccount; onClose: () => void;
     } catch (e: any) { toast.push(e.message, "error"); } finally { setBusy(false); }
   };
   return (
-    <Modal open title={`${t("resellers.creditTraffic")} — ${account.username}`} onClose={onClose}
-      footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
-        <Button variant="primary" disabled={busy || !gb} onClick={submit}>{t("common.save")}</Button></>}>
-      <div className="nx-stack">
-        <Callout tone="info">
+    <Modal
+      open
+      title={t("resellers.creditTraffic")}
+      subtitle={account.username}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
+          <Button variant="primary" disabled={busy || !gb} onClick={submit}>{t("common.save")}</Button>
+        </>
+      }
+    >
+      <div className="nx-stack nx-modal-stack">
+        <p className="nx-modal-lede">
           {t("resellers.prepaidHint", { remaining: formatBytes(account.prepaid_traffic_remaining ?? 0) })}
-        </Callout>
+        </p>
         <Field label={t("billing.packageTrafficGb")} hint={t("resellers.creditTrafficHint")}>
           <Input type="number" value={gb} onChange={(e: any) => setGb(e.target.value)} autoFocus />
         </Field>
@@ -559,13 +747,22 @@ const CreditResellerAccount: FC<{ account: ResellerAccount; onClose: () => void;
     } catch (e: any) { toast.push(e.message, "error"); } finally { setBusy(false); }
   };
   return (
-    <Modal open title={`${t("resellers.adjustWallet")} — ${account.username}`} onClose={onClose}
-      footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
-        <Button variant="primary" disabled={busy || amount === ""} onClick={submit}>{t("common.save")}</Button></>}>
-      <div className="nx-stack">
-        <Callout tone="info">
+    <Modal
+      open
+      title={t("resellers.adjustWallet")}
+      subtitle={account.username}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
+          <Button variant="primary" disabled={busy || amount === ""} onClick={submit}>{t("common.save")}</Button>
+        </>
+      }
+    >
+      <div className="nx-stack nx-modal-stack">
+        <p className="nx-modal-lede">
           {t("resellers.creditBalanceHint", { balance: (account.wallet_balance ?? 0).toLocaleString() })}
-        </Callout>
+        </p>
         <Field label={t("resellers.adjustMode")}>
           <select className="nx-select" value={mode} onChange={(e: any) => setMode(e.target.value)}>
             <option value="set">{t("resellers.modeSetBalance")}</option>
@@ -615,10 +812,18 @@ const AddResellerAccount: FC<{ onClose: () => void; onDone: () => void }> = ({ o
   };
 
   return (
-    <Modal open title={t("resellers.addAccount")} onClose={onClose}
-      footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
-        <Button variant="primary" disabled={busy || !username.trim() || !password} onClick={submit}>{t("common.create")}</Button></>}>
-      <div className="nx-stack">
+    <Modal
+      open
+      title={t("resellers.addAccount")}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
+          <Button variant="primary" disabled={busy || !username.trim() || !password} onClick={submit}>{t("common.create")}</Button>
+        </>
+      }
+    >
+      <div className="nx-stack nx-modal-stack">
         <Field label={t("common.username")} hint={t("resellers.loginUsernameHint")}>
           <Input value={username} onChange={(e: any) => setUsername(e.target.value)} autoFocus />
         </Field>
@@ -626,12 +831,12 @@ const AddResellerAccount: FC<{ onClose: () => void; onDone: () => void }> = ({ o
           <Input type="password" value={password} onChange={(e: any) => setPassword(e.target.value)} />
         </Field>
         <Field label={t("system.role")}>
-          <select className="nx-input" value={role} onChange={(e) => setRole(e.target.value)}>
+          <select className="nx-select" value={role} onChange={(e) => setRole(e.target.value)}>
             <option value="reseller">reseller</option>
             <option value="support">support</option>
           </select>
         </Field>
-        <div className="nx-row" style={{ gap: 12 }}>
+        <div className="nx-form-grid">
           <Field label={`${t("system.maxUsers")} (${t("common.optional")})`}>
             <Input type="number" min={1} value={maxUsers} onChange={(e: any) => setMaxUsers(e.target.value)} placeholder="∞" />
           </Field>
@@ -680,17 +885,26 @@ const EditResellerAccount: FC<{ account: ResellerAccount; onClose: () => void; o
   };
 
   return (
-    <Modal open title={`${t("common.edit")} — ${account.username}`} onClose={onClose}
-      footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
-        <Button variant="primary" disabled={busy} onClick={save}>{t("common.save")}</Button></>}>
-      <div className="nx-stack">
+    <Modal
+      open
+      title={t("common.edit")}
+      subtitle={account.username}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
+          <Button variant="primary" disabled={busy} onClick={save}>{t("common.save")}</Button>
+        </>
+      }
+    >
+      <div className="nx-stack nx-modal-stack">
         <Field label={t("system.role")}>
-          <select className="nx-input" value={role} onChange={(e) => setRole(e.target.value)}>
+          <select className="nx-select" value={role} onChange={(e) => setRole(e.target.value)}>
             <option value="reseller">reseller</option>
             <option value="support">support</option>
           </select>
         </Field>
-        <div className="nx-row" style={{ gap: 12 }}>
+        <div className="nx-form-grid">
           <Field label={`${t("system.maxUsers")} (${t("common.optional")})`}>
             <Input type="number" min={1} value={maxUsers} onChange={(e: any) => setMaxUsers(e.target.value)} placeholder="∞" />
           </Field>
@@ -741,8 +955,10 @@ const TenantsTab: FC = () => {
               <table className="nx-table">
                 <thead><tr>
                   <th>{t("common.name")}</th><th>{t("resellers.slug")}</th><th>{t("common.status")}</th>
-                  <th>{t("resellers.maxUsers")}</th><th>{t("resellers.maxNodes")}</th><th>{t("resellers.byoDiscount")}</th>
-                  <th style={{ textAlign: "end" }}>{t("common.actions")}</th>
+                  <th className="nx-num">{t("resellers.maxUsers")}</th>
+                  <th className="nx-num">{t("resellers.maxNodes")}</th>
+                  <th className="nx-num">{t("resellers.byoDiscount")}</th>
+                  <th className="nx-actions">{t("common.actions")}</th>
                 </tr></thead>
                 <tbody>
                   {data.map((tn) => (
@@ -750,10 +966,10 @@ const TenantsTab: FC = () => {
                       <td style={{ fontWeight: 600 }}>{tn.name}</td>
                       <td className="nx-mono">{tn.slug}</td>
                       <td><Pill tone={tn.enabled ? "ok" : "danger"} dot>{tn.enabled ? t("common.enabled") : t("common.disabled")}</Pill></td>
-                      <td>{tn.max_users ?? "∞"}</td>
-                      <td>{tn.max_nodes ?? "∞"}</td>
-                      <td>{tn.byo_node_discount_percent}%</td>
-                      <td><div className="nx-row" style={{ justifyContent: "flex-end", gap: 6 }}>
+                      <td className="nx-num">{tn.max_users ?? "∞"}</td>
+                      <td className="nx-num">{tn.max_nodes ?? "∞"}</td>
+                      <td className="nx-num">{tn.byo_node_discount_percent}%</td>
+                      <td className="nx-actions"><div className="nx-row" style={{ justifyContent: "flex-end", gap: 6 }}>
                         <Button size="sm" variant="ghost" onClick={() => setEdit(tn)}><IcEdit className="nx-ico" /></Button>
                         <Button variant="danger" size="sm" onClick={() => remove(tn.id)}><IcTrash className="nx-ico" /></Button>
                       </div></td>

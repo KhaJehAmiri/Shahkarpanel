@@ -26,6 +26,7 @@ import {
 } from "../../lib/routingRulesCrud";
 import { Button, Callout, Card, EmptyState, Field, HelpTip, Input, Modal, MultiSelect, Pill, Select, useToast } from "../ui";
 import { IcEdit, IcPlus, IcTrash } from "../icons";
+import { TableRowMenu } from "../TableRowMenu";
 
 export const RoutingSection: FC<{
   config: Record<string, unknown>;
@@ -226,7 +227,7 @@ export const RoutingSection: FC<{
                   <th>{t("xray.ruleTag")}</th>
                   <th>{t("xray.matchCols")}</th>
                   <th>{t("xray.target")}</th>
-                  <th style={{ textAlign: "end" }}>{t("common.actions")}</th>
+                  <th className="nx-actions">{t("common.actions")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -240,13 +241,38 @@ export const RoutingSection: FC<{
                         {String(r.balancerTag || r.outboundTag || "—")}
                       </Pill>
                     </td>
-                    <td>
-                      <div className="nx-row" style={{ justifyContent: "flex-end", gap: 4 }}>
-                        <Button size="sm" onClick={() => void move(idx, -1)} disabled={busy || idx === 0}>↑</Button>
-                        <Button size="sm" onClick={() => void move(idx, 1)} disabled={busy || idx === rules.length - 1}>↓</Button>
-                        <Button size="sm" disabled={busy} onClick={() => { setEditIdx(idx); setShow(true); }}><IcEdit className="nx-ico" /></Button>
-                        <Button variant="danger" size="sm" disabled={busy} onClick={() => void remove(idx)}><IcTrash className="nx-ico" /></Button>
-                      </div>
+                    <td className="nx-actions">
+                      <TableRowMenu
+                        items={[
+                          {
+                            id: "up",
+                            label: "↑",
+                            disabled: busy || idx === 0,
+                            onClick: () => void move(idx, -1),
+                          },
+                          {
+                            id: "down",
+                            label: "↓",
+                            disabled: busy || idx === rules.length - 1,
+                            onClick: () => void move(idx, 1),
+                          },
+                          {
+                            id: "edit",
+                            label: t("common.edit"),
+                            icon: <IcEdit className="nx-ico" />,
+                            disabled: busy,
+                            onClick: () => { setEditIdx(idx); setShow(true); },
+                          },
+                          {
+                            id: "del",
+                            label: t("common.delete"),
+                            icon: <IcTrash className="nx-ico" />,
+                            danger: true,
+                            disabled: busy,
+                            onClick: () => void remove(idx),
+                          },
+                        ]}
+                      />
                     </td>
                   </tr>
                 ))}
@@ -330,7 +356,7 @@ const BalancersSection: FC<{
                   <th>{t("xray.ruleTag")}</th>
                   <th>{t("xray.balancerSelectors", { defaultValue: "Selectors" })}</th>
                   <th>{t("xray.balancerStrategy", { defaultValue: "Strategy" })}</th>
-                  <th style={{ textAlign: "end" }}>{t("common.actions")}</th>
+                  <th className="nx-actions">{t("common.actions")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -355,10 +381,18 @@ const BalancersSection: FC<{
                         ))}
                       </Select>
                     </td>
-                    <td>
-                      <div className="nx-row" style={{ justifyContent: "flex-end" }}>
-                        <Button variant="danger" size="sm" onClick={() => remove(idx)}><IcTrash className="nx-ico" /></Button>
-                      </div>
+                    <td className="nx-actions">
+                      <TableRowMenu
+                        items={[
+                          {
+                            id: "del",
+                            label: t("common.delete"),
+                            icon: <IcTrash className="nx-ico" />,
+                            danger: true,
+                            onClick: () => remove(idx),
+                          },
+                        ]}
+                      />
                     </td>
                   </tr>
                 ))}

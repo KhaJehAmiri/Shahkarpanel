@@ -10,6 +10,8 @@ import { Users } from "./pages/Users";
 import { ServersHub } from "./pages/ServersHub";
 import { ConnectionHub } from "./pages/ConnectionHub";
 import { BusinessHub } from "./pages/BusinessHub";
+import { Billing } from "./pages/Billing";
+import { Resellers } from "./pages/Resellers";
 import { System } from "./pages/System";
 import { SetupWizard } from "./components/SetupWizard";
 import { ResellerOnboardingWizard } from "./components/ResellerOnboardingWizard";
@@ -45,6 +47,8 @@ export default function DashboardRoot() {
           <Route path="/users" element={<Users />} />
           <Route path="/servers" element={<ServersHub />} />
           <Route path="/connection" element={<ConnectionHub />} />
+          <Route path="/billing" element={<Billing />} />
+          <Route path="/resellers" element={<Resellers />} />
           <Route path="/business" element={<BusinessHub />} />
           <Route path="/system" element={<System />} />
 
@@ -57,8 +61,6 @@ export default function DashboardRoot() {
           <Route path="/inbounds" element={<LegacyRedirect to="/connection?tab=inbounds" />} />
           <Route path="/hosts" element={<LegacyRedirect to="/connection?tab=hosts" />} />
           <Route path="/xray" element={<LegacyRedirect to="/connection?tab=advanced" />} />
-          <Route path="/billing" element={<LegacyRedirect to="/business?tab=billing" />} />
-          <Route path="/resellers" element={<LegacyRedirect to="/business?tab=resellers" />} />
           <Route path="/analytics" element={<LegacyRedirect to="/business?tab=analytics" />} />
           <Route path="/automation" element={<LegacyRedirect to="/business?tab=automation" />} />
           <Route path="/infrastructure" element={<LegacyRedirect to="/servers?tab=nodes" />} />

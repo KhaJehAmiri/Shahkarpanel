@@ -1,6 +1,6 @@
 import { FC, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import { ApiKey, AgentUpdateCheck, AgentUpdateJobInfo, DeploymentInfo, FeatureFlag, SystemStats } from "../api/types";
 import { useApp } from "../context/AppContext";
@@ -11,7 +11,6 @@ import { LANGUAGES, setLanguage } from "../i18n";
 import {
   Button, Callout, Card, CardHead, EmptyState, Field, Input, Modal, Pill, Select, SkeletonRows, Tabs, Toggle, useToast,
 } from "../components/ui";
-import { CommercialSettings } from "../components/CommercialSettings";
 import { MigrationWizard } from "../components/MigrationWizard";
 import { IcPlus, IcDownload, IcTrash, IcKey, IcSun, IcMoon, IcEdit } from "../components/icons";
 
@@ -110,7 +109,18 @@ export const System: FC = () => {
       )}
       <Tabs active={tab} onChange={setTab} tabs={activeGroup?.tabs || []} />
       {tab === "flags" && <FlagsTab />}
-      {tab === "commercial" && <CommercialSettings />}
+      {tab === "commercial" && (
+        <Callout tone="info" title={t("system.commercialMovedTitle")}>
+          <div className="nx-stack" style={{ gap: 12 }}>
+            <span>{t("system.commercialMovedBody")}</span>
+            <div>
+              <Link to="/billing?billingTab=settings">
+                <Button variant="primary" size="sm">{t("system.openBillingSettings")}</Button>
+              </Link>
+            </div>
+          </div>
+        </Callout>
+      )}
       {tab === "updates" && (
         <div className="nx-stack" style={{ gap: 16 }}>
           <UpdatesTab />
@@ -750,7 +760,7 @@ const ApiKeysTab: FC = () => {
           : !data?.length ? <EmptyState title={t("common.noData")} action={<Button variant="primary" onClick={() => setShow(true)}><IcKey className="nx-ico" /> {t("system.createKey")}</Button>} />
           : (
             <div className="nx-table-wrap"><table className="nx-table">
-              <thead><tr><th>{t("common.name")}</th><th>{t("system.prefix")}</th><th>{t("system.scopes")}</th><th>{t("common.status")}</th><th style={{ textAlign: "end" }}>{t("common.actions")}</th></tr></thead>
+              <thead><tr><th>{t("common.name")}</th><th>{t("system.prefix")}</th><th>{t("system.scopes")}</th><th>{t("common.status")}</th><th className="nx-actions">{t("common.actions")}</th></tr></thead>
               <tbody>
                 {data.map((k) => (
                   <tr key={k.id}>
@@ -921,7 +931,7 @@ const AdminsTab: FC = () => {
             <table className="nx-table">
               <thead><tr>
                 <th>{t("common.username")}</th><th>{t("common.status")}</th><th>{t("system.role")}</th>
-                <th>{t("resellers.usersCount")}</th><th style={{ textAlign: "end" }}>{t("common.actions")}</th>
+                <th>{t("resellers.usersCount")}</th><th className="nx-actions">{t("common.actions")}</th>
               </tr></thead>
               <tbody>
                 {(data || []).map((a) => (
@@ -1055,7 +1065,7 @@ const AuditTab: FC = () => {
           : (
             <div className="nx-table-wrap">
               <table className="nx-table">
-                <thead><tr><th>{t("common.username")}</th><th>IP</th><th>{t("common.time")}</th><th style={{ textAlign: "end" }}>{t("common.actions")}</th></tr></thead>
+                <thead><tr><th>{t("common.username")}</th><th>IP</th><th>{t("common.time")}</th><th className="nx-actions">{t("common.actions")}</th></tr></thead>
                 <tbody>
                   {sessions.data.sessions.map((s, idx) => (
                     <tr key={`${s.username}-${s.logged_at}-${idx}`}>

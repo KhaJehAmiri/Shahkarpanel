@@ -6,7 +6,8 @@ import { useApp } from "../context/AppContext";
 import { useFetch } from "../lib/useFetch";
 import { formatDate } from "../lib/format";
 import { PageHeader } from "../components/Shell";
-import { Button, Callout, Card, Field, Input, Pager, Pill, SkeletonRows, usePagedList, useToast } from "../components/ui";
+import { Button, Callout, Card, EmptyState, Field, Input, Pager, SkeletonRows, usePagedList, useToast } from "../components/ui";
+import { TableRowMenu } from "../components/TableRowMenu";
 
 export const DedicatedIP: FC<{ embedded?: boolean }> = ({ embedded }) => {
   const { t, i18n } = useTranslation();
@@ -106,42 +107,60 @@ export const DedicatedIP: FC<{ embedded?: boolean }> = ({ embedded }) => {
             </div>
           </Card>
 
-          <Card>
-            <div className="nx-card-title" style={{ marginBottom: 12 }}>{t("dedip.poolTitle")}</div>
+          <Card pad0>
+            <div className="nx-pad" style={{ paddingBottom: 0 }}>
+              <div className="nx-card-title">{t("dedip.poolTitle")}</div>
+            </div>
             {pool.loading ? (
-              <SkeletonRows rows={4} cols={5} />
+              <div style={{ padding: 16 }}><SkeletonRows rows={4} cols={5} /></div>
             ) : (pool.data?.items.length ?? 0) === 0 ? (
-              <p className="nx-faint" style={{ fontSize: 13 }}>{t("dedip.empty")}</p>
+              <EmptyState title={t("common.noData")} desc={t("dedip.empty")} />
             ) : (
               <div className="nx-table-wrap">
-              <table className="nx-table">
-                <thead>
-                  <tr>
-                    <th>{t("dedip.address")}</th>
-                    <th>{t("dedip.nodeId")}</th>
-                    <th>{t("dedip.assignedTo")}</th>
-                    <th>{t("dedip.assignedAt")}</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {ipPager.slice.map((ip) => (
-                    <tr key={ip.id}>
-                      <td style={{ fontWeight: 600 }}>{ip.address}</td>
-                      <td>{ip.node_id ?? "—"}</td>
-                      <td>{ip.username ? <Pill tone="accent">{ip.username}</Pill> : <span className="nx-faint">{t("dedip.unassigned")}</span>}</td>
-                      <td>{ip.assigned_at ? formatDate(ip.assigned_at, i18n.language) : "—"}</td>
-                      <td style={{ textAlign: "right" }}>
-                        {ip.username && (
-                          <Button size="sm" variant="ghost" disabled={busy} onClick={() => release(ip.username)}>
-                            {t("dedip.releaseBtn")}
-                          </Button>
-                        )}
-                      </td>
+                <table className="nx-table">
+                  <thead>
+                    <tr>
+                      <th>{t("dedip.address")}</th>
+                      <th>{t("dedip.nodeId")}</th>
+                      <th>{t("dedip.assignedTo")}</th>
+                      <th>{t("dedip.assignedAt")}</th>
+                      <th className="nx-actions" />
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {ipPager.slice.map((ip) => (
+                      <tr key={ip.id}>
+                        <td><span className="nx-proto-name-main nx-mono" dir="ltr">{ip.address}</span></td>
+                        <td className="nx-proto-meta">{ip.node_id ?? "—"}</td>
+                        <td>
+                          {ip.username ? (
+                            <span className="nx-proto-chip">{ip.username}</span>
+                          ) : (
+                            <span className="nx-proto-meta">{t("dedip.unassigned")}</span>
+                          )}
+                        </td>
+                        <td className="nx-proto-meta">
+                          {ip.assigned_at ? formatDate(ip.assigned_at, i18n.language) : "—"}
+                        </td>
+                        <td className="nx-actions">
+                          {ip.username ? (
+                            <TableRowMenu
+                              items={[
+                                {
+                                  id: "release",
+                                  label: t("dedip.releaseBtn"),
+                                  danger: true,
+                                  disabled: busy,
+                                  onClick: () => release(ip.username),
+                                },
+                              ]}
+                            />
+                          ) : null}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
           </Card>

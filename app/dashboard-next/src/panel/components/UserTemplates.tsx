@@ -12,6 +12,7 @@ import {
   Button, Card, EmptyState, Field, Input, Modal, Select, SkeletonRows, useToast,
 } from "./ui";
 import { IcPlus, IcTrash, IcEdit } from "./icons";
+import { TableRowMenu } from "./TableRowMenu";
 
 export interface UserTemplateRow {
   id: number;
@@ -37,15 +38,15 @@ const PROTO_ORDER = ["vless", "vmess", "trojan", "shadowsocks", "wireguard", "am
 const NATIVE_PROTOCOLS = ["wireguard", "amneziawg", "hysteria2", "tuic", "anytls"] as const;
 
 const PROTO_VISUAL: Record<string, { icon: string; hue: string; label: string }> = {
-  vless: { icon: "⚡", hue: "#2ee0c4", label: "VLESS" },
-  vmess: { icon: "◆", hue: "#6366f1", label: "VMess" },
-  trojan: { icon: "🔒", hue: "#f59e0b", label: "Trojan" },
-  shadowsocks: { icon: "🛡", hue: "#38bdf8", label: "Shadowsocks" },
-  wireguard: { icon: "⬡", hue: "#a78bfa", label: "WireGuard" },
-  amneziawg: { icon: "🛡", hue: "#22d3ee", label: "AmneziaWG" },
-  hysteria2: { icon: "🚀", hue: "#f472b6", label: "Hysteria2" },
-  tuic: { icon: "◉", hue: "#34d399", label: "TUIC" },
-  anytls: { icon: "🛡", hue: "#a78bfa", label: "AnyTLS" },
+  vless: { icon: "VL", hue: "#2ee0c4", label: "VLESS" },
+  vmess: { icon: "VM", hue: "#818cf8", label: "VMess" },
+  trojan: { icon: "TR", hue: "#f59e0b", label: "Trojan" },
+  shadowsocks: { icon: "SS", hue: "#38bdf8", label: "Shadowsocks" },
+  wireguard: { icon: "WG", hue: "#94a3b8", label: "WireGuard" },
+  amneziawg: { icon: "AW", hue: "#22d3ee", label: "AmneziaWG" },
+  hysteria2: { icon: "H2", hue: "#f472b6", label: "Hysteria2" },
+  tuic: { icon: "TU", hue: "#34d399", label: "TUIC" },
+  anytls: { icon: "AT", hue: "#a78bfa", label: "AnyTLS" },
 };
 
 export const UserTemplatesPanel: FC = () => {
@@ -68,42 +69,62 @@ export const UserTemplatesPanel: FC = () => {
 
   return (
     <>
-      <Card style={{ marginBottom: 16 }}>
-        <div className="nx-row" style={{ justifyContent: "space-between", marginBottom: 12 }}>
-          <div>
-            <b>{t("users.templates")}</b>
-            <div className="nx-faint" style={{ fontSize: 12, marginTop: 4 }}>{t("users.templatesDesc")}</div>
+      <Card className="nx-mb-20 nx-templates-card">
+        <div className="nx-templates-bar">
+          <div className="nx-templates-bar-text">
+            <span className="nx-templates-bar-title">{t("users.templates")}</span>
+            <span className="nx-templates-bar-desc">{t("users.templatesDesc")}</span>
           </div>
-          <Button variant="primary" size="sm" onClick={() => setShow(true)}><IcPlus className="nx-ico" /> {t("users.addTemplate")}</Button>
+          <Button variant="primary" size="sm" onClick={() => setShow(true)}>
+            <IcPlus className="nx-ico" /> {t("users.addTemplate")}
+          </Button>
         </div>
-        {loading && !data ? <SkeletonRows rows={2} cols={3} />
-          : error && !data ? <EmptyState title={t("common.error")} desc={error} />
-          : !data?.length ? <div className="nx-faint" style={{ fontSize: 13 }}>{t("common.noData")}</div>
-          : (
-            <div className="nx-table-wrap">
-              <table className="nx-table">
-                <thead><tr>
-                  <th>{t("common.name")}</th><th>{t("users.dataLimit")}</th><th>{t("users.expire")}</th>
-                  <th style={{ textAlign: "end" }}>{t("common.actions")}</th>
-                </tr></thead>
-                <tbody>
-                  {data.map((row) => (
-                    <tr key={row.id}>
-                      <td style={{ fontWeight: 600 }}>{row.name || `#${row.id}`}</td>
-                      <td>{row.data_limit ? formatBytes(row.data_limit) : t("users.unlimited")}</td>
-                      <td>{row.expire_duration ? `${Math.round(row.expire_duration / 86400)}d` : "—"}</td>
-                      <td>
-                        <div className="nx-row" style={{ justifyContent: "flex-end", gap: 6 }}>
-                          <Button size="sm" variant="ghost" onClick={() => setEdit(row)}><IcEdit className="nx-ico" /></Button>
-                          <Button size="sm" variant="danger" onClick={() => remove(row)}><IcTrash className="nx-ico" /></Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+        {loading && !data ? (
+          <div style={{ marginTop: 12 }}><SkeletonRows rows={2} cols={3} /></div>
+        ) : error && !data ? (
+          <EmptyState title={t("common.error")} desc={error} />
+        ) : data && data.length > 0 ? (
+          <div className="nx-table-wrap nx-templates-table">
+            <table className="nx-table">
+              <thead>
+                <tr>
+                  <th>{t("common.name")}</th>
+                  <th>{t("users.dataLimit")}</th>
+                  <th>{t("users.expire")}</th>
+                  <th className="nx-actions" />
+                </tr>
+              </thead>
+              <tbody>
+                {data.map((row) => (
+                  <tr key={row.id}>
+                    <td><span className="nx-proto-name-main">{row.name || `#${row.id}`}</span></td>
+                    <td className="nx-proto-meta">{row.data_limit ? formatBytes(row.data_limit) : t("users.unlimited")}</td>
+                    <td className="nx-proto-meta">{row.expire_duration ? `${Math.round(row.expire_duration / 86400)}d` : "—"}</td>
+                    <td className="nx-actions">
+                      <TableRowMenu
+                        items={[
+                          {
+                            id: "edit",
+                            label: t("common.edit"),
+                            icon: <IcEdit className="nx-ico" />,
+                            onClick: () => setEdit(row),
+                          },
+                          {
+                            id: "del",
+                            label: t("common.delete"),
+                            icon: <IcTrash className="nx-ico" />,
+                            danger: true,
+                            onClick: () => remove(row),
+                          },
+                        ]}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
       </Card>
       {show && <TemplateFormModal onClose={() => setShow(false)} onDone={() => { setShow(false); reload(); }} />}
       {edit && <TemplateFormModal row={edit} onClose={() => setEdit(null)} onDone={() => { setEdit(null); reload(); }} />}
@@ -233,9 +254,22 @@ const TemplateFormModal: FC<{ row?: UserTemplateRow; onClose: () => void; onDone
   });
 
   return (
-    <Modal open wide title={row ? t("users.editTemplate") : t("users.addTemplate")} onClose={onClose}
-      footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
-        <Button variant="primary" disabled={busy || !name.trim()} onClick={submit}>{row ? t("common.save") : t("common.create")}</Button></>}>
+    <Modal
+      open
+      formWide
+      className="nx-uc-template-shell"
+      title={row ? t("users.editTemplate") : t("users.addTemplate")}
+      subtitle={t("users.templatesDesc")}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
+          <Button variant="primary" disabled={busy || !name.trim()} onClick={submit}>
+            {row ? t("common.save") : t("common.create")}
+          </Button>
+        </>
+      }
+    >
       <div className="nx-stack nx-template-form">
         <Field label={t("common.name")}><Input value={name} onChange={(e: any) => setName(e.target.value)} autoFocus /></Field>
         <div className="nx-template-metrics">

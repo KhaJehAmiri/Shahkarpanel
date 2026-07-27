@@ -80,7 +80,7 @@ export const NodeWarpSection: FC = () => {
                   <th>{t("common.name")}</th>
                   <th>{t("common.status")}</th>
                   <th>{t("warp.newTag")}</th>
-                  <th>{t("common.actions")}</th>
+                  <th className="nx-actions">{t("common.actions")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -91,8 +91,10 @@ export const NodeWarpSection: FC = () => {
                   return (
                     <tr key={n.id}>
                       <td>
-                        <div>{n.name}</div>
-                        <div className="nx-faint" style={{ fontSize: 11 }}>{kindLabel(n)}</div>
+                        <div className="nx-proto-name">
+                          <span className="nx-proto-name-main">{n.name}</span>
+                          <span className="nx-proto-name-sub">{kindLabel(n)}</span>
+                        </div>
                       </td>
                       <td>
                         {enabled ? (
@@ -116,23 +118,21 @@ export const NodeWarpSection: FC = () => {
                           ))}
                         </Select>
                       </td>
-                      <td>
-                        <div className="nx-row" style={{ gap: 6 }}>
-                          {enabled ? (
-                            <Button size="sm" disabled={busy} onClick={() => void apply(n, false, tag)}>
-                              {t("common.disable")}
-                            </Button>
-                          ) : (
-                            <Button
-                              size="sm"
-                              variant="primary"
-                              disabled={busy || !Object.keys(warp.data?.accounts || {}).length}
-                              onClick={() => void apply(n, true, tag)}
-                            >
-                              {t("warp.enableOnNode")}
-                            </Button>
-                          )}
-                        </div>
+                      <td className="nx-actions">
+                        {enabled ? (
+                          <Button size="sm" disabled={busy} onClick={() => void apply(n, false, tag)}>
+                            {t("common.disable")}
+                          </Button>
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="primary"
+                            disabled={busy || !Object.keys(warp.data?.accounts || {}).length}
+                            onClick={() => void apply(n, true, tag)}
+                          >
+                            {t("warp.enableOnNode")}
+                          </Button>
+                        )}
                       </td>
                     </tr>
                   );

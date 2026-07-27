@@ -90,7 +90,7 @@ const RulesTab: FC = () => {
           : !data?.length ? <EmptyState title={t("common.noData")} />
           : (
             <div className="nx-table-wrap"><table className="nx-table">
-              <thead><tr><th>{t("common.name")}</th><th>{t("automation.trigger")}</th><th>{t("automation.action")}</th><th>{t("common.status")}</th><th style={{ textAlign: "end" }}>{t("common.actions")}</th></tr></thead>
+              <thead><tr><th>{t("common.name")}</th><th>{t("automation.trigger")}</th><th>{t("automation.action")}</th><th>{t("common.status")}</th><th className="nx-actions">{t("common.actions")}</th></tr></thead>
               <tbody>
                 {data.map((r) => (
                   <tr key={r.id}>
@@ -197,7 +197,7 @@ const WorkflowsTab: FC = () => {
           : !data?.length ? <EmptyState title={t("common.noData")} />
           : (
             <div className="nx-table-wrap"><table className="nx-table">
-              <thead><tr><th>{t("common.name")}</th><th>{t("automation.trigger")}</th><th>{t("automation.steps")}</th><th>{t("common.status")}</th><th style={{ textAlign: "end" }}>{t("common.actions")}</th></tr></thead>
+              <thead><tr><th>{t("common.name")}</th><th>{t("automation.trigger")}</th><th>{t("automation.steps")}</th><th>{t("common.status")}</th><th className="nx-actions">{t("common.actions")}</th></tr></thead>
               <tbody>
                 {data.map((w) => (
                   <tr key={w.id}>

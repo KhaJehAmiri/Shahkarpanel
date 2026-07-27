@@ -556,21 +556,26 @@ def bulk_create_users(
         pinned_ep = crud.get_subscription_endpoint(db, body.subscription_endpoint_id)
         if pinned_ep is None or not pinned_ep.enabled:
             raise ValueError("Selected subscription panel endpoint was not found or is disabled")
+        from app.subscription.panel_balance import assert_panel_allowed_for_admin
+
+        assert_panel_allowed_for_admin(db, pinned_ep, dbadmin)
 
     # Snapshot panel loads once, then assign locally (round-robin on least-loaded).
-    # Old path called pick_least_loaded_panel → N COUNT queries *per user*.
+    # Resellers always stick to their branding domain (never every peer agent).
     # Branding-only reseller installs have no pN panels — fall back to the
     # reseller's subscription domain so links use su1.… not the owner host.
     panel_counts: Dict[int, int] = {}
     balance_panels: List[Any] = []
     if pinned_ep is None:
-        balance_panels = list_balance_panels(db)
-        if not balance_panels:
-            brand = reseller_branding_panel(db, dbadmin) or default_panel_for_create(
-                db, dbadmin
-            )
-            if brand is not None:
-                balance_panels = [brand]
+        brand = reseller_branding_panel(db, dbadmin)
+        if brand is not None:
+            balance_panels = [brand]
+        else:
+            balance_panels = list_balance_panels(db)
+            if not balance_panels:
+                fallback = default_panel_for_create(db, dbadmin)
+                if fallback is not None:
+                    balance_panels = [fallback]
         panel_counts = {ep.id: panel_user_count(db, ep.id) for ep in balance_panels}
 
     def _next_panel():

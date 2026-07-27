@@ -83,34 +83,52 @@ def reseller_branding_panel(db: Session, admin) -> Optional[SubscriptionEndpoint
 def panels_for_create(db: Session, admin=None) -> list[dict]:
     """Panels shown in create/bulk-create pickers for this admin.
 
-    Owner installs use ``p1…p9``. Resellers on branding-only installs (no pN
-    panels) still need their domain endpoint listed — otherwise the UI says
-    «no panels / no inbound» and new users never bind to the reseller domain.
+    Owner: ``p1…p9`` only (never reseller-* branding domains).
+    Reseller: only their own branding endpoint when present — never every
+    peer reseller domain and never a mixed dump of all agents.
     """
-    rows = panel_counts(db)
     brand = reseller_branding_panel(db, admin)
-    if brand is None:
-        return rows
-    if any(int(r["id"]) == int(brand.id) for r in rows):
-        return rows
-    return [
-        {
-            "id": brand.id,
-            "slug": brand.slug,
-            "host": brand.host,
-            "legacy_panel_id": brand.legacy_panel_id,
-            "user_count": panel_user_count(db, brand.id),
-        },
-        *rows,
-    ]
+    if brand is not None:
+        return [
+            {
+                "id": brand.id,
+                "slug": brand.slug,
+                "host": brand.host,
+                "legacy_panel_id": brand.legacy_panel_id,
+                "user_count": panel_user_count(db, brand.id),
+            }
+        ]
+    return panel_counts(db)
 
 
 def default_panel_for_create(db: Session, admin=None) -> Optional[SubscriptionEndpoint]:
-    """Least-loaded pN panel, else the reseller branding endpoint."""
-    ep = pick_least_loaded_panel(db)
-    if ep is not None:
-        return ep
-    return reseller_branding_panel(db, admin)
+    """Reseller branding domain first; else least-loaded pN panel."""
+    brand = reseller_branding_panel(db, admin)
+    if brand is not None:
+        return brand
+    return pick_least_loaded_panel(db)
+
+
+def assert_panel_allowed_for_admin(
+    db: Session,
+    endpoint: SubscriptionEndpoint,
+    admin=None,
+) -> None:
+    """Reject pinning a panel the current admin must not use."""
+    if admin is None or getattr(admin, "is_sudo", False):
+        slug = (endpoint.slug or "").strip()
+        if _PANEL_SLUG_RE.match(slug):
+            return
+        # Owner may only pin balancable pN panels (not reseller-* dumps).
+        raise ValueError("Selected subscription panel is not a load-balance panel")
+    brand = reseller_branding_panel(db, admin)
+    if brand is None:
+        # Branding-less reseller may pin a pN panel when those exist.
+        if _PANEL_SLUG_RE.match((endpoint.slug or "").strip()):
+            return
+        raise ValueError("Selected subscription panel is not available for this account")
+    if int(endpoint.id) != int(brand.id):
+        raise ValueError("Selected subscription panel is not available for this account")
 
 
 def endpoint_for_panel_slug(db: Session, slug: str) -> Optional[SubscriptionEndpoint]:
@@ -172,6 +190,7 @@ def resolve_panel_for_create(
         ep = crud.get_subscription_endpoint(db, endpoint_id)
         if ep is None or not ep.enabled:
             raise ValueError("Selected subscription panel endpoint was not found or is disabled")
+        assert_panel_allowed_for_admin(db, ep, admin)
         if _PANEL_SLUG_RE.match((ep.slug or "").strip()):
             return ep, ensure_panel_username(username, ep.slug)
         return ep, username

@@ -97,7 +97,7 @@ const KpiTile: FC<{
   return to ? <Link to={to} className={cls}>{body}</Link> : <div className={cls}>{body}</div>;
 };
 
-const PACKAGE_BUY_HREF = "/business?tab=billing&billingTab=packages";
+const PACKAGE_BUY_HREF = "/billing?billingTab=packages";
 
 const ResellerCommerceStrip: FC<{ ws: ResellerWorkspace }> = ({ ws }) => {
   const { t } = useTranslation();
@@ -150,7 +150,7 @@ const ResellerCommerceStrip: FC<{ ws: ResellerWorkspace }> = ({ ws }) => {
         </p>
         <div className="nx-commerce-foot">
           <span>{t("overview.fullBalance")}: {balance.toLocaleString()}{currency ? ` ${currency}` : ""}</span>
-          <Link to="/business?tab=billing" className="nx-commerce-link">{t("overview.openBilling")} →</Link>
+          <Link to="/billing" className="nx-commerce-link">{t("overview.openBilling")} →</Link>
         </div>
       </article>
 
@@ -479,7 +479,7 @@ export const Overview: FC = () => {
           <div className="nx-stack" style={{ gap: 10 }}>
             <span>{t("overview.packageExhaustedHint")}</span>
             <div>
-              <Link to="/business?tab=billing&billingTab=packages">
+              <Link to="/billing?billingTab=packages">
                 <Button variant="primary" size="sm">{t("overview.buyPackageCta")}</Button>
               </Link>
             </div>

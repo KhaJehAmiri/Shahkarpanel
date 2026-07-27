@@ -556,7 +556,7 @@ export const Users: FC = () => {
                   <th>{t("common.username")}</th><th>{t("common.status")}</th>
                   <th className="nx-col-inbound">{t("users.filters.serverInbound")}</th>
                   <th className="nx-col-proto" style={{ width: 156 }}>{t("common.protocols")}</th>
-                  <th>{t("users.used")}</th><th className="nx-col-expire">{t("users.expire")}</th><th style={{ textAlign: "end" }}>{t("common.actions")}</th>
+                  <th>{t("users.used")}</th><th className="nx-col-expire">{t("users.expire")}</th><th className="nx-actions">{t("common.actions")}</th>
                 </tr></thead>
                 <tbody>
                   {data.users.map((u) => {
@@ -1277,14 +1277,35 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
   return (
     <Drawer
       open
-      wide={useWizard || mode === "edit"}
-      hideHead={mode === "edit"}
-      overlayClassName={useWizard ? "centered" : ""}
-      drawerClassName={useWizard ? "wizard-mode" : `nx-user-form-drawer${mode === "edit" ? " nx-user-edit" : ""}`}
+      wide={mode === "edit" || mode === "create"}
+      hideHead
+      overlayClassName={mode === "create" ? "centered nx-uc-overlay" : undefined}
+      drawerClassName={
+        mode === "create"
+          ? `nx-uc-shell${useWizard ? " is-wizard" : " is-tabs"}`
+          : "nx-user-form-drawer nx-user-edit"
+      }
       title={mode === "create" ? t("common.create") : t("common.edit")}
       onClose={onClose}
     >
-      <div className={`nx-stack nx-user-form ${useWizard ? "compact" : ""} ${tabbedForm ? "nx-user-form-tabbed" : ""} ${mode === "edit" ? "is-edit" : ""}`}>
+      <div className={`nx-stack nx-user-form ${useWizard ? "compact" : ""} ${tabbedForm ? "nx-user-form-tabbed" : ""} ${mode === "edit" ? "is-edit" : ""} ${mode === "create" ? "is-create" : ""}`}>
+        {mode === "create" && (
+          <header className="nx-uc-top">
+            <div className="nx-uc-top-main">
+              <div className="nx-uc-eyebrow">{t("users.createEyebrow", { defaultValue: "New user" })}</div>
+              <h2 className="nx-uc-title">{t("users.createTitle", { defaultValue: "Create user" })}</h2>
+              <p className="nx-uc-lede">
+                {useWizard
+                  ? t("users.createWizardLede", { defaultValue: "Three short steps — identity, protocols, then limits." })
+                  : t("users.createExpertLede", { defaultValue: "Configure protocols, plan, and advanced options." })}
+              </p>
+            </div>
+            <button type="button" className="nx-btn icon ghost nx-uc-close" onClick={onClose} aria-label={t("common.close")}>
+              <IcClose />
+            </button>
+          </header>
+        )}
+
         {mode === "edit" && (
           <header className="nx-ue-top">
             <div className="nx-ue-top-main">
@@ -1324,7 +1345,7 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
         )}
 
         {tabbedForm && !loadingEdit && (
-          <div className={`nx-user-form-tabstrip${mode === "edit" ? " nx-ue-tabs" : ""}`} role="tablist">
+          <div className={`nx-user-form-tabstrip${mode === "edit" ? " nx-ue-tabs" : " nx-uc-tabs"}`} role="tablist">
             {(mode === "edit"
               ? (["plan", "protocols", "advanced"] as UserFormTab[])
               : (["protocols", "plan", "advanced"] as UserFormTab[])
@@ -1343,36 +1364,47 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
           </div>
         )}
         {useWizard && (
-          <div className="nx-wizard-steps">
+          <nav className="nx-uc-steps" aria-label={t("users.createTitle", { defaultValue: "Create user" })}>
             {WIZARD_STEPS.map((key, idx) => {
               const n = idx + 1;
-              const cls = n === wizardStep ? "active" : n < wizardStep ? "done" : "";
+              const state = n === wizardStep ? "active" : n < wizardStep ? "done" : "";
               return (
                 <Fragment key={key}>
-                  {idx > 0 && <div className={`nx-wizard-connector ${n <= wizardStep ? "done" : ""}`} />}
-                  <div className={`nx-wizard-step ${cls}`}>
-                    <span className="nx-wizard-step-num">{n < wizardStep ? "✓" : n}</span>
-                    <span>{t(`users.${key}`)}</span>
-                  </div>
+                  {idx > 0 && <div className={`nx-uc-step-line ${n <= wizardStep ? "done" : ""}`} aria-hidden />}
+                  <button
+                    type="button"
+                    className={`nx-uc-step ${state}`}
+                    disabled={n > wizardStep}
+                    onClick={() => n < wizardStep && setWizardStep(n)}
+                  >
+                    <span className="nx-uc-step-num">{n < wizardStep ? "✓" : n}</span>
+                    <span className="nx-uc-step-label">{t(`users.${key}`)}</span>
+                  </button>
                 </Fragment>
               );
             })}
-          </div>
+          </nav>
         )}
 
-        <div className={useWizard ? "nx-user-form-main" : "nx-uf-scroll"}>
+        <div className={useWizard || mode === "create" ? "nx-uc-scroll" : "nx-uf-scroll"}>
         {mode === "create" && templateId ? (
-          <Callout tone="info">{t("users.templateHint")}</Callout>
+          <p className="nx-uc-hint">{t("users.templateHint")}</p>
         ) : null}
         {showIdentity && mode === "create" && (
-          <>
+          <section className="nx-uc-block">
+            <div className="nx-uc-block-head">
+              <h3 className="nx-uc-block-title">{t("users.wizardStep1")}</h3>
+              {!useWizard && templates.data && templates.data.length > 0 ? (
+                <span className="nx-uc-block-meta">{t("users.template")}</span>
+              ) : null}
+            </div>
             {templateId ? (
               <Field label={t("common.username")} hint={t("users.usernameHint")}>
                 <Input value={username} onChange={(e: any) => setUsername(e.target.value)} autoFocus />
               </Field>
             ) : (
               <Field label={t("common.username")} hint={t("users.usernameAutoHint")}>
-                <div className="nx-input-group">
+                <div className="nx-input-group nx-uc-username">
                   <Input
                     value={username}
                     onChange={(e: any) => setUsername(e.target.value)}
@@ -1402,28 +1434,29 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
                 </select>
               </Field>
             )}
-          </>
+          </section>
         )}
 
         {showProtocols && (
-        <div className="nx-user-form-pane">
-          {(useWizard || tabbedForm) && (
-            <div className="nx-uf-pane-head">
-              <p className="nx-user-form-proto-lead">
+        <div className="nx-user-form-pane nx-uc-pane">
+          <div className="nx-uc-block-head">
+            <div>
+              <h3 className="nx-uc-block-title">{t("users.formTabProtocols")}</h3>
+              <p className="nx-uc-block-desc">
                 {useWizard ? t("users.wizardPickProtoHint") : t("users.formTabProtocolsHint")}
               </p>
-              <div className="nx-row" style={{ gap: 8, flexWrap: "wrap" }}>
-                {availableProtos.length > 0 && (
-                  <Button size="sm" variant="ghost" type="button" onClick={toggleAllProtos}>
-                    {allProtosSelected ? t("users.deselectAllProtos") : t("users.selectAllProtos")}
-                  </Button>
-                )}
-                {enabledProtos.length > 0 && (
-                  <Pill tone="accent">{t("users.wizardSelectedCount", { n: enabledProtos.length })}</Pill>
-                )}
-              </div>
             </div>
-          )}
+            <div className="nx-uc-block-actions">
+              {availableProtos.length > 0 && (
+                <button type="button" className="nx-uc-text-btn" onClick={toggleAllProtos}>
+                  {allProtosSelected ? t("users.deselectAllProtos") : t("users.selectAllProtos")}
+                </button>
+              )}
+              {enabledProtos.length > 0 && (
+                <span className="nx-uc-count">{enabledProtos.length}</span>
+              )}
+            </div>
+          </div>
           {protoWarnings.map((line) => (
             <div key={line} className="nx-user-form-warn-line">{line}</div>
           ))}
@@ -1441,6 +1474,9 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
                   {availableProtos.map((p) => {
                     const vis = PROTO_VISUAL[p] || { icon: "·", hue: "var(--nx-accent)" };
                     const selected = !!protos[p]?.enabled;
+                    const meta = NATIVE_PROTOCOLS.includes(p as typeof NATIVE_PROTOCOLS[number])
+                      ? t("users.wgNativePeer")
+                      : t("users.inboundCount", { n: inbounds.data?.[p]?.length || 0 });
                     return (
                       <button
                         key={p}
@@ -1448,15 +1484,14 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
                         className={`nx-proto-pick-card ${selected ? "selected" : ""}`}
                         style={{ "--proto-hue": vis.hue } as React.CSSProperties}
                         onClick={() => toggleWizardProto(p)}
+                        aria-pressed={selected}
                       >
-                        <span className="nx-proto-pick-check">✓</span>
                         <span className="nx-proto-icon">{vis.icon}</span>
-                        <b>{PROTO_LABEL[p] || p}</b>
-                        <small>
-                          {NATIVE_PROTOCOLS.includes(p as typeof NATIVE_PROTOCOLS[number])
-                            ? t("users.wgNativePeer")
-                            : t("users.inboundCount", { n: inbounds.data?.[p]?.length || 0 })}
-                        </small>
+                        <span className="nx-proto-pick-copy">
+                          <b>{PROTO_LABEL[p] || p}</b>
+                          <small>{meta}</small>
+                        </span>
+                        <span className="nx-proto-pick-check" aria-hidden>{selected ? "✓" : ""}</span>
                       </button>
                     );
                   })}
@@ -1473,11 +1508,17 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
         )}
 
         {showPlan && (
-        <div className={`nx-user-form-pane${mode === "edit" ? " nx-ue-pane" : ""}`}>
+        <div className={`nx-user-form-pane nx-uc-pane${mode === "edit" ? " nx-ue-pane" : ""}`}>
         {useWizard && wizardStep === 3 && (
-          <Callout tone="info" title={t("users.wizardReview")}>
-            <b>{username.trim() || t("users.usernameWillAuto")}</b> · {enabledProtos.map(([p]) => PROTO_LABEL[p] || p).join(", ")}
-          </Callout>
+          <div className="nx-uc-review">
+            <span className="nx-uc-review-label">{t("users.wizardReview")}</span>
+            <span className="nx-uc-review-value" dir="ltr">
+              <b>{username.trim() || t("users.usernameWillAuto")}</b>
+              {enabledProtos.length > 0 && (
+                <> · {enabledProtos.map(([p]) => PROTO_LABEL[p] || p).join(", ")}</>
+              )}
+            </span>
+          </div>
         )}
 
           {mode === "edit" ? (
@@ -1576,54 +1617,72 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
               </div>
             </>
           ) : (
-            <>
-              <div className="nx-user-form-grid">
-                <Field label={t("users.dataLimit")} hint={t("users.dataLimitHint")}>
-                  <div className="nx-row" style={{ gap: 8 }}>
-                    <Input
-                      type="number"
-                      min="0"
-                      step={dataLimitUnit === "MB" ? "1" : "0.001"}
-                      value={dataLimitValue}
-                      placeholder={t("users.unlimited")}
-                      onChange={(e: any) => setDataLimitValue(e.target.value)}
-                      style={{ flex: 1 }}
-                      dir="ltr"
-                    />
-                    <Select
-                      value={dataLimitUnit}
-                      onChange={(e: any) => setDataLimitUnit(e.target.value as DataLimitUnit)}
-                      style={{ width: 88 }}
-                    >
-                      <option value="MB">MB</option>
-                      <option value="GB">GB</option>
-                    </Select>
-                  </div>
-                </Field>
-                <Field label={t("common.status")}>
-                  <Select value={status} onChange={(e: any) => setStatus(e.target.value)}>
-                    <option value="active">{t("users.status.active")}</option>
-                    <option value="on_hold">{t("users.status.on_hold")}</option>
+            <div className="nx-uc-plan">
+              <div className="nx-ue-field">
+                <div className="nx-ue-label">{t("common.status")}</div>
+                <div className="nx-ue-seg" role="group">
+                  {(["active", "on_hold"] as const).map((s) => (
+                    <button key={s} type="button" className={status === s ? "on" : ""} onClick={() => setStatus(s)}>
+                      {t(`users.status.${s}`)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="nx-ue-field">
+                <div className="nx-ue-label">{t("users.dataLimit")}</div>
+                <div className="nx-ue-inline">
+                  <Input
+                    type="number"
+                    min="0"
+                    step={dataLimitUnit === "MB" ? "1" : "0.001"}
+                    value={dataLimitValue}
+                    placeholder={t("users.unlimited")}
+                    onChange={(e: any) => setDataLimitValue(e.target.value)}
+                    dir="ltr"
+                  />
+                  <Select
+                    value={dataLimitUnit}
+                    onChange={(e: any) => setDataLimitUnit(e.target.value as DataLimitUnit)}
+                  >
+                    <option value="MB">MB</option>
+                    <option value="GB">GB</option>
                   </Select>
-                </Field>
-                <Field label={t("users.expire")}>
-                  <div className="nx-row" style={{ gap: 8, flexWrap: "wrap" }}>
-                    <Input type="date" value={noExpire ? "" : expireDate} disabled={noExpire} onChange={(e: any) => setExpireDate(e.target.value)} style={{ flex: 1, minWidth: 140, maxWidth: 200 }} />
-                    <label className="nx-row" style={{ gap: 6, fontSize: 12, whiteSpace: "nowrap" }}>
-                      <Checkbox checked={noExpire} onChange={() => setNoExpire((u) => !u)} /> {t("users.never")}
-                    </label>
-                  </div>
-                  {!noExpire && (
-                    <div className="nx-uf-presets">
+                </div>
+                <p className="nx-ue-help">{t("users.dataLimitHint")}</p>
+              </div>
+
+              <div className="nx-ue-field">
+                <div className="nx-ue-label">{t("users.expire")}</div>
+                <label className="nx-ue-check">
+                  <Checkbox checked={noExpire} onChange={() => setNoExpire((u) => !u)} />
+                  <span>{t("users.never")}</span>
+                </label>
+                {!noExpire && (
+                  <>
+                    <Input
+                      type="date"
+                      className="nx-input-date"
+                      value={expireDate}
+                      onChange={(e: any) => setExpireDate(e.target.value)}
+                      dir="ltr"
+                      inputMode="none"
+                    />
+                    <div className="nx-ue-chips">
                       {[30, 60, 90].map((d) => (
-                        <button key={d} type="button" className="nx-uf-preset" onClick={() => preset(d)}>{d}d</button>
+                        <button key={d} type="button" className="nx-ue-chip" onClick={() => preset(d)}>+{d}d</button>
                       ))}
                     </div>
-                  )}
-                </Field>
+                  </>
+                )}
+              </div>
+
+              <div className="nx-ue-grid">
                 <Field label={t("users.resetStrategy")}>
                   <Select value={reset} onChange={(e: any) => setReset(e.target.value)}>
-                    {["no_reset", "day", "week", "month", "year"].map((r) => <option key={r} value={r}>{t(`users.resetStrategies.${r}`, r)}</option>)}
+                    {["no_reset", "day", "week", "month", "year"].map((r) => (
+                      <option key={r} value={r}>{t(`users.resetStrategies.${r}`, r)}</option>
+                    ))}
                   </Select>
                 </Field>
                 {(!useWizard || wizardStep === 3) && (
@@ -1636,26 +1695,30 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
                   </Field>
                 )}
               </div>
+
               {(!useWizard || wizardStep === 3) && (
-                <div className="nx-user-form-grid" style={{ marginTop: 8 }}>
-                  <Field label={t("users.speedUp")}>
-                    <Input type="number" min={0} placeholder="Mbps" value={speedUp} onChange={(e: any) => setSpeedUp(e.target.value)} dir="ltr" />
-                  </Field>
-                  <Field label={t("users.speedDown")}>
-                    <Input type="number" min={0} placeholder="Mbps" value={speedDown} onChange={(e: any) => setSpeedDown(e.target.value)} dir="ltr" />
-                  </Field>
-                  <Field label={t("users.deviceLimit")} hint={t("users.deviceLimitHint")}>
-                    <Input type="number" min={0} value={deviceLimit} onChange={(e: any) => setDeviceLimit(e.target.value)} placeholder={t("common.none")} dir="ltr" />
-                  </Field>
-                </div>
+                <>
+                  <div className="nx-ue-divider" />
+                  <div className="nx-ue-grid">
+                    <Field label={t("users.speedUp")}>
+                      <Input type="number" min={0} placeholder="Mbps" value={speedUp} onChange={(e: any) => setSpeedUp(e.target.value)} dir="ltr" />
+                    </Field>
+                    <Field label={t("users.speedDown")}>
+                      <Input type="number" min={0} placeholder="Mbps" value={speedDown} onChange={(e: any) => setSpeedDown(e.target.value)} dir="ltr" />
+                    </Field>
+                    <Field label={t("users.deviceLimit")} hint={t("users.deviceLimitHint")}>
+                      <Input type="number" min={0} value={deviceLimit} onChange={(e: any) => setDeviceLimit(e.target.value)} placeholder={t("common.none")} dir="ltr" />
+                    </Field>
+                  </div>
+                </>
               )}
-            </>
+            </div>
           )}
         </div>
         )}
 
         {showAdvanced && (
-        <div className={`nx-user-form-pane${mode === "edit" ? " nx-ue-pane" : ""}`}>
+        <div className={`nx-user-form-pane nx-uc-pane${mode === "edit" ? " nx-ue-pane" : ""}`}>
           {mode === "edit" && canWrite && (
             <div className="nx-ue-secure">
               <div className="nx-ue-label">{t("users.subSecuritySection")}</div>
@@ -1692,7 +1755,7 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
               </div>
             </div>
           )}
-          <div className={mode === "edit" ? "nx-ue-grid" : "nx-user-form-grid"}>
+          <div className={mode === "edit" ? "nx-ue-grid" : "nx-ue-grid"}>
             <Field label={t("users.sessionLimit", { defaultValue: "Session limit (minutes)" })}>
               <Input type="number" min="0" value={sessionLimitMinutes} onChange={(e: any) => setSessionLimitMinutes(e.target.value)} placeholder={t("common.none")} />
             </Field>
@@ -1745,7 +1808,7 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
 
         </div>
 
-        <div className="nx-user-form-foot">
+        <div className={`nx-user-form-foot${mode === "create" ? " nx-uc-foot" : ""}`}>
           <div>
             {useWizard && wizardStep > 1 && (
               <Button variant="ghost" onClick={() => setWizardStep((s) => s - 1)}>{t("users.prev")}</Button>
@@ -1763,7 +1826,7 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
           </div>
         </div>
         {useWizard && (
-          <div className="nx-faint nx-user-form-wizard-hint">{t("users.wizardExpertLink")}</div>
+          <div className="nx-uc-expert-hint">{t("users.wizardExpertLink")}</div>
         )}
       </div>
     </Drawer>

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.22.5 — 2026-07-28
+
+- Densify Protocols & Servers tables; compact ⋯ row menus.
+- Redesign create / bulk-create user modals; empty or 0 traffic = unlimited.
+- Fix panel picker: admins see pN only; resellers bind to their own domain.
+- Clean up User templates bar (no split empty state).
+
 ## 0.22.4 — 2026-07-23
 
 - In-panel node agent updates: System → Updates and per-node “Update agent” refresh the agent image over stored SSH (force re-download from GitHub/mirror, SSH upload fallback).

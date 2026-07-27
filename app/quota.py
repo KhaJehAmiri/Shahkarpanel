@@ -242,26 +242,20 @@ def flush_live_serving(*, force_restart: bool = False) -> None:
 def disconnect_users_everywhere(
     dbusers: Sequence[User],
     *,
-    allow_restart: bool = True,
+    allow_restart: bool = False,
 ) -> bool:
     """Drop a *set* of users from every live path **without disconnecting anyone else**.
 
     Removes the users through the Xray handler gRPC API (add/remove-user) on the
     main core and every connected node — the same live-mutation path 3x-ui uses
-    — so unrelated users keep their sessions. A full-core restart is issued only
-    as a fallback when the main core's API is unreachable (the sole way to
-    converge a dead core), and even then just **once** for the whole batch
-    (and never more often than ``_DISCONNECT_RESTART_COOLDOWN_SEC``).
+    — so unrelated users keep their sessions.
 
-    Pass ``allow_restart=False`` for safety-net re-asserts on users who are
-    already absent from generated config (e.g. ``limited``) — a restart is not
-    required and would thrash the core when the API is briefly down.
+    Full-core restart is **off by default**. Quota exhaustion and leak cleanup
+    must never restart Xray (that flaps every active account). Pass
+    ``allow_restart=True`` only for rare admin/migration paths that explicitly
+    accept a fleet-wide reconnect.
 
-    This blocks the users' *new* connections instantly. A stubborn, already
-    established session that keeps transferring after removal (e.g. a long-lived
-    SS-2022 or bulk TCP stream that bypasses the quota) is caught and force-cut
-    by the traffic-verified ``enforce_disconnect_for_non_billable`` escalation —
-    something 3x-ui never does. Returns True when at least one user was handled.
+    Returns True when at least one user was handled.
     """
     global _last_disconnect_restart_at
 
@@ -275,7 +269,7 @@ def disconnect_users_everywhere(
 
         hot_ok = hot_disconnect_users(users)
     except Exception:
-        logger.exception("Main-core hot disconnect failed; falling back to restart")
+        logger.exception("Main-core hot disconnect failed")
 
     if hot_ok:
         try:
@@ -299,16 +293,15 @@ def disconnect_users_everywhere(
             )
         else:
             _last_disconnect_restart_at = now
-            # Core down / API unreachable — a rebuild + restart is the only way to
-            # converge. Issued once for the whole batch (never once per user).
             flush_live_serving(force_restart=True)
     else:
         logger.debug(
-            "Hot disconnect unavailable; restart fallback disabled for this batch"
+            "Hot disconnect unavailable; restart fallback disabled (per-user disable only)"
         )
 
     try:
         from app.db import GetDB
+        from app.wireguard.peer_cache import peer_cache
         from app.wireguard.wg_manager import toggle_peer
 
         with GetDB() as db:
@@ -317,13 +310,42 @@ def disconnect_users_everywhere(
                     toggle_peer(db, dbuser.id, active=False)
                 except Exception:
                     logger.debug("WG peer toggle skipped for user %s", dbuser.id, exc_info=True)
+            # Dirty only the Finalmask shards those users live on so the
+            # hot-replace drops them without rewriting unrelated slots.
+            try:
+                from app.db.models import Proxy
+                from app.models.proxy import ProxyTypes
+                from app.wireguard.finalmask_reload import mark_finalmask_slots_dirty
+                from app.wireguard.finalmask_shard import user_finalmask_slot
+
+                slots = set()
+                uids = [int(u.id) for u in users]
+                for proxy in (
+                    db.query(Proxy)
+                    .filter(Proxy.user_id.in_(uids), Proxy.type == ProxyTypes.WireGuard)
+                    .all()
+                ):
+                    slot = user_finalmask_slot(dict(proxy.settings or {}))
+                    if slot is not None:
+                        slots.add(int(slot))
+                if slots:
+                    mark_finalmask_slots_dirty(slots)
+            except Exception:
+                logger.debug("Finalmask dirty-slot mark skipped", exc_info=True)
+        # Drop stale active=True peers from cache before Finalmask rebuild —
+        # otherwise urgent hot-replace can bake the disabled user back in.
+        peer_cache.invalidate()
     except Exception:
         logger.debug("WG peer toggle during disconnect skipped", exc_info=True)
 
     try:
+        from app.wireguard.finalmask_reload import flush_finalmask_xray_reload
         from app.wireguard.operations import sync_user_change as wg_sync
 
-        wg_sync()
+        # Urgent: skip sequential stats flush + apply nodes in parallel so WG
+        # cut latency is close to VLESS hot-remove.
+        flush_finalmask_xray_reload(urgent=True)
+        wg_sync(immediate=False)
     except Exception:
         logger.debug("WireGuard sync during disconnect skipped", exc_info=True)
 
@@ -457,15 +479,11 @@ def enforce_disconnect_for_non_billable(db, uids: Iterable[int]) -> None:
     """Verified enforcement for non-billable users that still emit traffic.
 
     Called every usage tick with the uids that reported traffic. For any user
-    that is no longer billable (limited/expired/disabled) we first re-assert the
-    live handler-API remove (cheap, no restart) — this alone stops all *new*
-    connections. Only when a user keeps leaking on an already-established
-    session for ``LIMITED_LEAK_RESTART_STREAK`` *consecutive* ticks do we
-    escalate to a single batched core restart to hard-cut the stubborn session.
-    A user who stops leaking (session closed) has their streak cleared, so a
-    naturally-closing connection never triggers a restart. This is the
-    "better than 3x-ui" guarantee: 3x-ui removes the user and then lets any
-    established session keep transferring indefinitely.
+    that is no longer billable (limited/expired/disabled) we re-assert the
+    live handler-API remove (cheap, no restart) so *new* connections stay
+    blocked. Stubborn established sessions are re-asserted per-user via
+    ``disconnect_users_everywhere`` (WG peer off + Finalmask dirty) — never
+    a full-core restart, which would flap every active account.
 
     ``db`` may be an open session (tests) or ``None`` (scheduler). The query is
     always finished and copied into plain objects *before* any network I/O so a
@@ -521,38 +539,30 @@ def enforce_disconnect_for_non_billable(db, uids: Iterable[int]) -> None:
     except Exception:
         logger.debug("Hot re-assert during non-billable enforcement skipped", exc_info=True)
 
-    # Step 2: escalate only genuinely stubborn sessions (bounded, cooldown-gated).
-    now = time.monotonic()
-    to_hard_cut: List = []
+    # Step 2: stubborn leakers used to escalate to a full-core restart, which
+    # disconnected every active user. That path is retired — keep re-asserting
+    # hot remove + WG peer disable only (see disconnect_users_everywhere).
     for dbuser in rows:
         streak = _leak_streak.get(dbuser.id, 0) + 1
         _leak_streak[dbuser.id] = streak
-        if LIMITED_LEAK_RESTART_STREAK <= 0 or streak < LIMITED_LEAK_RESTART_STREAK:
+        if LIMITED_LEAK_RESTART_STREAK <= 0:
             continue
-        if now < _force_disconnect_after.get(dbuser.id, 0):
+        if streak < LIMITED_LEAK_RESTART_STREAK:
             continue
-        _force_disconnect_after[dbuser.id] = now + _FORCE_DISCONNECT_COOLDOWN_SEC
+        if time.monotonic() < _force_disconnect_after.get(dbuser.id, 0):
+            continue
+        _force_disconnect_after[dbuser.id] = time.monotonic() + _FORCE_DISCONNECT_COOLDOWN_SEC
         _leak_streak.pop(dbuser.id, None)
         logger.warning(
-            'User "%s" (%s) kept transferring on an established session after hot '
-            "remove — escalating to a batched core restart to hard-cut it",
+            'User "%s" (%s) kept transferring after hot remove — re-asserting '
+            "per-user disable (no core restart)",
             dbuser.username,
             dbuser.status,
         )
-        to_hard_cut.append(dbuser)
-
-    if to_hard_cut:
-        global _last_disconnect_restart_at
-        from app import xray
-
-        now2 = time.monotonic()
-        if getattr(xray.core, "restarting", False):
-            logger.warning("Skipping leak-escalation restart — core already restarting")
-        elif now2 - _last_disconnect_restart_at < _DISCONNECT_RESTART_COOLDOWN_SEC:
-            logger.warning("Skipping leak-escalation restart — cooldown active")
-        else:
-            _last_disconnect_restart_at = now2
-            flush_live_serving(force_restart=True)
+        try:
+            disconnect_users_everywhere([dbuser], allow_restart=False)
+        except Exception:
+            logger.debug("stubborn-leak per-user disable skipped", exc_info=True)
 
 
 def clamp_usage_entries(

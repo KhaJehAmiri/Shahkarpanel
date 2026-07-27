@@ -357,7 +357,9 @@ def hot_disconnect_users(dbusers) -> bool:
 def sync_main_core_user(dbuser) -> None:
     """Push one user's proxy settings to the main core without restarting."""
     if dbuser.status not in (UserStatus.active, UserStatus.on_hold):
-        sync_core_users_now(force_restart=True)
+        # Never force-restart the whole core for one limited/disabled/expired
+        # user — that disconnects every active session. Hot-remove only.
+        hot_disconnect_users([dbuser])
         return
     if not xray.core.started or xray.core.restarting:
         return

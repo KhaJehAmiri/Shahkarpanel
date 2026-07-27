@@ -737,7 +737,14 @@ def modify_user(
 
     status_changed = user.status != old_status
     if user.status in [UserStatus.active, UserStatus.on_hold]:
-        bg.add_task(xray.operations.sync_core_users_async, full=speed_changed)
+        # Disable removes the user from main core + nodes via hot API. Re-enable
+        # must push Xray accounts (VLESS/VMess/…) back to both — WireGuard/
+        # Finalmask alone is not enough. ``update_user`` hot-adds main core and
+        # nodes; otherwise fall back to debounced core sync (e.g. speed change).
+        if status_changed:
+            bg.add_task(xray.operations.update_user, dbuser)
+        else:
+            bg.add_task(xray.operations.sync_core_users_async, full=speed_changed)
         # Kernel WG + Finalmask must converge on enable/status flips, not only
         # when speed limits change (otherwise Finalmask keeps disabled peers).
         if speed_changed or status_changed:

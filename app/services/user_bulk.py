@@ -1375,6 +1375,12 @@ def _sync_after_membership_change() -> None:
     except Exception:
         logger.exception("bulk: core resync failed")
     try:
+        # Main-core hot sync does not re-add users on remote node Xray inbounds
+        # after a bulk disable→enable. Push the connected-node configs too.
+        xray_mod.operations.push_connected_nodes_config_sync()
+    except Exception:
+        logger.exception("bulk: node Xray resync failed")
+    try:
         xray_mod.operations._sync_wireguard()
     except Exception:
         logger.exception("bulk: WireGuard resync failed")

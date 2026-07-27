@@ -437,7 +437,10 @@ BILLING_BLIND_DISCONNECT_CYCLES = config("BILLING_BLIND_DISCONNECT_CYCLES", cast
 # user has kept leaking for this many *consecutive* ticks, proving a genuinely abusive
 # long-lived session rather than a connection that is merely closing.
 # 0 disables the restart escalation entirely (hot remove only; accept a bounded leak).
-LIMITED_LEAK_RESTART_STREAK = config("LIMITED_LEAK_RESTART_STREAK", cast=int, default=3)
+# Consecutive usage ticks a non-billable user may keep leaking before we
+# re-assert per-user hot disable. 0 = never escalate (and never restart the
+# core for leaks — default, so quota cuts cannot flap every active account).
+LIMITED_LEAK_RESTART_STREAK = config("LIMITED_LEAK_RESTART_STREAK", cast=int, default=0)
 JOB_BILL_USAGE_INTERVAL = config("JOB_BILL_USAGE_INTERVAL", cast=int, default=30)
 
 # Usage-based billing (phase 3): minor units charged per GB of user traffic.

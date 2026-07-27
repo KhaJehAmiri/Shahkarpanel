@@ -225,14 +225,19 @@ def schedule_finalmask_xray_reload(
         logger.info("Scheduled Finalmask reload in %.1fs (bulk=%s)", delay, _pending_bulk)
 
 
-def flush_finalmask_xray_reload() -> None:
-    """Cancel debounce and run immediately (tests / explicit admin actions)."""
+def flush_finalmask_xray_reload(*, urgent: bool = False) -> None:
+    """Cancel debounce and run immediately (tests / explicit admin actions).
+
+    ``urgent=True`` (disable/enable single user): skip slow per-node stats
+    banking and apply dirty-slot hot-replaces in parallel so WireGuard cuts
+    land near VLESS hot-remove latency.
+    """
     global _timer
     with _lock:
         if _timer is not None:
             _timer.cancel()
             _timer = None
-    _run_finalmask_xray_reload()
+    _run_finalmask_xray_reload(urgent=urgent)
 
 
 def _finalmask_nodes(db) -> list:
@@ -252,6 +257,7 @@ def hot_replace_finalmask_shards(
     node_object=None,
     peers=None,
     skip_address_ensure: bool = False,
+    skip_stats_flush: bool = False,
 ) -> bool:
     """Rebuild and hot-swap only the given Finalmask shard inbounds.
 
@@ -259,6 +265,10 @@ def hot_replace_finalmask_shards(
     ``restart_node``. Does not touch routing (existing rules already list every
     shard tag → tunnel/WARP/DIRECT from the last full bake; new slots that did
     not exist yet fall back to restart so the routing rule is rewritten).
+
+    ``skip_stats_flush=True`` for urgent disable/enable: skip the slow
+    per-node transfer bank so the peer cut lands in ~one RTT. Usage still
+    converges on the next record_usages tick.
     """
     from app import xray
     from app.db import GetDB, crud
@@ -273,22 +283,25 @@ def hot_replace_finalmask_shards(
 
     # Shard rmi/adi drops unread per-user counters on that inbound. Bank them
     # into User.used_traffic first or Finalmask traffic never gets billed.
-    try:
-        from app.wireguard.finalmask_usage import flush_finalmask_node_stats
+    # Urgent disable skips this — sequential multi-node flushes were the main
+    # reason WG cut lagged seconds behind VLESS hot-remove.
+    if not skip_stats_flush:
+        try:
+            from app.wireguard.finalmask_usage import flush_finalmask_node_stats
 
-        flushed = flush_finalmask_node_stats(int(node_id))
-        if flushed:
-            logger.info(
-                "Finalmask node %s: flushed %s bytes of user stats before hot-replace",
+            flushed = flush_finalmask_node_stats(int(node_id))
+            if flushed:
+                logger.info(
+                    "Finalmask node %s: flushed %s bytes of user stats before hot-replace",
+                    node_id,
+                    flushed,
+                )
+        except Exception:
+            logger.debug(
+                "Finalmask node %s: pre-hot-replace stats flush skipped",
                 node_id,
-                flushed,
+                exc_info=True,
             )
-    except Exception:
-        logger.debug(
-            "Finalmask node %s: pre-hot-replace stats flush skipped",
-            node_id,
-            exc_info=True,
-        )
 
     with GetDB() as db:
         dbnode = crud.get_node_by_id(db, node_id)
@@ -528,16 +541,20 @@ def _commit_fingerprints(node_id: int, db, dbnode, peers) -> None:
     _save_fp_cache()
 
 
-def _run_finalmask_xray_reload() -> None:
+def _run_finalmask_xray_reload(*, urgent: bool = False) -> None:
     global _timer, _reload_in_flight, _pending_bulk
     with _lock:
         _timer = None
         was_bulk = _pending_bulk
         _pending_bulk = False
         if _reload_in_flight:
+            retry = 0.05 if urgent else (
+                BULK_DEBOUNCE_SEC if was_bulk else DEFAULT_DEBOUNCE_SEC
+            )
             timer = threading.Timer(
-                BULK_DEBOUNCE_SEC if was_bulk else DEFAULT_DEBOUNCE_SEC,
+                retry,
                 _run_finalmask_xray_reload,
+                kwargs={"urgent": urgent},
             )
             timer.daemon = True
             _timer = timer
@@ -560,8 +577,11 @@ def _run_finalmask_xray_reload() -> None:
             nodes = _finalmask_nodes(db)
             if not nodes:
                 return
-            ensure_plain_addresses_for_finalmask(db)
-            ensure_finalmask_slots(db)
+            # Urgent disable/enable: skip fleet-wide address/slot scans — dirty
+            # slots already identify what must change.
+            if not urgent:
+                ensure_plain_addresses_for_finalmask(db)
+                ensure_finalmask_slots(db)
             peers = peer_cache.get_peers(db)
             for dbnode in nodes:
                 node_by_id[int(dbnode.id)] = dbnode
@@ -589,18 +609,19 @@ def _run_finalmask_xray_reload() -> None:
             plans = escalated
 
         logger.info(
-            "Finalmask reload on %s node(s): %s",
+            "Finalmask reload on %s node(s): %s urgent=%s",
             len(plans),
             [(nid, mode, sorted(slots)[:12] + (["…"] if len(slots) > 12 else [])) for nid, mode, slots in plans],
+            urgent,
         )
 
         # Reuse the peer list from planning — re-collecting 10k+ proxies per
         # node was pinning the panel at ~100% CPU for minutes after every boot.
-        for node_id, mode, changed in plans:
+        def _apply_plan(node_id: int, mode: str, changed: Set[int]) -> None:
             try:
                 dbnode = node_by_id.get(int(node_id))
                 if dbnode is None:
-                    continue
+                    return
 
                 if mode == "seed" or (
                     mode == "hot" and len(changed) >= COLD_CACHE_SLOT_FLOOR
@@ -610,7 +631,7 @@ def _run_finalmask_xray_reload() -> None:
 
                         live = crud.get_node_by_id(db, node_id)
                         if live is None:
-                            continue
+                            return
                         _commit_fingerprints(node_id, db, live, peers)
                     logger.info(
                         "Finalmask node %s: seeded fingerprint cache (%s shards, mode=%s); "
@@ -631,7 +652,7 @@ def _run_finalmask_xray_reload() -> None:
                             node_id,
                             exc_info=True,
                         )
-                    continue
+                    return
 
                 if mode == "hot":
                     if not _node_supports_hot_replace(int(node_id)):
@@ -639,14 +660,15 @@ def _run_finalmask_xray_reload() -> None:
                             "Finalmask node %s: agent has no hot-replace — full restart",
                             node_id,
                         )
-                        try:
-                            from app.wireguard.finalmask_usage import (
-                                flush_finalmask_node_stats,
-                            )
+                        if not urgent:
+                            try:
+                                from app.wireguard.finalmask_usage import (
+                                    flush_finalmask_node_stats,
+                                )
 
-                            flush_finalmask_node_stats(int(node_id))
-                        except Exception:
-                            pass
+                                flush_finalmask_node_stats(int(node_id))
+                            except Exception:
+                                pass
                         restart_node(node_id)
                         with GetDB() as db:
                             from app.db import crud
@@ -654,12 +676,18 @@ def _run_finalmask_xray_reload() -> None:
                             live = crud.get_node_by_id(db, node_id)
                             if live is not None:
                                 _commit_fingerprints(node_id, db, live, peers)
-                        continue
+                        return
                     try:
                         from app.wireguard.sync_engine import mark_finalmask_rpc_busy
 
                         mark_finalmask_rpc_busy(node_id, True)
-                        ok = hot_replace_finalmask_shards(node_id, changed)
+                        ok = hot_replace_finalmask_shards(
+                            node_id,
+                            changed,
+                            peers=peers,
+                            skip_address_ensure=True,
+                            skip_stats_flush=urgent,
+                        )
                     finally:
                         try:
                             from app.wireguard.sync_engine import mark_finalmask_rpc_busy
@@ -689,14 +717,15 @@ def _run_finalmask_xray_reload() -> None:
                                 "falling back to full Xray restart",
                                 node_id,
                             )
-                            try:
-                                from app.wireguard.finalmask_usage import (
-                                    flush_finalmask_node_stats,
-                                )
+                            if not urgent:
+                                try:
+                                    from app.wireguard.finalmask_usage import (
+                                        flush_finalmask_node_stats,
+                                    )
 
-                                flush_finalmask_node_stats(int(node_id))
-                            except Exception:
-                                pass
+                                    flush_finalmask_node_stats(int(node_id))
+                                except Exception:
+                                    pass
                             restart_node(node_id)
                             with GetDB() as db:
                                 from app.db import crud
@@ -704,7 +733,7 @@ def _run_finalmask_xray_reload() -> None:
                                 live = crud.get_node_by_id(db, node_id)
                                 if live is not None:
                                     _commit_fingerprints(node_id, db, live, peers)
-                            continue
+                            return
                         logger.warning(
                             "Finalmask hot replace failed on node %s; "
                             "deferring to resumable sync (no restart)",
@@ -716,18 +745,19 @@ def _run_finalmask_xray_reload() -> None:
                             on_node_connected(int(node_id))
                         except Exception:
                             pass
-                        continue
+                        return
                 else:
-                    try:
-                        from app.wireguard.finalmask_usage import flush_finalmask_node_stats
+                    if not urgent:
+                        try:
+                            from app.wireguard.finalmask_usage import flush_finalmask_node_stats
 
-                        flush_finalmask_node_stats(int(node_id))
-                    except Exception:
-                        logger.debug(
-                            "Finalmask node %s: pre-restart stats flush skipped",
-                            node_id,
-                            exc_info=True,
-                        )
+                            flush_finalmask_node_stats(int(node_id))
+                        except Exception:
+                            logger.debug(
+                                "Finalmask node %s: pre-restart stats flush skipped",
+                                node_id,
+                                exc_info=True,
+                            )
                     restart_node(node_id)
 
                 with GetDB() as db:
@@ -735,12 +765,35 @@ def _run_finalmask_xray_reload() -> None:
 
                     live = crud.get_node_by_id(db, node_id)
                     if live is None:
-                        continue
+                        return
                     _commit_fingerprints(node_id, db, live, peers)
             except Exception:
                 logger.exception("Finalmask reload failed on node %s", node_id)
+
+        if urgent and len(plans) > 1:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            workers = min(8, len(plans))
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futs = [
+                    pool.submit(_apply_plan, int(nid), mode, changed)
+                    for nid, mode, changed in plans
+                ]
+                for fut in as_completed(futs):
+                    try:
+                        fut.result()
+                    except Exception:
+                        logger.exception("Finalmask urgent parallel apply failed")
+        else:
+            for node_id, mode, changed in plans:
+                _apply_plan(int(node_id), mode, changed)
     except Exception:
         logger.exception("Finalmask reload pass failed")
     finally:
         with _lock:
             _reload_in_flight = False
+            if _dirty_slots:
+                timer = threading.Timer(0.1, _run_finalmask_xray_reload)
+                timer.daemon = True
+                _timer = timer
+                timer.start()

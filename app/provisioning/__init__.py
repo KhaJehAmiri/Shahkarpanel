@@ -335,8 +335,13 @@ def build_install_command(
         "grep -q '^net.ipv4.ip_forward=1' /etc/sysctl.conf 2>/dev/null "
         "|| echo 'net.ipv4.ip_forward=1' >> /etc/sysctl.conf; "
         f"{host_network_tuning_shell()}; "
-        "docker rm -f shahkarnode >/dev/null 2>&1 || true; "
-        "mkdir -p /var/lib/shahkar-node; "
+        "docker rm -f shahkarnode nexusnode >/dev/null 2>&1 || true; "
+        "mkdir -p /var/lib/shahkar-node /var/lib/nexuspanel-node; "
+        # Prefer Shahkar data dir; keep legacy path as a bind fallback for old volumes.
+        "if [ -d /var/lib/nexuspanel-node ] && [ ! -e /var/lib/shahkar-node/.migrated ]; then "
+        "cp -a /var/lib/nexuspanel-node/. /var/lib/shahkar-node/ 2>/dev/null || true; "
+        "touch /var/lib/shahkar-node/.migrated; "
+        "fi; "
         f"{write_client_cert}"
         f"{ensure_image}"
         # --cap-add=NET_ADMIN + host network let the agent manage the wg interface.

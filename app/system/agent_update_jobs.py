@@ -1,12 +1,15 @@
 """Fleet / single-node agent image updates from the panel (SSH refresh)."""
 from __future__ import annotations
 
+import json
 import logging
+import os
 import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, List, Literal, Optional
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -27,6 +30,14 @@ from config import (
 )
 
 logger = logging.getLogger("shahkar-agent-update")
+
+# Nodes often listen on 2222 (panel default remains 22). Remember the last
+# working port per host so fleet updates do not re-probe forever.
+_SSH_PORT_CACHE = Path(
+    os.environ.get("SHAHKAR_DATA_DIR", "/var/lib/shahkar")
+) / "secrets" / "node_ssh_ports.json"
+# Also try the pre-rebrand data dir when the new path is not mounted.
+_SSH_PORT_CACHE_LEGACY = Path("/var/lib/nexuspanel/secrets/node_ssh_ports.json")
 
 JobStatus = Literal["pending", "running", "success", "failed", "partial"]
 NodeStatus = Literal["pending", "running", "success", "failed", "skipped"]
@@ -243,21 +254,104 @@ def _build_refresh_for_node(dbnode, *, force: bool) -> str:
     )
 
 
-def _try_ssh_candidates(host: str, port: int = 22, username: str = "root"):
-    last_exc: Optional[BaseException] = None
-    for creds in resolve_node_ssh_candidates(host, port=port, username=username):
-        try:
-            # Cheap connectivity probe
-            provisioning.run_remote_command(
-                creds,
-                "true",
-                timeout=NODE_PROVISION_SSH_TIMEOUT,
-                exec_timeout=30,
-            )
-            return creds
-        except Exception as exc:
-            last_exc = exc
+def _ssh_port_cache_path() -> Path:
+    if _SSH_PORT_CACHE.parent.is_dir():
+        return _SSH_PORT_CACHE
+    if _SSH_PORT_CACHE_LEGACY.parent.is_dir():
+        return _SSH_PORT_CACHE_LEGACY
+    return _SSH_PORT_CACHE
+
+
+def _remembered_ssh_port(host: str) -> Optional[int]:
+    path = _ssh_port_cache_path()
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        raw = data.get(host)
+        return int(raw) if raw else None
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return None
+
+
+def _remember_ssh_port(host: str, port: int) -> None:
+    path = _ssh_port_cache_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = {}
+        if path.is_file():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                data = {}
+        data[host] = int(port)
+        path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _ssh_ports(preferred: Optional[int] = None) -> List[int]:
+    """SSH ports to try for agent maintenance (env → remembered → 22 → 2222)."""
+    ports: List[int] = []
+    for raw in (
+        preferred,
+        os.environ.get("NODE_SSH_PORT"),
+        os.environ.get("WG_NODE_SSH_PORT"),
+        22,
+        2222,
+    ):
+        if raw is None or raw == "":
             continue
+        try:
+            port = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if port > 0 and port not in ports:
+            ports.append(port)
+    return ports or [22]
+
+
+def _tcp_open(host: str, port: int, timeout: float = 2.5) -> bool:
+    import socket
+
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _try_ssh_candidates(host: str, port: Optional[int] = None, username: str = "root"):
+    last_exc: Optional[BaseException] = None
+    saw_creds = False
+    preferred = port if port and port != 22 else _remembered_ssh_port(host)
+    ordered = _ssh_ports(preferred)
+    if preferred and preferred in ordered:
+        ordered = [preferred] + [p for p in ordered if p != preferred]
+    # Prefer ports that actually accept TCP so a firewalled :22 does not burn
+    # the full SSH timeout before we try :2222.
+    reachable = [p for p in ordered if _tcp_open(host, p)]
+    ordered = reachable + [p for p in ordered if p not in reachable]
+
+    for ssh_port in ordered:
+        try:
+            candidates = resolve_node_ssh_candidates(host, port=ssh_port, username=username)
+        except FileNotFoundError:
+            continue
+        saw_creds = True
+        for creds in candidates:
+            try:
+                provisioning.run_remote_command(
+                    creds,
+                    "true",
+                    timeout=min(NODE_PROVISION_SSH_TIMEOUT, 15),
+                    exec_timeout=30,
+                )
+                _remember_ssh_port(host, ssh_port)
+                return creds
+            except Exception as exc:
+                last_exc = exc
+                continue
     if last_exc:
         raise provisioning.ProvisioningError(
             f"SSH failed for {host}: {last_exc}. "

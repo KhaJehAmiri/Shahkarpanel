@@ -332,7 +332,7 @@ def migrations_upload_dir() -> Path:
 
     from config import BACKUP_DIR
 
-    custom = (os.environ.get("NEXUSPANEL_MIGRATIONS_DIR") or "").strip()
+    custom = (os.environ.get("SHAHKAR_MIGRATIONS_DIR") or "").strip()
     if custom:
         return Path(custom)
     return Path(BACKUP_DIR) / "migrations"
@@ -349,6 +349,6 @@ def save_uploaded_backup(content: bytes, filename: str) -> str:
     except OSError as exc:
         raise OSError(
             f"Cannot write backup to {dest_dir} ({exc}). "
-            "Ensure the directory is writable by the nexuspanel user."
+            "Ensure the directory is writable by the shahkar user."
         ) from exc
     return str(dest)

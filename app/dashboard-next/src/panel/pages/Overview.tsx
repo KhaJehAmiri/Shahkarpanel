@@ -2,7 +2,7 @@ import { FC, ReactNode, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
-import { CoreStats, MrrSummary, RealtimeStats, ResellerWorkspace, SystemStats, TopUser } from "../api/types";
+import { CoreStats, GatewayIncome, MrrSummary, RealtimeStats, ResellerWorkspace, SystemStats, TopUser } from "../api/types";
 import { usePanelUpdate } from "../context/UpdateContext";
 import { useApp } from "../context/AppContext";
 import { useCopilot } from "../copilot/CopilotContext";
@@ -19,6 +19,158 @@ import { BackupRestoreModal } from "../components/BackupRestoreModal";
 
 type NodeUsageRow = { node_id: number | null; node_name: string; uplink: number; downlink: number };
 type ProtocolUsageRow = { protocol: string; used_traffic: number };
+type PayPeriod = "today" | "yesterday" | "week" | "total";
+
+const PROVIDER_LABEL: Record<string, string> = {
+  centralpay: "CentralPay",
+  stripe: "Stripe",
+  demo: "Demo",
+  card: "Card",
+};
+
+const PaymentPulse: FC<{
+  income: GatewayIncome;
+  methods: string[];
+  isSudo: boolean;
+}> = ({ income, methods, isSudo }) => {
+  const { t } = useTranslation();
+  const [period, setPeriod] = useState<PayPeriod>("today");
+  const cur = income.currency_label || "";
+
+  const amount = income[period] ?? 0;
+  const count =
+    period === "today" ? (income.today_count ?? 0)
+    : period === "yesterday" ? (income.yesterday_count ?? 0)
+    : period === "week" ? (income.week_count ?? 0)
+    : income.payments_count;
+
+  const byKind =
+    period === "today" ? (income.today_by_kind || {})
+    : period === "yesterday" ? (income.yesterday_by_kind || {})
+    : period === "week" ? (income.week_by_kind || {})
+    : (income.total_by_kind || income.by_kind || {});
+
+  const portalAmt = (byKind.portal_renew || 0) + (byKind.portal_purchase || 0);
+  const topupAmt = byKind.topup || 0;
+
+  const delta = period === "today" ? amount - (income.yesterday || 0) : null;
+  const deltaPct =
+    delta != null && income.yesterday
+      ? Math.round((delta / Math.abs(income.yesterday)) * 100)
+      : null;
+
+  const periods: { id: PayPeriod; label: string }[] = [
+    { id: "today", label: t("overview.payToday") },
+    { id: "yesterday", label: t("overview.payYesterday") },
+    { id: "week", label: t("overview.payWeek") },
+    { id: "total", label: t("overview.payTotal") },
+  ];
+
+  const topResellers = useMemo(() => {
+    if (!isSudo) return [];
+    return [...(income.resellers || [])]
+      .filter((r) => !r.is_sudo)
+      .sort((a, b) => (b[period] || 0) - (a[period] || 0))
+      .slice(0, 3)
+      .filter((r) => (r[period] || 0) > 0);
+  }, [income.resellers, isSudo, period]);
+
+  const fmt = (n: number) => {
+    const body = formatCompactAmount(n);
+    return cur ? `${body} ${cur}` : body;
+  };
+
+  return (
+    <div className="sk-pay-pulse">
+      <div className="sk-pay-pulse-head">
+        <div className="sk-pay-pulse-title-row">
+          <span className="sk-pay-pulse-title">{t("overview.payTitle")}</span>
+          <span className="sk-pay-pulse-sub">{t("overview.paySubtitle")}</span>
+        </div>
+        <div className="sk-pay-pulse-tools">
+          <div className="sk-pay-period" role="tablist" aria-label={t("overview.payTitle")}>
+            {periods.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                role="tab"
+                aria-selected={period === p.id}
+                className={`sk-pay-period-btn${period === p.id ? " is-on" : ""}`}
+                onClick={() => setPeriod(p.id)}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+          <Link to="/billing?billingTab=income" className="sk-pay-pulse-link">
+            {t("overview.payOpen")}
+          </Link>
+        </div>
+      </div>
+
+      <div className="sk-pay-pulse-grid">
+        <article className="sk-pay-tile sk-pay-tile-hero">
+          <span className="sk-pay-tile-label">{t("overview.payIncome")}</span>
+          <LiveValue className="sk-pay-tile-value" value={amount} format={fmt} />
+          {delta != null ? (
+            <span className={`sk-pay-delta${delta > 0 ? " is-up" : delta < 0 ? " is-down" : ""}`}>
+              {delta === 0
+                ? t("overview.payFlat")
+                : t("overview.payVsYesterday", {
+                    amount: `${delta > 0 ? "+" : ""}${formatCompactAmount(delta)}`,
+                    pct: deltaPct != null ? `${deltaPct > 0 ? "+" : ""}${deltaPct}%` : "",
+                  })}
+            </span>
+          ) : (
+            <span className="sk-pay-delta">{t("overview.payOrdersCount", { n: count })}</span>
+          )}
+        </article>
+
+        <article className="sk-pay-tile">
+          <span className="sk-pay-tile-label">{t("overview.payOrders")}</span>
+          <LiveValue className="sk-pay-tile-value" value={count} />
+          <span className="sk-pay-delta">{t("overview.payCompleted")}</span>
+        </article>
+
+        <article className="sk-pay-tile">
+          <span className="sk-pay-tile-label">{t("overview.payPortal")}</span>
+          <LiveValue className="sk-pay-tile-value" value={portalAmt} format={fmt} />
+          <span className="sk-pay-delta">{t("overview.payPortalHint")}</span>
+        </article>
+
+        <article className="sk-pay-tile">
+          <span className="sk-pay-tile-label">{t("overview.payTopup")}</span>
+          <LiveValue className="sk-pay-tile-value" value={topupAmt} format={fmt} />
+          <span className="sk-pay-delta">{t("overview.payTopupHint")}</span>
+        </article>
+      </div>
+
+      <div className="sk-pay-pulse-foot">
+        <div className="sk-pay-methods">
+          <span className="sk-pay-methods-label">{t("overview.payMethods")}</span>
+          {methods.map((m) => (
+            <span key={m} className={`sk-pay-chip is-${m}`}>
+              <i className="sk-pay-chip-dot" aria-hidden />
+              {PROVIDER_LABEL[m] || m}
+            </span>
+          ))}
+        </div>
+        {topResellers.length > 0 && (
+          <div className="sk-pay-leaders">
+            <span className="sk-pay-methods-label">{t("overview.payLeaders")}</span>
+            {topResellers.map((r, i) => (
+              <span key={r.admin_id} className="sk-pay-leader">
+                <em>{i + 1}</em>
+                <b>{r.username}</b>
+                <span>{fmt(r[period] || 0)}</span>
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
 
 const Section: FC<{ title?: string; action?: ReactNode; children: ReactNode; className?: string }> = ({
   title,
@@ -26,10 +178,10 @@ const Section: FC<{ title?: string; action?: ReactNode; children: ReactNode; cla
   children,
   className,
 }) => (
-  <section className={`nx-home-section${className ? ` ${className}` : ""}`}>
+  <section className={`sk-home-section${className ? ` ${className}` : ""}`}>
     {(title || action) && (
-      <div className="nx-home-section-head">
-        {title ? <h2 className="nx-home-section-title">{title}</h2> : <span />}
+      <div className="sk-home-section-head">
+        {title ? <h2 className="sk-home-section-title">{title}</h2> : <span />}
         {action}
       </div>
     )}
@@ -60,14 +212,14 @@ const ActivityBars: FC<{ level: number; tone?: "up" | "down" }> = ({ level, tone
   const bars = 18;
   const intensity = Math.min(1, Math.log10(Math.max(level, 1) + 1) / 8);
   return (
-    <div className={`nx-activity ${tone}`} aria-hidden>
+    <div className={`sk-activity ${tone}`} aria-hidden>
       {Array.from({ length: bars }, (_, i) => {
         const wave = 0.35 + 0.65 * Math.abs(Math.sin((i / bars) * Math.PI * 2.2 + intensity * 4));
         const h = Math.max(12, Math.round((20 + intensity * 80) * wave));
         return (
           <span
             key={i}
-            className="nx-activity-bar"
+            className="sk-activity-bar"
             style={{ height: `${h}%`, animationDelay: `${i * 45}ms` }}
           />
         );
@@ -85,15 +237,15 @@ const KpiTile: FC<{
 }> = ({ label, value, sub, to, live }) => {
   const body = (
     <>
-      <span className="nx-kpi-label">
-        {live ? <span className="nx-kpi-live-dot" aria-hidden /> : null}
+      <span className="sk-kpi-label">
+        {live ? <span className="sk-kpi-live-dot" aria-hidden /> : null}
         {label}
       </span>
-      <LiveValue className="nx-kpi-value" value={value} format={(n) => Math.round(n).toLocaleString()} />
-      {sub ? <span className="nx-kpi-sub">{sub}</span> : null}
+      <LiveValue className="sk-kpi-value" value={value} format={(n) => Math.round(n).toLocaleString()} />
+      {sub ? <span className="sk-kpi-sub">{sub}</span> : null}
     </>
   );
-  const cls = `nx-kpi${to ? " nx-kpi-link" : ""}${live ? " is-live" : ""}`;
+  const cls = `sk-kpi${to ? " sk-kpi-link" : ""}${live ? " is-live" : ""}`;
   return to ? <Link to={to} className={cls}>{body}</Link> : <div className={cls}>{body}</div>;
 };
 
@@ -114,23 +266,23 @@ const ResellerCommerceStrip: FC<{ ws: ResellerWorkspace }> = ({ ws }) => {
   const packageEmpty = prepaid <= 0;
 
   return (
-    <div className="nx-commerce-strip">
-      <article className="nx-commerce-card nx-commerce-wallet">
-        <header className="nx-commerce-card-head">
-          <span className="nx-commerce-eyebrow">{t("billing.wallet")}</span>
+    <div className="sk-commerce-strip">
+      <article className="sk-commerce-card sk-commerce-wallet">
+        <header className="sk-commerce-card-head">
+          <span className="sk-commerce-eyebrow">{t("billing.wallet")}</span>
           {ws.wallet_blocked ? (
-            <span className="nx-commerce-badge is-danger">{t("overview.walletBlockedBadge")}</span>
+            <span className="sk-commerce-badge is-danger">{t("overview.walletBlockedBadge")}</span>
           ) : ws.wallet_low ? (
-            <span className="nx-commerce-badge is-warn">{t("overview.lowWalletBadge")}</span>
+            <span className="sk-commerce-badge is-warn">{t("overview.lowWalletBadge")}</span>
           ) : (
-            <span className="nx-commerce-badge is-ok">{t("overview.walletOkBadge")}</span>
+            <span className="sk-commerce-badge is-ok">{t("overview.walletOkBadge")}</span>
           )}
         </header>
-        <div className="nx-commerce-balance">
+        <div className="sk-commerce-balance">
           <strong title={balance.toLocaleString()}>{formatCompactAmount(balance)}</strong>
-          {currency ? <span className="nx-commerce-currency">{currency}</span> : null}
+          {currency ? <span className="sk-commerce-currency">{currency}</span> : null}
         </div>
-        <p className="nx-commerce-meta">
+        <p className="sk-commerce-meta">
           {pending > 0
             ? t("overview.pendingCharge", {
                 cost: pending.toLocaleString(),
@@ -148,29 +300,29 @@ const ResellerCommerceStrip: FC<{ ws: ResellerWorkspace }> = ({ ws }) => {
                   })
                 : t("overview.noPendingCharge")}
         </p>
-        <div className="nx-commerce-foot">
+        <div className="sk-commerce-foot">
           <span>{t("overview.fullBalance")}: {balance.toLocaleString()}{currency ? ` ${currency}` : ""}</span>
-          <Link to="/billing" className="nx-commerce-link">{t("overview.openBilling")} →</Link>
+          <Link to="/billing" className="sk-commerce-link">{t("overview.openBilling")} →</Link>
         </div>
       </article>
 
-      <article className={`nx-commerce-card nx-commerce-traffic${packageEmpty ? " is-package-empty" : ""}`}>
-        <header className="nx-commerce-card-head">
-          <span className="nx-commerce-eyebrow">{t("overview.trafficPackage")}</span>
+      <article className={`sk-commerce-card sk-commerce-traffic${packageEmpty ? " is-package-empty" : ""}`}>
+        <header className="sk-commerce-card-head">
+          <span className="sk-commerce-eyebrow">{t("overview.trafficPackage")}</span>
           {packageEmpty ? (
-            <span className="nx-commerce-badge is-danger">{t("overview.packageExhaustedBadge")}</span>
+            <span className="sk-commerce-badge is-danger">{t("overview.packageExhaustedBadge")}</span>
           ) : (
-            <span className="nx-commerce-badge is-ok">{t("overview.packageActiveBadge")}</span>
+            <span className="sk-commerce-badge is-ok">{t("overview.packageActiveBadge")}</span>
           )}
         </header>
-        <div className="nx-commerce-balance">
+        <div className="sk-commerce-balance">
           <strong>{formatBytes(prepaid)}</strong>
-          <span className="nx-commerce-currency">{t("overview.packageLeftLabel")}</span>
+          <span className="sk-commerce-currency">{t("overview.packageLeftLabel")}</span>
         </div>
-        <div className="nx-commerce-meter" aria-hidden>
+        <div className="sk-commerce-meter" aria-hidden>
           <span style={{ width: packageEmpty ? "100%" : `${Math.max(2, Math.min(100, prepaid > 0 ? 35 : 100))}%` }} />
         </div>
-        <p className="nx-commerce-meta">
+        <p className="sk-commerce-meta">
           {packageEmpty
             ? t("overview.packageExhaustedMeta")
             : t("overview.prepaidRemaining", { remaining: formatBytes(prepaid) })}
@@ -181,13 +333,13 @@ const ResellerCommerceStrip: FC<{ ws: ResellerWorkspace }> = ({ ws }) => {
               })}`
             : ` · ${t("overview.usageTotal", { used: formatBytes(used) })}`}
         </p>
-        <div className="nx-commerce-foot">
+        <div className="sk-commerce-foot">
           {packageEmpty ? (
-            <Link to={PACKAGE_BUY_HREF} className="nx-commerce-link" style={{ fontWeight: 700 }}>
+            <Link to={PACKAGE_BUY_HREF} className="sk-commerce-link" style={{ fontWeight: 700 }}>
               {t("overview.buyPackageCta")} →
             </Link>
           ) : (
-            <Link to={PACKAGE_BUY_HREF} className="nx-commerce-link">{t("overview.managePackages")} →</Link>
+            <Link to={PACKAGE_BUY_HREF} className="sk-commerce-link">{t("overview.managePackages")} →</Link>
           )}
           {(ws.pending_usage_bytes ?? 0) > 0 ? (
             <span>
@@ -236,50 +388,50 @@ const LiveHero: FC<{
   };
 
   return (
-    <div className={`nx-live-hero${stale ? " is-stale" : ""}${running ? " is-running" : " is-stopped"}`}>
-      <div className="nx-live-hero-glow" aria-hidden />
-      <div className="nx-live-hero-top">
-        <div className="nx-live-badge">
-          <span className={`nx-live-pulse${stale ? " warn" : ""}`} />
+    <div className={`sk-live-hero${stale ? " is-stale" : ""}${running ? " is-running" : " is-stopped"}`}>
+      <div className="sk-live-hero-glow" aria-hidden />
+      <div className="sk-live-hero-top">
+        <div className="sk-live-badge">
+          <span className={`sk-live-pulse${stale ? " warn" : ""}`} />
           {stale ? t("overview.liveStale") : t("overview.live")}
         </div>
-        <div className={`nx-core-chip${running ? " ok" : " danger"}`}>
-          <span className="nx-core-chip-dot" />
+        <div className={`sk-core-chip${running ? " ok" : " danger"}`}>
+          <span className="sk-core-chip-dot" />
           {running ? t("overview.coreRunning") : t("overview.coreStopped")}
-          <span className="nx-core-chip-ver">Xray {core.data?.version ? `v${core.data.version}` : "—"}</span>
+          <span className="sk-core-chip-ver">Xray {core.data?.version ? `v${core.data.version}` : "—"}</span>
         </div>
       </div>
 
-      <div className="nx-live-hero-grid">
-        <div className="nx-live-stream">
-          <div className="nx-live-stream-head">
-            <span className="nx-speed-arrow up">↑</span>
+      <div className="sk-live-hero-grid">
+        <div className="sk-live-stream">
+          <div className="sk-live-stream-head">
+            <span className="sk-speed-arrow up">↑</span>
             <span>{t("overview.upload")}</span>
           </div>
-          <div className="nx-live-stream-value">{formatSpeed(up)}</div>
-          {totalUp != null && <div className="nx-live-stream-total">{formatBytes(totalUp)} total</div>}
+          <div className="sk-live-stream-value">{formatSpeed(up)}</div>
+          {totalUp != null && <div className="sk-live-stream-total">{formatBytes(totalUp)} total</div>}
           <ActivityBars level={up} tone="up" />
-          <Sparkline data={upSeries} height={42} color="var(--nx-info)" />
+          <Sparkline data={upSeries} height={42} color="var(--sk-info)" />
         </div>
 
-        <div className="nx-live-stream">
-          <div className="nx-live-stream-head">
-            <span className="nx-speed-arrow down">↓</span>
+        <div className="sk-live-stream">
+          <div className="sk-live-stream-head">
+            <span className="sk-speed-arrow down">↓</span>
             <span>{t("overview.download")}</span>
           </div>
-          <div className="nx-live-stream-value">{formatSpeed(down)}</div>
-          {totalDown != null && <div className="nx-live-stream-total">{formatBytes(totalDown)} total</div>}
+          <div className="sk-live-stream-value">{formatSpeed(down)}</div>
+          {totalDown != null && <div className="sk-live-stream-total">{formatBytes(totalDown)} total</div>}
           <ActivityBars level={down} tone="down" />
-          <Sparkline data={downSeries} height={42} color="var(--nx-accent)" />
+          <Sparkline data={downSeries} height={42} color="var(--sk-accent)" />
         </div>
 
-        <div className="nx-live-side">
-          <div className="nx-live-side-block">
-            <span className="nx-live-side-label">{t("overview.xrayCore")}</span>
-            <p className="nx-live-side-hint">
+        <div className="sk-live-side">
+          <div className="sk-live-side-block">
+            <span className="sk-live-side-label">{t("overview.xrayCore")}</span>
+            <p className="sk-live-side-hint">
               {running ? t("overview.coreRunningHint") : (core.data?.startup_error || t("overview.coreStoppedHint"))}
             </p>
-            <div className="nx-core-actions">
+            <div className="sk-core-actions">
               {running ? (
                 <Button variant="danger" size="sm" disabled={busy} onClick={() => act("stop")}>
                   {t("overview.stop")}
@@ -290,19 +442,19 @@ const LiveHero: FC<{
                 </Button>
               )}
               <Button variant="ghost" size="sm" disabled={busy} onClick={() => act("restart")}>
-                <IcRefresh className="nx-ico" /> {t("overview.restart")}
+                <IcRefresh className="sk-ico" /> {t("overview.restart")}
               </Button>
             </div>
           </div>
-          <div className="nx-live-uptime">
-            <div className="nx-live-uptime-cell">
+          <div className="sk-live-uptime">
+            <div className="sk-live-uptime-cell">
               <IcBolt />
               <div>
                 <span>Xray</span>
                 <strong>{formatUptime(xray)}</strong>
               </div>
             </div>
-            <div className="nx-live-uptime-cell">
+            <div className="sk-live-uptime-cell">
               <IcMonitor />
               <div>
                 <span>{t("overview.uptimeOs")}</span>
@@ -345,6 +497,28 @@ export const Overview: FC = () => {
     () => (admin?.is_sudo && isEnabled("billing") ? api.get("/billing/mrr?days=30") : Promise.resolve(null as unknown as MrrSummary)),
     [admin?.is_sudo, isEnabled("billing")],
   );
+  const payProviders = useFetch<string[]>(
+    () => (isEnabled("billing") ? api.get("/billing/payment-providers") : Promise.resolve([])),
+    [isEnabled("billing")],
+  );
+  const allProviders = useFetch<string[]>(
+    () => (isEnabled("billing") ? api.get("/billing/providers") : Promise.resolve([])),
+    [isEnabled("billing")],
+  );
+  const payMethods = useMemo(() => {
+    const list = [...(payProviders.data || [])];
+    if ((allProviders.data || []).includes("card") && !list.includes("card")) list.push("card");
+    return list;
+  }, [payProviders.data, allProviders.data]);
+  const payActive = payMethods.length > 0;
+  const gatewayIncome = useFetch<GatewayIncome>(
+    () => (
+      isEnabled("billing") && payActive
+        ? api.get("/billing/gateway-income?payments_limit=1")
+        : Promise.resolve(null as unknown as GatewayIncome)
+    ),
+    [isEnabled("billing"), payActive],
+  );
   const ws = workspace.data;
   const [rt, setRt] = useState<RealtimeStats | null>(null);
   const [rtStale, setRtStale] = useState(false);
@@ -378,6 +552,9 @@ export const Overview: FC = () => {
     nodesUsage.reload({ background: true });
     workspace.reload({ background: true });
     mrr.reload({ background: true });
+    payProviders.reload({ background: true });
+    allProviders.reload({ background: true });
+    if (payActive) gatewayIncome.reload({ background: true });
   }, 20000);
 
   const { hasUpdate, check, openUpdateModal } = usePanelUpdate();
@@ -428,17 +605,17 @@ export const Overview: FC = () => {
   const down = rt?.outgoing_bandwidth_speed ?? s?.outgoing_bandwidth_speed ?? 0;
 
   return (
-    <div className="nx-overview nx-home-min nx-home-alive">
-      <div className="nx-home-ambient" aria-hidden />
+    <div className="sk-overview sk-home-min sk-home-alive">
+      <div className="sk-home-ambient" aria-hidden />
 
       <PageHeader
         title={t("overview.title")}
         subtitle={t("overview.subtitle")}
         actions={(
-          <div className="nx-row" style={{ gap: 8, flexWrap: "wrap" }}>
+          <div className="sk-row" style={{ gap: 8, flexWrap: "wrap" }}>
             {canBackup && (
               <Button variant="primary" onClick={() => setBackupOpen(true)}>
-                <IcDownload className="nx-ico" /> {t("overview.backupRestore")}
+                <IcDownload className="sk-ico" /> {t("overview.backupRestore")}
               </Button>
             )}
             {admin?.is_sudo && (
@@ -453,19 +630,19 @@ export const Overview: FC = () => {
       )}
 
       {hasUpdate && check && (
-        <Callout tone="info" className="compact nx-mb-16">
+        <Callout tone="info" className="compact sk-mb-16">
           {t("system.updatesBehind", {
             from: check.current_version,
             to: check.remote_version,
           })}{" "}
-          <button type="button" className="nx-link-btn" style={{ marginInlineStart: 8, fontWeight: 600 }} onClick={openUpdateModal}>
+          <button type="button" className="sk-link-btn" style={{ marginInlineStart: 8, fontWeight: 600 }} onClick={openUpdateModal}>
             {t("system.applyUpdates")} →
           </button>
         </Callout>
       )}
 
       {!admin?.is_sudo && ws?.wallet_blocked && (
-        <Callout tone="danger" title={t("overview.walletBlockedTitle")} className="nx-mb-16">
+        <Callout tone="danger" title={t("overview.walletBlockedTitle")} className="sk-mb-16">
           {t("overview.walletBlockedHint", {
             cost: (ws.pending_usage_cost ?? 0).toLocaleString(),
             balance: (ws.wallet_balance ?? 0).toLocaleString(),
@@ -475,8 +652,8 @@ export const Overview: FC = () => {
         </Callout>
       )}
       {!admin?.is_sudo && (ws?.prepaid_traffic_remaining ?? 0) <= 0 && (
-        <Callout tone="warn" title={t("overview.packageExhaustedTitle")} className="nx-mb-16">
-          <div className="nx-stack" style={{ gap: 10 }}>
+        <Callout tone="warn" title={t("overview.packageExhaustedTitle")} className="sk-mb-16">
+          <div className="sk-stack" style={{ gap: 10 }}>
             <span>{t("overview.packageExhaustedHint")}</span>
             <div>
               <Link to="/billing?billingTab=packages">
@@ -487,30 +664,30 @@ export const Overview: FC = () => {
         </Callout>
       )}
       {!admin?.is_sudo && !ws?.wallet_blocked && ws?.wallet_low && (
-        <Callout tone="warn" title={t("overview.lowWalletTitle")} className="nx-mb-16">
+        <Callout tone="warn" title={t("overview.lowWalletTitle")} className="sk-mb-16">
           {t("overview.lowWalletHint")}
         </Callout>
       )}
       {!admin?.is_sudo && (ws?.capped_users ?? 0) > 0 && (
-        <Callout tone="warn" title={t("overview.cappedUsersTitle")} className="nx-mb-16">
+        <Callout tone="warn" title={t("overview.cappedUsersTitle")} className="sk-mb-16">
           {t("overview.cappedUsersHint", { count: ws?.capped_users ?? 0 })}
         </Callout>
       )}
 
       {admin?.is_sudo && healthItems.length > 0 && !setupDone && (
-        <div className="nx-mb-20"><HealthChecklist items={healthItems} /></div>
+        <div className="sk-mb-20"><HealthChecklist items={healthItems} /></div>
       )}
 
       {admin?.is_sudo && !setupDone && (
-        <div className="nx-quick-actions nx-mb-20">
-          <Link to="/servers?tab=nodes" className="nx-quick-card accent">
-            <IcServer className="nx-ico" /><span>{t("overview.quickAddServer")}</span>
+        <div className="sk-quick-actions sk-mb-20">
+          <Link to="/servers?tab=nodes" className="sk-quick-card accent">
+            <IcServer className="sk-ico" /><span>{t("overview.quickAddServer")}</span>
           </Link>
-          <Link to="/connection?tab=inbounds" className="nx-quick-card">
-            <IcBolt className="nx-ico" /><span>{t("overview.quickAddInbound")}</span>
+          <Link to="/connection?tab=inbounds" className="sk-quick-card">
+            <IcBolt className="sk-ico" /><span>{t("overview.quickAddInbound")}</span>
           </Link>
-          <Link to="/users" className="nx-quick-card ok">
-            <IcUsers className="nx-ico" /><span>{t("overview.quickAddUser")}</span>
+          <Link to="/users" className="sk-quick-card ok">
+            <IcUsers className="sk-ico" /><span>{t("overview.quickAddUser")}</span>
           </Link>
         </div>
       )}
@@ -533,8 +710,8 @@ export const Overview: FC = () => {
         {sys.loading && !s ? (
           <Card><SkeletonRows rows={2} cols={4} /></Card>
         ) : (
-          <div className="nx-fleet-stack">
-            <div className={`nx-kpi-grid${admin?.is_sudo ? "" : " is-reseller"}`}>
+          <div className="sk-fleet-stack">
+            <div className={`sk-kpi-grid${admin?.is_sudo ? "" : " is-reseller"}`}>
               <KpiTile label={t("overview.totalUsers")} value={s?.total_user} to="/users" />
               <KpiTile
                 live
@@ -581,9 +758,9 @@ export const Overview: FC = () => {
       )}
 
       <Section title={t("overview.usage", "Usage")}>
-        <div className="nx-usage-grid">
-          <article className="nx-usage-board">
-            <header className="nx-usage-board-head">
+        <div className="sk-usage-grid">
+          <article className="sk-usage-board">
+            <header className="sk-usage-board-head">
               <div>
                 <h3>{t("analytics.protocolUsage", "Usage by protocol")}</h3>
                 <p>{t("overview.usageProtocolHint", "Share of total recorded traffic")}</p>
@@ -601,13 +778,13 @@ export const Overview: FC = () => {
                 format={(n) => formatBytes(n, 0)}
               />
             ) : (
-              <div className="nx-muted nx-center" style={{ padding: 20 }}>{t("common.noData")}</div>
+              <div className="sk-muted sk-center" style={{ padding: 20 }}>{t("common.noData")}</div>
             )}
           </article>
 
           {admin?.is_sudo && nodesUsage.data?.usages?.length ? (
-            <article className="nx-usage-board">
-              <header className="nx-usage-board-head">
+            <article className="sk-usage-board">
+              <header className="sk-usage-board-head">
                 <div>
                   <h3>{t("overview.nodesUsage")}</h3>
                   <p>{t("overview.usageNodesHint", "Last 30 days across connected nodes")}</p>
@@ -624,13 +801,13 @@ export const Overview: FC = () => {
             </article>
           ) : null}
 
-          <article className="nx-usage-board">
-            <header className="nx-usage-board-head">
+          <article className="sk-usage-board">
+            <header className="sk-usage-board-head">
               <div>
                 <h3>{t("overview.topUsers")}</h3>
                 <p>{t("overview.usageUsersHint", "Highest consumers on this panel")}</p>
               </div>
-              <Link to="/users" className="nx-usage-link">
+              <Link to="/users" className="sk-usage-link">
                 {t("common.viewAll", "View all")}
                 <span aria-hidden>→</span>
               </Link>
@@ -646,32 +823,46 @@ export const Overview: FC = () => {
                 format={(n) => formatBytes(n, 0)}
               />
             ) : (
-              <div className="nx-muted nx-center" style={{ padding: 20 }}>{t("common.noData")}</div>
+              <div className="sk-muted sk-center" style={{ padding: 20 }}>{t("common.noData")}</div>
             )}
           </article>
         </div>
       </Section>
 
+      {isEnabled("billing") && payActive && (
+        <Section>
+          {gatewayIncome.loading && !gatewayIncome.data ? (
+            <div className="sk-pay-pulse"><SkeletonRows rows={3} cols={4} /></div>
+          ) : gatewayIncome.data ? (
+            <PaymentPulse
+              income={gatewayIncome.data}
+              methods={payMethods}
+              isSudo={!!admin?.is_sudo}
+            />
+          ) : null}
+        </Section>
+      )}
+
       {admin?.is_sudo && mrr.data && (
         <Section title={t("overview.mrrTitle")}>
-          <div className="nx-home-mrr">
-            <div className="nx-home-mrr-cell">
-              <span className="nx-home-mrr-label">{t("overview.mrrRevenue")}</span>
-              <LiveValue className="nx-home-mrr-value" value={mrr.data.total_revenue} format={(n) => Math.round(n).toLocaleString()} />
+          <div className="sk-home-mrr">
+            <div className="sk-home-mrr-cell">
+              <span className="sk-home-mrr-label">{t("overview.mrrRevenue")}</span>
+              <LiveValue className="sk-home-mrr-value" value={mrr.data.total_revenue} format={(n) => Math.round(n).toLocaleString()} />
             </div>
-            <div className="nx-home-mrr-cell">
-              <span className="nx-home-mrr-label">{t("overview.mrrFloat")}</span>
-              <LiveValue className="nx-home-mrr-value" value={mrr.data.wallet_float} format={(n) => Math.round(n).toLocaleString()} />
+            <div className="sk-home-mrr-cell">
+              <span className="sk-home-mrr-label">{t("overview.mrrFloat")}</span>
+              <LiveValue className="sk-home-mrr-value" value={mrr.data.wallet_float} format={(n) => Math.round(n).toLocaleString()} />
             </div>
-            <div className="nx-home-mrr-cell">
-              <span className="nx-home-mrr-label">{t("overview.mrrResellers")}</span>
-              <LiveValue className="nx-home-mrr-value" value={mrr.data.active_resellers} />
+            <div className="sk-home-mrr-cell">
+              <span className="sk-home-mrr-label">{t("overview.mrrResellers")}</span>
+              <LiveValue className="sk-home-mrr-value" value={mrr.data.active_resellers} />
             </div>
           </div>
         </Section>
       )}
 
-      <div className="nx-home-foot">
+      <div className="sk-home-foot">
         {t("overview.version")} {s?.version} · {new Intl.DateTimeFormat(i18n.language, { dateStyle: "medium", timeStyle: "medium" }).format(new Date())}
       </div>
     </div>

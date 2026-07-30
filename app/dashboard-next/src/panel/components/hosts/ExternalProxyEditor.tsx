@@ -77,18 +77,18 @@ export const ExternalProxyEditor: FC<{
   const setHops = (next: ExternalProxyHop[]) => onChange(serializeExternalProxyJson(next));
 
   return (
-    <div className="nx-stack" style={{ gap: 10 }}>
-      <p className="nx-host-ech-hint">{t("infra.hostExternalProxyHint")}</p>
+    <div className="sk-stack" style={{ gap: 10 }}>
+      <p className="sk-host-ech-hint">{t("infra.hostExternalProxyHint")}</p>
       {hops.map((hop, idx) => (
-        <div key={idx} className="nx-card nx-card-pad" style={{ display: "grid", gap: 8 }}>
-          <div className="nx-row" style={{ justifyContent: "space-between" }}>
+        <div key={idx} className="sk-card sk-card-pad" style={{ display: "grid", gap: 8 }}>
+          <div className="sk-row" style={{ justifyContent: "space-between" }}>
             <strong>{t("infra.hostExternalProxyHop", { n: idx + 1 })}</strong>
             <Button
               size="sm"
               variant="danger"
               onClick={() => setHops(hops.filter((_, i) => i !== idx))}
             >
-              <IcTrash className="nx-ico" />
+              <IcTrash className="sk-ico" />
             </Button>
           </div>
           <Field label={t("infra.address")}>
@@ -184,7 +184,7 @@ export const ExternalProxyEditor: FC<{
         </div>
       ))}
       <Button variant="ghost" onClick={() => setHops([...hops, emptyExternalProxyHop()])}>
-        <IcPlus className="nx-ico" /> {t("infra.hostExternalProxyAdd")}
+        <IcPlus className="sk-ico" /> {t("infra.hostExternalProxyAdd")}
       </Button>
     </div>
   );

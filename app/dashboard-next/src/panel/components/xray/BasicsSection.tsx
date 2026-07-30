@@ -17,7 +17,7 @@ export const BasicsSection: FC<{
   };
 
   return (
-    <div className="nx-stack">
+    <div className="sk-stack">
       <Callout tone="info" title={t("xray.basicsTitle")}>{t("xray.basicsDesc")}</Callout>
       <Card>
         <Field label={t("xray.logLevel")}>
@@ -32,7 +32,7 @@ export const BasicsSection: FC<{
         </Field>
         <Field label={`${t("xray.accessLog")} (${t("common.optional")})`}>
           <input
-            className="nx-input"
+            className="sk-input"
             value={String(log.access || "")}
             onChange={(e: ChangeEvent<HTMLInputElement>) => setLog("access", e.target.value)}
             placeholder="/var/log/xray/access.log"
@@ -40,14 +40,14 @@ export const BasicsSection: FC<{
         </Field>
         <Field label={`${t("xray.errorLog")} (${t("common.optional")})`}>
           <input
-            className="nx-input"
+            className="sk-input"
             value={String(log.error || "")}
             onChange={(e: ChangeEvent<HTMLInputElement>) => setLog("error", e.target.value)}
             placeholder="/var/log/xray/error.log"
           />
         </Field>
       </Card>
-      <div className="nx-row" style={{ justifyContent: "flex-end" }}>
+      <div className="sk-row" style={{ justifyContent: "flex-end" }}>
         <Button variant="primary" disabled={saving} onClick={onSave}>{t("common.save")}</Button>
       </div>
     </div>

@@ -32,7 +32,7 @@ def _read_version() -> str:
 
 
 __version__ = _read_version()
-PRODUCT_NAME = "NexusPanel"
+PRODUCT_NAME = "Shahkar"
 
 
 def panel_version() -> str:
@@ -40,8 +40,8 @@ def panel_version() -> str:
     return _read_version()
 
 app = FastAPI(
-    title="NexusPanel API",
-    description="NexusPanel — professional proxy management platform powered by Xray",
+    title="Shahkar API",
+    description="Shahkar — professional proxy management platform powered by Xray",
     version=__version__,
     docs_url="/docs" if DOCS else None,
     redoc_url="/redoc" if DOCS else None,
@@ -86,7 +86,7 @@ async def security_headers_middleware(request: Request, call_next):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
-    response.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+    response.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=(), notifications=(self)")
     if request.url.scheme == "https":
         response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
     cache = _static_cache_control(request.url.path)

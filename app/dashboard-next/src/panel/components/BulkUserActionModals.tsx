@@ -78,11 +78,11 @@ export const BulkExtendModal: FC<SelectedScopeProps> = ({
         </>
       }
     >
-      <p className="nx-faint" style={{ fontSize: 13, marginBottom: 14 }}>
+      <p className="sk-faint" style={{ fontSize: 13, marginBottom: 14 }}>
         {t("bulkExtend.descData", { n: selectedUsernames.length })}
       </p>
       <Field label={t("bulkExtend.days")}>
-        <div className="nx-row" style={{ gap: 8, flexWrap: "wrap" }}>
+        <div className="sk-row" style={{ gap: 8, flexWrap: "wrap" }}>
           <Input
             type="number"
             min={0}
@@ -98,7 +98,7 @@ export const BulkExtendModal: FC<SelectedScopeProps> = ({
         </div>
       </Field>
       <Field label={t("bulkExtend.addData")}>
-        <div className="nx-row" style={{ gap: 8, flexWrap: "wrap" }}>
+        <div className="sk-row" style={{ gap: 8, flexWrap: "wrap" }}>
           <Input
             type="number"
             min={0}
@@ -108,13 +108,13 @@ export const BulkExtendModal: FC<SelectedScopeProps> = ({
             style={{ maxWidth: 120 }}
             dir="ltr"
           />
-          <span className="nx-faint" style={{ alignSelf: "center", fontSize: 13 }}>GB</span>
+          <span className="sk-faint" style={{ alignSelf: "center", fontSize: 13 }}>GB</span>
           {[10, 30, 50, 100].map((g) => (
             <Button key={g} size="sm" variant="ghost" onClick={() => setDataGb(String(g))}>{g}</Button>
           ))}
         </div>
       </Field>
-      <p className="nx-faint" style={{ fontSize: 12, marginTop: 4 }}>{t("bulkExtend.addDataHint")}</p>
+      <p className="sk-faint" style={{ fontSize: 12, marginTop: 4 }}>{t("bulkExtend.addDataHint")}</p>
     </Modal>
   );
 };
@@ -167,7 +167,7 @@ export const BulkResetUsageModal: FC<SelectedScopeProps> = ({
         </>
       }
     >
-      <p className="nx-faint" style={{ fontSize: 13 }}>{t("bulkReset.desc", { n: selectedUsernames.length })}</p>
+      <p className="sk-faint" style={{ fontSize: 13 }}>{t("bulkReset.desc", { n: selectedUsernames.length })}</p>
     </Modal>
   );
 };

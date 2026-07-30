@@ -1,4 +1,4 @@
-/** Helpers for NexusPanel Xray config UI (3x-ui parity). */
+/** Helpers for Shahkar Xray config UI (3x-ui parity). */
 
 /** Inbounds that panel users can be assigned to. */
 export const PRODUCT_INBOUND_PROTOCOLS = [
@@ -116,8 +116,8 @@ export const SNIFF_OVERRIDES = ["http", "tls", "quic", "fakedns"];
 export const KCP_HEADERS = ["none", "srtp", "utp", "wechat-video", "dtls", "wireguard"];
 const SYSTEM_TAGS = new Set(["API_INBOUND", "API", "TUN_IN", "metrics_in"]);
 
-/** Xray wireguard JSON marker — ignored by Xray, used by NexusPanel UI. */
-export const NXPANEL_INBOUND_KIND = "nexusPanelKind";
+/** Xray wireguard JSON marker — ignored by Xray, used by Shahkar UI. */
+export const SHAHKAR_INBOUND_KIND = "shahkarPanelKind";
 
 export function isAmneziaInbound(i: {
   protocol?: string;
@@ -125,7 +125,7 @@ export function isAmneziaInbound(i: {
   settings?: unknown;
 }): boolean {
   const settings = (i.settings || {}) as Record<string, unknown>;
-  if (settings[NXPANEL_INBOUND_KIND] === "amneziawg") return true;
+  if (settings[SHAHKAR_INBOUND_KIND] === "amneziawg") return true;
   const proto = String(i.protocol || "");
   const tag = String(i.tag || "");
   return proto === "amneziawg" || (proto === "wireguard" && /amnezia|awg/i.test(tag));
@@ -319,7 +319,7 @@ export function defaultAmneziaInbound(
       secretKey: "",
       mtu: 1420,
       peers: [],
-      [NXPANEL_INBOUND_KIND]: "amneziawg",
+      [SHAHKAR_INBOUND_KIND]: "amneziawg",
     },
   };
 }

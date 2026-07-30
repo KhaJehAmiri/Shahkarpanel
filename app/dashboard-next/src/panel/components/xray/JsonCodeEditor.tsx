@@ -21,15 +21,15 @@ export const JsonCodeEditor: FC<{
   }, [value]);
 
   return (
-    <div className="nx-json-editor">
-      <div className="nx-json-editor-gutter" ref={gutterRef} aria-hidden>
+    <div className="sk-json-editor">
+      <div className="sk-json-editor-gutter" ref={gutterRef} aria-hidden>
         {Array.from({ length: lineCount }, (_, i) => (
-          <div key={i} className="nx-json-editor-ln">{i + 1}</div>
+          <div key={i} className="sk-json-editor-ln">{i + 1}</div>
         ))}
       </div>
       <textarea
         ref={taRef}
-        className="nx-json-editor-code"
+        className="sk-json-editor-code"
         value={value}
         onChange={(e: ChangeEvent<HTMLTextAreaElement>) => onChange(e.target.value)}
         onScroll={syncScroll}

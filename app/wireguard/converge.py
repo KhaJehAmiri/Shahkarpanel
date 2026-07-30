@@ -12,7 +12,7 @@ import threading
 import time
 from typing import Any, Dict, Optional
 
-logger = logging.getLogger("nexus-wg")
+logger = logging.getLogger("shahkar-wg")
 
 _lock = threading.Lock()
 

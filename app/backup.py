@@ -34,7 +34,7 @@ from config import (
 
 logger = logging.getLogger("uvicorn.error")
 
-ARCHIVE_PREFIX = "nexuspanel-backup-"
+ARCHIVE_PREFIX = "shahkar-backup-"
 _SQLITE_MAGIC = b"SQLite format 3"
 _PG_CUSTOM_MAGIC = b"PGDMP"
 _GZIP_MAGIC = b"\x1f\x8b"
@@ -55,8 +55,8 @@ def _db_backend() -> str:
 
 
 def _safe_host_label() -> str:
-    host = (socket.gethostname() or "nexuspanel").strip().lower()
-    host = re.sub(r"[^a-z0-9._-]+", "-", host).strip("-._") or "nexuspanel"
+    host = (socket.gethostname() or "shahkar").strip().lower()
+    host = re.sub(r"[^a-z0-9._-]+", "-", host).strip("-._") or "shahkar"
     return host[:64]
 
 
@@ -120,7 +120,7 @@ def _write_control_env_backup(workdir: str) -> None:
         return
     dest = os.path.join(workdir, "runtime-env.backup")
     lines = [
-        "# NexusPanel migration control secrets — do not commit",
+        "# Shahkar migration control secrets — do not commit",
         *(f"{k}={values[k]}" for k in _CONTROL_ENV_KEYS if k in values),
         "",
     ]
@@ -221,7 +221,7 @@ def _compose_pg_cmd(tool: str, *extra: str) -> Optional[List[str]]:
     from app.db.base import engine
 
     url = engine.url
-    project = os.environ.get("COMPOSE_PROJECT_NAME", "nexuspanel").strip() or "nexuspanel"
+    project = os.environ.get("COMPOSE_PROJECT_NAME", "shahkar").strip() or "shahkar"
     cmd = [
         "docker", "compose", "-p", project, "-f", compose_file,
         "exec", "-T", "postgres",
@@ -525,7 +525,7 @@ def detect_backup_kind(path: str) -> str:
         return "sqlite"
     if head.startswith(_GZIP_MAGIC):
         return "tar"
-    # Plain SQL text dumps (legacy NexusPanel / mysqldump).
+    # Plain SQL text dumps (legacy Shahkar / mysqldump).
     sample = head.lstrip()
     if sample.startswith((b"--", b"SET ", b"CREATE ", b"DROP ", b"BEGIN", b"PRAGMA")):
         return "sql"
@@ -599,7 +599,7 @@ def save_uploaded_backup(content: bytes, original_name: str = "") -> str:
         except OSError:
             pass
         raise ValueError(
-            "Uploaded file is not a valid NexusPanel backup "
+            "Uploaded file is not a valid Shahkar backup "
             "(expected .dump / .db / .sql / .tar.gz)."
         )
     logger.info("Backup uploaded: %s", dest)
@@ -691,12 +691,12 @@ def _psql_admin(env: dict, appuser: str, *args: str, dbname: str = "postgres", *
     if compose_cmd:
         from app.db.base import engine
         # rebuild without the trailing tool args already in compose_cmd
-        project = os.environ.get("COMPOSE_PROJECT_NAME", "nexuspanel").strip() or "nexuspanel"
+        project = os.environ.get("COMPOSE_PROJECT_NAME", "shahkar").strip() or "shahkar"
         compose_file = _compose_file()
         cmd = [
             "docker", "compose", "-p", project, "-f", compose_file,
             "exec", "-T",
-            "-e", "PGAPPNAME=nexuspanel-restore",
+            "-e", "PGAPPNAME=shahkar-restore",
             "postgres",
             "psql", "-U", appuser, "-d", dbname, *args,
         ]
@@ -765,9 +765,9 @@ def _compose_pg_restore_into(dump_path: str, dbname: str, env: dict, appuser: st
     compose_file = _compose_file()
     if not compose_file or not shutil.which("docker"):
         raise RuntimeError("docker compose postgres service not available")
-    project = os.environ.get("COMPOSE_PROJECT_NAME", "nexuspanel").strip() or "nexuspanel"
+    project = os.environ.get("COMPOSE_PROJECT_NAME", "shahkar").strip() or "shahkar"
     root = _compose_root()
-    remote = f"/tmp/nexuspanel-restore-{uuid4().hex[:10]}.dump"
+    remote = f"/tmp/shahkar-restore-{uuid4().hex[:10]}.dump"
     cp = subprocess.run(
         ["docker", "compose", "-p", project, "-f", compose_file, "cp", dump_path, f"postgres:{remote}"],
         cwd=root, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
@@ -781,7 +781,7 @@ def _compose_pg_restore_into(dump_path: str, dbname: str, env: dict, appuser: st
         cmd = [
             "docker", "compose", "-p", project, "-f", compose_file,
             "exec", "-T",
-            "-e", "PGAPPNAME=nexuspanel-restore",
+            "-e", "PGAPPNAME=shahkar-restore",
             "postgres",
             "pg_restore",
             "-U", appuser,
@@ -821,7 +821,7 @@ def _local_pg_restore_into(dump_path: str, dbname: str, env: dict, appuser: str)
         dump_path,
     ]
     local_env = env.copy()
-    local_env["PGAPPNAME"] = "nexuspanel-restore"
+    local_env["PGAPPNAME"] = "shahkar-restore"
     proc = subprocess.run(cmd, env=local_env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     if _pg_restore_failed(proc):
         tail = (proc.stderr or b"").decode(errors="replace")[-800:]
@@ -846,8 +846,8 @@ def _restore_postgres_custom(dump_path: str) -> None:
     appuser = str(url.username or "postgres")
     env = _pg_env()
     stamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
-    tmp_db = f"nexuspanel_restore_{stamp}"
-    old_db = f"nexuspanel_old_{stamp}"
+    tmp_db = f"shahkar_restore_{stamp}"
+    old_db = f"shahkar_old_{stamp}"
 
     engine.dispose()
 
@@ -936,8 +936,8 @@ def _restore_postgres_sql(sql_src: str) -> None:
     appuser = str(url.username or "postgres")
     env = _pg_env()
     stamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
-    tmp_db = f"nexuspanel_restore_{stamp}"
-    old_db = f"nexuspanel_old_{stamp}"
+    tmp_db = f"shahkar_restore_{stamp}"
+    old_db = f"shahkar_old_{stamp}"
 
     engine.dispose()
     proc = _psql_admin(
@@ -956,9 +956,9 @@ def _restore_postgres_sql(sql_src: str) -> None:
         # Import SQL into temp.
         compose_file = _compose_file()
         if compose_file and shutil.which("docker"):
-            project = os.environ.get("COMPOSE_PROJECT_NAME", "nexuspanel").strip() or "nexuspanel"
+            project = os.environ.get("COMPOSE_PROJECT_NAME", "shahkar").strip() or "shahkar"
             root = _compose_root()
-            remote = f"/tmp/nexuspanel-restore-{uuid4().hex[:10]}.sql"
+            remote = f"/tmp/shahkar-restore-{uuid4().hex[:10]}.sql"
             cp = subprocess.run(
                 ["docker", "compose", "-p", project, "-f", compose_file, "cp", sql_src, f"postgres:{remote}"],
                 cwd=root, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,

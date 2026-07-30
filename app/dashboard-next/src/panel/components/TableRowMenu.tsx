@@ -61,7 +61,7 @@ export const TableRowMenu: FC<{
     ? createPortal(
         <div
           ref={menuRef}
-          className={`nx-reseller-menu nx-reseller-menu--fixed${pos.openUp ? " is-up" : ""}`}
+          className={`sk-reseller-menu sk-reseller-menu--fixed${pos.openUp ? " is-up" : ""}`}
           role="menu"
           style={{
             top: pos.openUp ? undefined : pos.top,
@@ -75,7 +75,7 @@ export const TableRowMenu: FC<{
               type="button"
               role="menuitem"
               disabled={item.disabled}
-              className={`nx-reseller-menu-item${item.danger ? " is-danger" : ""}`}
+              className={`sk-reseller-menu-item${item.danger ? " is-danger" : ""}`}
               onClick={() => {
                 if (item.disabled) return;
                 setOpen(false);
@@ -92,17 +92,17 @@ export const TableRowMenu: FC<{
     : null;
 
   return (
-    <div className="nx-ra-menu">
+    <div className="sk-ra-menu">
       <button
         ref={btnRef}
         type="button"
-        className="nx-ra-icon-btn"
+        className="sk-ra-icon-btn"
         title={label || t("common.actions")}
         aria-label={label || t("common.actions")}
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >
-        <IcMore className="nx-ico" />
+        <IcMore className="sk-ico" />
       </button>
       {menu}
     </div>

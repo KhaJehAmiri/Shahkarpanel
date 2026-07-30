@@ -14,7 +14,7 @@ from app.db import models as db_models
 from app.models.proxy import ProxyTypes
 from app.models.user import UserStatus
 from app.utils.crypto import get_cert_SANs
-from app.xray.inbound_normalize import NXPANEL_INBOUND_KIND
+from app.xray.inbound_normalize import SHAHKAR_INBOUND_KIND
 from app.xray.network_defaults import DEFAULT_TLS_FINGERPRINT, effective_vless_flow
 from config import DEBUG, XRAY_EXCLUDE_INBOUND_TAGS, XRAY_FALLBACKS_INBOUND_TAG
 
@@ -202,7 +202,7 @@ class XRayConfig(dict):
             if raw_proto == 'amneziawg':
                 inbound['protocol'] = ProxyTypes.WireGuard.value
                 settings_raw = inbound.setdefault('settings', {})
-                settings_raw.setdefault(NXPANEL_INBOUND_KIND, 'amneziawg')
+                settings_raw.setdefault(SHAHKAR_INBOUND_KIND, 'amneziawg')
 
             if inbound['protocol'] not in ProxyTypes._value2member_map_:
                 continue
@@ -487,7 +487,7 @@ class XRayConfig(dict):
         """True when a wireguard inbound is an assignable AmneziaWG product listener."""
         proto = str(inbound.get("protocol") or "").lower()
         settings = inbound.get("settings") or {}
-        if settings.get(NXPANEL_INBOUND_KIND) == "amneziawg":
+        if settings.get(SHAHKAR_INBOUND_KIND) == "amneziawg":
             return True
         if proto == "amneziawg":
             return True

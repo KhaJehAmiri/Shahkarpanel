@@ -20,7 +20,7 @@ interface Props {
 }
 
 export function SubAppTile({
-  app, platform, subUrl, profileName = "NexusPanel", importLabel, downloadLabel, pasteFallback, streisandHint, clipboardHint, noResponse, onToast,
+  app, platform, subUrl, profileName = "Shahkar", importLabel, downloadLabel, pasteFallback, streisandHint, clipboardHint, noResponse, onToast,
 }: Props) {
   const [busy, setBusy] = useState(false);
   const deepLink = app.buildScheme(subUrl, { name: profileName });

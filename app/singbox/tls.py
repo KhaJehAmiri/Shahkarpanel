@@ -50,7 +50,7 @@ def refresh_node_tls(db, dbnode) -> Dict[str, Any]:
     cfg = dbnode.singbox
     if cfg is None:
         return {"present": False, "trusted": False}
-    cert_path = cfg.certificate_path or "/var/lib/nexuspanel-node/tls/cert.pem"
+    cert_path = cfg.certificate_path or "/var/lib/shahkar-node/tls/cert.pem"
     node_object = xray.nodes.get(dbnode.id)
     status = fetch_remote_tls_status(node_object, cert_path)
     apply_tls_status_to_config(cfg, status, le_domain=cfg.tls_le_domain or cfg.sni)

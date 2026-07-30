@@ -3,7 +3,7 @@
 # Run on the panel host; copy outputs to each node agent.
 set -euo pipefail
 
-OUT="${1:-/var/lib/nexuspanel/certs/mtls}"
+OUT="${1:-/var/lib/shahkar/certs/mtls}"
 DAYS="${2:-3650}"
 mkdir -p "$OUT"
 cd "$OUT"
@@ -15,10 +15,10 @@ fi
 
 openssl req -x509 -newkey rsa:4096 -sha256 -days "$DAYS" -nodes \
   -keyout ca.key -out ca.pem \
-  -subj "/CN=NexusPanel Node CA"
+  -subj "/CN=Shahkar Node CA"
 
 openssl req -newkey rsa:4096 -nodes -keyout client.key -out client.csr \
-  -subj "/CN=nexuspanel-panel-client"
+  -subj "/CN=shahkar-panel-client"
 
 openssl x509 -req -in client.csr -CA ca.pem -CAkey ca.key -CAcreateserial \
   -out client.pem -days "$DAYS" -sha256

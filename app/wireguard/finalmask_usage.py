@@ -27,7 +27,7 @@ from app.db import GetDB, crud
 from app.wireguard.operations import _node_object
 from app.wireguard.xray_native import xray_native_wg_enabled
 
-logger = logging.getLogger("nexus-finalmask-usage")
+logger = logging.getLogger("shahkar-finalmask-usage")
 
 
 class FinalmaskUsageTracker:

@@ -2,7 +2,7 @@
 
 When the remote node's network blocks Docker Hub / CloudFront (HTTP 403 on
 blob pulls), ``docker build`` on the node fails even though the panel bundle
-downloaded fine. Shipping the panel's already-built ``nexuspanel/node`` image
+downloaded fine. Shipping the panel's already-built ``shahkar/node`` image
 avoids any Hub access on the node.
 """
 from __future__ import annotations
@@ -17,8 +17,8 @@ from config import NODE_AGENT_IMAGE
 
 logger = logging.getLogger("uvicorn.error")
 
-_PREFERRED_CACHE = Path("/var/lib/nexuspanel/cache/agent-images")
-_FALLBACK_CACHE = Path("/tmp/nexuspanel-agent-images")
+_PREFERRED_CACHE = Path("/var/lib/shahkar/cache/agent-images")
+_FALLBACK_CACHE = Path("/tmp/shahkar-agent-images")
 
 
 class AgentImageUnavailable(RuntimeError):
@@ -53,20 +53,20 @@ def _docker(*args: str, timeout: int = 120) -> subprocess.CompletedProcess[str]:
 
 def image_id(image: Optional[str] = None) -> str:
     """Return the local image ID (sha256:…) or raise if missing."""
-    ref = (image or NODE_AGENT_IMAGE).strip() or "nexuspanel/node:latest"
+    ref = (image or NODE_AGENT_IMAGE).strip() or "shahkar/node:latest"
     proc = _docker("image", "inspect", "--format", "{{.Id}}", ref, timeout=30)
     if proc.returncode != 0 or not (proc.stdout or "").strip():
         detail = (proc.stderr or proc.stdout or "").strip() or "not found"
         raise AgentImageUnavailable(
             f"Node agent image '{ref}' is not available on the panel host ({detail}). "
-            f"Build it first: docker build -t {ref} /opt/nexuspanel/node"
+            f"Build it first: docker build -t {ref} /opt/shahkar/node"
         )
     return proc.stdout.strip()
 
 
 def cached_image_path(image: Optional[str] = None) -> Path:
     """Return path to a gzipped ``docker save`` tarball, building the cache if needed."""
-    ref = (image or NODE_AGENT_IMAGE).strip() or "nexuspanel/node:latest"
+    ref = (image or NODE_AGENT_IMAGE).strip() or "shahkar/node:latest"
     iid = image_id(ref)
     short = iid.split(":", 1)[-1][:16]
     cache_dir = _cache_dir()

@@ -134,7 +134,7 @@ def onboarding_status(db: Session, admin) -> dict:
 
     completed = feature_flags.is_enabled("reseller_onboarding_completed", admin_id=dbadmin.id)
     branding = tenant_svc.resolve_branding(db, dbadmin.tenant_id)
-    has_branding = bool(branding.get("panel_title") and branding["panel_title"] != "NexusPanel")
+    has_branding = bool(branding.get("panel_title") and branding["panel_title"] != "Shahkar")
     from sqlalchemy import or_
 
     plan_filters = [Plan.owner_admin_id == dbadmin.id]

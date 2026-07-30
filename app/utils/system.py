@@ -299,7 +299,7 @@ def _use_fleet_bandwidth() -> bool:
 def realtime_bandwidth() -> RealtimeBandwidthStat:
     """Fleet Xray (panel + nodes) when it carries real traffic; else host NIC.
 
-    3x-ui Overall Speed is host NetIO. We extend that for NexusPanel by summing
+    3x-ui Overall Speed is host NetIO. We extend that for Shahkar by summing
     Xray counters across every connected node so Home shows whole-fleet proxy
     throughput instead of only the panel box.
     """

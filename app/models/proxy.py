@@ -207,7 +207,7 @@ class WireGuardSettings(ProxySettings):
     auto-generated when absent so an empty ``{}`` from the API yields a valid
     peer.
 
-    ``nexusPanelKind`` records whether the user was assigned plain WG, AmneziaWG,
+    ``shahkarPanelKind`` records whether the user was assigned plain WG, AmneziaWG,
     or both (panel-only; ignored by the node).
 
     ``finalmask_slot`` is the sticky Finalmask shard index (UDP port =
@@ -219,7 +219,11 @@ class WireGuardSettings(ProxySettings):
     address: Optional[str] = None
     awg_address: Optional[str] = None
     preshared_key: Optional[str] = None
-    nexus_panel_kind: Optional[str] = Field(default=None, alias="nexusPanelKind")
+    shahkar_panel_kind: Optional[str] = Field(
+        default=None,
+        alias="shahkarPanelKind",
+        serialization_alias="shahkarPanelKind",
+    )
     finalmask_slot: Optional[int] = None
 
     model_config = ConfigDict(populate_by_name=True)

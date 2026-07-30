@@ -28,12 +28,12 @@ export const HubLayout: FC<{
   };
 
   return (
-    <div className="nx-hub nx-page">
+    <div className="sk-hub sk-page">
       <PageHeader title={title} subtitle={subtitle} description={description} actions={actions} />
-      <div className="nx-hub-tabs">
+      <div className="sk-hub-tabs">
         <Tabs active={active} onChange={onTab} tabs={visible.map((t) => ({ id: t.id, label: t.label }))} />
       </div>
-      <div className="nx-hub-body">{children(active)}</div>
+      <div className="sk-hub-body">{children(active)}</div>
     </div>
   );
 };

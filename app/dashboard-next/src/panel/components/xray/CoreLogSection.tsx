@@ -38,13 +38,13 @@ export const CoreLogSection: FC = () => {
 
   return (
     <Card>
-      <div className="nx-row" style={{ justifyContent: "space-between", marginBottom: 8 }}>
+      <div className="sk-row" style={{ justifyContent: "space-between", marginBottom: 8 }}>
         <strong>{t("xray.coreLogs")}</strong>
         <Button size="sm" variant="ghost" onClick={() => setLines([])}>{t("common.clear")}</Button>
       </div>
       {!connected && !error && <Callout tone="info">{t("common.loading")}</Callout>}
       {error && <Callout tone="warn">{error}</Callout>}
-      <pre ref={boxRef} className="nx-log-viewer" dir="ltr" style={{ maxHeight: 420, overflow: "auto", fontSize: 12 }}>
+      <pre ref={boxRef} className="sk-log-viewer" dir="ltr" style={{ maxHeight: 420, overflow: "auto", fontSize: 12 }}>
         {lines.join("\n") || "—"}
       </pre>
     </Card>

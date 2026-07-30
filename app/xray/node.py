@@ -173,7 +173,7 @@ class ReSTXRayNode:
         from config import NODE_CONTROL_SECRET
         headers = {}
         if NODE_CONTROL_SECRET:
-            headers["X-Nexus-Control-Secret"] = NODE_CONTROL_SECRET
+            headers["X-Shahkar-Control-Secret"] = NODE_CONTROL_SECRET
         try:
             res = self.session.post(
                 self._rest_api_url + path,
@@ -218,7 +218,7 @@ class ReSTXRayNode:
                     address=self.address,
                     port=self.api_port,
                     ssl_cert=self._node_cert.encode(),
-                    ssl_target_name="NexusPanel"
+                    ssl_target_name="Shahkar"
                 )
             else:
                 raise ConnectionError("Node is not started")
@@ -273,7 +273,7 @@ class ReSTXRayNode:
             address=self.address,
             port=self.api_port,
             ssl_cert=self._node_cert.encode(),
-            ssl_target_name="NexusPanel"
+            ssl_target_name="Shahkar"
         )
 
         try:
@@ -326,7 +326,7 @@ class ReSTXRayNode:
             address=self.address,
             port=self.api_port,
             ssl_cert=self._node_cert.encode(),
-            ssl_target_name="NexusPanel"
+            ssl_target_name="Shahkar"
         )
 
         try:
@@ -731,7 +731,7 @@ class RPyCXRayNode:
                 address=self.address,
                 port=self.api_port,
                 ssl_cert=self._node_cert.encode(),
-                ssl_target_name="NexusPanel",
+                ssl_target_name="Shahkar",
             )
             grpc.channel_ready_future(self._api._channel).result(timeout=timeout)
             return True
@@ -783,7 +783,7 @@ class RPyCXRayNode:
             address=self.address,
             port=self.api_port,
             ssl_cert=self._node_cert.encode(),
-            ssl_target_name="NexusPanel"
+            ssl_target_name="Shahkar"
         )
         try:
             grpc.channel_ready_future(self._api._channel).result(timeout=5)

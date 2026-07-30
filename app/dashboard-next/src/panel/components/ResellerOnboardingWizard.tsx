@@ -45,8 +45,8 @@ export const ResellerOnboardingWizard: FC = () => {
         </>
       }
     >
-      <p className="nx-faint" style={{ fontSize: 13, marginTop: 0 }}>{t("onboarding.description")}</p>
-      <div className="nx-stack" style={{ gap: 10 }}>
+      <p className="sk-faint" style={{ fontSize: 13, marginTop: 0 }}>{t("onboarding.description")}</p>
+      <div className="sk-stack" style={{ gap: 10 }}>
         <Step done={!!steps.branding} label={t("onboarding.stepBranding")} to="/resellers" />
         <Step done={!!steps.plan} label={t("onboarding.stepPlan")} to="/billing" />
         <Step done={!!steps.user} label={t("onboarding.stepUser")} to="/users" />
@@ -58,12 +58,12 @@ export const ResellerOnboardingWizard: FC = () => {
 const Step: FC<{ done: boolean; label: string; to: string }> = ({ done, label, to }) => {
   const { t } = useTranslation();
   return (
-    <div className="nx-row" style={{ justifyContent: "space-between", gap: 12 }}>
-      <div className="nx-row" style={{ gap: 8 }}>
+    <div className="sk-row" style={{ justifyContent: "space-between", gap: 12 }}>
+      <div className="sk-row" style={{ gap: 8 }}>
         <Pill tone={done ? "ok" : "default"} dot>{done ? t("onboarding.doneBadge") : t("onboarding.todoBadge")}</Pill>
         <span>{label}</span>
       </div>
-      <Link className="nx-btn sm ghost" to={to}>{t("onboarding.open")}</Link>
+      <Link className="sk-btn sm ghost" to={to}>{t("onboarding.open")}</Link>
     </div>
   );
 };

@@ -320,7 +320,7 @@ Scoped به tenant / مالک نماینده.
 sequenceDiagram
   participant Buyer as Buyer
   participant Bot as TelegramBot
-  participant API as NexusPanel_v2
+  participant API as Shahkar_v2
   Buyer->>Bot: خرید پلن
   Bot->>API: GET /plans?enabled_only=true
   API-->>Bot: catalog

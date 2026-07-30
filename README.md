@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/KhaJehAmiri/nexuspanel/master/docs/logo.svg" width="88" alt="NexusPanel" />
+<img src="https://raw.githubusercontent.com/KhaJehAmiri/shahkar/master/docs/logo.svg" width="88" alt="Shahkar" />
 
-# NexusPanel
+# Shahkar
 
 **Professional proxy control plane — multi-node, multi-protocol, white-label, commercial-ready**
 
@@ -15,7 +15,7 @@
 
 **English** · [فارسی](./README-fa.md) · [简体中文](./README-zh-cn.md) · [Русский](./README-ru.md)
 
-[Quick install](#-one-line-install-vps) · [Architecture](#-architecture) · [Features](#-feature-matrix) · [Protocols](#-protocols--subscriptions) · [Security](#-security-is-the-tests-folder-on-github) · [Repository](https://github.com/KhaJehAmiri/nexuspanel)
+[Quick install](#-one-line-install-vps) · [Architecture](#-architecture) · [Features](#-feature-matrix) · [Protocols](#-protocols--subscriptions) · [Security](#-security-is-the-tests-folder-on-github) · [Repository](https://github.com/KhaJehAmiri/shahkar)
 
 </div>
 
@@ -23,7 +23,7 @@
 
 ## Table of contents
 
-- [What is NexusPanel?](#what-is-nexuspanel)
+- [What is Shahkar?](#what-is-shahkar)
 - [One-line install (VPS)](#-one-line-install-vps)
 - [Architecture](#-architecture)
 - [Feature matrix](#-feature-matrix)
@@ -42,7 +42,7 @@
 
 ---
 
-## What is NexusPanel?
+## What is Shahkar?
 
 A full-stack **proxy control plane** for Xray, WireGuard, and sing-box: users, nodes, subscriptions, **resellers, billing, HA, automation, and traffic intelligence** — with a modern React dashboard (EN / FA / RU / ZH).
 
@@ -62,7 +62,7 @@ A full-stack **proxy control plane** for Xray, WireGuard, and sing-box: users, n
 On a fresh **Ubuntu / Debian** server as **root**:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/nexuspanel/master/scripts/nexuspanel.sh) install
+bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/shahkar/master/scripts/shahkar.sh) install
 ```
 
 <details>
@@ -71,10 +71,10 @@ bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/nexuspanel/maste
 | Step | Action |
 |------|--------|
 | 1 | Install Docker & git (auto-swap on low-RAM VPS) |
-| 2 | Clone `KhaJehAmiri/nexuspanel` → `/opt/nexuspanel` |
+| 2 | Clone `KhaJehAmiri/shahkar` → `/opt/shahkar` |
 | 3 | Generate `.env` (admin password, JWT, bootstrap token) |
 | 4 | Build & run panel via Docker Compose (PostgreSQL by default) |
-| 5 | Build `nexuspanel/node` image for SSH provisioning |
+| 5 | Build `shahkar/node` image for SSH provisioning |
 | 6 | Print dashboard URL and credentials |
 
 </details>
@@ -83,7 +83,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/nexuspanel/maste
 |------|--------|
 | Dashboard | `http://SERVER_IP:8000/dashboard/` |
 | System / Feature flags | `http://SERVER_IP:8000/dashboard/#/system` |
-| Manage | `nexuspanel status` · `logs` · `update` · `backup` · `https` |
+| Manage | `shahkar status` · `logs` · `update` · `backup` · `https` |
 
 ---
 
@@ -95,7 +95,7 @@ flowchart TB
     U[End user]
   end
 
-  subgraph panel [NexusPanel single install]
+  subgraph panel [Shahkar single install]
     API[FastAPI + React dashboard]
     DB[(PostgreSQL / SQLite)]
     R[Redis Event Bus / HA]
@@ -224,10 +224,10 @@ Enable flags: `billing`, `user_portal`, `white_label`, `node_provisioning` (and 
 | **HA** | Redis leader election; singleton jobs run on leader only |
 | **Metrics** | Prometheus `/api/metrics` + optional Grafana compose stack |
 | **Auto-heal** | Restart unhealthy nodes (flag-gated) |
-| **Backups** | `nexuspanel backup` / restore; scheduled jobs |
+| **Backups** | `shahkar backup` / restore; scheduled jobs |
 | **Updates** | In-dashboard / CLI panel update |
 | **Migration** | 3x-ui import API |
-| **HTTPS** | `nexuspanel https` — nginx + Let’s Encrypt |
+| **HTTPS** | `shahkar https` — nginx + Let’s Encrypt |
 
 ---
 
@@ -244,8 +244,8 @@ Enable flags: `billing`, `user_portal`, `white_label`, `node_provisioning` (and 
 ## Development
 
 ```bash
-git clone https://github.com/KhaJehAmiri/nexuspanel.git
-cd nexuspanel
+git clone https://github.com/KhaJehAmiri/shahkar.git
+cd shahkar
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
@@ -254,7 +254,7 @@ python3 main.py
 ```
 
 ```bash
-python3 nexuspanel-cli.py admin create --sudo
+python3 shahkar-cli.py admin create --sudo
 python3 -m pytest -q   # full suite is local / private CI — see Security
 ```
 
@@ -267,7 +267,7 @@ docker compose -f docker-compose.postgres.yml up -d --build
 docker compose -f docker-compose.monitoring.yml up -d   # optional Prometheus + Grafana
 ```
 
-Data: `/var/lib/nexuspanel`
+Data: `/var/lib/shahkar`
 
 ---
 
@@ -278,7 +278,7 @@ Data: `/var/lib/nexuspanel`
 | `SQLALCHEMY_DATABASE_URL` | SQLite (dev) / PostgreSQL (prod) |
 | `REDIS_URL` | Event bus + HA |
 | `NODE_BOOTSTRAP_TOKEN` | Node self-registration |
-| `NODE_AGENT_IMAGE` | Node image (`nexuspanel/node:latest`) |
+| `NODE_AGENT_IMAGE` | Node image (`shahkar/node:latest`) |
 | `PANEL_PUBLIC_ADDRESS` | Public URL for provisioned nodes |
 | `HA_ENABLED` | Multi-instance panel |
 | `USAGE_BILLING_RATE_PER_GB` | Fallback GB rate (overridden in UI) |
@@ -328,4 +328,4 @@ Licensed under **[AGPL-3.0](LICENSE)**. Network use (SaaS) must comply with AGPL
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) — [github.com/KhaJehAmiri/nexuspanel](https://github.com/KhaJehAmiri/nexuspanel)
+See [CONTRIBUTING.md](CONTRIBUTING.md) — [github.com/KhaJehAmiri/shahkar](https://github.com/KhaJehAmiri/shahkar)

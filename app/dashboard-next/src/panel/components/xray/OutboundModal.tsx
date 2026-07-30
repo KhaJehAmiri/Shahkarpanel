@@ -133,7 +133,7 @@ export const OutboundModal: FC<{
   };
 
   const modalTitle = isNew ? (
-    <span className="nx-modal-title-plus"><IcPlus className="nx-ico" /> {t("xray.tabOutbounds")}</span>
+    <span className="sk-modal-title-plus"><IcPlus className="sk-ico" /> {t("xray.tabOutbounds")}</span>
   ) : (
     t("common.edit")
   );
@@ -154,7 +154,7 @@ export const OutboundModal: FC<{
         </>
       }
     >
-      <div className="nx-outbound-modal">
+      <div className="sk-outbound-modal">
         <Tabs
           tabs={[
             { id: "form", label: t("outbounds.tabForm") },
@@ -172,30 +172,30 @@ export const OutboundModal: FC<{
         />
 
         {tab === "json" ? (
-          <div className="nx-outbound-json-tab">
-            <div className="nx-outbound-import">
+          <div className="sk-outbound-json-tab">
+            <div className="sk-outbound-import">
               <Input
                 value={importLink}
                 onChange={(e: ChangeEvent<HTMLInputElement>) => setImportLink(e.target.value)}
                 placeholder={OUTBOUND_LINK_PLACEHOLDER}
                 dir="ltr"
-                className="nx-mono"
+                className="sk-mono"
                 onKeyDown={(e) => { if (e.key === "Enter") handleImport(); }}
               />
               <Button variant="primary" onClick={handleImport} disabled={!importLink.trim()}>
                 {t("outbounds.importLink")}
               </Button>
             </div>
-            <div className="nx-outbound-json">
+            <div className="sk-outbound-json">
               <JsonCodeEditor
                 value={jsonText}
                 onChange={(v) => { setJsonText(v); setJsonErr(null); }}
               />
-              {jsonErr && <div className="nx-outbound-json-err">{jsonErr}</div>}
+              {jsonErr && <div className="sk-outbound-json-err">{jsonErr}</div>}
             </div>
           </div>
         ) : (
-          <div className="nx-outbound-modal-body">
+          <div className="sk-outbound-modal-body">
             <OutboundFormFields f={f} setF={setF} chainTags={outbounds.map((o) => String(o.tag))} />
           </div>
         )}

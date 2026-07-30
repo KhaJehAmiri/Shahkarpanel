@@ -2,7 +2,7 @@ from enum import Enum
 
 
 class EventType(str, Enum):
-    """Canonical event types published on the NexusPanel event bus.
+    """Canonical event types published on the Shahkar event bus.
 
     User lifecycle values intentionally mirror
     ``app.utils.notification.Notification.Type`` so existing notifications map

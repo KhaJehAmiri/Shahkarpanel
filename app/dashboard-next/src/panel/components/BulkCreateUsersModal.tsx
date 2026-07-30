@@ -5,7 +5,7 @@ import { InboundsByProtocol, NodeItem } from "../api/types";
 import { useFetch } from "../lib/useFetch";
 import { dataLimitToBytes, type DataLimitUnit } from "../lib/data-limit";
 import {
-  NXPANEL_WG_KIND,
+  SHAHKAR_WG_KIND,
   defaultProtoInboundTags,
   deriveSsMethodFromInbounds,
   inboundMatchesSsMethod,
@@ -309,9 +309,9 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
         if (method) s.method = method;
       }
       const wgKind = wgKindForSubmit(!!protos.wireguard?.enabled, !!protos.amneziawg?.enabled);
-      if (p === "wireguard" && wgKind) s[NXPANEL_WG_KIND] = wgKind;
+      if (p === "wireguard" && wgKind) s[SHAHKAR_WG_KIND] = wgKind;
       if (NATIVE_PROTOCOLS.includes(p as typeof NATIVE_PROTOCOLS[number])) {
-        proxies[p] = Object.keys(s).length ? s : (p === "wireguard" && wgKind ? { [NXPANEL_WG_KIND]: wgKind } : {});
+        proxies[p] = Object.keys(s).length ? s : (p === "wireguard" && wgKind ? { [SHAHKAR_WG_KIND]: wgKind } : {});
         inb[p] = p === "wireguard" && protos.amneziawg?.enabled && awgTags.length
           ? protos.amneziawg.tags.filter((tag) => awgTags.includes(tag))
           : [];
@@ -461,16 +461,16 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
       <Modal
         open
         formWide
-        className="nx-bulk-create-shell nx-bulk-create-results"
-        overlayClassName="nx-bulk-create-overlay"
+        className="sk-bulk-create-shell sk-bulk-create-results"
+        overlayClassName="sk-bulk-create-overlay"
         title={t("bulkCreate.resultsTitle", { n: result.created })}
         onClose={onClose}
         footer={
-          <div className="nx-bulk-create-foot">
-            <span className="nx-bulk-create-summary">
+          <div className="sk-bulk-create-foot">
+            <span className="sk-bulk-create-summary">
               {t("bulkCreate.resultsSummary", { n: resultLinks.length, panel: selectedPanel?.slug || "—" })}
             </span>
-            <div className="nx-bulk-create-foot-actions">
+            <div className="sk-bulk-create-foot-actions">
               <Button variant="ghost" onClick={onClose}>{t("common.close")}</Button>
               <Button variant="primary" onClick={copyAllLinks} disabled={!resultLinks.length}>
                 {t("bulkCreate.copyAll")}
@@ -479,18 +479,18 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
           </div>
         }
       >
-        <div className="nx-bulk-create-results-body">
-          <p className="nx-bulk-create-intro">{t("bulkCreate.resultsDesc")}</p>
-          <div className="nx-bulk-create-results-toolbar">
+        <div className="sk-bulk-create-results-body">
+          <p className="sk-bulk-create-intro">{t("bulkCreate.resultsDesc")}</p>
+          <div className="sk-bulk-create-results-toolbar">
             <Button size="sm" variant="primary" onClick={copyAllLinks} disabled={!resultLinks.length}>
               {t("bulkCreate.copyAll")}
             </Button>
-            <span className="nx-faint">{t("bulkCreate.resultsCount", { n: resultLinks.length })}</span>
+            <span className="sk-faint">{t("bulkCreate.resultsCount", { n: resultLinks.length })}</span>
           </div>
-          <div className="nx-bulk-create-results-list">
+          <div className="sk-bulk-create-results-list">
             {resultLinks.map((row) => (
-              <div key={row.username} className="nx-bulk-create-result-row">
-                <div className="nx-bulk-create-result-meta">
+              <div key={row.username} className="sk-bulk-create-result-row">
+                <div className="sk-bulk-create-result-meta">
                   <strong dir="ltr">{row.username}</strong>
                   <code dir="ltr">{row.url}</code>
                 </div>
@@ -507,11 +507,11 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
               </div>
             ))}
             {!resultLinks.length && (
-              <div className="nx-faint">{t("bulkCreate.noLinks")}</div>
+              <div className="sk-faint">{t("bulkCreate.noLinks")}</div>
             )}
           </div>
           {!!result.errors?.length && (
-            <div className="nx-bulk-create-results-errors">
+            <div className="sk-bulk-create-results-errors">
               {result.errors.slice(0, 8).map((err) => (
                 <div key={err}>{err}</div>
               ))}
@@ -526,21 +526,21 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
     <Modal
       open={open}
       formWide
-      className="nx-bulk-create-shell"
-      overlayClassName="nx-bulk-create-overlay"
+      className="sk-bulk-create-shell"
+      overlayClassName="sk-bulk-create-overlay"
       title={t("bulkCreate.title")}
       subtitle={t("bulkCreate.descFull")}
       onClose={onClose}
       footer={
-        <div className="nx-bulk-create-foot">
-          <span className="nx-bulk-create-summary">
+        <div className="sk-bulk-create-foot">
+          <span className="sk-bulk-create-summary">
             {t("bulkCreate.summary", {
               count,
               protos: enabledProtoLabels,
               panel: selectedPanel?.slug || t("bulkCreate.panelNone"),
             })}
           </span>
-          <div className="nx-bulk-create-foot-actions">
+          <div className="sk-bulk-create-foot-actions">
             <Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
             {tab !== "basic" && (
               <Button variant="ghost" onClick={goBack}>{t("bulkCreate.back")}</Button>
@@ -556,14 +556,14 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
         </div>
       }
     >
-      <div className="nx-bulk-create-tabs" role="tablist">
+      <div className="sk-bulk-create-tabs" role="tablist">
         {tabs.map(({ id, label, skip }) => (
           <button
             key={id}
             type="button"
             role="tab"
             aria-selected={tab === id}
-            className={`nx-bulk-create-tab ${tab === id ? "active" : ""}`}
+            className={`sk-bulk-create-tab ${tab === id ? "active" : ""}`}
             disabled={skip}
             onClick={() => {
               if (id === "protocols" && useTemplate) return;
@@ -577,11 +577,11 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
         ))}
       </div>
 
-      <div className="nx-bulk-create-panel">
+      <div className="sk-bulk-create-panel">
         {tab === "basic" && (
           <>
-            <h4 className="nx-bulk-create-section-title">{t("bulkCreate.sectionPanel")}</h4>
-            <p className="nx-faint" style={{ fontSize: 12.5, margin: "0 0 12px" }}>
+            <h4 className="sk-bulk-create-section-title">{t("bulkCreate.sectionPanel")}</h4>
+            <p className="sk-faint" style={{ fontSize: 12.5, margin: "0 0 12px" }}>
               {resellerOnly
                 ? t("bulkCreate.panelResellerHint", {
                     defaultValue: "Users are bound to your subscription domain only.",
@@ -591,11 +591,11 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
                   })}
             </p>
             {balance.loading && !balance.data ? (
-              <span className="nx-faint">{t("common.loading")}</span>
+              <span className="sk-faint">{t("common.loading")}</span>
             ) : panels.length === 0 ? (
-              <div className="nx-faint">{t("bulkCreate.noPanels")}</div>
+              <div className="sk-faint">{t("bulkCreate.noPanels")}</div>
             ) : resellerOnly ? (
-              <div className="nx-bulk-create-panel-locked">
+              <div className="sk-bulk-create-panel-locked">
                 <b dir="ltr">{panels[0].slug}</b>
                 <small dir="ltr">
                   {panels[0].host || "—"}
@@ -603,7 +603,7 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
                 </small>
               </div>
             ) : (
-              <div className="nx-bulk-create-panel-picker">
+              <div className="sk-bulk-create-panel-picker">
                 {panels.length > 8 && (
                   <Input
                     value={panelSearch}
@@ -640,15 +640,15 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
                   ))}
                 </Select>
                 {!showAutoBalance && panels.length > 1 && panelId == null && (
-                  <p className="nx-ue-help" style={{ marginTop: 8 }}>
+                  <p className="sk-ue-help" style={{ marginTop: 8 }}>
                     {t("bulkCreate.pickPanelHint", { defaultValue: "Select a panel for these users." })}
                   </p>
                 )}
               </div>
             )}
 
-            <h4 className="nx-bulk-create-section-title" style={{ marginTop: 18 }}>{t("bulkCreate.sectionIdentity")}</h4>
-            <div className="nx-bulk-create-grid">
+            <h4 className="sk-bulk-create-section-title" style={{ marginTop: 18 }}>{t("bulkCreate.sectionIdentity")}</h4>
+            <div className="sk-bulk-create-grid">
               <Field label={t("bulkCreate.count")}>
                 <Input
                   type="number"
@@ -678,13 +678,13 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
             </div>
 
             {templates.length > 0 && (
-              <div className="nx-bulk-create-template">
-                <label className="nx-bulk-create-template-label">
+              <div className="sk-bulk-create-template">
+                <label className="sk-bulk-create-template-label">
                   <Checkbox checked={useTemplate} onChange={() => setUseTemplate((v) => !v)} />
                   <span>{t("bulkCreate.useTemplate")}</span>
                 </label>
                 {useTemplate && (
-                  <div className="nx-bulk-create-template-body">
+                  <div className="sk-bulk-create-template-body">
                     <Field label={t("users.template")}>
                       <Select
                         value={String(templateId)}
@@ -705,18 +705,18 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
         {tab === "protocols" && (
           <>
             {useTemplate ? (
-              <div className="nx-bulk-create-template-notice">{t("bulkCreate.templateSkipProtocols")}</div>
+              <div className="sk-bulk-create-template-notice">{t("bulkCreate.templateSkipProtocols")}</div>
             ) : !inbounds.data ? (
-              <span className="nx-faint">{t("common.loading")}</span>
+              <span className="sk-faint">{t("common.loading")}</span>
             ) : (
               <>
-                <h4 className="nx-bulk-create-section-title">{t("bulkCreate.sectionProtocols")}</h4>
+                <h4 className="sk-bulk-create-section-title">{t("bulkCreate.sectionProtocols")}</h4>
                 {availableProtos.length === 0 ? (
-                  <div className="nx-faint">{t("users.noProtocolsAvailableHint")}</div>
+                  <div className="sk-faint">{t("users.noProtocolsAvailableHint")}</div>
                 ) : (
-                <div className="nx-proto-pick">
+                <div className="sk-proto-pick">
                   {availableProtos.map((p) => {
-                    const vis = PROTO_VISUAL[p] || { icon: "·", hue: "var(--nx-accent)" };
+                    const vis = PROTO_VISUAL[p] || { icon: "·", hue: "var(--sk-accent)" };
                     const selected = !!protos[p]?.enabled;
                     const meta = NATIVE_PROTOCOLS.includes(p as typeof NATIVE_PROTOCOLS[number])
                       ? t("users.wgNativePeer")
@@ -725,17 +725,17 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
                       <button
                         key={p}
                         type="button"
-                        className={`nx-proto-pick-card ${selected ? "selected" : ""}`}
+                        className={`sk-proto-pick-card ${selected ? "selected" : ""}`}
                         style={{ "--proto-hue": vis.hue } as React.CSSProperties}
                         onClick={() => toggleProto(p)}
                         aria-pressed={selected}
                       >
-                        <span className="nx-proto-icon">{vis.icon}</span>
-                        <span className="nx-proto-pick-copy">
+                        <span className="sk-proto-icon">{vis.icon}</span>
+                        <span className="sk-proto-pick-copy">
                           <b>{PROTO_LABEL[p] || p}</b>
                           <small>{meta}</small>
                         </span>
-                        <span className="nx-proto-pick-check" aria-hidden>{selected ? "✓" : ""}</span>
+                        <span className="sk-proto-pick-check" aria-hidden>{selected ? "✓" : ""}</span>
                       </button>
                     );
                   })}
@@ -743,7 +743,7 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
                 )}
 
                 {enabledProtoRows.length > 0 && (
-                  <div className="nx-bulk-create-proto-config">
+                  <div className="sk-bulk-create-proto-config">
                     {enabledProtoRows.map((p) => {
                       const v = protos[p];
                       const ibList = p === "amneziawg"
@@ -753,11 +753,11 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
                         ? (deriveSsMethodFromInbounds(v.tags, ibList) || ssMethodFromInbound(ibList[0] || {}))
                         : "";
                       return (
-                        <div key={p} className="nx-bulk-create-proto-row">
-                          <div className="nx-bulk-create-proto-row-head">
+                        <div key={p} className="sk-bulk-create-proto-row">
+                          <div className="sk-bulk-create-proto-row-head">
                             <b>{PROTO_LABEL[p] || p}</b>
                             {p === "shadowsocks" && (
-                              <span className="nx-faint" style={{ fontSize: 11 }}>
+                              <span className="sk-faint" style={{ fontSize: 11 }}>
                                 {v.tags.length
                                   ? t("users.ssMethodValue", { method: ssRef })
                                   : t("users.ssMethodFromInbound")}
@@ -776,7 +776,7 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
                             </Field>
                           )}
                           {ibList.length > 0 && (
-                            <div className="nx-bulk-create-inbound-chips">
+                            <div className="sk-bulk-create-inbound-chips">
                               {(selectedPanel
                                 ? (() => {
                                     const matched = ibList.filter((ib) => tagMatchesPanel(ib.tag, selectedPanel.slug));
@@ -791,7 +791,7 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
                                   <button
                                     key={ib.tag}
                                     type="button"
-                                    className={`nx-bulk-create-inbound-chip ${on ? "on" : ""} ${ok ? "" : "disabled"}`}
+                                    className={`sk-bulk-create-inbound-chip ${on ? "on" : ""} ${ok ? "" : "disabled"}`}
                                     onClick={() => ok && toggleTag(p, ib.tag)}
                                     title={p === "shadowsocks" && ib.ss_method ? ib.ss_method : undefined}
                                   >
@@ -815,11 +815,11 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
         )}
 
         {tab === "limits" && (
-          <div className="nx-bulk-create-limits">
-            <section className="nx-uc-plan">
-              <div className="nx-ue-field">
-                <div className="nx-ue-label">{t("users.dataLimit")}</div>
-                <div className="nx-ue-inline">
+          <div className="sk-bulk-create-limits">
+            <section className="sk-uc-plan">
+              <div className="sk-ue-field">
+                <div className="sk-ue-label">{t("users.dataLimit")}</div>
+                <div className="sk-ue-inline">
                   <Input
                     type="number"
                     min={0}
@@ -837,10 +837,10 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
                     <option value="GB">GB</option>
                   </Select>
                 </div>
-                <p className="nx-ue-help">{t("users.dataLimitHint")}</p>
+                <p className="sk-ue-help">{t("users.dataLimitHint")}</p>
               </div>
 
-              <div className="nx-ue-grid">
+              <div className="sk-ue-grid">
                 <Field label={t("users.resetStrategy")}>
                   <Select value={reset} onChange={(e: ChangeEvent<HTMLSelectElement>) => setReset(e.target.value)}>
                     {["no_reset", "day", "week", "month", "year"].map((r) => (
@@ -898,10 +898,10 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
               </div>
             </section>
 
-            <section className="nx-uc-plan">
-              <div className="nx-ue-field">
-                <div className="nx-ue-label">{t("users.expire")}</div>
-                <label className="nx-ue-check">
+            <section className="sk-uc-plan">
+              <div className="sk-ue-field">
+                <div className="sk-ue-label">{t("users.expire")}</div>
+                <label className="sk-ue-check">
                   <Checkbox checked={noExpire} onChange={() => setNoExpire((x) => !x)} />
                   <span>{t("users.never")}</span>
                 </label>
@@ -909,15 +909,15 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
                   <>
                     <Input
                       type="date"
-                      className="nx-input-date"
+                      className="sk-input-date"
                       value={expireDate}
                       onChange={(e: ChangeEvent<HTMLInputElement>) => setExpireDate(e.target.value)}
                       dir="ltr"
                       inputMode="none"
                     />
-                    <div className="nx-ue-chips">
+                    <div className="sk-ue-chips">
                       {[7, 30, 90, 365].map((d) => (
-                        <button key={d} type="button" className="nx-ue-chip" onClick={() => presetExpire(d)}>
+                        <button key={d} type="button" className="sk-ue-chip" onClick={() => presetExpire(d)}>
                           +{d}d
                         </button>
                       ))}
@@ -927,7 +927,7 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
               </div>
 
               {(routingPresets.data || dnsPresets.data) && (
-                <div className="nx-ue-grid">
+                <div className="sk-ue-grid">
                   {routingPresets.data && (
                     <Field label={t("users.routingPreset", { defaultValue: "Routing preset" })}>
                       <Select value={routingPreset} onChange={(e: ChangeEvent<HTMLSelectElement>) => setRoutingPreset(e.target.value)}>

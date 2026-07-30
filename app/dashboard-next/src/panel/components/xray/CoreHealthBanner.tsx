@@ -41,7 +41,7 @@ export const CoreHealthBanner: FC<{ highlightTag?: string | null }> = ({ highlig
     <Callout tone="danger" title={title}>
       {stats.startup_error || t("inbounds.coreDownBody")}
       {stats.failed_port ? (
-        <div className="nx-faint" style={{ marginTop: 6, fontSize: 12 }}>
+        <div className="sk-faint" style={{ marginTop: 6, fontSize: 12 }}>
           {t("inbounds.coreDownPort", { port: stats.failed_port })}
         </div>
       ) : null}

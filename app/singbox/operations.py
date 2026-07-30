@@ -19,7 +19,7 @@ from app.singbox.sync import SBUser, build_node_spec
 from app.singbox.transport import client_for_node
 from app.utils.concurrency import threaded_function
 
-logger = logging.getLogger("nexus-singbox")
+logger = logging.getLogger("shahkar-singbox")
 
 SERVED_STATUSES = (UserStatus.active,)
 

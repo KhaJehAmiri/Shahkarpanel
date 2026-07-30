@@ -1,18 +1,18 @@
 {
   "en": [
     "AmneziaWG inbounds now display as amneziawg (AWG) in the table instead of wireguard",
-    "Persist nexusPanelKind marker in config so the label survives save/reload"
+    "Persist shahkarPanelKind marker in config so the label survives save/reload"
   ],
   "fa": [
     "اینباند AmneziaWG در جدول به‌جای wireguard با برچسب amneziawg (AWG) نمایش داده می‌شود",
-    "ذخیره marker nexusPanelKind در کانفیگ تا برچسب بعد از save/reload حفظ شود"
+    "ذخیره marker shahkarPanelKind در کانفیگ تا برچسب بعد از save/reload حفظ شود"
   ],
   "ru": [
     "AmneziaWG inbound отображается как amneziawg (AWG), а не wireguard",
-    "Маркер nexusPanelKind сохраняется в конфиге для корректной метки после перезагрузки"
+    "Маркер shahkarPanelKind сохраняется в конфиге для корректной метки после перезагрузки"
   ],
   "zh": [
     "AmneziaWG 入站列表显示为 amneziawg (AWG)，不再显示 wireguard",
-    "在配置中持久化 nexusPanelKind 标记，保存/重载后标签不变"
+    "在配置中持久化 shahkarPanelKind 标记，保存/重载后标签不变"
   ]
 }

@@ -5,7 +5,7 @@ import importlib.util
 from pathlib import Path
 
 _IMPL = Path(__file__).resolve().parent / "0_xray_core.py"
-_spec = importlib.util.spec_from_file_location("nexuspanel.jobs._xray_core_impl", _IMPL)
+_spec = importlib.util.spec_from_file_location("shahkar.jobs._xray_core_impl", _IMPL)
 if _spec is None or _spec.loader is None:
     raise ImportError(f"Cannot load xray core health job from {_IMPL}")
 _mod = importlib.util.module_from_spec(_spec)

@@ -153,7 +153,7 @@ export const HostsTab: FC = () => {
 
   if (loading) {
     return (
-      <div className="nx-hosts-page">
+      <div className="sk-hosts-page">
         <SkeletonRows rows={4} cols={3} />
       </div>
     );
@@ -161,20 +161,20 @@ export const HostsTab: FC = () => {
   if (error) return <EmptyState title={t("common.error")} desc={error} />;
 
   return (
-    <div className="nx-hosts-page">
+    <div className="sk-hosts-page">
       <Callout tone="info" title={t("infra.tabHosts")}>
         {t("infra.hostsDescAuto")}
       </Callout>
 
       {edge.data && admin?.is_sudo && (
         <Callout tone={edge.data.enabled ? "ok" : "info"} title={t("infra.cdnStatus", { defaultValue: "CDN / edge proxy" })}>
-          <div className="nx-stack" style={{ gap: 4, fontSize: 13 }}>
+          <div className="sk-stack" style={{ gap: 4, fontSize: 13 }}>
             <div>
               {edge.data.cdn_runtime_enabled
                 ? t("infra.cdnRuntimeOn", { defaultValue: "CDN runtime active" })
                 : t("infra.cdnRuntimeOff", { defaultValue: "CDN runtime inactive" })}
             </div>
-            <div className="nx-faint">
+            <div className="sk-faint">
               {t("infra.cdnRoutes", { defaultValue: "{{count}} nginx route(s)", count: edge.data.routes?.length || 0 })}
               {" · "}
               {edge.data.nginx_writable
@@ -185,9 +185,9 @@ export const HostsTab: FC = () => {
         </Callout>
       )}
 
-      <div className="nx-hosts-stats">
-        <Stat label={t("infra.hostStatTotal")} value={stats.total} icon={<IcGlobe className="nx-ico" />} />
-        <Stat label={t("infra.hostStatEnabled")} value={stats.enabled} icon={<IcCheck className="nx-ico" />} />
+      <div className="sk-hosts-stats">
+        <Stat label={t("infra.hostStatTotal")} value={stats.total} icon={<IcGlobe className="sk-ico" />} />
+        <Stat label={t("infra.hostStatEnabled")} value={stats.enabled} icon={<IcCheck className="sk-ico" />} />
         <Stat label={t("infra.hostStatDisabled")} value={stats.disabled} />
       </div>
 
@@ -195,11 +195,11 @@ export const HostsTab: FC = () => {
         <Callout tone="info">{t("infra.hostsReadOnly")}</Callout>
       )}
 
-      <div className="nx-hosts-actions">
+      <div className="sk-hosts-actions">
         {!readOnly && (
           <>
             <Button variant="primary" disabled={busy || !inboundTags.length} onClick={openAdd}>
-              <IcPlus className="nx-ico" /> {t("infra.hostAddTitle")}
+              <IcPlus className="sk-ico" /> {t("infra.hostAddTitle")}
             </Button>
             <Button disabled={busy || inboundTags.length < 2} onClick={() => setCloneOpen(true)}>
               {t("infra.hostCloneTemplate", { defaultValue: "Clone hosts" })}
@@ -213,9 +213,9 @@ export const HostsTab: FC = () => {
       ) : !rows.length ? (
         <EmptyState title={t("common.noData")} desc={t("infra.noHost")} />
       ) : (
-        <div className="nx-card pad0 nx-hosts-table-card">
-          <div className="nx-table-wrap">
-            <table className="nx-table">
+        <div className="sk-card pad0 sk-hosts-table-card">
+          <div className="sk-table-wrap">
+            <table className="sk-table">
               <thead>
                 <tr>
                   <th>{t("infra.remark")}</th>
@@ -223,7 +223,7 @@ export const HostsTab: FC = () => {
                   <th>{t("infra.hostInbound")}</th>
                   <th>{t("infra.hostTls")}</th>
                   <th>{t("common.enable")}</th>
-                  <th className="nx-actions" />
+                  <th className="sk-actions" />
                 </tr>
               </thead>
               <tbody>
@@ -233,12 +233,12 @@ export const HostsTab: FC = () => {
                   const canDown = row.index < listLen - 1;
                   return (
                     <tr key={`${row.tag}-${row.index}`} className={row.host.is_disabled ? "is-muted" : ""}>
-                      <td><span className="nx-proto-name-main">{row.host.remark || "—"}</span></td>
-                      <td className="nx-hosts-mono nx-proto-meta" dir="ltr">
+                      <td><span className="sk-proto-name-main">{row.host.remark || "—"}</span></td>
+                      <td className="sk-hosts-mono sk-proto-meta" dir="ltr">
                         {formatEndpoint(row.host)}
                       </td>
-                      <td><span className="nx-proto-chip">{hostTagLabel(row.tag)}</span></td>
-                      <td className="nx-proto-meta">{securityLabel(row.host.security)}</td>
+                      <td><span className="sk-proto-chip">{hostTagLabel(row.tag)}</span></td>
+                      <td className="sk-proto-meta">{securityLabel(row.host.security)}</td>
                       <td>
                         <Toggle
                           on={!row.host.is_disabled}
@@ -247,7 +247,7 @@ export const HostsTab: FC = () => {
                           onChange={() => toggleEnable(row)}
                         />
                       </td>
-                      <td className="nx-actions">
+                      <td className="sk-actions">
                         {!readOnly ? (
                           <TableRowMenu
                             items={[
@@ -266,14 +266,14 @@ export const HostsTab: FC = () => {
                               {
                                 id: "edit",
                                 label: t("common.edit"),
-                                icon: <IcEdit className="nx-ico" />,
+                                icon: <IcEdit className="sk-ico" />,
                                 disabled: busy,
                                 onClick: () => openEdit(row),
                               },
                               {
                                 id: "del",
                                 label: t("common.delete"),
-                                icon: <IcTrash className="nx-ico" />,
+                                icon: <IcTrash className="sk-ico" />,
                                 danger: true,
                                 disabled: busy,
                                 onClick: () => removeHost(row),
@@ -281,7 +281,7 @@ export const HostsTab: FC = () => {
                             ]}
                           />
                         ) : (
-                          <span className="nx-muted">—</span>
+                          <span className="sk-muted">—</span>
                         )}
                       </td>
                     </tr>

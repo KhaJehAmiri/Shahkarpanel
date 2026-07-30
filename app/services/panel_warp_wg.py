@@ -20,12 +20,12 @@ import subprocess
 import tempfile
 from typing import Optional, Sequence
 
-logger = logging.getLogger("nexuspanel-warp")
+logger = logging.getLogger("shahkar-warp")
 
 WARP_IFACE = "nxwarp0"
 WARP_TABLE = "51828"
 WARP_RULE_PRIORITY_BASE = 100
-COMMENT_MASQ = "nxpanel-warp-wg-masq"
+COMMENT_MASQ = "shahkar-warp-wg-masq"
 
 
 def _run(cmd: list[str], check: bool = False, input_text: Optional[str] = None):

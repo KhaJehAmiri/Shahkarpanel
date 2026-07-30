@@ -40,6 +40,7 @@ from . import (
     user,
     user_template,
     v2,
+    web_push,
     workflows,
 )
 
@@ -84,6 +85,7 @@ routers = [
     user_template.router,
     user.router,
     v2.router,
+    web_push.router,
     workflows.router,
     home.router,
 ]

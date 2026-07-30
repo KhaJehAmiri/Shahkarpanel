@@ -11,7 +11,7 @@ from typing import Any
 
 from app.migration.sqlite_dump import _PanelTableAccess, load_panel_from_tables
 
-logger = logging.getLogger("nexus-migration-3xui")
+logger = logging.getLogger("shahkar-migration-3xui")
 
 PGDMP_MAGIC = b"PGDMP"
 
@@ -36,7 +36,7 @@ def _compose_file() -> str:
 
 
 def _compose_cmd(*args: str) -> list[str]:
-    project = os.environ.get("COMPOSE_PROJECT_NAME", "nexuspanel").strip() or "nexuspanel"
+    project = os.environ.get("COMPOSE_PROJECT_NAME", "shahkar").strip() or "shahkar"
     compose_file = _compose_file()
     return [
         "docker",
@@ -55,10 +55,10 @@ def _pg_credentials() -> tuple[str, str, int, dict[str, str]]:
     if not IS_POSTGRESQL:
         raise ValueError(
             "This backup is a PostgreSQL pg_dump file. "
-            "Import it only when NexusPanel itself uses PostgreSQL."
+            "Import it only when Shahkar itself uses PostgreSQL."
         )
     url = engine.url
-    user = str(url.username or "nexuspanel")
+    user = str(url.username or "shahkar")
     host = str(url.host or "127.0.0.1")
     port = int(url.port or 5432)
     env = os.environ.copy()
@@ -84,7 +84,7 @@ def _connect_temp_db(db_name: str):
     return psycopg2.connect(
         host=url.host or "127.0.0.1",
         port=int(url.port or 5432),
-        user=str(url.username or "nexuspanel"),
+        user=str(url.username or "shahkar"),
         password=str(url.password or ""),
         dbname=db_name,
     )
@@ -172,7 +172,7 @@ def _load_via_local_pg_tools(path: Path) -> tuple[dict[str, Any], list[dict[str,
     if not shutil.which("pg_restore") or not shutil.which("psql"):
         raise RuntimeError("pg_restore/psql not installed in panel container")
     user, host, port, env = _pg_credentials()
-    tmp_db = f"nexus_mig_{uuid.uuid4().hex[:12]}"
+    tmp_db = f"shahkar_mig_{uuid.uuid4().hex[:12]}"
     try:
         _restore_to_temp_db(path, tmp_db, user=user, host=host, port=port, env=env)
         return _load_from_temp_db(tmp_db, path)
@@ -194,7 +194,7 @@ def _postgres_exec(*pg_args: str, env: dict[str, str] | None = None) -> subproce
 
 def _load_via_docker_compose(path: Path) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
     user, _, _, env = _pg_credentials()
-    tmp_db = f"nexus_mig_{uuid.uuid4().hex[:12]}"
+    tmp_db = f"shahkar_mig_{uuid.uuid4().hex[:12]}"
     remote_path = f"/tmp/{tmp_db}.dump"
 
     try:
@@ -263,5 +263,5 @@ def load_panel_from_postgres_dump(path: str | Path) -> tuple[dict[str, Any], lis
 def pg_dump_format_hint(path: Path) -> str:
     return (
         f"{path.name} is a PostgreSQL pg_dump backup (not SQLite). "
-        "NexusPanel will import it via pg_restore automatically."
+        "Shahkar will import it via pg_restore automatically."
     )

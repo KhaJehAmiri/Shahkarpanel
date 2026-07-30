@@ -97,18 +97,18 @@ export const NodesTab: FC<{ resellerMode?: boolean }> = ({ resellerMode }) => {
   };
 
   return (
-    <div className="nx-stack nx-hub-panel">
+    <div className="sk-stack sk-hub-panel">
       {!resellerMode && (
         <>
-          <p className="nx-hub-lede">
+          <p className="sk-hub-lede">
             <strong>{t("infra.xrayVersionHintTitle")}. </strong>
             {t("infra.xrayVersionHint")}
           </p>
           <NodeGroupsPanel />
         </>
       )}
-      <div className="nx-proto-toolbar">
-        <div className="nx-proto-toolbar-start">
+      <div className="sk-proto-toolbar">
+        <div className="sk-proto-toolbar-start">
           {(data?.length ?? 0) > 8 && (
             <Input
               value={nodeSearch}
@@ -118,22 +118,22 @@ export const NodesTab: FC<{ resellerMode?: boolean }> = ({ resellerMode }) => {
             />
           )}
         </div>
-        <div className="nx-proto-toolbar-end">
+        <div className="sk-proto-toolbar-end">
           <Button size="sm" variant="ghost" title={t("common.refresh")} onClick={reload}>
-            <IcRefresh className="nx-ico" />
+            <IcRefresh className="sk-ico" />
           </Button>
           <Button size="sm" variant="primary" onClick={openAdd}>
-            <IcPlus className="nx-ico" /> {t("infra.addNode")}
+            <IcPlus className="sk-ico" /> {t("infra.addNode")}
           </Button>
         </div>
       </div>
       <Card pad0>
         {loading ? <div style={{ padding: 20 }}><SkeletonRows rows={4} cols={5} /></div>
           : error ? <EmptyState title={t("common.error")} desc={error} action={<Button onClick={reload}>{t("common.retry")}</Button>} />
-          : !filteredNodes.length ? <EmptyState title={t("common.noData")} action={<Button variant="primary" onClick={openAdd}><IcPlus className="nx-ico" /> {t("infra.addNode")}</Button>} />
+          : !filteredNodes.length ? <EmptyState title={t("common.noData")} action={<Button variant="primary" onClick={openAdd}><IcPlus className="sk-ico" /> {t("infra.addNode")}</Button>} />
           : (
-            <div className="nx-table-wrap">
-              <table className="nx-table">
+            <div className="sk-table-wrap">
+              <table className="sk-table">
                 <thead>
                   <tr>
                     <th>{t("common.name")}</th>
@@ -141,8 +141,8 @@ export const NodesTab: FC<{ resellerMode?: boolean }> = ({ resellerMode }) => {
                     <th>{t("common.status")}</th>
                     <th>{t("infra.region")}</th>
                     <th title={t("infra.xrayVersionHint")}>{t("infra.xrayVersionCol")}</th>
-                    <th className="nx-num">{t("infra.latency")}</th>
-                    <th className="nx-actions" />
+                    <th className="sk-num">{t("infra.latency")}</th>
+                    <th className="sk-actions" />
                   </tr>
                 </thead>
                 <tbody>
@@ -158,14 +158,14 @@ export const NodesTab: FC<{ resellerMode?: boolean }> = ({ resellerMode }) => {
                         menuItems.push({
                           id: "override",
                           label: t("infra.xrayConfigOverride"),
-                          icon: <IcBolt className="nx-ico" />,
+                          icon: <IcBolt className="sk-ico" />,
                           onClick: () => setOverrideNode(n),
                         });
                       }
                       menuItems.push({
                         id: "edit",
                         label: t("infra.editNode"),
-                        icon: <IcEdit className="nx-ico" />,
+                        icon: <IcEdit className="sk-ico" />,
                         onClick: () => setEditNode(n),
                       });
                       if (n.provision_status !== "provisioning" && n.provision_status !== "failed") {
@@ -180,7 +180,7 @@ export const NodesTab: FC<{ resellerMode?: boolean }> = ({ resellerMode }) => {
                       menuItems.push({
                         id: "retry",
                         label: t("infra.provisionRetry"),
-                        icon: <IcRefresh className="nx-ico" />,
+                        icon: <IcRefresh className="sk-ico" />,
                         onClick: () => setRetryNode(n),
                       });
                     }
@@ -188,14 +188,14 @@ export const NodesTab: FC<{ resellerMode?: boolean }> = ({ resellerMode }) => {
                       menuItems.push({
                         id: "reconnect",
                         label: t("infra.reconnect"),
-                        icon: <IcRefresh className="nx-ico" />,
+                        icon: <IcRefresh className="sk-ico" />,
                         onClick: () => reconnect(n),
                       });
                     }
                     menuItems.push({
                       id: "del",
                       label: t("common.delete"),
-                      icon: <IcTrash className="nx-ico" />,
+                      icon: <IcTrash className="sk-ico" />,
                       danger: true,
                       onClick: () => remove(n),
                     });
@@ -203,48 +203,48 @@ export const NodesTab: FC<{ resellerMode?: boolean }> = ({ resellerMode }) => {
                     return (
                       <tr key={n.id} className={n.provision_status === "failed" ? "is-muted" : undefined}>
                         <td>
-                          <div className="nx-proto-name">
-                            <span className="nx-proto-name-main">
+                          <div className="sk-proto-name">
+                            <span className="sk-proto-name-main">
                               {n.name}
                               {n.core_kind === "wireguard" ? (
-                                <span className="nx-proto-chip is-muted" style={{ marginInlineStart: 6 }}>WG</span>
+                                <span className="sk-proto-chip is-muted" style={{ marginInlineStart: 6 }}>WG</span>
                               ) : null}
                             </span>
                           </div>
                         </td>
-                        <td className="nx-mono nx-proto-meta" dir="ltr">{n.address}:{n.port}</td>
+                        <td className="sk-mono sk-proto-meta" dir="ltr">{n.address}:{n.port}</td>
                         <td>
                           {n.provision_status === "provisioning" ? (
-                            <div className="nx-stack" style={{ gap: 4, minWidth: 140 }}>
-                              <div className="nx-row" style={{ justifyContent: "space-between", gap: 8 }}>
-                                <span className="nx-proto-meta">{provisionLabel(n.provision_step)}</span>
-                                <span className="nx-mono nx-proto-meta">{n.provision_progress ?? 5}%</span>
+                            <div className="sk-stack" style={{ gap: 4, minWidth: 140 }}>
+                              <div className="sk-row" style={{ justifyContent: "space-between", gap: 8 }}>
+                                <span className="sk-proto-meta">{provisionLabel(n.provision_step)}</span>
+                                <span className="sk-mono sk-proto-meta">{n.provision_progress ?? 5}%</span>
                               </div>
                               <UsageBar pct={n.provision_progress ?? 5} />
                             </div>
                           ) : n.provision_status === "failed" ? (
-                            <div className="nx-proto-name">
+                            <div className="sk-proto-name">
                               <Pill tone="danger" dot>{t("infra.provisionFailedShort")}</Pill>
                               {n.provision_message ? (
-                                <span className="nx-proto-name-sub">{n.provision_message}</span>
+                                <span className="sk-proto-name-sub">{n.provision_message}</span>
                               ) : null}
                             </div>
                           ) : (
-                            <div className="nx-proto-name">
+                            <div className="sk-proto-name">
                               <Pill tone={statusTone(n.status)} dot>{t(`users.status.${n.status}`, n.status)}</Pill>
                               {n.control_tunneled ? (
-                                <span className="nx-proto-name-sub">{t("infra.controlTunneled")}</span>
+                                <span className="sk-proto-name-sub">{t("infra.controlTunneled")}</span>
                               ) : null}
-                              {n.message ? <span className="nx-proto-name-sub">{n.message}</span> : null}
+                              {n.message ? <span className="sk-proto-name-sub">{n.message}</span> : null}
                             </div>
                           )}
                         </td>
-                        <td className="nx-proto-meta">{n.region || "—"}</td>
-                        <td className="nx-mono nx-proto-meta">{n.xray_version || "—"}</td>
-                        <td className="nx-num nx-proto-meta">
+                        <td className="sk-proto-meta">{n.region || "—"}</td>
+                        <td className="sk-mono sk-proto-meta">{n.xray_version || "—"}</td>
+                        <td className="sk-num sk-proto-meta">
                           {n.latency_ms != null ? `${n.latency_ms.toFixed(0)} ms` : "—"}
                         </td>
-                        <td className="nx-actions">
+                        <td className="sk-actions">
                           <TableRowMenu items={menuItems} />
                         </td>
                       </tr>
@@ -326,22 +326,22 @@ const NodeGroupsPanel: FC = () => {
 
   return (
     <Card style={{ marginBottom: 14, padding: 14 }}>
-      <div className="nx-card-title" style={{ marginBottom: 8 }}>{t("infra.nodeGroups")}</div>
-      <div className="nx-row" style={{ gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+      <div className="sk-card-title" style={{ marginBottom: 8 }}>{t("infra.nodeGroups")}</div>
+      <div className="sk-row" style={{ gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
         <Input value={name} onChange={(e: any) => setName(e.target.value)} placeholder={t("common.name")} style={{ maxWidth: 180 }} />
         <Input value={region} onChange={(e: any) => setRegion(e.target.value)} placeholder={t("infra.region")} style={{ maxWidth: 140 }} />
-        <Button size="sm" variant="primary" disabled={busy || !name.trim()} onClick={add}><IcPlus className="nx-ico" /> {t("common.create")}</Button>
+        <Button size="sm" variant="primary" disabled={busy || !name.trim()} onClick={add}><IcPlus className="sk-ico" /> {t("common.create")}</Button>
       </div>
       {loading ? (
         <SkeletonRows rows={1} cols={3} />
       ) : !data?.length ? (
-        <div className="nx-faint" style={{ fontSize: 12 }}>{t("common.noData")}</div>
+        <div className="sk-faint" style={{ fontSize: 12 }}>{t("common.noData")}</div>
       ) : (
-        <div className="nx-row" style={{ gap: 8, flexWrap: "wrap" }}>
+        <div className="sk-row" style={{ gap: 8, flexWrap: "wrap" }}>
           {data.map((g) => (
             <Pill key={g.id} tone="accent">
               {g.name}{g.region ? ` · ${g.region}` : ""}
-              <button type="button" className="nx-btn icon ghost sm" style={{ marginInlineStart: 6 }} title={t("common.delete")} aria-label={t("common.delete")} onClick={() => remove(g)}>×</button>
+              <button type="button" className="sk-btn icon ghost sm" style={{ marginInlineStart: 6 }} title={t("common.delete")} aria-label={t("common.delete")} onClick={() => remove(g)}>×</button>
             </Pill>
           ))}
         </div>
@@ -399,14 +399,14 @@ const EditNodeModal: FC<{ node: NodeItem; onClose: () => void; onDone: () => voi
         <Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
         <Button variant="primary" disabled={busy || xrayBusy || !name.trim() || !address.trim()} onClick={submit}>{t("common.save")}</Button>
       </>}>
-      <div className="nx-stack">
+      <div className="sk-stack">
         <Field label={t("common.name")}><Input value={name} onChange={(e: any) => setName(e.target.value)} autoFocus /></Field>
         <Field label={t("infra.address")}><Input value={address} onChange={(e: any) => setAddress(e.target.value)} /></Field>
 
-        <div style={{ borderTop: "1px solid var(--nx-border, rgba(127,127,127,.25))", paddingTop: 12, marginTop: 4 }}>
-          <div className="nx-row" style={{ justifyContent: "space-between", marginBottom: 8 }}>
+        <div style={{ borderTop: "1px solid var(--sk-border, rgba(127,127,127,.25))", paddingTop: 12, marginTop: 4 }}>
+          <div className="sk-row" style={{ justifyContent: "space-between", marginBottom: 8 }}>
             <span style={{ fontWeight: 600 }}>{t("infra.xraySetVersion")}</span>
-            <span className="nx-mono nx-faint" style={{ fontSize: 12 }}>
+            <span className="sk-mono sk-faint" style={{ fontSize: 12 }}>
               {t("infra.xrayVersion")}: {liveVersion || "—"}
             </span>
           </div>
@@ -416,8 +416,8 @@ const EditNodeModal: FC<{ node: NodeItem; onClose: () => void; onDone: () => voi
               {(releases.data || []).map((r) => <option key={r.tag} value={r.tag}>{r.tag}</option>)}
             </Select>
           </Field>
-          <div className="nx-faint" style={{ fontSize: 12, marginBottom: 8 }}>{t("infra.xrayEditHint")}</div>
-          <div className="nx-row" style={{ justifyContent: "flex-end" }}>
+          <div className="sk-faint" style={{ fontSize: 12, marginBottom: 8 }}>{t("infra.xrayEditHint")}</div>
+          <div className="sk-row" style={{ justifyContent: "flex-end" }}>
             <Button variant="primary" size="sm" disabled={xrayBusy || busy || !tag} onClick={applyXray}>
               {xrayBusy ? t("common.loading") : t("infra.xrayApplyVersion")}
             </Button>
@@ -458,7 +458,7 @@ const XrayVersionModal: FC<{ node: NodeItem; onClose: () => void; onDone: () => 
           {(releases.data || []).map((r) => <option key={r.tag} value={r.tag}>{r.tag}</option>)}
         </Select>
       </Field>
-      <div className="nx-faint" style={{ fontSize: 12, marginTop: 8 }}>{t("infra.xrayVersion")}: {node.xray_version || "—"}</div>
+      <div className="sk-faint" style={{ fontSize: 12, marginTop: 8 }}>{t("infra.xrayVersion")}: {node.xray_version || "—"}</div>
     </Modal>
   );
 };
@@ -523,18 +523,18 @@ export const TunnelsTab: FC = () => {
   };
 
   const renderHealth = (tn: Tunnel) => {
-    if (!tn.enabled) return <span className="nx-proto-meta">—</span>;
+    if (!tn.enabled) return <span className="sk-proto-meta">—</span>;
     const h = healthMap[tn.id];
-    if (h === "loading") return <span className="nx-proto-meta">{t("common.loading")}</span>;
+    if (h === "loading") return <span className="sk-proto-meta">{t("common.loading")}</span>;
     if (h === "error") return <Pill tone="default">?</Pill>;
-    if (!h) return <span className="nx-proto-meta">—</span>;
+    if (!h) return <span className="sk-proto-meta">—</span>;
     const hint = healthHint(h);
     return (
-      <div className="nx-proto-name">
+      <div className="sk-proto-name">
         <Pill tone={h.healthy ? "ok" : "danger"} dot>
           {h.healthy ? t("infra.tunnelHealthOk") : t("infra.tunnelHealthDown")}
         </Pill>
-        {hint ? <span className="nx-proto-name-sub">{hint}</span> : null}
+        {hint ? <span className="sk-proto-name-sub">{hint}</span> : null}
       </div>
     );
   };
@@ -545,14 +545,14 @@ export const TunnelsTab: FC = () => {
       : nodes.data?.find((n) => n.id === id)?.name || `#${id}`;
 
   return (
-    <div className="nx-stack nx-hub-panel">
-      <p className="nx-hub-lede">{t("infra.tunnelDesc")}</p>
-      <div className="nx-proto-toolbar">
-        <div className="nx-proto-toolbar-start" />
-        <div className="nx-proto-toolbar-end">
-          <Button size="sm" variant="ghost" onClick={reload}><IcRefresh className="nx-ico" /></Button>
+    <div className="sk-stack sk-hub-panel">
+      <p className="sk-hub-lede">{t("infra.tunnelDesc")}</p>
+      <div className="sk-proto-toolbar">
+        <div className="sk-proto-toolbar-start" />
+        <div className="sk-proto-toolbar-end">
+          <Button size="sm" variant="ghost" onClick={reload}><IcRefresh className="sk-ico" /></Button>
           <Button size="sm" variant="primary" onClick={() => setShow(true)}>
-            <IcLink className="nx-ico" /> {t("infra.addTunnel")}
+            <IcLink className="sk-ico" /> {t("infra.addTunnel")}
           </Button>
         </div>
       </div>
@@ -561,8 +561,8 @@ export const TunnelsTab: FC = () => {
           : error ? <EmptyState title={t("common.error")} desc={error} />
           : !data?.length ? <EmptyState title={t("common.noData")} />
           : (
-            <div className="nx-table-wrap">
-              <table className="nx-table">
+            <div className="sk-table-wrap">
+              <table className="sk-table">
                 <thead>
                   <tr>
                     <th>{t("common.name")}</th>
@@ -573,57 +573,57 @@ export const TunnelsTab: FC = () => {
                     <th>{t("infra.listenPort")}→{t("infra.targetPort")}</th>
                     <th>{t("infra.tunnelHealthCol")}</th>
                     <th>{t("common.status")}</th>
-                    <th className="nx-actions" />
+                    <th className="sk-actions" />
                   </tr>
                 </thead>
                 <tbody>
                   {data.map((tn) => (
                     <tr key={tn.id} className={tn.enabled ? undefined : "is-muted"}>
-                      <td><span className="nx-proto-name-main">{tn.name}</span></td>
-                      <td className="nx-proto-meta">{endName(tn.relay_node_id, tn.relay_kind)}</td>
-                      <td className="nx-proto-meta">{tn.intermediate_node_id ? endName(tn.intermediate_node_id, "node") : "—"}</td>
-                      <td className="nx-proto-meta">{endName(tn.exit_node_id, tn.exit_kind)}</td>
-                      <td><span className="nx-proto-chip">{tn.transport}</span></td>
-                      <td className="nx-mono nx-proto-meta">{tn.listen_port} → {tn.target_port}</td>
+                      <td><span className="sk-proto-name-main">{tn.name}</span></td>
+                      <td className="sk-proto-meta">{endName(tn.relay_node_id, tn.relay_kind)}</td>
+                      <td className="sk-proto-meta">{tn.intermediate_node_id ? endName(tn.intermediate_node_id, "node") : "—"}</td>
+                      <td className="sk-proto-meta">{endName(tn.exit_node_id, tn.exit_kind)}</td>
+                      <td><span className="sk-proto-chip">{tn.transport}</span></td>
+                      <td className="sk-mono sk-proto-meta">{tn.listen_port} → {tn.target_port}</td>
                       <td>{renderHealth(tn)}</td>
                       <td>
                         <Pill tone={tn.enabled ? "ok" : "default"} dot>
                           {tn.enabled ? t("common.enabled") : t("common.disabled")}
                         </Pill>
                       </td>
-                      <td className="nx-actions">
+                      <td className="sk-actions">
                         <TableRowMenu
                           items={[
                             {
                               id: "health",
                               label: t("infra.tunnelHealthRefresh"),
-                              icon: <IcRefresh className="nx-ico" />,
+                              icon: <IcRefresh className="sk-ico" />,
                               disabled: !tn.enabled,
                               onClick: () => void loadHealth(tn.id),
                             },
                             {
                               id: "apply",
                               label: t("infra.applyTunnel"),
-                              icon: <IcBolt className="nx-ico" />,
+                              icon: <IcBolt className="sk-ico" />,
                               disabled: !tn.enabled,
                               onClick: () => apply(tn.id),
                             },
                             {
                               id: "config",
                               label: t("infra.viewConfig"),
-                              icon: <IcEye className="nx-ico" />,
+                              icon: <IcEye className="sk-ico" />,
                               onClick: () => setConfigId(tn.id),
                             },
                             {
                               id: "edit",
                               label: t("common.edit"),
-                              icon: <IcEdit className="nx-ico" />,
+                              icon: <IcEdit className="sk-ico" />,
                               onClick: () => setEdit(tn),
                             },
                             {
                               id: "del",
                               label: t("common.delete"),
-                              icon: <IcTrash className="nx-ico" />,
+                              icon: <IcTrash className="sk-ico" />,
                               danger: true,
                               onClick: () => remove(tn.id),
                             },
@@ -757,16 +757,16 @@ const EditTunnel: FC<{ tunnel: Tunnel; transports: TunnelTransportMeta[]; onClos
     <Modal open title={`${t("common.edit")} — ${tunnel.name}`} onClose={onClose}
       footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
         <Button variant="primary" disabled={busy} onClick={submit}>{t("common.save")}</Button></>}>
-      <div className="nx-stack">
+      <div className="sk-stack">
         <Field label={t("common.name")}><Input value={f.name} onChange={upd("name")} /></Field>
-        <label className="nx-row" style={{ gap: 8 }}><input type="checkbox" checked={f.enabled} onChange={upd("enabled")} /> {t("common.enabled")}</label>
+        <label className="sk-row" style={{ gap: 8 }}><input type="checkbox" checked={f.enabled} onChange={upd("enabled")} /> {t("common.enabled")}</label>
         <TunnelTransportSelect
           value={f.transport}
           onChange={upd("transport")}
           transports={transports}
           hint={transports.find((tr) => tr.id === f.transport)?.stub ? t("infra.tunnelSingboxStubHint") : undefined}
         />
-        <div className="nx-row" style={{ gap: 12 }}>
+        <div className="sk-row" style={{ gap: 12 }}>
           <Field label={t("infra.listenPort")}><Input type="number" value={f.listen} onChange={upd("listen")} /></Field>
           <Field label={t("infra.targetPort")}><Input type="number" value={f.target} onChange={upd("target")} /></Field>
         </div>
@@ -782,9 +782,9 @@ const TunnelConfigModal: FC<{ tunnelId: number; onClose: () => void }> = ({ tunn
   return (
     <Modal open title={t("infra.tunnelConfig")} onClose={onClose} wide
       footer={<Button variant="ghost" onClick={onClose}>{t("common.close")}</Button>}>
-      {loading ? <div className="nx-faint">{t("common.loading")}</div>
-        : error ? <div className="nx-callout danger">{error}</div>
-        : <pre className="nx-code" style={{ fontSize: 11, maxHeight: 400, overflow: "auto", whiteSpace: "pre-wrap" }}>
+      {loading ? <div className="sk-faint">{t("common.loading")}</div>
+        : error ? <div className="sk-callout danger">{error}</div>
+        : <pre className="sk-code" style={{ fontSize: 11, maxHeight: 400, overflow: "auto", whiteSpace: "pre-wrap" }}>
             {JSON.stringify(data, null, 2)}
           </pre>}
     </Modal>
@@ -885,7 +885,7 @@ const AddTunnel: FC<{
     <Modal open title={t("infra.addTunnel")} onClose={onClose}
       footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
         <Button variant="primary" disabled={busy || !f.name || !f.relay || !f.exit || bothPanel || (needsTransit && !f.transit)} onClick={submit}>{t("common.create")}</Button></>}>
-      <div className="nx-stack">
+      <div className="sk-stack">
         {deploy.data && (
           <Callout tone="info">
             {panelForeign ? t("infra.tunnelHintPanelForeign") : t("infra.tunnelHintPanelIran")}
@@ -912,14 +912,14 @@ const AddTunnel: FC<{
             )}
           </Select>
           {templates.error ? (
-            <div className="nx-faint" style={{ fontSize: 12, marginTop: 6, color: "var(--nx-danger)" }}>
+            <div className="sk-faint" style={{ fontSize: 12, marginTop: 6, color: "var(--sk-danger)" }}>
               {templates.error}
               <Button size="sm" variant="ghost" onClick={templates.reload}>{t("common.retry")}</Button>
             </div>
           ) : null}
         </Field>
         <Field label={t("common.name")}><Input value={f.name} onChange={upd("name")} autoFocus /></Field>
-        <div className="nx-row" style={{ gap: 12 }}>
+        <div className="sk-row" style={{ gap: 12 }}>
           <Field label={t("infra.relayNode")} hint={t("infra.relayEndHint")}>
             <Select value={f.relay} onChange={upd("relay")}>
               <option value="">—</option>
@@ -949,7 +949,7 @@ const AddTunnel: FC<{
           transports={transports}
           hint={transports.find((tr) => tr.id === f.transport)?.stub ? t("infra.tunnelSingboxStubHint") : undefined}
         />
-        <div className="nx-row" style={{ gap: 12 }}>
+        <div className="sk-row" style={{ gap: 12 }}>
           <Field label={t("infra.listenPort")}><Input type="number" value={f.listen} onChange={upd("listen")} /></Field>
           {needsTransit && (
             <Field label={t("infra.transitPort")}><Input type="number" value={f.transitPort} onChange={upd("transitPort")} /></Field>
@@ -969,19 +969,19 @@ const TopologyCard: FC = () => {
   const topo = useFetch<TopologyResponse>(() => api.get("/nodes/topology"), []);
 
   return (
-    <Card className="nx-mt-20">
+    <Card className="sk-mt-20">
       <CardHead title={t("infra.topology", "Node topology")} actions={
         <Button variant="ghost" size="sm" onClick={topo.reload}>{t("common.refresh")}</Button>
       } />
       {topo.loading ? <SkeletonRows rows={2} cols={3} />
         : topo.error ? <EmptyState title={t("common.error")} desc={topo.error} />
         : (
-          <div className="nx-stack" style={{ gap: 8, fontSize: 13 }}>
+          <div className="sk-stack" style={{ gap: 8, fontSize: 13 }}>
             {(topo.data?.edges || []).length === 0 ? (
-              <div className="nx-faint">{t("infra.topologyEmpty", "No tunnels configured yet.")}</div>
+              <div className="sk-faint">{t("infra.topologyEmpty", "No tunnels configured yet.")}</div>
             ) : (
               (topo.data?.edges || []).map((e) => (
-                <div key={e.id} className="nx-code" style={{ padding: "8px 10px" }}>
+                <div key={e.id} className="sk-code" style={{ padding: "8px 10px" }}>
                   <b>{e.name}</b>: {e.source} → {e.target} ({e.transport}) {e.enabled ? "" : `[${t("common.disabled")}]`}
                 </div>
               ))

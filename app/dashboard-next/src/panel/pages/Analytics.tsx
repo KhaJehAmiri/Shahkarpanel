@@ -16,10 +16,10 @@ export const Analytics: FC<{ embedded?: boolean }> = ({ embedded }) => {
   useLiveReload(() => top.reload(), 30000);
 
   return (
-    <div className="nx-page">
+    <div className="sk-page">
       {!embedded && <PageHeader title={t("analytics.title")} subtitle={t("analytics.subtitle")} description={t("analytics.description")} />}
 
-      <Card className="nx-mb-20">
+      <Card className="sk-mb-20">
         <CardHead title={t("analytics.topUsers")} />
         {top.loading ? <SkeletonRows rows={3} cols={2} />
           : top.error ? <EmptyState title={t("common.error")} desc={top.error} action={<Button onClick={top.reload}>{t("common.retry")}</Button>} />
@@ -27,13 +27,13 @@ export const Analytics: FC<{ embedded?: boolean }> = ({ embedded }) => {
           : (
             <>
               <RankBars data={top.data.slice(0, 10).map((u) => ({ label: u.username, value: u.used_traffic }))} format={(n) => formatBytes(n, 0)} />
-              <div className="nx-table-wrap nx-table-inset">
-                <table className="nx-table">
+              <div className="sk-table-wrap sk-table-inset">
+                <table className="sk-table">
                   <thead><tr><th>#</th><th>{t("common.username")}</th><th>{t("users.used")}</th><th>{t("common.status")}</th></tr></thead>
                   <tbody>
                     {top.data.map((u, i) => (
                       <tr key={u.username}>
-                        <td className="nx-faint">{i + 1}</td>
+                        <td className="sk-faint">{i + 1}</td>
                         <td style={{ fontWeight: 600 }}>{u.username}</td>
                         <td>{formatBytes(u.used_traffic)}</td>
                         <td><Pill tone={statusTone(u.status)} dot>{t(`users.status.${u.status}`, u.status)}</Pill></td>
@@ -63,7 +63,7 @@ const ProtocolUsageCard: FC = () => {
   useLiveReload(() => rows.reload(), 60000);
 
   return (
-    <Card className="nx-mb-20">
+    <Card className="sk-mb-20">
       <CardHead title={t("analytics.protocolUsage", "Usage by protocol")} actions={
         <Button variant="ghost" size="sm" onClick={rows.reload}>{t("common.refresh")}</Button>
       } />
@@ -71,8 +71,8 @@ const ProtocolUsageCard: FC = () => {
         : rows.error ? <EmptyState title={t("common.error")} desc={rows.error} />
         : !rows.data?.length ? <EmptyState title={t("common.noData")} />
         : (
-          <div className="nx-table-wrap">
-            <table className="nx-table">
+          <div className="sk-table-wrap">
+            <table className="sk-table">
               <thead><tr><th>{t("analytics.protocol", "Protocol")}</th><th>{t("users.used")}</th></tr></thead>
               <tbody>
                 {rows.data.map((r) => (
@@ -119,11 +119,11 @@ const SmartRoutingCard: FC = () => {
   };
 
   return (
-    <Card className="nx-mb-20">
+    <Card className="sk-mb-20">
       <CardHead title={t("analytics.smartRouting")} actions={
         <Button variant="primary" size="sm" disabled={busy} onClick={load}>{t("analytics.loadNodes")}</Button>
       } />
-      <div className="nx-row" style={{ gap: 12, marginBottom: 12 }}>
+      <div className="sk-row" style={{ gap: 12, marginBottom: 12 }}>
         <Field label={t("analytics.strategy")}>
           <Select value={strategy} onChange={(e: any) => setStrategy(e.target.value)} style={{ minWidth: 180 }}>
             {strategies.map((s) => <option key={s} value={s}>{s}</option>)}
@@ -131,15 +131,15 @@ const SmartRoutingCard: FC = () => {
         </Field>
       </div>
       {strategiesError ? <Callout tone="warn" title={t("common.error")}>{strategiesError}</Callout> : null}
-      {!nodes.length ? <div className="nx-faint" style={{ fontSize: 13 }}>{t("analytics.routingHint")}</div>
+      {!nodes.length ? <div className="sk-faint" style={{ fontSize: 13 }}>{t("analytics.routingHint")}</div>
         : (
-          <div className="nx-table-wrap">
-            <table className="nx-table">
+          <div className="sk-table-wrap">
+            <table className="sk-table">
               <thead><tr><th>#</th><th>{t("common.name")}</th><th>{t("infra.region")}</th><th>{t("infra.latency")}</th><th>{t("common.status")}</th></tr></thead>
               <tbody>
                 {nodes.map((n, i) => (
                   <tr key={n.id}>
-                    <td className="nx-faint">{i + 1}</td>
+                    <td className="sk-faint">{i + 1}</td>
                     <td style={{ fontWeight: 600 }}>{n.name}</td>
                     <td>{n.region || "—"}</td>
                     <td>{n.latency_ms != null ? `${n.latency_ms.toFixed(0)} ms` : "—"}</td>
@@ -179,20 +179,20 @@ const IntelligenceCard: FC<{ enabled: boolean }> = ({ enabled }) => {
     <Card>
       <CardHead title={t("analytics.intelligence")} actions={<Button variant="primary" onClick={run} disabled={busy}>{t("analytics.run")}</Button>} />
       {!data ? (
-        <div className="nx-muted nx-center" style={{ padding: 20 }}>{t("analytics.runHint")}</div>
+        <div className="sk-muted sk-center" style={{ padding: 20 }}>{t("analytics.runHint")}</div>
       ) : (
-        <div className="nx-intel-grid">
+        <div className="sk-intel-grid">
           {groups.map((g) => {
             const items = Array.isArray(data[g.key]) ? data[g.key] : data[g.key] ? [data[g.key]] : [];
             return (
-              <div key={g.key} className="nx-intel-card">
-                <div className="nx-row" style={{ justifyContent: "space-between", marginBottom: 10 }}>
+              <div key={g.key} className="sk-intel-card">
+                <div className="sk-row" style={{ justifyContent: "space-between", marginBottom: 10 }}>
                   <b>{g.label}</b><Pill tone={items.length ? "warn" : "ok"}>{items.length}</Pill>
                 </div>
-                {!items.length ? <div className="nx-faint" style={{ fontSize: 12 }}>{t("analytics.noFindings")}</div>
-                  : <div className="nx-stack" style={{ gap: 6 }}>
+                {!items.length ? <div className="sk-faint" style={{ fontSize: 12 }}>{t("analytics.noFindings")}</div>
+                  : <div className="sk-stack" style={{ gap: 6 }}>
                       {items.slice(0, 6).map((it: any, i: number) => (
-                        <div key={i} className="nx-code" style={{ fontSize: 11, padding: "4px 8px", wordBreak: "break-all" }}>
+                        <div key={i} className="sk-code" style={{ fontSize: 11, padding: "4px 8px", wordBreak: "break-all" }}>
                           {it.username || it.name || it.node_name || JSON.stringify(it).slice(0, 80)}
                         </div>
                       ))}

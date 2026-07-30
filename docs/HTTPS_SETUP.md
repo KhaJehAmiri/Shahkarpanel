@@ -1,6 +1,6 @@
 # HTTPS & reverse proxy
 
-NexusPanel is designed to run **behind nginx with TLS**. The app itself binds to
+Shahkar is designed to run **behind nginx with TLS**. The app itself binds to
 `127.0.0.1` and is never exposed directly to the internet. One script,
 [`scripts/setup_https.sh`](../scripts/setup_https.sh), provisions everything.
 
@@ -29,10 +29,10 @@ sudo scripts/setup_https.sh
 sudo scripts/setup_https.sh --domain panel.example.com --email you@example.com
 
 # Re-run any time to rotate/repair; or via the manager:
-sudo nexuspanel https            # honours DOMAIN= / EMAIL= env vars
+sudo shahkar https            # honours DOMAIN= / EMAIL= env vars
 ```
 
-The one-line installer (`nexuspanel install`) runs this automatically at the end
+The one-line installer (`shahkar install`) runs this automatically at the end
 of installation. Set `SKIP_HTTPS=1` to opt out (e.g. behind an external LB), or
 `DOMAIN=panel.example.com EMAIL=you@example.com` to get a domain certificate.
 

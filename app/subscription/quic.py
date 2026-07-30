@@ -4,47 +4,22 @@ These protocols are served by the node's sing-box engine (not Xray inbounds), so
 they cannot ride the standard ``share.py`` inbound loop. Like WireGuard they use
 dedicated subscription endpoints tied to the same token and central quota.
 """
-from typing import Iterable, List, Optional, Sequence, TypeVar
+from typing import Iterable, List, Optional, TypeVar
 from urllib import parse
 
 _NodeT = TypeVar("_NodeT")
 
 
 def filter_singbox_client_entry_nodes(db, nodes: Iterable[_NodeT]) -> List[_NodeT]:
-    """Keep only nodes that are valid *client entry* points for sing-box.
+    """Publish every node that has sing-box protocols enabled.
 
-    Tunnel exit nodes run sing-box with ``final: direct``. If we advertise them
-    in subscriptions, clients dial abroad and skip the Iran relay → tunnel hop.
-    Relays (and nodes that are not an exit-only tunnel role) stay published.
+    Historically exit-only tunnel nodes were stripped so clients would not dial
+    abroad and skip the Iran relay hop. Operators now enable Hy2/TUIC/AnyTLS
+    deliberately per node (relay *or* exit); hiding exits made «enabled»
+    protocols disappear from subscriptions. Topology remains the operator's
+    choice — we no longer second-guess it here.
     """
-    from app.db.models import Tunnel
-
-    node_list = list(nodes)
-    if not node_list:
-        return node_list
-
-    rows: Sequence = (
-        db.query(
-            Tunnel.relay_node_id,
-            Tunnel.intermediate_node_id,
-            Tunnel.exit_node_id,
-        )
-        .filter(Tunnel.enabled.is_(True))
-        .all()
-    )
-    entry_ids: set[int] = set()
-    exit_ids: set[int] = set()
-    for relay_id, mid_id, exit_id in rows:
-        if relay_id is not None:
-            entry_ids.add(int(relay_id))
-        if mid_id is not None:
-            entry_ids.add(int(mid_id))
-        if exit_id is not None:
-            exit_ids.add(int(exit_id))
-    skip = exit_ids - entry_ids
-    if not skip:
-        return node_list
-    return [n for n in node_list if int(getattr(n, "id")) not in skip]
+    return list(nodes)
 
 
 def node_host(dbnode, *, protocol: str = "hysteria2") -> str:
@@ -176,16 +151,24 @@ def _looks_like_ip(host: Optional[str]) -> bool:
 def singbox_dial_host_sni(dbnode, cfg, preferred_host: str) -> tuple[str, str]:
     """Host/SNI for sing-box share links.
 
-    Nodes currently serve self-signed certs whose CN is the server IP. Clients
-    that dial ``hostname`` with ``sni=hostname`` often fail the TLS handshake
-    even with ``insecure=1``. Prefer dialing the IP with matching SNI when the
-    cert is not a public CA.
+    Prefer the operator-configured domain (Hosts UI / ``cfg.sni`` / node
+    hostname). Self-signed certs keep ``insecure=1`` via ``singbox_link_insecure``
+    — clients do not need the dial address forced to the node IP. Only fall
+    back to the bare IP when no hostname is configured.
     """
-    preferred_host = (preferred_host or "").strip() or (dbnode.address or "")
-    if cfg is not None and getattr(cfg, "tls_trusted", False):
-        return preferred_host, (cfg.sni or preferred_host)
-
+    preferred_host = (preferred_host or "").strip()
+    cfg_sni = (getattr(cfg, "sni", None) or "").strip() if cfg is not None else ""
     addr = (getattr(dbnode, "address", None) or "").strip()
+
+    # Prefer a real hostname for dialing (Hosts → SNI → node.address if hostname).
+    candidates = [preferred_host, cfg_sni, addr]
+    dial_host = next((c for c in candidates if c and not _looks_like_ip(c)), "") or preferred_host or cfg_sni or addr
+    sni = cfg_sni or (dial_host if dial_host and not _looks_like_ip(dial_host) else "") or dial_host
+
+    if dial_host:
+        return dial_host, sni or dial_host
+
+    # Last resort: resolve address to IP when nothing else is set.
     ip = addr if _looks_like_ip(addr) else None
     if ip is None and addr:
         try:
@@ -195,8 +178,8 @@ def singbox_dial_host_sni(dbnode, cfg, preferred_host: str) -> tuple[str, str]:
         except Exception:
             ip = None
     if ip:
-        return ip, ip
-    return preferred_host, (cfg.sni if cfg and cfg.sni else preferred_host)
+        return ip, sni or ip
+    return addr or preferred_host, sni or cfg_sni or addr or preferred_host
 
 
 def user_hysteria2_link(
@@ -315,7 +298,7 @@ def user_anytls_link(
     password = user_settings.get("password")
     if not password:
         return None
-    host = node_host(dbnode)
+    host = node_host(dbnode, protocol="anytls")
     if insecure is None:
         insecure = singbox_link_insecure(cfg)
     from app.singbox.sync import anytls_port_for_user

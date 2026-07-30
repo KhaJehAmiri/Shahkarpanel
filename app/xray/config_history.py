@@ -15,7 +15,7 @@ from typing import List, Optional
 from app import logger
 from config import XRAY_JSON
 
-_DEFAULT_HISTORY_DIR = "/var/lib/nexuspanel/xray-config-history"
+_DEFAULT_HISTORY_DIR = "/var/lib/shahkar/xray-config-history"
 HISTORY_DIR = os.environ.get("XRAY_CONFIG_HISTORY_DIR") or _DEFAULT_HISTORY_DIR
 try:
     MAX_SNAPSHOTS = int(os.environ.get("XRAY_CONFIG_HISTORY_MAX", "20") or 20)

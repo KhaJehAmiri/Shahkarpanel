@@ -285,7 +285,7 @@ export const BulkAssignModal: FC<Props> = ({
       title={t("bulkAssign.title")}
       onClose={onClose}
       wide
-      className="nx-bulk-assign-modal"
+      className="sk-bulk-assign-modal"
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
@@ -302,17 +302,17 @@ export const BulkAssignModal: FC<Props> = ({
         </>
       }
     >
-      <p className="nx-bulk-assign-lead">{t("bulkAssign.desc")}</p>
+      <p className="sk-bulk-assign-lead">{t("bulkAssign.desc")}</p>
       {applying && mode === "native" ? (
-        <p className="nx-bulk-assign-hint">{t("bulkAssign.applyingHint")}</p>
+        <p className="sk-bulk-assign-hint">{t("bulkAssign.applyingHint")}</p>
       ) : null}
 
-      <div className="nx-seg nx-seg-stretch nx-bulk-assign-mode" role="tablist">
+      <div className="sk-seg sk-seg-stretch sk-bulk-assign-mode" role="tablist">
         <button
           type="button"
           role="tab"
           aria-selected={mode === "inbound"}
-          className={`nx-seg-btn ${mode === "inbound" ? "active" : ""}`}
+          className={`sk-seg-btn ${mode === "inbound" ? "active" : ""}`}
           onClick={() => { setMode("inbound"); clearPreview(); }}
         >
           {t("bulkAssign.modeInbound")}
@@ -321,7 +321,7 @@ export const BulkAssignModal: FC<Props> = ({
           type="button"
           role="tab"
           aria-selected={mode === "native"}
-          className={`nx-seg-btn ${mode === "native" ? "active" : ""}`}
+          className={`sk-seg-btn ${mode === "native" ? "active" : ""}`}
           onClick={() => { setMode("native"); clearPreview(); }}
         >
           {t("bulkAssign.modeNative")}
@@ -329,9 +329,9 @@ export const BulkAssignModal: FC<Props> = ({
       </div>
 
       {mode === "inbound" ? (
-        <div className="nx-bulk-assign-panel">
-          <p className="nx-bulk-assign-hint">{t("bulkAssign.inboundHint")}</p>
-          <div className="nx-bulk-assign-grid">
+        <div className="sk-bulk-assign-panel">
+          <p className="sk-bulk-assign-hint">{t("bulkAssign.inboundHint")}</p>
+          <div className="sk-bulk-assign-grid">
             <Field label={t("bulkInbound.inboundTag")}>
               {inboundTags.length ? (
                 <Select
@@ -348,7 +348,7 @@ export const BulkAssignModal: FC<Props> = ({
                 </Select>
               ) : (
                 <input
-                  className="nx-input"
+                  className="sk-input"
                   value={inboundTag}
                   onChange={(e: ChangeEvent<HTMLInputElement>) => {
                     setInboundTag(e.target.value);
@@ -360,17 +360,17 @@ export const BulkAssignModal: FC<Props> = ({
               )}
             </Field>
             <Field label={t("bulkInbound.action")}>
-              <div className="nx-seg nx-seg-stretch">
+              <div className="sk-seg sk-seg-stretch">
                 <button
                   type="button"
-                  className={`nx-seg-btn ${inboundAction === "add" ? "active" : ""}`}
+                  className={`sk-seg-btn ${inboundAction === "add" ? "active" : ""}`}
                   onClick={() => { setInboundAction("add"); clearPreview(); }}
                 >
                   {t("bulkAssign.actionAdd")}
                 </button>
                 <button
                   type="button"
-                  className={`nx-seg-btn ${inboundAction === "remove" ? "active" : ""}`}
+                  className={`sk-seg-btn ${inboundAction === "remove" ? "active" : ""}`}
                   onClick={() => { setInboundAction("remove"); clearPreview(); }}
                 >
                   {t("bulkAssign.actionRemove")}
@@ -380,42 +380,42 @@ export const BulkAssignModal: FC<Props> = ({
           </div>
         </div>
       ) : (
-        <div className="nx-bulk-assign-panel">
-          <p className="nx-bulk-assign-hint">{t("bulkAssign.nativeHint")}</p>
+        <div className="sk-bulk-assign-panel">
+          <p className="sk-bulk-assign-hint">{t("bulkAssign.nativeHint")}</p>
           {nativeProto === "amneziawg" && (
-            <p className="nx-bulk-assign-hint">{t("bulkAssign.finalmaskAmneziaNote")}</p>
+            <p className="sk-bulk-assign-hint">{t("bulkAssign.finalmaskAmneziaNote")}</p>
           )}
           {availableNatives.length === 0 ? (
-            <div className="nx-callout nx-bulk-assign-empty">{t("bulkAssign.noNative")}</div>
+            <div className="sk-callout sk-bulk-assign-empty">{t("bulkAssign.noNative")}</div>
           ) : (
-            <div className="nx-bulk-proto-grid" role="listbox" aria-label={t("bulkAssign.pickProtocol")}>
+            <div className="sk-bulk-proto-grid" role="listbox" aria-label={t("bulkAssign.pickProtocol")}>
               {availableNatives.map((opt) => (
                 <button
                   key={opt.id}
                   type="button"
                   role="option"
                   aria-selected={nativeProto === opt.id}
-                  className={`nx-bulk-proto-card ${nativeProto === opt.id ? "is-active" : ""}`}
+                  className={`sk-bulk-proto-card ${nativeProto === opt.id ? "is-active" : ""}`}
                   onClick={() => { setNativeProto(opt.id); clearPreview(); }}
                 >
-                  <span className="nx-bulk-proto-badge">{opt.badge}</span>
-                  <span className="nx-bulk-proto-name">{t(opt.labelKey)}</span>
+                  <span className="sk-bulk-proto-badge">{opt.badge}</span>
+                  <span className="sk-bulk-proto-name">{t(opt.labelKey)}</span>
                 </button>
               ))}
             </div>
           )}
           <Field label={t("bulkInbound.action")}>
-            <div className="nx-seg nx-seg-stretch">
+            <div className="sk-seg sk-seg-stretch">
               <button
                 type="button"
-                className={`nx-seg-btn ${nativeAction === "enable" ? "active" : ""}`}
+                className={`sk-seg-btn ${nativeAction === "enable" ? "active" : ""}`}
                 onClick={() => { setNativeAction("enable"); clearPreview(); }}
               >
                 {t("bulkAssign.actionEnable")}
               </button>
               <button
                 type="button"
-                className={`nx-seg-btn ${nativeAction === "disable" ? "active" : ""}`}
+                className={`sk-seg-btn ${nativeAction === "disable" ? "active" : ""}`}
                 onClick={() => { setNativeAction("disable"); clearPreview(); }}
               >
                 {t("bulkAssign.actionDisable")}
@@ -425,7 +425,7 @@ export const BulkAssignModal: FC<Props> = ({
         </div>
       )}
 
-      <div className="nx-bulk-assign-scope">
+      <div className="sk-bulk-assign-scope">
         <Field label={t("bulkInbound.scope")}>
           <Select
             value={scope}
@@ -462,31 +462,31 @@ export const BulkAssignModal: FC<Props> = ({
       </div>
 
       {preview && (
-        <div className="nx-bulk-assign-preview">
-          <div className="nx-bulk-assign-preview-title">{t("bulkInbound.previewResult")}</div>
-          <div className="nx-bulk-assign-stats">
-            <div className="nx-bulk-stat">
-              <span className="nx-bulk-stat-n">{preview.would_apply}</span>
-              <span className="nx-bulk-stat-l">{t("bulkAssign.statApply")}</span>
+        <div className="sk-bulk-assign-preview">
+          <div className="sk-bulk-assign-preview-title">{t("bulkInbound.previewResult")}</div>
+          <div className="sk-bulk-assign-stats">
+            <div className="sk-bulk-stat">
+              <span className="sk-bulk-stat-n">{preview.would_apply}</span>
+              <span className="sk-bulk-stat-l">{t("bulkAssign.statApply")}</span>
             </div>
-            <div className="nx-bulk-stat">
-              <span className="nx-bulk-stat-n">{preview.already_set}</span>
-              <span className="nx-bulk-stat-l">{t("bulkAssign.statSkip")}</span>
+            <div className="sk-bulk-stat">
+              <span className="sk-bulk-stat-n">{preview.already_set}</span>
+              <span className="sk-bulk-stat-l">{t("bulkAssign.statSkip")}</span>
             </div>
-            <div className="nx-bulk-stat">
-              <span className="nx-bulk-stat-n">{preview.total_users}</span>
-              <span className="nx-bulk-stat-l">{t("bulkAssign.statTotal")}</span>
+            <div className="sk-bulk-stat">
+              <span className="sk-bulk-stat-n">{preview.total_users}</span>
+              <span className="sk-bulk-stat-l">{t("bulkAssign.statTotal")}</span>
             </div>
             {mode === "inbound" && previewInbound && previewInbound.incompatible > 0 && (
-              <div className="nx-bulk-stat is-warn">
-                <span className="nx-bulk-stat-n">{previewInbound.incompatible}</span>
-                <span className="nx-bulk-stat-l">{t("bulkAssign.statIncompatible")}</span>
+              <div className="sk-bulk-stat is-warn">
+                <span className="sk-bulk-stat-n">{previewInbound.incompatible}</span>
+                <span className="sk-bulk-stat-l">{t("bulkAssign.statIncompatible")}</span>
               </div>
             )}
             {mode === "inbound" && previewInbound && previewInbound.missing_proxy > 0 && (
-              <div className="nx-bulk-stat is-warn">
-                <span className="nx-bulk-stat-n">{previewInbound.missing_proxy}</span>
-                <span className="nx-bulk-stat-l">{t("bulkAssign.statMissing")}</span>
+              <div className="sk-bulk-stat is-warn">
+                <span className="sk-bulk-stat-n">{previewInbound.missing_proxy}</span>
+                <span className="sk-bulk-stat-l">{t("bulkAssign.statMissing")}</span>
               </div>
             )}
           </div>

@@ -3,11 +3,11 @@ import { FC, useId } from "react";
 type Tone = "accent" | "ok" | "warn" | "danger" | "info";
 
 const TONE_COLOR: Record<Tone, string> = {
-  accent: "var(--nx-accent)",
-  ok: "var(--nx-ok)",
-  warn: "var(--nx-warn)",
-  danger: "var(--nx-danger)",
-  info: "var(--nx-info)",
+  accent: "var(--sk-accent)",
+  ok: "var(--sk-ok)",
+  warn: "var(--sk-warn)",
+  danger: "var(--sk-danger)",
+  info: "var(--sk-info)",
 };
 
 export const GaugeRing: FC<{
@@ -28,12 +28,12 @@ export const GaugeRing: FC<{
   const gradId = `gauge-grad-${uid}`;
 
   return (
-    <div className={`nx-gauge ${animated ? "nx-gauge-live" : ""}`}>
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="nx-gauge-svg">
+    <div className={`sk-gauge ${animated ? "sk-gauge-live" : ""}`}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="sk-gauge-svg">
         <defs>
           <linearGradient id={gradId} x1="0%" y1="0%" x2="100%" y2="100%">
             <stop offset="0%" stopColor={color} />
-            <stop offset="100%" stopColor="var(--nx-accent-2)" />
+            <stop offset="100%" stopColor="var(--sk-accent-2)" />
           </linearGradient>
         </defs>
         <g transform={`rotate(-90 ${size / 2} ${size / 2})`}>
@@ -42,7 +42,7 @@ export const GaugeRing: FC<{
             cy={size / 2}
             r={r}
             fill="none"
-            stroke="var(--nx-surface-3)"
+            stroke="var(--sk-surface-3)"
             strokeWidth={10}
           />
           <circle
@@ -54,19 +54,19 @@ export const GaugeRing: FC<{
             strokeWidth={10}
             strokeLinecap="round"
             strokeDasharray={`${dash} ${c}`}
-            className="nx-gauge-arc"
+            className="sk-gauge-arc"
           />
         </g>
-        <text x="50%" y={sub ? "43%" : "50%"} textAnchor="middle" className="nx-gauge-value">
+        <text x="50%" y={sub ? "43%" : "50%"} textAnchor="middle" className="sk-gauge-value">
           {Math.round(pct)}%
         </text>
         {sub ? (
-          <text x="50%" y="62%" textAnchor="middle" className="nx-gauge-sub">
+          <text x="50%" y="62%" textAnchor="middle" className="sk-gauge-sub">
             {sub}
           </text>
         ) : null}
       </svg>
-      <div className="nx-gauge-label">{label}</div>
+      <div className="sk-gauge-label">{label}</div>
     </div>
   );
 };

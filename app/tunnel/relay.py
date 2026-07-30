@@ -8,7 +8,7 @@ from app import tunnel as tunnel_svc
 from app.db import crud
 from app.wireguard.sync import plain_wg_enabled
 
-logger = logging.getLogger("nexus-tunnel")
+logger = logging.getLogger("shahkar-tunnel")
 
 _RELAY_INDEX_TTL_SEC = 30.0
 _relay_index_cache: Optional["TunnelRelayIndex"] = None

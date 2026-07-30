@@ -9,7 +9,7 @@ from config import (
     XRAY_AUTO_UPGRADE_INCLUDE_PRERELEASE,
 )
 
-logger = logging.getLogger("nexus-xray-auto-upgrade")
+logger = logging.getLogger("shahkar-xray-auto-upgrade")
 
 
 def run_xray_auto_upgrade(*, force: bool = False) -> dict[str, Any]:

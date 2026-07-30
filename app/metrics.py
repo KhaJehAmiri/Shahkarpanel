@@ -19,30 +19,30 @@ def render_metrics() -> bytes:
     from app.models.node import NodeStatus
     from app.models.user import UserStatus
 
-    Info("nexuspanel", "NexusPanel information", registry=registry).info(
+    Info("shahkar", "Shahkar information", registry=registry).info(
         {"version": __version__}
     )
 
     users_gauge = Gauge(
-        "nexuspanel_users", "Number of users by status", ["status"], registry=registry
+        "shahkar_users", "Number of users by status", ["status"], registry=registry
     )
     online_gauge = Gauge(
-        "nexuspanel_online_users", "Users seen online in the last 24h", registry=registry
+        "shahkar_online_users", "Users seen online in the last 24h", registry=registry
     )
     bandwidth_gauge = Gauge(
-        "nexuspanel_bandwidth_bytes_total",
+        "shahkar_bandwidth_bytes_total",
         "Total system bandwidth in bytes",
         ["direction"],
         registry=registry,
     )
     node_connected_gauge = Gauge(
-        "nexuspanel_node_connected",
+        "shahkar_node_connected",
         "Whether a node is connected (1) or not (0)",
         ["node_id", "name"],
         registry=registry,
     )
     node_bandwidth_gauge = Gauge(
-        "nexuspanel_node_bandwidth_bytes_total",
+        "shahkar_node_bandwidth_bytes_total",
         "Total per-node bandwidth in bytes",
         ["node_id", "name", "direction"],
         registry=registry,

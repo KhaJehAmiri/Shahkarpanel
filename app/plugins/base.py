@@ -1,4 +1,4 @@
-"""Base class for NexusPanel plugins.
+"""Base class for Shahkar plugins.
 
 A plugin reacts to events on the event bus. Built-in plugins are registered at
 startup; the architecture leaves room for external/marketplace plugins later

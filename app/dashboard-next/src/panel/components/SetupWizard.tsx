@@ -17,7 +17,7 @@ export const SetupWizard: FC = () => {
   const { t } = useTranslation();
   const { admin, refreshFlags } = useApp();
   const [open, setOpen] = useState(false);
-  const [title, setTitle] = useState("NexusPanel");
+  const [title, setTitle] = useState("Shahkar");
   const [features, setFeatures] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -61,15 +61,15 @@ export const SetupWizard: FC = () => {
         </>
       }
     >
-      <div className="nx-stack">
-        <p className="nx-faint" style={{ fontSize: 13 }}>{t("setup.description")}</p>
+      <div className="sk-stack">
+        <p className="sk-faint" style={{ fontSize: 13 }}>{t("setup.description")}</p>
         <Field label={t("setup.panelTitle")}>
           <Input value={title} onChange={(e: any) => setTitle(e.target.value)} />
         </Field>
-        <div className="nx-stack" style={{ gap: 8 }}>
-          <div className="nx-faint" style={{ fontSize: 12 }}>{t("setup.features")}</div>
+        <div className="sk-stack" style={{ gap: 8 }}>
+          <div className="sk-faint" style={{ fontSize: 12 }}>{t("setup.features")}</div>
           {TOGGLEABLE.map((f) => (
-            <label key={f} className="nx-row" style={{ gap: 8, cursor: "pointer" }}>
+            <label key={f} className="sk-row" style={{ gap: 8, cursor: "pointer" }}>
               <input
                 type="checkbox"
                 checked={!!features[f]}
@@ -79,7 +79,7 @@ export const SetupWizard: FC = () => {
             </label>
           ))}
         </div>
-        {err ? <div className="nx-callout danger">{err}</div> : null}
+        {err ? <div className="sk-callout danger">{err}</div> : null}
       </div>
     </Modal>
   );

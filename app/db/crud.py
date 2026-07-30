@@ -770,7 +770,7 @@ def _purge_user_dependents(db: Session, user_ids: List[int]) -> None:
     if not user_ids:
         return
 
-    from app.db.models import ClientDevice, PaymentIntent
+    from app.db.models import ClientDevice, PaymentIntent, PortalPushSubscription
 
     # Hard-delete pure per-user analytics / logs / orders / membership rows.
     #
@@ -786,6 +786,7 @@ def _purge_user_dependents(db: Session, user_ids: List[int]) -> None:
         ClientProbe,
         ClientTelemetry,
         ClientDevice,
+        PortalPushSubscription,
         UserOrder,
         UserUsageResetLogs,
     ):
@@ -873,7 +874,7 @@ def ensure_bulk_delete_indexes(db: Session) -> None:
 
     from sqlalchemy import text
 
-    log = logging.getLogger("nexuspanel")
+    log = logging.getLogger("shahkar")
     for stmt in (
         "CREATE INDEX IF NOT EXISTS ix_exclude_inbounds_association_proxy_id "
         "ON exclude_inbounds_association (proxy_id)",
@@ -1205,6 +1206,117 @@ def rotate_user_sub_link(db: Session, dbuser: User) -> User:
     dbuser.sub_revoked_at = None
     db.commit()
     db.refresh(dbuser)
+    return dbuser
+
+
+def set_user_sub_token(db: Session, dbuser: User, token: str) -> User:
+    """Set a custom subscription token (link id) for the user."""
+    import re
+
+    token = (token or "").strip().lower()
+    if not re.fullmatch(r"[a-z0-9]{8,32}", token):
+        raise ValueError("Subscription id must be 8–32 lowercase letters or digits")
+    other = get_user_by_sub_token(db, token)
+    if other is not None and other.id != dbuser.id:
+        raise ValueError("This subscription id is already taken")
+    dbuser.sub_token = token
+    dbuser.sub_revoked_at = None
+    db.commit()
+    db.refresh(dbuser)
+    return dbuser
+
+
+def set_portal_password(db: Session, dbuser: User, new_password: str) -> User:
+    """Update the end-user portal password."""
+    from app.models.admin import pwd_context
+
+    if not new_password or len(new_password) < 4:
+        raise ValueError("Password must be at least 4 characters")
+    dbuser.hashed_portal_password = pwd_context.hash(new_password)
+    dbuser.portal_enabled = True
+    dbuser.portal_password_reset_at = datetime.utcnow()
+    db.commit()
+    db.refresh(dbuser)
+    return dbuser
+
+
+def ensure_portal_bootstrap(db: Session, dbuser: User) -> User:
+    """Enable portal with initial password = username when not yet set.
+
+    Sets ``must_change_credentials`` so the user must pick a new username and
+    password before using the portal normally.
+    """
+    from app.models.admin import pwd_context
+
+    needs_password = not dbuser.hashed_portal_password
+    if not dbuser.portal_enabled or needs_password:
+        dbuser.portal_enabled = True
+        if needs_password:
+            dbuser.hashed_portal_password = pwd_context.hash(dbuser.username)
+            dbuser.portal_password_reset_at = datetime.utcnow()
+        dbuser.must_change_credentials = True
+        db.commit()
+        db.refresh(dbuser)
+        from app.client.provision import ensure_app_proxies
+
+        ensure_app_proxies(db, dbuser)
+    return dbuser
+
+
+def complete_portal_setup(
+    db: Session,
+    dbuser: User,
+    new_username: str,
+    new_password: str,
+) -> User:
+    """First-login setup: rename VPN username and set a real portal password."""
+    import re
+
+    from app.models.admin import pwd_context
+
+    if not getattr(dbuser, "must_change_credentials", False):
+        raise ValueError("Credential setup is not required")
+
+    username = (new_username or "").strip().lower()
+    password = new_password or ""
+    if not re.fullmatch(r"[a-z0-9_]{3,32}", username):
+        raise ValueError("Username must be 3–32 chars: a-z, 0-9, underscore")
+    if len(password) < 4:
+        raise ValueError("Password must be at least 4 characters")
+    if password.lower() == username:
+        raise ValueError("Password must not match username")
+    if password == dbuser.username:
+        raise ValueError("Choose a password different from the account id")
+
+    old_username = dbuser.username
+    if username != old_username.lower():
+        other = get_user(db, username)
+        if other is not None and other.id != dbuser.id:
+            raise ValueError("Username is already taken")
+        dbuser.username = username
+
+    dbuser.hashed_portal_password = pwd_context.hash(password)
+    dbuser.portal_enabled = True
+    dbuser.must_change_credentials = False
+    dbuser.portal_password_reset_at = datetime.utcnow()
+    dbuser.edit_at = datetime.utcnow()
+    db.commit()
+    db.refresh(dbuser)
+
+    if username != old_username.lower():
+        try:
+            from app.xray import operations as xray_ops
+
+            xray_ops.update_user(dbuser)
+        except Exception:
+            pass
+        try:
+            from app.client.provision import ensure_app_proxies
+
+            ensure_app_proxies(db, dbuser)
+        except Exception:
+            pass
+
     return dbuser
 
 
@@ -1590,7 +1702,18 @@ def update_admin(db: Session, dbadmin: Admin, modified_admin: AdminModify) -> Ad
     if modified_admin.discord_webhook:
         dbadmin.discord_webhook = modified_admin.discord_webhook
     fields_set = getattr(modified_admin, "model_fields_set", None) or set()
-    for attr in ("role", "max_users", "max_total_traffic", "max_nodes", "commission_percent"):
+    for attr in (
+        "role",
+        "max_users",
+        "max_total_traffic",
+        "max_nodes",
+        "commission_percent",
+        "centralpay_enabled",
+        "card_enabled",
+        "card_number",
+        "card_holder",
+        "card_bank",
+    ):
         if attr in fields_set:
             setattr(dbadmin, attr, getattr(modified_admin, attr))
         else:

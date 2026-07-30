@@ -1,4 +1,4 @@
-/* Subscribe — NexusPanel Signal Portal
+/* Subscribe — Shahkar Signal Portal
    UI/UX Pro Max: Glassmorphism + Minimal SaaS
    Self-hosted Vazirmatn (RTL) · Plus Jakarta / Plex Mono via optional CDN */
 
@@ -1371,6 +1371,123 @@ html[data-sub-theme="dark"] .s-rail-btn.on {
   .s-proto-grid { grid-template-columns: repeat(4, 1fr); }
 }
 
+.s-proto-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 4px;
+}
+.s-proto-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex: 1 1 140px;
+  min-height: 52px;
+  padding: 12px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--s-line);
+  background: var(--s-soft);
+  color: var(--s-muted);
+  font: inherit;
+  font-size: 1rem;
+  font-weight: 800;
+  cursor: pointer;
+  transition: border-color 0.18s var(--s-ease), background 0.18s var(--s-ease), color 0.18s var(--s-ease), box-shadow 0.18s var(--s-ease);
+}
+.s-proto-tab:hover {
+  border-color: color-mix(in srgb, var(--s-accent) 40%, var(--s-line));
+  color: var(--s-text);
+}
+.s-proto-tab.is-on {
+  border-color: var(--s-accent);
+  background: color-mix(in srgb, var(--s-accent) 16%, transparent);
+  color: var(--s-accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--s-accent) 30%, transparent);
+}
+.s-proto-tab-ico {
+  display: inline-flex;
+  color: inherit;
+}
+.s-proto-tab-name { line-height: 1.2; }
+.s-proto-tab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.6em;
+  height: 1.6em;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--s-text) 10%, transparent);
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+.s-proto-tab.is-on .s-proto-tab-count {
+  background: color-mix(in srgb, var(--s-accent) 22%, transparent);
+}
+
+.s-location-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+@media (min-width: 560px) {
+  .s-location-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (min-width: 860px) {
+  .s-location-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+.s-location-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 12px 16px;
+  border: 1px solid var(--s-line);
+  border-radius: 14px;
+  background: var(--s-soft);
+  cursor: pointer;
+  font: inherit;
+  text-align: center;
+  transition: border-color 0.18s var(--s-ease), transform 0.18s var(--s-ease), background 0.18s var(--s-ease);
+}
+.s-location-card:hover,
+.s-location-card.on {
+  border-color: var(--s-accent);
+  background: color-mix(in srgb, var(--s-accent) 10%, var(--s-soft));
+  transform: translateY(-1px);
+}
+.s-location-flag {
+  font-size: 1.75rem;
+  line-height: 1;
+}
+.s-location-name {
+  font-size: 0.92rem;
+  font-weight: 800;
+  color: var(--s-text);
+  line-height: 1.25;
+}
+
+.s-modal-config .s-modal-proto {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 14px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--s-accent);
+}
+.s-modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 14px;
+}
+.s-modal-actions .s-btn {
+  min-width: 140px;
+}
+
 .s-proto-card {
   display: flex;
   flex-direction: column;
@@ -1544,16 +1661,30 @@ html[data-sub-theme="dark"] .s-rail-btn.on {
 }
 .s-qr:hover { transform: translateY(-2px); }
 .s-qr-frame {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  max-width: 100%;
+  margin-inline: auto;
   padding: 12px;
   border-radius: 16px;
   background: #fff;
   border: 1px solid var(--s-line);
   box-shadow: var(--s-shadow-sm);
   transition: box-shadow 0.22s var(--s-ease);
+  direction: ltr;
+  unicode-bidi: isolate;
 }
 .s-qr:hover .s-qr-frame { box-shadow: var(--s-shadow-lift); }
 .s-qr-frame canvas,
-.s-qr-frame img { display: block; border-radius: 4px; max-width: 100%; height: auto; }
+.s-qr-frame img {
+  display: block;
+  margin: 0 auto;
+  border-radius: 4px;
+  max-width: 100%;
+  height: auto;
+}
 .s-qr-lg { padding: 16px; }
 .s-qr-hint {
   font-size: 12px;
@@ -1905,6 +2036,63 @@ html[data-sub-theme="dark"] .s-rail-btn.on {
   direction: ltr;
   unicode-bidi: plaintext;
 }
+.s-ov-identity-side {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  margin-inline-start: auto;
+}
+.s-portal-enter-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.s-portal-enter {
+  --s-portal-btn: #0f766e;
+  --s-portal-btn-2: #14b8a6;
+  margin: 0;
+  width: auto;
+  max-width: none;
+  min-height: 40px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: linear-gradient(135deg, var(--s-portal-btn), var(--s-portal-btn-2));
+  color: #fff;
+  border: 1px solid color-mix(in srgb, var(--s-portal-btn-2) 55%, #fff);
+  box-shadow:
+    0 1px 0 color-mix(in srgb, #fff 22%, transparent) inset,
+    0 8px 20px color-mix(in srgb, var(--s-portal-btn-2) 38%, transparent);
+}
+.s-portal-enter:hover {
+  background: linear-gradient(135deg, #0d9488, #2dd4bf);
+  color: #fff;
+  filter: none;
+  transform: translateY(-1px);
+  box-shadow:
+    0 1px 0 color-mix(in srgb, #fff 28%, transparent) inset,
+    0 10px 24px color-mix(in srgb, var(--s-portal-btn-2) 45%, transparent);
+}
+.s-portal-enter:disabled {
+  opacity: 0.55;
+  transform: none;
+}
+.s-portal-enter-ico {
+  display: inline-flex;
+  flex-shrink: 0;
+  opacity: 1;
+}
+.s-portal-info {
+  display: none;
+}
 .s-ov-actions {
   padding: 18px;
   display: flex;
@@ -2081,7 +2269,6 @@ html[data-sub-theme="dark"] .s-rail-btn.on {
 }
 .s-ov-presence {
   flex-shrink: 0;
-  margin-inline-start: auto;
 }
 .s-setup-hint {
   font-size: 11px;

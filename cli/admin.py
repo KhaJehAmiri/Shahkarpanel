@@ -112,7 +112,7 @@ def create_admin(
     """
     Creates an admin
 
-    Password can also be set using `NEXUSPANEL_ADMIN_PASSWORD`.
+    Password can also be set using `SHAHKAR_ADMIN_PASSWORD`.
     """
     with GetDB() as db:
         try:
@@ -183,7 +183,7 @@ def set_password(
     """
     Changes an admin's password (non-interactive friendly).
 
-    Password can also be supplied via the ``NEXUSPANEL_ADMIN_PASSWORD`` env var.
+    Password can also be supplied via the ``SHAHKAR_ADMIN_PASSWORD`` env var.
     Changing the password also invalidates the admin's existing login sessions.
     """
     with GetDB() as db:
@@ -243,7 +243,7 @@ def reset_credentials(
     This is the "I forgot my login" recovery path: it targets the sole sudo
     admin automatically, so you can set a fresh username and password even if
     the previous ones are lost. The new password is read from the
-    ``NEXUSPANEL_ADMIN_PASSWORD`` env var (never passed on the command line);
+    ``SHAHKAR_ADMIN_PASSWORD`` env var (never passed on the command line);
     leave it unset to keep the current password. Resetting the password also
     invalidates existing login sessions.
     """
@@ -252,7 +252,7 @@ def reset_credentials(
 
     if not password and not new_username:
         utils.error(
-            "Nothing to change: set NEXUSPANEL_ADMIN_PASSWORD and/or pass --new-username."
+            "Nothing to change: set SHAHKAR_ADMIN_PASSWORD and/or pass --new-username."
         )
 
     with GetDB() as db:
@@ -283,7 +283,7 @@ def whoami():
     """
     Prints the username of the sole sudo admin (for scripting/tooling).
 
-    Lets management tooling (e.g. the ``nexus`` server manager) resolve which
+    Lets management tooling (e.g. the ``shahkar`` server manager) resolve which
     admin account to act on without asking the operator to retype a username
     they may not even remember. Fails if there isn't exactly one sudo admin.
     """

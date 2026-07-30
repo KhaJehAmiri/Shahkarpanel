@@ -1,4 +1,4 @@
-"""NexusPanel event bus.
+"""Shahkar event bus.
 
 A small publish/subscribe layer that decouples *producing* events (a user was
 created, a node went down) from *consuming* them (webhooks, Telegram, plugins,

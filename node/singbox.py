@@ -1,4 +1,4 @@
-"""Native sing-box engine management for a NexusPanel node.
+"""Native sing-box engine management for a Shahkar node.
 
 sing-box is the node's *second* data-plane engine (alongside Xray), used for
 QUIC-based protocols Xray cannot serve: Hysteria2 and TUIC. Like the WireGuard
@@ -21,7 +21,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
-logger = logging.getLogger("nexus-node-singbox")
+logger = logging.getLogger("shahkar-node-singbox")
 
 # Protocols this engine serves. Kept narrow on purpose; everything else stays
 # on Xray.
@@ -191,7 +191,7 @@ def render_config(spec: SingBoxSpec, *, include_v2ray_api: bool = True) -> dict:
             "external_controller": f"127.0.0.1:{spec.clash_api_port}",
             "secret": spec.clash_api_secret,
         },
-        "cache_file": {"enabled": True, "path": "/var/lib/nexusnode/singbox-cache.db"},
+        "cache_file": {"enabled": True, "path": "/var/lib/shahkarnode/singbox-cache.db"},
     }
     if inbound_tags and user_names and include_v2ray_api:
         experimental["v2ray_api"] = {
@@ -244,7 +244,7 @@ def render_config(spec: SingBoxSpec, *, include_v2ray_api: bool = True) -> dict:
 
 def _kill_stale_singbox(
     binary: str = "sing-box",
-    config_path: str = "/var/lib/nexusnode/singbox.json",
+    config_path: str = "/var/lib/shahkarnode/singbox.json",
     keep_pid: Optional[int] = None,
 ) -> None:
     """Terminate orphan ``sing-box run -c …`` processes after agent restarts."""
@@ -275,7 +275,7 @@ def ensure_self_signed_cert(
     cert_path: Optional[str],
     key_path: Optional[str],
     *,
-    common_name: str = "nexus-node",
+    common_name: str = "shahkar-node",
     days: int = 3650,
 ) -> bool:
     """Create a self-signed cert/key pair if either file is missing.
@@ -307,7 +307,7 @@ def ensure_self_signed_cert(
                 "openssl", "req", "-x509", "-nodes", "-newkey", "rsa:2048",
                 "-keyout", key_path, "-out", cert_path,
                 "-days", str(int(days)),
-                "-subj", f"/CN={common_name or 'nexus-node'}",
+                "-subj", f"/CN={common_name or 'shahkar-node'}",
             ],
             check=True, capture_output=True, text=True,
         )
@@ -343,7 +343,7 @@ class SingBoxManager:
 
     def __init__(
         self,
-        config_path: str = "/var/lib/nexusnode/singbox.json",
+        config_path: str = "/var/lib/shahkarnode/singbox.json",
         binary: str = "sing-box",
         run: Optional[Callable] = None,
         http_get: Optional[Callable] = None,

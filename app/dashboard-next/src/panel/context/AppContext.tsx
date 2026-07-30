@@ -3,8 +3,8 @@ import { api, clearToken, getToken, setUnauthorizedHandler } from "../api/client
 import { AdminInfo, Branding, FeatureFlag } from "../api/types";
 import { applyBranding } from "../lib/branding";
 
-const THEME_KEY = "nx_theme";
-const EXPERT_KEY = "nx_expert_mode";
+const THEME_KEY = "sk_theme";
+const EXPERT_KEY = "sk_expert_mode";
 
 interface AppState {
   admin: AdminInfo | null;

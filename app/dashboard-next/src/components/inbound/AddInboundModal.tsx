@@ -183,11 +183,11 @@ export function InboundModal({
       onClose={onClose}
       dismissOnOverlay={false}
       formWide
-      className="nx-inbound-wizard-shell"
-      overlayClassName="nx-inbound-wizard-overlay"
+      className="sk-inbound-wizard-shell"
+      overlayClassName="sk-inbound-wizard-overlay"
       title={isEdit ? "Edit Inbound" : "Add Inbound"}
       footer={
-        <div className="nx-inbound-wizard-foot">
+        <div className="sk-inbound-wizard-foot">
           <Button variant="ghost" onClick={onClose} disabled={saving}>
             Cancel
           </Button>

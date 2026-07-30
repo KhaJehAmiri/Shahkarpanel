@@ -60,13 +60,29 @@ def get_scoped_plans(
     return q.order_by(Plan.id).all()
 
 
+def _global_plan_clause():
+    """Sudo/global catalog: no tenant and no reseller owner."""
+    return (Plan.tenant_id.is_(None)) & (Plan.owner_admin_id.is_(None))
+
+
+def get_global_plans(db: Session, *, enabled_only: bool = True) -> List[Plan]:
+    q = db.query(Plan).filter(_global_plan_clause())
+    if enabled_only:
+        q = q.filter(Plan.enabled.is_(True))
+    return q.order_by(Plan.id).all()
+
+
 def get_plans_for_user_reseller(
     db: Session,
     admin_id: int,
     *,
     enabled_only: bool = True,
 ) -> List[Plan]:
-    """Plans visible to an end-user via their owning reseller."""
+    """Plans visible to an end-user via their owning reseller only.
+
+    Reseller catalogs are isolated from the global (sudo) catalog so customers
+    of a نماینده never see platform plans or pricing.
+    """
     dbadmin = db.query(Admin).filter(Admin.id == admin_id).first()
     if dbadmin is None:
         return []
@@ -74,13 +90,42 @@ def get_plans_for_user_reseller(
     q = db.query(Plan)
     if enabled_only:
         q = q.filter(Plan.enabled.is_(True))
-    clauses = []
+    clauses = [Plan.owner_admin_id == admin_id]
     if tenant_id is not None:
         clauses.append(Plan.tenant_id == tenant_id)
-    clauses.append(Plan.owner_admin_id == admin_id)
     from sqlalchemy import or_
 
     return q.filter(or_(*clauses)).order_by(Plan.id).all()
+
+
+def get_plans_for_portal_user(
+    db: Session,
+    dbuser,
+    *,
+    enabled_only: bool = True,
+) -> List[Plan]:
+    """Catalog for a portal login — reseller-scoped or global (sudo users only)."""
+    if getattr(dbuser, "admin_id", None):
+        return get_plans_for_user_reseller(db, dbuser.admin_id, enabled_only=enabled_only)
+    return get_global_plans(db, enabled_only=enabled_only)
+
+
+def plan_available_for_portal_user(db: Session, dbuser, plan: Plan) -> bool:
+    """Whether ``plan`` is in the portal catalog for this end-user."""
+    if not plan or not plan.enabled:
+        return False
+    admin_id = getattr(dbuser, "admin_id", None)
+    # Platform-owned users (no reseller): global catalog only.
+    if not admin_id:
+        return plan.tenant_id is None and plan.owner_admin_id is None
+    dbadmin = db.query(Admin).filter(Admin.id == admin_id).first()
+    if dbadmin is None:
+        return False
+    if plan.owner_admin_id == admin_id:
+        return True
+    if dbadmin.tenant_id is not None and plan.tenant_id == dbadmin.tenant_id:
+        return True
+    return False
 
 
 def assert_plan_accessible(db: Session, admin, plan: Plan) -> None:
@@ -96,7 +141,12 @@ def assert_plan_accessible(db: Session, admin, plan: Plan) -> None:
         raise HTTPException(status_code=403, detail="Plan not in your catalog")
 
 
-def assert_plan_for_user(db: Session, user_admin_id: int, plan: Plan) -> None:
+def assert_plan_for_user(db: Session, user_admin_id: Optional[int], plan: Plan) -> None:
+    """Enforce portal purchase scope: reseller customers cannot buy global plans."""
+    if not user_admin_id:
+        if plan.tenant_id is None and plan.owner_admin_id is None:
+            return
+        raise HTTPException(status_code=403, detail="Plan not available for this user")
     dbadmin = db.query(Admin).filter(Admin.id == user_admin_id).first()
     if dbadmin is None:
         raise HTTPException(status_code=400, detail="User has no owning reseller")

@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from app.db import GetDB
 from app.db.models import NodeSingBox
 
-logger = logging.getLogger("nexus-tls-expiry")
+logger = logging.getLogger("shahkar-tls-expiry")
 
 WARN_DAYS = 7
 

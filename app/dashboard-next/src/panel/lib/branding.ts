@@ -1,7 +1,7 @@
 import { Branding } from "../api/types";
 
 /** Built-in mark — served via /sub-assets (always mounted) and /brand after restart. */
-export const DEFAULT_LOGO_URL = "/sub-assets/brand/nexuspanel-logo.png";
+export const DEFAULT_LOGO_URL = "/sub-assets/brand/shahkar.png";
 export const DEFAULT_FAVICON_URL = "/sub-assets/brand/favicon.ico";
 
 export function brandLogoUrl(branding: Branding | null | undefined): string {
@@ -32,7 +32,7 @@ export function applyFavicon(href: string) {
 
 export function applyBranding(branding: Branding | null | undefined) {
   if (branding?.primary_color) {
-    document.documentElement.style.setProperty("--nx-accent", branding.primary_color);
+    document.documentElement.style.setProperty("--sk-accent", branding.primary_color);
   }
   applyFavicon(brandFaviconUrl(branding));
 }

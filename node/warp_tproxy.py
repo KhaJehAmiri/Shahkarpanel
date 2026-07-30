@@ -5,9 +5,9 @@ import logging
 import shutil
 from typing import Callable, List, Optional, Sequence
 
-logger = logging.getLogger("nexus-wg")
+logger = logging.getLogger("shahkar-wg")
 
-COMMENT = "nxpanel-warp-tproxy"
+COMMENT = "shahkar-warp-tproxy"
 MARK = "0x18e70"
 TABLE = "51829"
 # Inner client packets must fit in WARP's 1280 MTU (WG overhead ~60).

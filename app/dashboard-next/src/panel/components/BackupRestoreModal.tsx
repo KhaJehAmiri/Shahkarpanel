@@ -19,7 +19,7 @@ export const BackupRestoreModal: FC<{ open: boolean; onClose: () => void }> = ({
   const downloadBackup = async () => {
     setBusy("backup");
     try {
-      await api.download("/backup/download", "nexuspanel-backup.tar.gz");
+      await api.download("/backup/download", "shahkar-backup.tar.gz");
       toast.push(t("system.backupDownloaded"), "success");
     } catch (e: any) {
       toast.push(e?.message || t("common.error"), "error");
@@ -54,22 +54,22 @@ export const BackupRestoreModal: FC<{ open: boolean; onClose: () => void }> = ({
       onClose={onClose}
       footer={<Button variant="ghost" disabled={!!busy} onClick={onClose}>{t("common.close")}</Button>}
     >
-      <p className="nx-muted" style={{ marginTop: 0, marginBottom: 16, fontSize: 13, lineHeight: 1.5 }}>
+      <p className="sk-muted" style={{ marginTop: 0, marginBottom: 16, fontSize: 13, lineHeight: 1.5 }}>
         {t("overview.backupRestoreHint")}
       </p>
 
-      <div className="nx-stack" style={{ gap: 12 }}>
+      <div className="sk-stack" style={{ gap: 12 }}>
         <button
           type="button"
-          className="nx-quick-card accent"
+          className="sk-quick-card accent"
           disabled={!!busy}
           onClick={downloadBackup}
           style={{ width: "100%", textAlign: "start", cursor: busy ? "wait" : "pointer" }}
         >
-          <IcDownload className="nx-ico" />
+          <IcDownload className="sk-ico" />
           <span style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-start" }}>
             <strong>{busy === "backup" ? t("common.loading") : t("system.downloadBackup")}</strong>
-            <span className="nx-muted" style={{ fontSize: 12, fontWeight: 400 }}>
+            <span className="sk-muted" style={{ fontSize: 12, fontWeight: 400 }}>
               {t("overview.backupCardHint")}
             </span>
           </span>
@@ -86,22 +86,22 @@ export const BackupRestoreModal: FC<{ open: boolean; onClose: () => void }> = ({
             />
             <button
               type="button"
-              className="nx-quick-card"
+              className="sk-quick-card"
               disabled={!!busy}
               onClick={() => uploadRef.current?.click()}
               style={{
                 width: "100%",
                 textAlign: "start",
                 cursor: busy ? "wait" : "pointer",
-                borderColor: "color-mix(in srgb, var(--nx-danger) 35%, transparent)",
+                borderColor: "color-mix(in srgb, var(--sk-danger) 35%, transparent)",
               }}
             >
-              <IcDownload className="nx-ico" style={{ transform: "rotate(180deg)", color: "var(--nx-danger)" }} />
+              <IcDownload className="sk-ico" style={{ transform: "rotate(180deg)", color: "var(--sk-danger)" }} />
               <span style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-start" }}>
-                <strong style={{ color: "var(--nx-danger)" }}>
+                <strong style={{ color: "var(--sk-danger)" }}>
                   {busy === "restore" ? t("common.loading") : t("system.restoreBackup")}
                 </strong>
-                <span className="nx-muted" style={{ fontSize: 12, fontWeight: 400 }}>
+                <span className="sk-muted" style={{ fontSize: 12, fontWeight: 400 }}>
                   {t("overview.restoreCardHint")}
                 </span>
               </span>

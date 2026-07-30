@@ -64,11 +64,11 @@ if command -v nginx >/dev/null 2>&1 && [ -f /etc/nginx/nginx.conf ]; then
     if systemctl is-active --quiet nginx 2>/dev/null; then
       ok "nginx is active"
     else
-      warn "nginx still not active — run: apt-get install --reinstall nginx && nexuspanel https"
+      warn "nginx still not active — run: apt-get install --reinstall nginx && shahkar https"
     fi
   else
     warn "nginx -t failed after repair — check /etc/nginx"
   fi
 else
-  warn "nginx binary/config missing — install with: apt-get install -y nginx && nexuspanel https"
+  warn "nginx binary/config missing — install with: apt-get install -y nginx && shahkar https"
 fi

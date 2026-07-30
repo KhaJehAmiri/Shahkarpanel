@@ -51,17 +51,17 @@ export const DnsSection: FC<{
   };
 
   return (
-    <div className="nx-stack">
+    <div className="sk-stack">
       <Callout tone="info" title={t("xray.dnsTitle")}>{t("xray.dnsDesc")}</Callout>
       <Card>
         <Field label={t("xray.dnsServers")}>
           <textarea
-            className="nx-input"
+            className="sk-input"
             rows={6}
             value={text}
             onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setServers(e.target.value)}
             placeholder={"1.1.1.1\n8.8.8.8\nhttps://dns.google/dns-query"}
-            style={{ fontFamily: "var(--nx-font-mono)", fontSize: 12 }}
+            style={{ fontFamily: "var(--sk-font-mono)", fontSize: 12 }}
           />
         </Field>
         {objectServers.length > 0 && (
@@ -71,15 +71,15 @@ export const DnsSection: FC<{
         )}
         <Field label={t("xray.dnsHosts")} hint={t("xray.dnsHostsHint")}>
           <textarea
-            className="nx-input"
+            className="sk-input"
             rows={4}
             value={stringifyHosts(dns.hosts)}
             onChange={(e: ChangeEvent<HTMLTextAreaElement>) => patchDns({ hosts: parseHosts(e.target.value) })}
             placeholder={"domain.com: 1.2.3.4\ngeosite:category-ads-all: 127.0.0.1"}
-            style={{ fontFamily: "var(--nx-font-mono)", fontSize: 12 }}
+            style={{ fontFamily: "var(--sk-font-mono)", fontSize: 12 }}
           />
         </Field>
-        <div className="nx-row" style={{ gap: 12, flexWrap: "wrap" }}>
+        <div className="sk-row" style={{ gap: 12, flexWrap: "wrap" }}>
           <Field label={`${t("xray.dnsClientIp")} (${t("common.optional")})`}>
             <Input
               value={String(dns.clientIp || "")}
@@ -102,11 +102,11 @@ export const DnsSection: FC<{
             />
           </Field>
         </div>
-        <label className="nx-row" style={{ gap: 8, cursor: "pointer" }}>
+        <label className="sk-row" style={{ gap: 8, cursor: "pointer" }}>
           <Checkbox checked={Boolean(dns.disableCache)} onChange={() => patchDns({ disableCache: !dns.disableCache })} />
           <span>{t("xray.dnsDisableCache")}</span>
         </label>
-        <label className="nx-row" style={{ gap: 8, cursor: "pointer", marginTop: 8 }}>
+        <label className="sk-row" style={{ gap: 8, cursor: "pointer", marginTop: 8 }}>
           <Checkbox
             checked={Boolean((dns.fakeDns as Record<string, unknown> | undefined)?.enabled)}
             onChange={() => {
@@ -118,7 +118,7 @@ export const DnsSection: FC<{
         </label>
         <Field label={t("xray.dnsSplitServers", "Split-horizon servers (JSON)")} hint={t("xray.dnsSplitHint", "Optional per-domain DNS servers as JSON array.")}>
           <textarea
-            className="nx-input"
+            className="sk-input"
             rows={4}
             value={typeof dns.servers === "object" ? JSON.stringify(dns.servers, null, 2) : text}
             onChange={(e: ChangeEvent<HTMLTextAreaElement>) => {
@@ -129,11 +129,11 @@ export const DnsSection: FC<{
                 setServers(e.target.value);
               }
             }}
-            style={{ fontFamily: "var(--nx-font-mono)", fontSize: 12 }}
+            style={{ fontFamily: "var(--sk-font-mono)", fontSize: 12 }}
           />
         </Field>
       </Card>
-      <div className="nx-row" style={{ justifyContent: "flex-end" }}>
+      <div className="sk-row" style={{ justifyContent: "flex-end" }}>
         <Button variant="primary" disabled={saving} onClick={onSave}>{t("common.save")}</Button>
       </div>
     </div>

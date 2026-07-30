@@ -20,7 +20,7 @@ from typing import Dict, Optional, Tuple
 logger = logging.getLogger("uvicorn.error")
 
 # Local bind base: control = BASE + 2*node_id, api = +1
-LOCAL_PORT_BASE = int(os.environ.get("NEXUSPANEL_CONTROL_TUNNEL_BASE", "27000"))
+LOCAL_PORT_BASE = int(os.environ.get("SHAHKAR_CONTROL_TUNNEL_BASE", "27000"))
 
 _lock = threading.RLock()
 _tunnels: Dict[int, "TunnelProc"] = {}

@@ -233,7 +233,7 @@ export const MigrationWizard: FC = () => {
   ];
 
   return (
-    <div className="nx-stack" style={{ gap: 16 }}>
+    <div className="sk-stack" style={{ gap: 16 }}>
       <Callout tone="info" title={t("migration.title")}>
         {mode === "backup" ? t("migration.descriptionBackup") : t("migration.descriptionApi")}
       </Callout>
@@ -252,7 +252,7 @@ export const MigrationWizard: FC = () => {
               ) : null
             }
           />
-          <div className="nx-form-grid">
+          <div className="sk-form-grid">
             <Field label={t("migration.slug")} hint={t("migration.slugHint")}>
               <Input
                 value={p.slug}
@@ -300,7 +300,7 @@ export const MigrationWizard: FC = () => {
                     <Input value={p.backup_path} readOnly />
                   </Field>
                 ) : null}
-                <p className="nx-faint" style={{ fontSize: 12, margin: 0 }}>
+                <p className="sk-faint" style={{ fontSize: 12, margin: 0 }}>
                   {t("migration.uploadOnlyHint")}
                 </p>
               </>
@@ -309,7 +309,7 @@ export const MigrationWizard: FC = () => {
         </Card>
       ))}
 
-      <div className="nx-share-row">
+      <div className="sk-share-row">
         <Button variant="ghost" onClick={() => setPanels((r) => [...r, emptyPanel()])}>{t("migration.addPanel")}</Button>
         <Button disabled={busy} onClick={() => run(true)}>{t("migration.dryRun")}</Button>
         <Button variant="primary" disabled={busy} onClick={() => run(false)}>{t("migration.run")}</Button>
@@ -325,7 +325,7 @@ export const MigrationWizard: FC = () => {
               marginTop: 8,
               height: 6,
               borderRadius: 4,
-              background: "var(--nx-border, rgba(255,255,255,0.12))",
+              background: "var(--sk-border, rgba(255,255,255,0.12))",
               overflow: "hidden",
             }}
           >
@@ -333,7 +333,7 @@ export const MigrationWizard: FC = () => {
               style={{
                 height: "100%",
                 width: `${progress.total > 0 ? Math.min(100, Math.round((progress.processed / progress.total) * 100)) : 8}%`,
-                background: "var(--nx-accent, #2ee0c4)",
+                background: "var(--sk-accent, #2ee0c4)",
                 transition: "width .4s ease",
               }}
             />
@@ -362,9 +362,9 @@ export const MigrationWizard: FC = () => {
       {results && (
         <Card>
           <CardHead title={t("migration.results")} />
-          <div className="nx-stack" style={{ gap: 12 }}>
+          <div className="sk-stack" style={{ gap: 12 }}>
             {results.map((r) => (
-              <div key={r.panel_slug} className="nx-faint" style={{ fontSize: 13 }}>
+              <div key={r.panel_slug} className="sk-faint" style={{ fontSize: 13 }}>
                 <strong>{r.panel_slug}</strong>
                 {r.error ? (
                   <div style={{ marginTop: 8 }}>

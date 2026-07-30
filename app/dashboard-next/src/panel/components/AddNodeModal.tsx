@@ -134,7 +134,7 @@ export const AddNodeModal: FC<{
             {t("infra.manualInstallCmd")}
           </Button>
         </>}>
-        <div className="nx-stack" style={{ gap: 12 }}>
+        <div className="sk-stack" style={{ gap: 12 }}>
           <Callout tone="warn">{t("infra.provisionDisabledHint")}</Callout>
           <Field label={t("common.name")}>
             <Input value={f.name} onChange={upd("name")} placeholder="de-node-1" />
@@ -153,7 +153,7 @@ export const AddNodeModal: FC<{
     <Modal
       open
       formWide
-      className="nx-add-node-shell"
+      className="sk-add-node-shell"
       title={t("infra.addNode")}
       onClose={onClose}
       footer={<>
@@ -163,12 +163,12 @@ export const AddNodeModal: FC<{
         </Button>
       </>}
     >
-      <div className="nx-add-node-body">
+      <div className="sk-add-node-body">
         <Callout tone="info" className="compact">{t("infra.autoHint")}</Callout>
 
-        <section className="nx-add-node-section" aria-labelledby="add-node-core">
-          <h3 className="nx-add-node-section-title" id="add-node-core">{t("infra.addNodeSectionCore")}</h3>
-          <div className="nx-form-grid">
+        <section className="sk-add-node-section" aria-labelledby="add-node-core">
+          <h3 className="sk-add-node-section-title" id="add-node-core">{t("infra.addNodeSectionCore")}</h3>
+          <div className="sk-form-grid">
             <Field label={t("infra.coreKind")}>
               <Select value={f.core_kind} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => onCoreKindChange(e.target.value as "xray" | "wireguard")}>
                 <option value="xray">Xray (v2ray)</option>
@@ -185,9 +185,9 @@ export const AddNodeModal: FC<{
           </div>
         </section>
 
-        <section className="nx-add-node-section" aria-labelledby="add-node-server">
-          <h3 className="nx-add-node-section-title" id="add-node-server">{t("infra.addNodeSectionServer")}</h3>
-          <div className="nx-form-grid">
+        <section className="sk-add-node-section" aria-labelledby="add-node-server">
+          <h3 className="sk-add-node-section-title" id="add-node-server">{t("infra.addNodeSectionServer")}</h3>
+          <div className="sk-form-grid">
             <Field label={t("common.name")}>
               <Input value={f.name} onChange={upd("name")} autoFocus placeholder="de-node-1" />
             </Field>
@@ -210,9 +210,9 @@ export const AddNodeModal: FC<{
           </div>
         </section>
 
-        <section className="nx-add-node-section" aria-labelledby="add-node-ssh">
-          <h3 className="nx-add-node-section-title" id="add-node-ssh">{t("infra.addNodeSectionSsh")}</h3>
-          <div className="nx-form-grid">
+        <section className="sk-add-node-section" aria-labelledby="add-node-ssh">
+          <h3 className="sk-add-node-section-title" id="add-node-ssh">{t("infra.addNodeSectionSsh")}</h3>
+          <div className="sk-form-grid">
             <Field label={t("infra.sshUser")}>
               <Input value={f.username} onChange={upd("username")} placeholder="root" />
             </Field>

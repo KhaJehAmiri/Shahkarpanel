@@ -23,7 +23,7 @@ from app.wireguard.keys import generate_keypair, generate_preshared_key
 from app.wireguard.pool import WireGuardPeerIPAllocator
 from app.wireguard.sync import plain_wg_enabled, server_interface_address
 
-logger = logging.getLogger("nexus-wg-autoscale")
+logger = logging.getLogger("shahkar-wg-autoscale")
 
 DEFAULT_MAX_PEERS = 200
 BASE_SUBNET_PREFIX = "10.8"

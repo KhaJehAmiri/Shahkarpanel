@@ -136,15 +136,21 @@ def get_validated_sub(
             if dbuser.sub_revoked_at:
                 raise HTTPException(status_code=404, detail="Not Found")
             return dbuser
-        raise HTTPException(status_code=404, detail="Not Found")
+        # Fall through — some legacy / reseller aliases are also 32-char hex.
 
     # Legacy 3x-ui subId and other alias tokens.
     alias = crud.get_subscription_token_alias(db, token, endpoint_id=endpoint_id)
+    if not alias and token != token.lower():
+        alias = crud.get_subscription_token_alias(db, token.lower(), endpoint_id=endpoint_id)
     if not alias and sub_ctx.endpoint:
         for panel_id in panel_endpoint_ids_for_subscription(db, sub_ctx.endpoint):
             alias = crud.get_subscription_token_alias(db, token, endpoint_id=panel_id)
             if alias:
                 break
+            if token != token.lower():
+                alias = crud.get_subscription_token_alias(db, token.lower(), endpoint_id=panel_id)
+                if alias:
+                    break
     # Reseller branding domains (slug reseller-*) re-host panel aliases under a
     # custom host — accept the token from any endpoint when the user belongs
     # to that reseller tenant.
@@ -152,6 +158,8 @@ def get_validated_sub(
         slug = (sub_ctx.endpoint.slug or "").strip()
         if slug.startswith("reseller-"):
             candidate = crud.get_subscription_token_alias_any_endpoint(db, token)
+            if not candidate and token != token.lower():
+                candidate = crud.get_subscription_token_alias_any_endpoint(db, token.lower())
             if candidate:
                 from app.db.models import Admin, User
 
@@ -169,6 +177,14 @@ def get_validated_sub(
                         and int(admin.tenant_id) == expected_tid
                     ):
                         alias = candidate
+    # Public subscribe / portal bootstrap: token itself is ownership proof — allow
+    # resolving aliases across endpoints when host-scoped lookup missed.
+    if not alias:
+        candidate = crud.get_subscription_token_alias_any_endpoint(db, token)
+        if not candidate and token != token.lower():
+            candidate = crud.get_subscription_token_alias_any_endpoint(db, token.lower())
+        if candidate:
+            alias = candidate
     if alias:
         from app.db.models import User
         dbuser = db.query(User).filter(User.id == alias.user_id).first()

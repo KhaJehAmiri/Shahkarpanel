@@ -1,13 +1,12 @@
-name: nexuspanel
-
+name: shahkar
 services:
-  nexuspanel:
+  shahkar:
     build: .
     restart: always
     stop_grace_period: 5s
     env_file:
       - .env
-      - /var/lib/nexuspanel/.env
+      - /var/lib/shahkar/.env
     network_mode: host
     pid: host
     cap_add:
@@ -18,7 +17,7 @@ services:
     group_add:
       - "${DOCKER_GID:-988}"
     volumes:
-      - /var/lib/nexuspanel:/var/lib/nexuspanel
+      - /var/lib/shahkar:/var/lib/shahkar
       # Directory-only nginx mounts. Never bind individual files (nginx.conf,
       # mime.types, proxy_params, /run/nginx.pid, /usr/sbin/nginx): if the host
       # path is missing, Docker creates a *directory* stub and permanently

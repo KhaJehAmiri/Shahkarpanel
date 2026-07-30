@@ -4,7 +4,7 @@ When several panel instances share one database, background jobs that must run
 exactly once (usage recording, notifications, backups, failover detection) have
 to be coordinated. This module provides a Redis-backed leader lock:
 
-* The leader holds a key (``nexuspanel:leader``) with a short TTL and renews it.
+* The leader holds a key (``shahkar:leader``) with a short TTL and renews it.
 * Non-leaders periodically try to acquire the (expired) key.
 * :func:`is_leader` tells callers whether *this* instance currently leads.
 
@@ -21,7 +21,7 @@ from config import HA_ENABLED, HA_INSTANCE_ID, HA_LEADER_TTL, REDIS_URL
 
 logger = logging.getLogger("uvicorn.error")
 
-_LEADER_KEY = "nexuspanel:leader"
+_LEADER_KEY = "shahkar:leader"
 
 _instance_id = HA_INSTANCE_ID or f"{socket.gethostname()}:{os.getpid()}"
 _redis = None

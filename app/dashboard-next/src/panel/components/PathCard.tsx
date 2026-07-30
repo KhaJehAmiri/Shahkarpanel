@@ -11,11 +11,11 @@ export const PathCard: FC<{
 }> = ({ icon, title, steps, action, to, tone = "accent" }) => {
   const nav = useNavigate();
   return (
-    <button type="button" className={`nx-path-card nx-path-${tone}`} onClick={() => nav(to)}>
-      <div className="nx-path-icon">{icon}</div>
-      <div className="nx-path-title">{title}</div>
-      <div className="nx-path-steps">{steps}</div>
-      <div className="nx-path-action">{action} →</div>
+    <button type="button" className={`sk-path-card sk-path-${tone}`} onClick={() => nav(to)}>
+      <div className="sk-path-icon">{icon}</div>
+      <div className="sk-path-title">{title}</div>
+      <div className="sk-path-steps">{steps}</div>
+      <div className="sk-path-action">{action} →</div>
     </button>
   );
 };

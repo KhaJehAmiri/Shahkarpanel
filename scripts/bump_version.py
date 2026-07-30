@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bump NexusPanel semver in VERSION, app/__init__.py, and dashboard package.json."""
+"""Bump Shahkar semver in VERSION, app/__init__.py, and dashboard package.json."""
 from __future__ import annotations
 
 import argparse
@@ -65,7 +65,7 @@ def write_version(version: str) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Bump NexusPanel version")
+    parser = argparse.ArgumentParser(description="Bump Shahkar version")
     parser.add_argument("target", nargs="?", help="Explicit version (e.g. 0.9.0) or patch|minor|major")
     args = parser.parse_args()
     current = read_version()

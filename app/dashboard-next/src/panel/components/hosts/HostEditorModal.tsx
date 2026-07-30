@@ -51,13 +51,13 @@ function TokenPanel({
   onPick: (token: string) => void;
 }) {
   return (
-    <div className="nx-host-token-panel">
-      <div className="nx-host-token-panel-head">
-        <span className="nx-host-placeholder-label">{label}</span>
+    <div className="sk-host-token-panel">
+      <div className="sk-host-token-panel-head">
+        <span className="sk-host-placeholder-label">{label}</span>
       </div>
-      <div className="nx-host-placeholders">
+      <div className="sk-host-placeholders">
         {tokens.map((token) => (
-          <button key={token} type="button" className="nx-host-chip" onClick={() => onPick(token)}>
+          <button key={token} type="button" className="sk-host-chip" onClick={() => onPick(token)}>
             {token}
           </button>
         ))}
@@ -138,8 +138,8 @@ export const HostEditorModal: FC<Props> = ({
       title={mode === "add" ? t("infra.hostAddTitle") : t("infra.hostEditTitle")}
       onClose={onClose}
       formWide
-      className="nx-host-editor-shell"
-      overlayClassName="nx-host-editor-overlay"
+      className="sk-host-editor-shell"
+      overlayClassName="sk-host-editor-overlay"
       footer={
         <>
           <Button variant="ghost" disabled={busy} onClick={onClose}>
@@ -155,13 +155,13 @@ export const HostEditorModal: FC<Props> = ({
         </>
       }
     >
-      <div className="nx-host-editor-body">
-        <div className="nx-host-modal-tabs">
+      <div className="sk-host-editor-body">
+        <div className="sk-host-modal-tabs">
           {tabs.map((tb) => (
             <button
               key={tb.id}
               type="button"
-              className={`nx-host-modal-tab ${tab === tb.id ? "active" : ""}`}
+              className={`sk-host-modal-tab ${tab === tb.id ? "active" : ""}`}
               onClick={() => setTab(tb.id)}
             >
               {tb.label}
@@ -169,12 +169,12 @@ export const HostEditorModal: FC<Props> = ({
           ))}
         </div>
 
-        <div className="nx-host-editor-scroll">
+        <div className="sk-host-editor-scroll">
           {tab === "basic" && (
             <>
-              <section className="nx-host-section">
-                <h3 className="nx-host-section-title">{t("infra.hostSectionDisplay")}</h3>
-                <div className="nx-host-modal-grid">
+              <section className="sk-host-section">
+                <h3 className="sk-host-section-title">{t("infra.hostSectionDisplay")}</h3>
+                <div className="sk-host-modal-grid">
                   <Field label={t("infra.hostRegion")} hint={t("infra.hostRegionHint")}>
                     <Select
                       value={form.region || ""}
@@ -202,9 +202,9 @@ export const HostEditorModal: FC<Props> = ({
                     </Select>
                   </Field>
                   {isNative && (
-                    <p className="nx-host-callout">{t("infra.hostNativeHint")}</p>
+                    <p className="sk-host-callout">{t("infra.hostNativeHint")}</p>
                   )}
-                  <div className="nx-host-span-2">
+                  <div className="sk-host-span-2">
                     <Field label={t("infra.remark")} hint={t("infra.hostRemarkHintShort")}>
                       <Input value={form.remark} onChange={(e) => set("remark", e.target.value)} dir="ltr" />
                     </Field>
@@ -214,13 +214,13 @@ export const HostEditorModal: FC<Props> = ({
                     tokens={REMARK_TOKENS}
                     onPick={(token) => insertToken("remark", token)}
                   />
-                  <p className="nx-host-callout">{t("infra.hostRemarkHintDetail")}</p>
+                  <p className="sk-host-callout">{t("infra.hostRemarkHintDetail")}</p>
                 </div>
               </section>
 
-              <section className="nx-host-section">
-                <h3 className="nx-host-section-title">{t("infra.hostSectionConnection")}</h3>
-                <div className="nx-host-modal-grid">
+              <section className="sk-host-section">
+                <h3 className="sk-host-section-title">{t("infra.hostSectionConnection")}</h3>
+                <div className="sk-host-modal-grid">
                   <Field label={t("infra.address")} hint={t("infra.hostAddressHint")}>
                     <Input
                       value={form.address}
@@ -239,20 +239,20 @@ export const HostEditorModal: FC<Props> = ({
                     />
                   </Field>
                   {addressHasRegionFlag && (
-                    <p className="nx-host-callout warn">{t("infra.hostAddressRegionWarning")}</p>
+                    <p className="sk-host-callout warn">{t("infra.hostAddressRegionWarning")}</p>
                   )}
                   <TokenPanel
                     label={t("infra.hostAddressTokens")}
                     tokens={ADDRESS_TOKENS}
                     onPick={(token) => insertToken("address", token)}
                   />
-                  <p className="nx-host-callout">{t("infra.hostEchCdnWarning")}</p>
+                  <p className="sk-host-callout">{t("infra.hostEchCdnWarning")}</p>
                 </div>
               </section>
 
-              <section className="nx-host-section">
-                <h3 className="nx-host-section-title">{t("infra.hostSectionTls")}</h3>
-                <div className="nx-host-modal-grid">
+              <section className="sk-host-section">
+                <h3 className="sk-host-section-title">{t("infra.hostSectionTls")}</h3>
+                <div className="sk-host-modal-grid">
                   <Field label={t("infra.hostSni")}>
                     <Input value={form.sni} onChange={(e) => set("sni", e.target.value)} dir="ltr" />
                   </Field>
@@ -262,9 +262,9 @@ export const HostEditorModal: FC<Props> = ({
                   <Field label={t("infra.hostPath")}>
                     <Input value={form.path} onChange={(e) => set("path", e.target.value)} dir="ltr" />
                   </Field>
-                  <div className="nx-host-toggle-row">
+                  <div className="sk-host-toggle-row">
                     <Toggle on={!form.is_disabled} onChange={(v) => set("is_disabled", !v)} label={t("common.enable")} />
-                    <span className="nx-host-toggle-label">{t("common.enable")}</span>
+                    <span className="sk-host-toggle-label">{t("common.enable")}</span>
                   </div>
                 </div>
               </section>
@@ -272,7 +272,7 @@ export const HostEditorModal: FC<Props> = ({
           )}
 
           {tab === "security" && (
-            <div className="nx-host-modal-grid">
+            <div className="sk-host-modal-grid">
               <Field label={t("infra.hostTls")}>
                 <Select
                   value={form.security || "inbound_default"}
@@ -305,34 +305,34 @@ export const HostEditorModal: FC<Props> = ({
                   ))}
                 </Select>
               </Field>
-              <div className="nx-host-toggles">
-                <div className="nx-host-toggle-row">
+              <div className="sk-host-toggles">
+                <div className="sk-host-toggle-row">
                   <Toggle on={!!form.allowinsecure} onChange={(v) => set("allowinsecure", v)} label={t("infra.hostInsecure")} />
-                  <span className="nx-host-toggle-label">{t("infra.hostInsecure")}</span>
+                  <span className="sk-host-toggle-label">{t("infra.hostInsecure")}</span>
                 </div>
-                <div className="nx-host-toggle-row">
+                <div className="sk-host-toggle-row">
                   <Toggle on={!!form.mux_enable} onChange={(v) => set("mux_enable", v)} label={t("infra.hostMux")} />
-                  <span className="nx-host-toggle-label">{t("infra.hostMux")}</span>
+                  <span className="sk-host-toggle-label">{t("infra.hostMux")}</span>
                 </div>
-                <div className="nx-host-toggle-row">
+                <div className="sk-host-toggle-row">
                   <Toggle on={!!form.use_sni_as_host} onChange={(v) => set("use_sni_as_host", v)} label={t("infra.hostSniAsHost")} />
-                  <span className="nx-host-toggle-label">{t("infra.hostSniAsHost")}</span>
+                  <span className="sk-host-toggle-label">{t("infra.hostSniAsHost")}</span>
                 </div>
-                <div className="nx-host-toggle-row">
+                <div className="sk-host-toggle-row">
                   <Toggle on={!!form.override_sni_from_address} onChange={(v) => set("override_sni_from_address", v)} label={t("infra.hostSniFromAddress")} />
-                  <span className="nx-host-toggle-label">{t("infra.hostSniFromAddress")}</span>
+                  <span className="sk-host-toggle-label">{t("infra.hostSniFromAddress")}</span>
                 </div>
-                <div className="nx-host-toggle-row">
+                <div className="sk-host-toggle-row">
                   <Toggle on={!!form.keep_sni_blank} onChange={(v) => set("keep_sni_blank", v)} label={t("infra.hostKeepSniBlank")} />
-                  <span className="nx-host-toggle-label">{t("infra.hostKeepSniBlank")}</span>
+                  <span className="sk-host-toggle-label">{t("infra.hostKeepSniBlank")}</span>
                 </div>
               </div>
             </div>
           )}
 
           {tab === "advanced" && (
-            <div className="nx-host-modal-grid">
-              <div className="nx-host-span-2">
+            <div className="sk-host-modal-grid">
+              <div className="sk-host-span-2">
                 <Field
                   label={t("infra.hostNodeIds", "Nodes")}
                   hint={t(
@@ -340,9 +340,9 @@ export const HostEditorModal: FC<Props> = ({
                     "Empty = all nodes. Select specific servers so this host only appears for them in the subscription.",
                   )}
                 >
-                  <div className="nx-stack" style={{ gap: 6, maxHeight: 180, overflow: "auto" }}>
+                  <div className="sk-stack" style={{ gap: 6, maxHeight: 180, overflow: "auto" }}>
                     {(nodes.data || []).map((n) => (
-                      <label key={n.id} className="nx-row" style={{ gap: 8, fontSize: 13 }}>
+                      <label key={n.id} className="sk-row" style={{ gap: 8, fontSize: 13 }}>
                         <input
                           type="checkbox"
                           checked={selectedNodeIds.has(n.id)}
@@ -350,15 +350,15 @@ export const HostEditorModal: FC<Props> = ({
                         />
                         <span>
                           #{n.id} {n.name}
-                          <span className="nx-faint"> · {n.address}</span>
+                          <span className="sk-faint"> · {n.address}</span>
                           {n.core_kind ? (
-                            <span className="nx-faint"> · {n.core_kind}</span>
+                            <span className="sk-faint"> · {n.core_kind}</span>
                           ) : null}
                         </span>
                       </label>
                     ))}
                     {!nodes.data?.length && (
-                      <span className="nx-faint">{t("common.noData")}</span>
+                      <span className="sk-faint">{t("common.noData")}</span>
                     )}
                   </div>
                   <Input
@@ -397,22 +397,22 @@ export const HostEditorModal: FC<Props> = ({
               <Field label={t("infra.hostNoise")}>
                 <Input value={form.noise_setting || ""} onChange={(e) => set("noise_setting", e.target.value)} dir="ltr" />
               </Field>
-              <div className="nx-host-json-field">
+              <div className="sk-host-json-field">
                 <Field label={t("infra.hostMuxParams")}>
                   <StructuredHostJsonFields kind="mux" value={form.mux_params || ""} onChange={(v) => set("mux_params", v)} />
                 </Field>
               </div>
-              <div className="nx-host-json-field">
+              <div className="sk-host-json-field">
                 <Field label={t("infra.hostSockoptParams")}>
                   <StructuredHostJsonFields kind="sockopt" value={form.sockopt_params || ""} onChange={(v) => set("sockopt_params", v)} />
                 </Field>
               </div>
-              <div className="nx-host-json-field">
+              <div className="sk-host-json-field">
                 <Field label={t("infra.hostFinalMask")}>
                   <StructuredHostJsonFields kind="final_mask" value={form.final_mask || ""} onChange={(v) => set("final_mask", v)} />
                 </Field>
               </div>
-              <div className="nx-host-span-2">
+              <div className="sk-host-span-2">
                 <Field label={t("infra.hostExternalProxy")}>
                   <ExternalProxyEditor
                     value={form.external_proxy || ""}
@@ -420,9 +420,9 @@ export const HostEditorModal: FC<Props> = ({
                   />
                 </Field>
               </div>
-              <div className="nx-host-toggle-row">
+              <div className="sk-host-toggle-row">
                 <Toggle on={!!form.random_user_agent} onChange={(v) => set("random_user_agent", v)} label={t("infra.hostRandomUa")} />
-                <span className="nx-host-toggle-label">{t("infra.hostRandomUa")}</span>
+                <span className="sk-host-toggle-label">{t("infra.hostRandomUa")}</span>
               </div>
             </div>
           )}

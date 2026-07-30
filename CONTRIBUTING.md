@@ -1,10 +1,10 @@
-# Contributing to NexusPanel
+# Contributing to Shahkar
 
-Thank you for helping improve NexusPanel.
+Thank you for helping improve Shahkar.
 
 ## Getting started
 
-1. Fork [KhaJehAmiri/nexuspanel](https://github.com/KhaJehAmiri/nexuspanel) on GitHub.
+1. Fork [KhaJehAmiri/shahkar](https://github.com/KhaJehAmiri/shahkar) on GitHub.
 2. Clone your fork and create a branch.
 3. Install dependencies: `pip install -r requirements.txt`
 4. Copy `.env.example` to `.env` and run `alembic upgrade head`.
@@ -36,4 +36,4 @@ Built assets are served from `app/dashboard-next/out/` (see `app/dashboard/__ini
 
 ## Questions
 
-Open a [GitHub issue](https://github.com/KhaJehAmiri/nexuspanel/issues) for bugs and feature requests.
+Open a [GitHub issue](https://github.com/KhaJehAmiri/shahkar/issues) for bugs and feature requests.

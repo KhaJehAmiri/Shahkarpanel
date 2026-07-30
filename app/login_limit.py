@@ -73,7 +73,7 @@ def enforce_login_rate_limit(
     now = time.time()
     r = _redis_client()
     if r is not None:
-        key = f"nexus:login:{ip}"
+        key = f"shahkar:login:{ip}"
         try:
             count = r.incr(key)
             if count == 1:

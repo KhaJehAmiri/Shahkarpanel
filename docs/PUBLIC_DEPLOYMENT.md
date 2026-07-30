@@ -1,6 +1,6 @@
-# NexusPanel for public operators (Marzban-style)
+# Shahkar for public operators (Marzban-style)
 
-NexusPanel is built to serve **two audiences from one backend**, with no code
+Shahkar is built to serve **two audiences from one backend**, with no code
 forks:
 
 | Layer | Who uses it | How |
@@ -15,7 +15,7 @@ smart layer (profiles, negotiation, dedicated IPs) is purely additive.
 ## Install & secure (one line)
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/nexuspanel/master/scripts/nexuspanel.sh) install
+bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/shahkar/master/scripts/shahkar.sh) install
 ```
 
 The installer ships **secure by default**:
@@ -27,12 +27,12 @@ The installer ships **secure by default**:
   certificate by default, or a domain certificate when you pass a domain:
   ```bash
   DOMAIN=panel.example.com EMAIL=you@example.com \
-    bash <(curl -fsSL .../scripts/nexuspanel.sh) install
+    bash <(curl -fsSL .../scripts/shahkar.sh) install
   ```
 - Auto-renewal and an nginx reload hook are configured.
 - Open the dashboard at **`https://<your-domain-or-ip>/dashboard/`** (not the
   old `http://…:8000`). See [`HTTPS_SETUP.md`](./HTTPS_SETUP.md) for details and
-  to (re)run TLS setup with `nexuspanel https`.
+  to (re)run TLS setup with `shahkar https`.
 
 ## Layer 1 — selling configs with standard apps
 

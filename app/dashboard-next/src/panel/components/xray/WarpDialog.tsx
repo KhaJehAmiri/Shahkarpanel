@@ -180,20 +180,20 @@ export const WarpDialog: FC<{
       onClose={onClose}
       footer={<Button variant="ghost" onClick={onClose}>{t("common.close")}</Button>}
     >
-      <div className="nx-stack" style={{ gap: 16 }}>
+      <div className="sk-stack" style={{ gap: 16 }}>
         <Callout tone="info" title={t("warp.aboutTitle")}>{t("warp.aboutMulti")}</Callout>
 
         {loading ? (
-          <div style={{ color: "var(--nx-muted)" }}>{t("common.loading")}</div>
+          <div style={{ color: "var(--sk-muted)" }}>{t("common.loading")}</div>
         ) : (
           <>
             <Field label={t("warp.newTag")} hint={t("warp.newTagHint")}>
-              <div className="nx-row" style={{ gap: 8, flexWrap: "wrap" }}>
+              <div className="sk-row" style={{ gap: 8, flexWrap: "wrap" }}>
                 <Input
                   value={newTag}
                   onChange={(e: ChangeEvent<HTMLInputElement>) => setNewTag(e.target.value)}
                   placeholder="warp-2"
-                  className="nx-mono"
+                  className="sk-mono"
                   dir="ltr"
                   style={{ maxWidth: 160 }}
                 />
@@ -208,7 +208,7 @@ export const WarpDialog: FC<{
             ) : (
               <>
                 <Field label={t("warp.accounts")}>
-                  <div className="nx-row" style={{ gap: 6, flexWrap: "wrap" }}>
+                  <div className="sk-row" style={{ gap: 6, flexWrap: "wrap" }}>
                     {accountTags.map((tag) => (
                       <Button
                         key={tag}
@@ -225,23 +225,23 @@ export const WarpDialog: FC<{
 
                 {account && (
                   <>
-                    <div className="nx-row" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                    <div className="sk-row" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                       <Pill tone="ok" dot>{t("warp.statusActive")}</Pill>
                       <Pill tone={isPlus ? "accent" : "default"}>{isPlus ? "WARP+" : "WARP free"}</Pill>
                       <Pill tone="default">{warpTag}</Pill>
                     </div>
 
                     <Field label={t("warp.deviceId")}>
-                      <Input value={account.device_id || ""} readOnly className="nx-mono" dir="ltr" />
+                      <Input value={account.device_id || ""} readOnly className="sk-mono" dir="ltr" />
                     </Field>
 
                     <Field label={t("warp.license")} hint={t("warp.licenseHint")}>
-                      <div className="nx-row" style={{ gap: 8, flexWrap: "wrap" }}>
+                      <div className="sk-row" style={{ gap: 8, flexWrap: "wrap" }}>
                         <Input
                           value={license}
                           onChange={(e: ChangeEvent<HTMLInputElement>) => setLicense(e.target.value)}
                           placeholder="xxxxxxxx-xxxx-xxxx"
-                          className="nx-mono"
+                          className="sk-mono"
                           dir="ltr"
                         />
                         <Button onClick={applyLicense} disabled={busy || !license.trim()}>
@@ -256,8 +256,8 @@ export const WarpDialog: FC<{
                       <Callout tone="warn">{t("warp.outboundMissing")}</Callout>
                     )}
 
-                    <div className="nx-row" style={{ gap: 8, flexWrap: "wrap", justifyContent: "space-between" }}>
-                      <div className="nx-row" style={{ gap: 8 }}>
+                    <div className="sk-row" style={{ gap: 8, flexWrap: "wrap", justifyContent: "space-between" }}>
+                      <div className="sk-row" style={{ gap: 8 }}>
                         <Button variant="danger" onClick={remove} disabled={busy}>
                           {t("warp.deleteTag")}
                         </Button>

@@ -1,16 +1,22 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict
 
 from app import billing, feature_flags
 from app.billing.mrr import compute_mrr
 from app.billing.payments import (
+    approve_portal_payment,
     complete_payment,
     create_topup_payment,
     get_intent_for_admin,
+    get_intent_for_admin_or_sudo,
     list_online_providers,
+    list_portal_payments_for_admin,
+    public_base_from_request,
+    reject_portal_payment,
 )
 from app.billing.usage_billing import usage_summary_for_admin
 from app.db import Session, crud, get_db
@@ -100,10 +106,16 @@ def list_providers(_: Admin = Depends(require_permission("billing:read"))):
 
 
 @router.get("/payment-providers", response_model=List[str])
-def list_payment_providers(_: Admin = Depends(require_permission("billing:read"))):
+def list_payment_providers(
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(require_permission("billing:read")),
+):
     """Online PSPs available for self-service top-up (excludes manual)."""
     _require_billing_enabled()
-    return list_online_providers()
+    from app.billing.providers import filter_providers_for_admin
+
+    dbadmin = crud.get_admin(db, admin.username)
+    return filter_providers_for_admin(list_online_providers(), dbadmin)
 
 
 @router.get("/wallet", response_model=WalletResponse)
@@ -689,13 +701,20 @@ class PaymentResponse(BaseModel):
 @router.post("/topup", response_model=PaymentCreateResponse)
 def topup_wallet(
     body: TopUpRequest,
+    request: Request,
     db: Session = Depends(get_db),
     admin: Admin = Depends(require_permission("billing:read")),
 ):
     """Reseller self-service wallet top-up via an online payment provider."""
     _require_billing_enabled()
     admin_id = _admin_id(db, admin)
-    intent, payload = create_topup_payment(db, admin_id, body.amount, body.provider)
+    intent, payload = create_topup_payment(
+        db,
+        admin_id,
+        body.amount,
+        body.provider,
+        public_base=public_base_from_request(request),
+    )
     return PaymentCreateResponse(
         payment_id=intent.id,
         kind=intent.kind,
@@ -731,6 +750,134 @@ def complete_wallet_payment(
     )
 
 
+class PortalPaymentRow(BaseModel):
+    id: int
+    status: str
+    provider: str
+    amount: int
+    plan_id: Optional[int] = None
+    plan_name: Optional[str] = None
+    user_id: Optional[int] = None
+    username: Optional[str] = None
+    user_note: Optional[str] = None
+    has_receipt: bool = False
+    receipt_name: Optional[str] = None
+    created_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+
+
+class PortalPaymentRejectBody(BaseModel):
+    reason: Optional[str] = None
+
+
+def _portal_payment_row(db: Session, intent) -> PortalPaymentRow:
+    plan = crud.get_plan_by_id(db, intent.plan_id) if intent.plan_id else None
+    user = crud.get_user_by_id(db, intent.user_id) if intent.user_id else None
+    extra = intent.extra or {}
+    row = PortalPaymentRow(
+        id=intent.id,
+        status=intent.status,
+        provider=intent.provider,
+        amount=intent.amount,
+        plan_id=intent.plan_id,
+        plan_name=plan.name if plan else None,
+        user_id=intent.user_id,
+        username=user.username if user else None,
+        user_note=extra.get("user_note"),
+        has_receipt=bool(extra.get("receipt_relpath")),
+        receipt_name=extra.get("receipt_name"),
+        created_at=intent.created_at,
+        completed_at=intent.completed_at,
+    )
+    if not row.user_note:
+        action = extra.get("action") or intent.kind
+        uname = extra.get("new_username") or extra.get("created_username") or extra.get("target_username")
+        row.user_note = f"{action}" + (f" · {uname}" if uname else "")
+    return row
+
+
+@router.get("/portal-payments", response_model=List[PortalPaymentRow])
+def list_portal_payments(
+    status: Optional[str] = None,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(require_permission("billing:read")),
+):
+    """Portal purchases (card-to-card) — scoped to owning admin; sudo sees all."""
+    _require_billing_enabled()
+    dbadmin = crud.get_admin(db, admin.username)
+    if dbadmin is None and not admin.is_sudo:
+        raise HTTPException(status_code=400, detail="Admin not found in database")
+    scope = dbadmin if dbadmin is not None else admin
+    intents = list_portal_payments_for_admin(db, scope, status=status)
+    return [_portal_payment_row(db, intent) for intent in intents]
+
+
+@router.get("/portal-payments/{payment_id}/receipt")
+def portal_payment_receipt(
+    payment_id: int,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(require_permission("billing:read")),
+):
+    """Download the uploaded card-transfer receipt for a portal payment."""
+    _require_billing_enabled()
+    dbadmin = crud.get_admin(db, admin.username)
+    scope = dbadmin if dbadmin is not None else admin
+    intent = get_intent_for_admin_or_sudo(db, payment_id, scope)
+    extra = intent.extra or {}
+    rel = extra.get("receipt_relpath")
+    if not rel:
+        raise HTTPException(status_code=404, detail="No receipt uploaded")
+    from app.billing.receipts import receipt_media_type, resolve_receipt_path
+
+    path = resolve_receipt_path(str(rel))
+    media = receipt_media_type(path, extra.get("receipt_content_type"))
+    filename = extra.get("receipt_name") or path.name
+    return FileResponse(path, media_type=media, filename=filename)
+
+
+@router.post("/portal-payments/{payment_id}/approve", response_model=PortalPaymentRow)
+def approve_portal_purchase(
+    payment_id: int,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(require_permission("billing:write")),
+):
+    """Approve a card-to-card portal purchase and apply the plan."""
+    _require_billing_enabled()
+    dbadmin = crud.get_admin(db, admin.username)
+    scope = dbadmin if dbadmin is not None else admin
+    intent = get_intent_for_admin_or_sudo(db, payment_id, scope)
+    intent = approve_portal_payment(db, intent)
+    try:
+        from app.portal_push import notify_portal_payment
+
+        notify_portal_payment(db, intent, approved=True)
+    except Exception:
+        pass
+    return _portal_payment_row(db, intent)
+
+
+@router.post("/portal-payments/{payment_id}/reject", response_model=PortalPaymentRow)
+def reject_portal_purchase(
+    payment_id: int,
+    body: PortalPaymentRejectBody,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(require_permission("billing:write")),
+):
+    """Reject a pending card-to-card portal purchase."""
+    _require_billing_enabled()
+    dbadmin = crud.get_admin(db, admin.username)
+    scope = dbadmin if dbadmin is not None else admin
+    intent = get_intent_for_admin_or_sudo(db, payment_id, scope)
+    intent = reject_portal_payment(db, intent, reason=body.reason)
+    try:
+        from app.portal_push import notify_portal_payment
+
+        notify_portal_payment(db, intent, approved=False)
+    except Exception:
+        pass
+    return _portal_payment_row(db, intent)
+
+
 class MrrResellerRow(BaseModel):
     admin_id: int
     username: str
@@ -759,6 +906,200 @@ def owner_mrr(
     if days < 1 or days > 365:
         raise HTTPException(status_code=422, detail="days must be 1–365")
     return compute_mrr(db, days=days)
+
+
+class GatewayIncomeResellerRow(BaseModel):
+    admin_id: int
+    username: str
+    is_sudo: bool = False
+    centralpay_enabled: bool = False
+    card_enabled: bool = False
+    today: int
+    yesterday: int
+    week: int
+    total: int
+    payments_count: int
+    by_provider: Dict[str, int] = {}
+    by_kind: Dict[str, int] = {}
+
+
+class GatewayIncomePaymentRow(BaseModel):
+    id: int
+    kind: str
+    provider: str
+    amount: int
+    status: str
+    admin_id: int
+    username: Optional[str] = None
+    plan_id: Optional[int] = None
+    plan_name: Optional[str] = None
+    reference: Optional[Any] = None
+    card: Optional[str] = None
+    created_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+
+
+class GatewayIncomeResponse(BaseModel):
+    today: int
+    yesterday: int
+    week: int
+    total: int
+    today_count: int = 0
+    yesterday_count: int = 0
+    week_count: int = 0
+    payments_count: int
+    currency_label: str = ""
+    by_provider: Dict[str, int] = {}
+    by_kind: Dict[str, int] = {}
+    today_by_kind: Dict[str, int] = {}
+    yesterday_by_kind: Dict[str, int] = {}
+    week_by_kind: Dict[str, int] = {}
+    total_by_kind: Dict[str, int] = {}
+    resellers: List[GatewayIncomeResellerRow] = []
+    recent_payments: List[GatewayIncomePaymentRow] = []
+
+
+@router.get("/gateway-income", response_model=GatewayIncomeResponse)
+def gateway_income(
+    provider: Optional[str] = None,
+    username: Optional[str] = None,
+    payments_limit: int = 100,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(require_permission("billing:read")),
+):
+    """Gateway (CentralPay/Stripe/demo) cash collected — today / yesterday / week / total.
+
+    Sudo sees all resellers; a reseller sees only their own traffic — and only
+    when the master has enabled CentralPay for that reseller.
+    """
+    _require_billing_enabled()
+    from app.billing.gateway_income import compute_gateway_income
+    from app.billing.providers import admin_may_use_centralpay
+
+    if payments_limit < 1 or payments_limit > 500:
+        raise HTTPException(status_code=422, detail="payments_limit must be 1–500")
+
+    admin_id: Optional[int] = None
+    if admin.is_sudo:
+        if username:
+            target = crud.get_admin(db, username.strip())
+            if target is None:
+                raise HTTPException(status_code=404, detail="Admin not found")
+            admin_id = target.id
+    else:
+        dbadmin = crud.get_admin(db, admin.username)
+        if dbadmin is None or not admin_may_use_centralpay(dbadmin):
+            raise HTTPException(
+                status_code=403,
+                detail="Gateway income is only available when CentralPay is enabled for your account",
+            )
+        admin_id = _admin_id(db, admin)
+
+    return compute_gateway_income(
+        db,
+        admin_id=admin_id,
+        provider=(provider or "").strip() or None,
+        include_payments=True,
+        payments_limit=payments_limit,
+    )
+
+
+class MyCardSettings(BaseModel):
+    """Reseller (or sudo) card-to-card settings for their own portal customers."""
+
+    card_enabled: bool = False
+    card_number: str = ""
+    card_holder: str = ""
+    card_bank: str = ""
+    # Sudo uses platform settings — surface that for the UI.
+    uses_platform_settings: bool = False
+
+
+class MyCardSettingsUpdate(BaseModel):
+    card_enabled: bool = False
+    card_number: str = ""
+    card_holder: str = ""
+    card_bank: str = ""
+
+
+@router.get("/my-card-settings", response_model=MyCardSettings)
+def get_my_card_settings(
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(require_permission("billing:read")),
+):
+    """Current admin's card-to-card config (reseller self-service; sudo = platform)."""
+    _require_billing_enabled()
+    from app import platform_settings as ps
+
+    if admin.is_sudo:
+        return MyCardSettings(
+            card_enabled=bool(ps.get_bool("payment.card_enabled")),
+            card_number=ps.get_str("payment.card_number") or "",
+            card_holder=ps.get_str("payment.card_holder") or "",
+            card_bank=ps.get_str("payment.card_bank") or "",
+            uses_platform_settings=True,
+        )
+    dbadmin = crud.get_admin(db, admin.username)
+    if dbadmin is None:
+        raise HTTPException(status_code=404, detail="Admin not found")
+    return MyCardSettings(
+        card_enabled=bool(getattr(dbadmin, "card_enabled", False)),
+        card_number=(getattr(dbadmin, "card_number", None) or ""),
+        card_holder=(getattr(dbadmin, "card_holder", None) or ""),
+        card_bank=(getattr(dbadmin, "card_bank", None) or ""),
+        uses_platform_settings=False,
+    )
+
+
+@router.put("/my-card-settings", response_model=MyCardSettings)
+def put_my_card_settings(
+    body: MyCardSettingsUpdate,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(require_permission("billing:write")),
+):
+    """Save card-to-card details for this admin's portal customers."""
+    _require_billing_enabled()
+    from app import platform_settings as ps
+    from app.billing.providers import reload_providers
+
+    number = (body.card_number or "").strip()
+    holder = (body.card_holder or "").strip()
+    bank = (body.card_bank or "").strip()
+    if body.card_enabled and not number:
+        raise HTTPException(status_code=422, detail="Card number is required when card payment is enabled")
+
+    if admin.is_sudo:
+        ps.update_settings_bulk({
+            "payment.card_enabled": bool(body.card_enabled),
+            "payment.card_number": number,
+            "payment.card_holder": holder,
+            "payment.card_bank": bank,
+        })
+        reload_providers()
+        return MyCardSettings(
+            card_enabled=bool(body.card_enabled),
+            card_number=number,
+            card_holder=holder,
+            card_bank=bank,
+            uses_platform_settings=True,
+        )
+
+    dbadmin = crud.get_admin(db, admin.username)
+    if dbadmin is None:
+        raise HTTPException(status_code=404, detail="Admin not found")
+    dbadmin.card_enabled = bool(body.card_enabled)
+    dbadmin.card_number = number or None
+    dbadmin.card_holder = holder or None
+    dbadmin.card_bank = bank or None
+    db.commit()
+    db.refresh(dbadmin)
+    return MyCardSettings(
+        card_enabled=bool(dbadmin.card_enabled),
+        card_number=dbadmin.card_number or "",
+        card_holder=dbadmin.card_holder or "",
+        card_bank=dbadmin.card_bank or "",
+        uses_platform_settings=False,
+    )
 
 
 @router.post("/webhook/stripe")
@@ -819,6 +1160,60 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
         {"stripe_webhook": "checkout.session.completed", "session_id": session.get("id")},
     )
     return {"received": True}
+
+
+@router.get("/return/centralpay")
+def centralpay_return(
+    orderId: int,
+    db: Session = Depends(get_db),
+):
+    """CentralPay browser return — verify deposit, complete intent, redirect UI."""
+    from fastapi.responses import RedirectResponse
+
+    from app import platform_settings as ps
+    from app.db.models import PaymentIntent
+    from config import PANEL_PUBLIC_ADDRESS
+
+    def _panel_base() -> str:
+        addr = (PANEL_PUBLIC_ADDRESS or "").strip().rstrip("/")
+        if addr.startswith("http://") or addr.startswith("https://"):
+            return addr
+        if addr:
+            return f"https://{addr}"
+        return ""
+
+    def _dest(kind: Optional[str], ok: bool) -> str:
+        flag = "ok" if ok else "fail"
+        path = f"/dashboard/#/billing?pay={flag}" if kind == "topup" else f"/portal/?pay={flag}"
+        base = _panel_base()
+        # Absolute URL so a reverse-proxy return host does not keep the browser
+        # on the relay domain (e.g. bot.ajor.store).
+        return f"{base}{path}" if base else path
+
+    if not (ps.get_str("payment.centralpay_api_key") or "").strip():
+        return RedirectResponse(_dest(None, False), status_code=302)
+
+    from app.billing.providers import CentralPayProvider
+
+    intent_id = CentralPayProvider.intent_id_from_order_id(int(orderId))
+    intent = db.query(PaymentIntent).filter(PaymentIntent.id == int(intent_id)).first()
+    if intent is None or intent.provider != "centralpay":
+        return RedirectResponse(_dest(None, False), status_code=302)
+
+    if intent.status == "completed":
+        return RedirectResponse(_dest(intent.kind, True), status_code=302)
+
+    try:
+        complete_payment(
+            db,
+            intent,
+            {"centralpay_return": True, "orderId": int(orderId)},
+        )
+        return RedirectResponse(_dest(intent.kind, True), status_code=302)
+    except HTTPException:
+        return RedirectResponse(_dest(intent.kind, False), status_code=302)
+    except Exception:
+        return RedirectResponse(_dest(intent.kind, False), status_code=302)
 
 
 @router.get("/usage", response_model=UsageSummaryResponse)

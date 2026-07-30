@@ -23,8 +23,8 @@ UpdateMode = Literal["restart", "pip", "dashboard", "recreate", "rebuild"]
 
 _ROOT = Path(__file__).resolve().parents[2]
 _VERSION_FILE = _ROOT / "VERSION"
-_META_FILE = Path(os.environ.get("NEXUSPANEL_DATA_DIR", "/var/lib/nexuspanel")) / "install-meta.json"
-_COMPOSE_PROJECT = os.environ.get("COMPOSE_PROJECT_NAME", "nexuspanel").strip() or "nexuspanel"
+_META_FILE = Path(os.environ.get("SHAHKAR_DATA_DIR", "/var/lib/shahkar")) / "install-meta.json"
+_COMPOSE_PROJECT = os.environ.get("COMPOSE_PROJECT_NAME", "shahkar").strip() or "shahkar"
 _lock = threading.Lock()
 # Serialize every git mutation/fetch against the bind-mounted checkout.
 # Concurrent ``git fetch`` (update check) + ``git reset --hard`` (apply) races
@@ -58,9 +58,9 @@ def _github_repo() -> str:
     try:
         from config import PANEL_GITHUB_REPO
 
-        return PANEL_GITHUB_REPO.strip() or "KhaJehAmiri/nexuspanel"
+        return PANEL_GITHUB_REPO.strip() or "KhaJehAmiri/shahkar"
     except Exception:
-        return "KhaJehAmiri/nexuspanel"
+        return "KhaJehAmiri/shahkar"
 
 
 def _github_branch() -> str:
@@ -457,7 +457,7 @@ def _pip_install_requirements() -> None:
         return
     if _docker_available() and _compose_file():
         _run_cmd_quiet(
-            _compose_cmd("exec", "-T", "-u", "0", "nexuspanel", "pip", "install", "--no-cache-dir", "-r", "/code/requirements.txt"),
+            _compose_cmd("exec", "-T", "-u", "0", "shahkar", "pip", "install", "--no-cache-dir", "-r", "/code/requirements.txt"),
             timeout=900,
         )
         return
@@ -480,11 +480,11 @@ def _own_container_id() -> Optional[str]:
 
     ``$HOSTNAME``/cgroup are unreliable inside our container (compose sets a
     custom hostname; cgroup v2 exposes nothing), so ask compose for the id of
-    the ``nexuspanel`` service while the container is still alive.
+    the ``shahkar`` service while the container is still alive.
     """
     try:
         out = subprocess.check_output(
-            _compose_cmd("ps", "-q", "nexuspanel"),
+            _compose_cmd("ps", "-q", "shahkar"),
             cwd=str(_ROOT),
             text=True,
             stderr=subprocess.DEVNULL,
@@ -500,7 +500,7 @@ def _own_container_id() -> Optional[str]:
             [
                 "docker", "ps", "-aq",
                 "--filter", f"label=com.docker.compose.project={_COMPOSE_PROJECT}",
-                "--filter", "label=com.docker.compose.service=nexuspanel",
+                "--filter", "label=com.docker.compose.service=shahkar",
             ],
             text=True,
             stderr=subprocess.DEVNULL,
@@ -543,24 +543,24 @@ def _host_code_dir() -> str:
     root = str(_ROOT)
     if root not in ("", "/code") and Path(root).is_dir():
         return root
-    for candidate in ("/opt/nexuspanel", "/opt/marzban"):
+    for candidate in ("/opt/shahkar", "/opt/marzban"):
         # Prefer a conventional host path even when not visible in-container.
         return candidate
-    return root if root else "/opt/nexuspanel"
+    return root if root else "/opt/shahkar"
 
 
 def _open_update_log():
     """Open the update/restart log, best-effort — never block the restart on it.
 
     The panel process runs unprivileged (uid 1000), but the data dir
-    (``/var/lib/nexuspanel``) is commonly ``root:root 0755``, so *creating* a
+    (``/var/lib/shahkar``) is commonly ``root:root 0755``, so *creating* a
     new ``update-rebuild.log`` there raises ``PermissionError``. That used to
     abort ``_schedule_compose_action`` entirely — the pulled code landed on
     disk but the container was NEVER restarted, so the panel kept running the
     OLD in-memory version ("update says done but source didn't change"). Fall
     back to ``/tmp`` and finally to no log so the restart always proceeds.
     """
-    for candidate in (_META_FILE.parent / "update-rebuild.log", Path("/tmp") / "nexuspanel-update-rebuild.log"):
+    for candidate in (_META_FILE.parent / "update-rebuild.log", Path("/tmp") / "shahkar-update-rebuild.log"):
         try:
             return open(candidate, "a", encoding="utf-8")
         except OSError:
@@ -598,11 +598,11 @@ def _nginx_ensure_sidecar_shell() -> str:
         return ""
     # docker run -v paths are resolved on the *host*. ``script.parent`` is
     # ``/code/scripts`` in-container and does not exist on the host — that
-    # produced exit 127: ``/nexus-ensure/ensure_nginx_restarting_page.sh: No
+    # produced exit 127: ``/shahkar-ensure/ensure_nginx_restarting_page.sh: No
     # such file or directory`` (and noisy one-off containers on every update).
     host_scripts = str(Path(_host_code_dir()) / "scripts")
     # Skip when there is no real nginx binary. Fresh installs without
-    # ``nexuspanel https`` often get Docker-created stub *directories* at
+    # ``shahkar https`` often get Docker-created stub *directories* at
     # ``/usr/sbin/nginx`` from compose bind mounts of a missing host path.
     nginx_bin = Path("/usr/sbin/nginx")
     if nginx_bin.is_dir() or not nginx_bin.is_file():
@@ -615,10 +615,10 @@ def _nginx_ensure_sidecar_shell() -> str:
     vols = [
         "-v", "/etc/nginx:/etc/nginx",
         "-v", "/etc/letsencrypt:/etc/letsencrypt:ro",
-        "-v", "/var/lib/nexuspanel:/var/lib/nexuspanel",
+        "-v", "/var/lib/shahkar:/var/lib/shahkar",
         "-v", "/var/lib/nginx:/var/lib/nginx",
         "-v", "/var/log/nginx:/var/log/nginx",
-        "-v", f"{host_scripts}:/nexus-ensure:ro",
+        "-v", f"{host_scripts}:/shahkar-ensure:ro",
     ]
     # Only bind nginx binary / pid when they are real files. Missing paths become
     # stub directories on the host and permanently break nginx.
@@ -640,7 +640,7 @@ def _nginx_ensure_sidecar_shell() -> str:
         "-e", f"PANEL_PORT={port}",
         "--entrypoint", "bash",
         image,
-        "/nexus-ensure/ensure_nginx_restarting_page.sh",
+        "/shahkar-ensure/ensure_nginx_restarting_page.sh",
     ]
     return " ".join(shlex.quote(p) for p in parts) + " || true"
 
@@ -676,7 +676,7 @@ def _schedule_compose_action(mode: UpdateMode) -> None:
 
     label = mode
     if mode in ("recreate", "rebuild"):
-        up_args = ["up", "-d", "--force-recreate", "--no-deps", "nexuspanel"]
+        up_args = ["up", "-d", "--force-recreate", "--no-deps", "shahkar"]
         if mode == "rebuild":
             up_args.insert(2, "--build")
         compose = _compose_file()
@@ -690,7 +690,7 @@ def _schedule_compose_action(mode: UpdateMode) -> None:
             # After recreate, force-start in case compose left the service exited.
             ensure_up = (
                 f"cid=$(docker ps -aq --filter label=com.docker.compose.project={shlex.quote(_COMPOSE_PROJECT)} "
-                f"--filter label=com.docker.compose.service=nexuspanel | head -n1); "
+                f"--filter label=com.docker.compose.service=shahkar | head -n1); "
                 f"[ -n \"$cid\" ] && docker start \"$cid\" >/dev/null 2>&1 || true"
             )
             cmd = [
@@ -733,7 +733,7 @@ def _schedule_compose_action(mode: UpdateMode) -> None:
             cmd = ["sh", "-c", f"{pre}docker restart -t 3 {shlex.quote(cid)}"]
     else:
         # No container id — fall back to compose recreate (best effort).
-        cmd = _compose_cmd("up", "-d", "--force-recreate", "--no-deps", "nexuspanel")
+        cmd = _compose_cmd("up", "-d", "--force-recreate", "--no-deps", "shahkar")
         label = "recreate"
 
     # A short delay lets the update-job status flush before we go down.
@@ -809,7 +809,7 @@ def _restart_panel(job: UpdateJob) -> None:
     if _docker_available() and _compose_file():
         _schedule_compose_action("restart")
         return
-    for unit in ("nexuspanel", "marzban"):
+    for unit in ("shahkar", "marzban"):
         if not shutil.which("systemctl"):
             break
         try:
@@ -841,7 +841,7 @@ def _worker(job_id: str) -> None:
             job.step_done("pull", detail=f"origin/{_github_branch()}")
         else:
             raise RuntimeError(
-                "git unavailable — bind-mount the app dir (/opt/nexuspanel:/code) and install git in the panel container"
+                "git unavailable — bind-mount the app dir (/opt/shahkar:/code) and install git in the panel container"
             )
 
         job.step_running("backup")

@@ -18,7 +18,7 @@ from app.models.subscription_endpoint import SubscriptionExportMode
 from app.models.user import UserCreate, UserModify, UserStatus, UserStatusCreate
 from app.models.proxy import ProxyHost as ProxyHostModel
 
-logger = logging.getLogger("nexus-migration-3xui")
+logger = logging.getLogger("shahkar-migration-3xui")
 
 _TAG_SAFE = re.compile(r"[^a-zA-Z0-9_-]+")
 _USERNAME_MAX = 34
@@ -585,7 +585,7 @@ def _merge_inbound_to_xray(panel_slug: str, inbound: dict, xray_config: dict) ->
         except json.JSONDecodeError:
             entry["settings"] = {}
     if isinstance(entry["settings"], dict):
-        # NexusPanel users live in the DB; do not embed 3x-ui client lists in Xray JSON.
+        # Shahkar users live in the DB; do not embed 3x-ui client lists in Xray JSON.
         entry["settings"].pop("clients", None)
         if str(entry.get("protocol") or "").lower() == "vless":
             from app.xray.inbound_normalize import normalize_vless_inbound_settings

@@ -2,16 +2,25 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "NexusPanel",
-  description: "NexusPanel — professional proxy management",
+  title: "Shahkar",
+  description: "Shahkar — professional proxy management",
+  applicationName: "Shahkar",
+  appleWebApp: {
+    capable: true,
+    title: "Shahkar",
+    statusBarStyle: "black-translucent",
+  },
+  other: {
+    "mobile-web-app-capable": "yes",
+  },
   icons: {
     icon: [
-      { url: "/sub-assets/brand/favicon.ico", sizes: "any" },
-      { url: "/sub-assets/brand/favicon-32.png", type: "image/png", sizes: "32x32" },
-      { url: "/sub-assets/brand/favicon-48.png", type: "image/png", sizes: "48x48" },
+      { url: "/brand/favicon.ico", sizes: "any" },
+      { url: "/brand/pwa-192.png", type: "image/png", sizes: "192x192" },
+      { url: "/brand/pwa-512.png", type: "image/png", sizes: "512x512" },
     ],
-    apple: { url: "/sub-assets/brand/apple-touch-icon.png", sizes: "180x180" },
-    shortcut: "/sub-assets/brand/favicon.ico",
+    apple: { url: "/brand/apple-touch-icon.png", sizes: "180x180" },
+    shortcut: "/brand/favicon.ico",
   },
 };
 
@@ -24,6 +33,9 @@ const LANG_BOOTSTRAP = `(function(){try{
   var dir=lang==='fa'?'rtl':'ltr';
   document.documentElement.setAttribute('lang',lang);
   document.documentElement.setAttribute('dir',dir);
+  var standalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
+    || (window.navigator && window.navigator.standalone === true);
+  if (standalone) document.documentElement.classList.add('sk-standalone');
 }catch(e){}})();`;
 
 export default function RootLayout({

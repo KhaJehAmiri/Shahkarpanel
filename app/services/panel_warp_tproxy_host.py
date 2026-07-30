@@ -6,9 +6,9 @@ import shutil
 import subprocess
 from typing import Callable, Optional, Sequence
 
-logger = logging.getLogger("nexuspanel-warp")
+logger = logging.getLogger("shahkar-warp")
 
-COMMENT = "nxpanel-warp-tproxy"
+COMMENT = "shahkar-warp-tproxy"
 MARK = "0x18e70"
 TABLE = "51829"
 

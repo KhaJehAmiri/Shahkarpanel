@@ -7,7 +7,7 @@ from typing import Iterable, List, Optional
 from app.services.hosts_sync import sync_hosts_for_node
 from app.services.materialize import materialize_node_services
 
-logger = logging.getLogger("nexus-services-apply")
+logger = logging.getLogger("shahkar-services-apply")
 
 
 def set_node_services(

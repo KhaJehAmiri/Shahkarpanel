@@ -53,8 +53,8 @@ export const StructuredHostJsonFields: FC<Props> = ({ kind, value, onChange }) =
 
   if (advanced) {
     return (
-      <div className="nx-stack" style={{ gap: 8 }}>
-        <label className="nx-row" style={{ gap: 8, fontSize: 12 }}>
+      <div className="sk-stack" style={{ gap: 8 }}>
+        <label className="sk-row" style={{ gap: 8, fontSize: 12 }}>
           <Toggle on={advanced} onChange={setAdvanced} />
           {t("infra.hostJsonAdvanced", { defaultValue: "Raw JSON editor" })}
         </label>
@@ -65,14 +65,14 @@ export const StructuredHostJsonFields: FC<Props> = ({ kind, value, onChange }) =
 
   if (kind === "mux") {
     return (
-      <div className="nx-stack" style={{ gap: 10 }}>
-        <label className="nx-row" style={{ gap: 8, fontSize: 12 }}>
+      <div className="sk-stack" style={{ gap: 10 }}>
+        <label className="sk-row" style={{ gap: 8, fontSize: 12 }}>
           <Toggle on={advanced} onChange={setAdvanced} />
           {t("infra.hostJsonAdvanced", { defaultValue: "Raw JSON editor" })}
         </label>
-        <div className="nx-host-toggle-row">
+        <div className="sk-host-toggle-row">
           <Toggle on={!!obj.enabled} onChange={(v) => setField("enabled", v)} />
-          <span className="nx-host-toggle-label">{t("infra.hostMuxEnabled", { defaultValue: "Mux enabled" })}</span>
+          <span className="sk-host-toggle-label">{t("infra.hostMuxEnabled", { defaultValue: "Mux enabled" })}</span>
         </div>
         <Field label={t("infra.hostMuxConcurrency", { defaultValue: "Concurrency" })}>
           <Input
@@ -109,18 +109,18 @@ export const StructuredHostJsonFields: FC<Props> = ({ kind, value, onChange }) =
 
   if (kind === "sockopt") {
     return (
-      <div className="nx-stack" style={{ gap: 10 }}>
-        <label className="nx-row" style={{ gap: 8, fontSize: 12 }}>
+      <div className="sk-stack" style={{ gap: 10 }}>
+        <label className="sk-row" style={{ gap: 8, fontSize: 12 }}>
           <Toggle on={advanced} onChange={setAdvanced} />
           {t("infra.hostJsonAdvanced", { defaultValue: "Raw JSON editor" })}
         </label>
-        <div className="nx-host-toggle-row">
+        <div className="sk-host-toggle-row">
           <Toggle on={!!obj.tcpFastOpen} onChange={(v) => setField("tcpFastOpen", v)} />
-          <span className="nx-host-toggle-label">tcpFastOpen</span>
+          <span className="sk-host-toggle-label">tcpFastOpen</span>
         </div>
-        <div className="nx-host-toggle-row">
+        <div className="sk-host-toggle-row">
           <Toggle on={obj.tcpNoDelay !== false} onChange={(v) => setField("tcpNoDelay", v)} />
-          <span className="nx-host-toggle-label">tcpNoDelay</span>
+          <span className="sk-host-toggle-label">tcpNoDelay</span>
         </div>
         <Field label="tcpKeepAliveInterval">
           <Input
@@ -162,8 +162,8 @@ export const StructuredHostJsonFields: FC<Props> = ({ kind, value, onChange }) =
   }
 
   return (
-    <div className="nx-stack" style={{ gap: 10 }}>
-      <label className="nx-row" style={{ gap: 8, fontSize: 12 }}>
+    <div className="sk-stack" style={{ gap: 10 }}>
+      <label className="sk-row" style={{ gap: 8, fontSize: 12 }}>
         <Toggle on={advanced} onChange={setAdvanced} />
         {t("infra.hostJsonAdvanced", { defaultValue: "Raw JSON editor" })}
       </label>

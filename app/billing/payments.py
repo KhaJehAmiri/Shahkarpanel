@@ -1,15 +1,23 @@
-"""Payment intent orchestration: top-up and portal direct pay."""
+"""Payment intent orchestration: top-up and portal buy/renew."""
+import secrets
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app import billing, xray
 from app.billing.providers import available_providers, get_provider, provider_supports_intent
-from app.db.models import PaymentIntent, Plan, User
+from app.db.models import Admin, PaymentIntent, Plan, User
 from app.models.user import UserStatus
-from app.portal import apply_plan_to_user, create_user_order, mark_order_applied
+from app.portal import (
+    apply_plan_to_user,
+    assert_can_add_account,
+    create_account_from_plan,
+    create_user_order,
+    get_owned_account,
+    mark_order_applied,
+)
 from app.tenant.plan_ops import assert_plan_for_user
 from app import platform_settings as ps
 from config import PORTAL_DIRECT_PAYMENT
@@ -32,9 +40,50 @@ def _validate_amount(amount: int) -> int:
     return value
 
 
-def _require_provider(name: str) -> None:
+def _require_provider(name: str, dbadmin=None) -> None:
     if not provider_supports_intent(name):
         raise HTTPException(status_code=422, detail=f"Provider '{name}' is not available")
+    if name == "centralpay":
+        from app.billing.providers import admin_may_use_centralpay
+
+        # Platform sudo always OK; reseller must be opted in. If dbadmin is
+        # unknown (shouldn't happen), deny to avoid opening the gateway to all.
+        if dbadmin is not None and not admin_may_use_centralpay(dbadmin):
+            raise HTTPException(
+                status_code=403,
+                detail="CentralPay is not enabled for this reseller",
+            )
+    if name == "card":
+        from app.billing.providers import resolve_card_for_admin
+
+        if dbadmin is not None and resolve_card_for_admin(dbadmin) is None:
+            raise HTTPException(
+                status_code=403,
+                detail="Card payment is not configured for this reseller",
+            )
+
+
+def _billing_admin_id(db: Session, dbuser: User) -> int:
+    admin_id = dbuser.admin_id
+    if admin_id:
+        return admin_id
+    sudo = db.query(Admin).filter(Admin.is_sudo.is_(True)).order_by(Admin.id).first()
+    if sudo is None:
+        raise HTTPException(status_code=400, detail="No panel admin available for payment")
+    return sudo.id
+
+
+def public_base_from_request(request) -> str:
+    """Public origin for payment return URLs (honours reverse-proxy headers)."""
+    xf_proto = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip()
+    xf_host = (
+        (request.headers.get("x-forwarded-host") or "").split(",")[0].strip()
+        or (request.headers.get("host") or "").strip()
+    )
+    if xf_host:
+        scheme = xf_proto or (request.url.scheme if getattr(request, "url", None) else None) or "https"
+        return f"{scheme}://{xf_host}".rstrip("/")
+    return str(request.base_url).rstrip("/")
 
 
 def create_topup_payment(
@@ -42,23 +91,47 @@ def create_topup_payment(
     admin_id: int,
     amount: int,
     provider: str,
+    *,
+    public_base: Optional[str] = None,
 ) -> tuple[PaymentIntent, dict]:
-    _require_provider(provider)
+    from app.db import crud
+
+    dbadmin = crud.get_admin_by_id(db, admin_id)
+    _require_provider(provider, dbadmin)
     value = _validate_amount(amount)
+    extra: dict = {}
+    if public_base:
+        extra["public_base"] = public_base.rstrip("/")
     intent = PaymentIntent(
         kind="topup",
         admin_id=admin_id,
         amount=value,
         provider=provider,
         status="pending",
+        extra=extra or None,
     )
     db.add(intent)
     db.commit()
     db.refresh(intent)
-    instructions = get_provider(provider).create_payment(intent)
-    db.commit()
-    db.refresh(intent)
-    return intent, instructions
+    try:
+        instructions = get_provider(provider).create_payment(intent)
+        db.commit()
+        db.refresh(intent)
+        return intent, instructions
+    except ValueError as exc:
+        intent.status = "failed"
+        extra_fail = dict(intent.extra or {})
+        extra_fail["create_error"] = str(exc)[:500]
+        intent.extra = extra_fail
+        db.commit()
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except Exception as exc:
+        intent.status = "failed"
+        extra_fail = dict(intent.extra or {})
+        extra_fail["create_error"] = str(exc)[:500]
+        intent.extra = extra_fail
+        db.commit()
+        raise HTTPException(status_code=502, detail=f"Payment provider error: {exc}") from exc
 
 
 def create_portal_payment(
@@ -66,38 +139,197 @@ def create_portal_payment(
     dbuser: User,
     plan_id: int,
     provider: str,
+    *,
+    action: str = "renew",
+    target_username: Optional[str] = None,
+    new_username: Optional[str] = None,
+    public_base: Optional[str] = None,
 ) -> tuple[PaymentIntent, dict]:
+    """Start portal checkout.
+
+    action=renew  → renew an owned account (default: login account)
+    action=purchase → buy a brand-new VPN account (new_username required)
+    """
     if not PORTAL_DIRECT_PAYMENT:
         raise HTTPException(status_code=404, detail="Direct portal payment is disabled")
-    _require_provider(provider)
+
+    from app.db import crud
+
+    billing_admin_id = _billing_admin_id(db, dbuser)
+    dbadmin = crud.get_admin_by_id(db, billing_admin_id)
+    _require_provider(provider, dbadmin)
 
     plan = db.query(Plan).filter(Plan.id == plan_id).first()
     if not plan or not plan.enabled:
         raise HTTPException(status_code=404, detail="Plan not found")
-    if not dbuser.admin_id:
-        raise HTTPException(status_code=400, detail="User has no owning reseller")
     assert_plan_for_user(db, dbuser.admin_id, plan)
 
     price = int(plan.price or 0)
     if price <= 0:
-        raise HTTPException(status_code=422, detail="Use renew for free plans")
+        raise HTTPException(status_code=422, detail="Use free renew/create for free plans")
+
+    action = (action or "renew").strip().lower()
+    extra: dict = {
+        "action": action,
+        "plan_id": plan.id,
+        "portal_user_id": int(dbuser.id),
+        "plan_name": plan.name,
+    }
+    if public_base:
+        extra["public_base"] = public_base.rstrip("/")
+
+    if action == "purchase":
+        username = (new_username or "").strip().lower()
+        if len(username) < 3:
+            raise HTTPException(status_code=400, detail="New username required (3–32 chars)")
+        if crud.get_user(db, username):
+            raise HTTPException(status_code=409, detail="Username already exists")
+        # Refuse before the customer pays; the cap must never eat a paid intent.
+        assert_can_add_account(db, dbuser)
+        extra["new_username"] = username
+        kind = "portal_purchase"
+        # Payer is the portal login; target user created on completion.
+        target_user_id = dbuser.id
+    else:
+        target = get_owned_account(db, dbuser, target_username or dbuser.username)
+        kind = "portal_renew"
+        target_user_id = target.id
+        extra["target_username"] = target.username
 
     intent = PaymentIntent(
-        kind="portal_renew",
-        admin_id=dbuser.admin_id,
-        user_id=dbuser.id,
+        kind=kind,
+        admin_id=billing_admin_id,
+        user_id=target_user_id,
         plan_id=plan.id,
         amount=price,
         provider=provider,
         status="pending",
+        extra=extra,
     )
     db.add(intent)
     db.commit()
     db.refresh(intent)
-    instructions = get_provider(provider).create_payment(intent)
+    try:
+        instructions = get_provider(provider).create_payment(intent)
+        db.commit()
+        db.refresh(intent)
+        return intent, instructions
+    except ValueError as exc:
+        intent.status = "failed"
+        extra_fail = dict(intent.extra or {})
+        extra_fail["create_error"] = str(exc)[:500]
+        intent.extra = extra_fail
+        db.commit()
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except Exception as exc:
+        intent.status = "failed"
+        extra_fail = dict(intent.extra or {})
+        extra_fail["create_error"] = str(exc)[:500]
+        intent.extra = extra_fail
+        db.commit()
+        raise HTTPException(status_code=502, detail=f"Payment provider error: {exc}") from exc
+
+
+def submit_card_payment(
+    db: Session,
+    intent: PaymentIntent,
+    *,
+    note: Optional[str] = None,
+    receipt_meta: Optional[dict] = None,
+) -> PaymentIntent:
+    if intent.provider != "card":
+        raise HTTPException(status_code=400, detail="Not a card payment")
+    if intent.status not in ("pending", "awaiting_review"):
+        raise HTTPException(status_code=409, detail="Payment is not pending")
+    extra = dict(intent.extra or {})
+    if note:
+        extra["user_note"] = str(note)[:500]
+    if receipt_meta:
+        extra.update(receipt_meta)
+    extra["submitted_at"] = datetime.utcnow().isoformat() + "Z"
+    intent.extra = extra
+    intent.status = "awaiting_review"
+    try:
+        from app.portal_tx import attach_tx_message
+
+        attach_tx_message(
+            intent,
+            plan_name=(extra.get("plan_name") or None),
+            event="submitted",
+        )
+    except Exception:
+        pass
     db.commit()
     db.refresh(intent)
-    return intent, instructions
+    try:
+        from app.web_push import notify_card_payment_submitted
+
+        notify_card_payment_submitted(db, intent)
+    except Exception:
+        pass
+    try:
+        from app.portal_push import notify_portal_payment
+
+        notify_portal_payment(db, intent, event="submitted")
+    except Exception:
+        pass
+    return intent
+
+
+def approve_portal_payment(db: Session, intent: PaymentIntent) -> PaymentIntent:
+    if intent.kind not in ("portal_renew", "portal_purchase"):
+        raise HTTPException(status_code=400, detail="Not a portal purchase")
+    if intent.status not in ("pending", "awaiting_review"):
+        raise HTTPException(status_code=409, detail="Payment is not awaiting review")
+    if intent.provider != "card":
+        raise HTTPException(status_code=400, detail="Only card payments can be manually approved")
+    return complete_payment(db, intent, {"admin_approved": True})
+
+
+def reject_portal_payment(db: Session, intent: PaymentIntent, *, reason: Optional[str] = None) -> PaymentIntent:
+    if intent.kind not in ("portal_renew", "portal_purchase"):
+        raise HTTPException(status_code=400, detail="Not a portal purchase")
+    if intent.status not in ("pending", "awaiting_review"):
+        raise HTTPException(status_code=409, detail="Payment is not awaiting review")
+    extra = dict(intent.extra or {})
+    if reason:
+        extra["reject_reason"] = str(reason)[:500]
+    extra["rejected_at"] = datetime.utcnow().isoformat() + "Z"
+    intent.extra = extra
+    intent.status = "rejected"
+    try:
+        from app.portal_tx import attach_tx_message
+
+        attach_tx_message(
+            intent,
+            plan_name=(extra.get("plan_name") or None),
+            event="rejected",
+        )
+    except Exception:
+        pass
+    db.commit()
+    db.refresh(intent)
+    return intent
+
+
+def list_portal_payments_for_admin(
+    db: Session,
+    admin: Admin,
+    *,
+    status: Optional[str] = None,
+    limit: int = 50,
+) -> List[PaymentIntent]:
+    q = db.query(PaymentIntent).filter(
+        PaymentIntent.kind.in_(("portal_renew", "portal_purchase"))
+    )
+    if not getattr(admin, "is_sudo", False):
+        admin_pk = getattr(admin, "id", None)
+        if admin_pk is None:
+            return []
+        q = q.filter(PaymentIntent.admin_id == admin_pk)
+    if status:
+        q = q.filter(PaymentIntent.status == status)
+    return q.order_by(PaymentIntent.id.desc()).limit(max(1, min(limit, 200))).all()
 
 
 def _apply_topup(db: Session, intent: PaymentIntent) -> None:
@@ -109,7 +341,6 @@ def _apply_topup(db: Session, intent: PaymentIntent) -> None:
         description=f"Wallet top-up via {intent.provider}",
         reference=f"payment:{intent.id}",
     )
-    # Wallet credit can clear insolvency caps — restore users onto live cores.
     try:
         from app.billing.usage_billing import bill_reseller_usage
         from app.db import crud
@@ -120,7 +351,6 @@ def _apply_topup(db: Session, intent: PaymentIntent) -> None:
             bill_reseller_usage(db, admin)
         _newly, reactivated = enforce_reseller_traffic_caps(db)
         if reactivated:
-            # Commit first so restore sees restored statuses; caller commits too.
             db.commit()
             restore_users_everywhere(reactivated)
     except Exception:
@@ -142,6 +372,49 @@ def _apply_portal_renew(db: Session, intent: PaymentIntent) -> User:
     return dbuser
 
 
+def _free_username(db: Session, base: str) -> str:
+    """First unused variant of ``base`` (``base``, ``base2``, ``base3``, …).
+
+    The name is reserved at checkout time but only created after the money
+    lands, so it can be taken meanwhile. A paid purchase must never dead-end on
+    a 409 the customer cannot resolve.
+    """
+    from app.db import crud
+
+    if not crud.get_user(db, base):
+        return base
+    stem = base[:29]
+    for n in range(2, 100):
+        candidate = f"{stem}{n}"
+        if not crud.get_user(db, candidate):
+            return candidate
+    return f"{base[:24]}{secrets.token_hex(3)}"
+
+
+def _apply_portal_purchase(db: Session, intent: PaymentIntent) -> User:
+    """Create a new owned VPN account after payment."""
+    plan = db.query(Plan).filter(Plan.id == intent.plan_id).first()
+    owner = db.query(User).filter(User.id == intent.user_id).first()
+    extra = intent.extra or {}
+    username = (extra.get("new_username") or "").strip().lower()
+    if plan is None or owner is None or not username:
+        raise HTTPException(status_code=404, detail="Purchase target not found")
+
+    # Owner row is the portal login that paid.
+    dbuser = create_account_from_plan(db, owner, plan, _free_username(db, username))
+    order = create_user_order(db, dbuser, plan, status="paid")
+    mark_order_applied(db, order)
+    # Point intent at the created account for admin UI.
+    intent.user_id = dbuser.id
+    extra = dict(extra)
+    extra["created_username"] = dbuser.username
+    if not extra.get("portal_user_id"):
+        extra["portal_user_id"] = int(owner.id)
+    intent.extra = extra
+    db.commit()
+    return dbuser
+
+
 def complete_payment(
     db: Session,
     intent: PaymentIntent,
@@ -149,7 +422,7 @@ def complete_payment(
 ) -> PaymentIntent:
     if intent.status == "completed":
         return intent
-    if intent.status != "pending":
+    if intent.status not in ("pending", "awaiting_review"):
         raise HTTPException(status_code=409, detail="Payment is not pending")
 
     provider = get_provider(intent.provider)
@@ -160,11 +433,25 @@ def complete_payment(
         _apply_topup(db, intent)
     elif intent.kind == "portal_renew":
         _apply_portal_renew(db, intent)
+    elif intent.kind == "portal_purchase":
+        _apply_portal_purchase(db, intent)
     else:
         raise HTTPException(status_code=400, detail="Unknown payment kind")
 
     intent.status = "completed"
     intent.completed_at = datetime.utcnow()
+    try:
+        from app.portal_tx import attach_tx_message
+
+        extra = intent.extra or {}
+        event = "approved" if intent.provider == "card" else "completed"
+        attach_tx_message(
+            intent,
+            plan_name=(extra.get("plan_name") or None),
+            event=event,
+        )
+    except Exception:
+        pass
     db.commit()
     db.refresh(intent)
     return intent
@@ -177,11 +464,36 @@ def get_intent_for_admin(db: Session, payment_id: int, admin_id: int) -> Payment
     return intent
 
 
-def get_intent_for_user(db: Session, payment_id: int, user_id: int) -> PaymentIntent:
+def get_intent_for_admin_or_sudo(db: Session, payment_id: int, admin: Admin) -> PaymentIntent:
     intent = db.query(PaymentIntent).filter(PaymentIntent.id == payment_id).first()
-    if intent is None or intent.user_id != user_id:
+    if intent is None:
+        raise HTTPException(status_code=404, detail="Payment not found")
+    if getattr(admin, "is_sudo", False):
+        return intent
+    if intent.admin_id != admin.id:
         raise HTTPException(status_code=404, detail="Payment not found")
     return intent
+
+
+def get_intent_for_user(db: Session, payment_id: int, user_id: int) -> PaymentIntent:
+    intent = db.query(PaymentIntent).filter(PaymentIntent.id == payment_id).first()
+    if intent is None:
+        raise HTTPException(status_code=404, detail="Payment not found")
+    # Allow portal owner to access intents for themselves or their purchases.
+    if intent.user_id == user_id:
+        return intent
+    extra = intent.extra or {}
+    # Pending purchase is stored with owner as user_id already.
+    owner = db.query(User).filter(User.id == user_id).first()
+    if owner and intent.user_id:
+        target = db.query(User).filter(User.id == intent.user_id).first()
+        if target and (
+            target.id == owner.id
+            or target.portal_owner_user_id == owner.id
+            or (extra.get("action") == "purchase" and intent.user_id == owner.id)
+        ):
+            return intent
+    raise HTTPException(status_code=404, detail="Payment not found")
 
 
 def list_online_providers() -> list[str]:

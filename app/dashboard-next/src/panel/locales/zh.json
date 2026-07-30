@@ -1,6 +1,6 @@
 {
   "common": {
-    "appName": "NexusPanel",
+    "appName": "Shahkar",
     "tagline": "控制台",
     "logout": "退出登录",
     "username": "用户名",
@@ -84,7 +84,7 @@
   },
   "login": {
     "title": "欢迎回来",
-    "subtitle": "登录您的 NexusPanel 工作区",
+    "subtitle": "登录您的 Shahkar 工作区",
     "signIn": "登录",
     "failed": "用户名或密码错误",
     "signingIn": "正在登录…"
@@ -251,7 +251,7 @@
     "importConflict.duplicate_in_file": "文件内重复",
     "importMapTitle": "将外部 inbound 标签映射到此面板",
     "importSkipInbound": "跳过（使用面板默认）",
-    "importFmtMarzban": "Marzban / NexusPanel / PasarGuard：设置 → 导出用户 (JSON)，或包含 users[] 的备份",
+    "importFmtMarzban": "Marzban / Shahkar / PasarGuard：设置 → 导出用户 (JSON)，或包含 users[] 的备份",
     "importFmt3xui": "3x-ui：面板备份 JSON（含客户端的 inbounds）或 inbound 导出",
     "importFmtCsv": "CSV：username, protocols, limit_gb, expire, note",
     "importFmtLinks": "链接：每行一个 vless/vmess/trojan/ss:// 链接的 .txt",
@@ -787,7 +787,7 @@
     "subtitle": "配置、安全与维护",
     "description": "仅限所有者操作。通过 Feature Flag 启停模块、做备份、发放 API 密钥、调整面板外观。",
     "tabFlags": "功能开关",
-    "tabCommercial": "商业",
+    "tabCommercial": "Commercial",
     "commercialMovedTitle": "商业设置已迁移",
     "commercialMovedBody": "平台计费、支付网关与代理层级设置现位于 账单 → 设置。",
     "openBillingSettings": "打开账单设置",
@@ -821,7 +821,7 @@
     "themeDark": "深色",
     "themeLight": "浅色",
     "language": "语言",
-    "aboutText": "NexusPanel 是一个现代化的多租户代理基础设施控制台。",
+    "aboutText": "Shahkar 是一个现代化的多租户代理基础设施控制台。",
     "tabAdmins": "管理员",
     "addAdmin": "添加管理员",
     "role": "角色",
@@ -876,7 +876,6 @@
     "agentUpdateDone": "节点代理已更新。",
     "agentUpdatePartial": "部分代理已更新；请查看失败列表。",
     "agentUpdateFailed": "节点代理更新失败。",
-    "tabCommercial": "Commercial",
     "maxNodes": "Max nodes",
     "restartCore": "Restart panel core",
     "restartCoreConfirm": "Restart the panel Xray core now? Active sessions may drop briefly.",
@@ -1072,7 +1071,7 @@
     "notXrayBody": "These protocols run on the node's sing-box engine (alongside Xray or WireGuard). TLS certificate files must exist on the server at the paths you configure.",
     "nodesCount": "H2-enabled servers",
     "configTitle": "Server configuration",
-    "configHint": "Place TLS cert/key on the node (e.g. /var/lib/nexuspanel-node/tls/). Save pushes users to sing-box.",
+    "configHint": "Place TLS cert/key on the node (e.g. /var/lib/shahkar-node/tls/). Save pushes users to sing-box.",
     "tlsTitle": "TLS (shared)",
     "certPath": "Certificate path",
     "keyPath": "Private key path",
@@ -1133,7 +1132,8 @@
     "section": {
       "billing": "Usage billing",
       "payment": "Payment gateways",
-      "reseller": "Reseller hierarchy"
+      "reseller": "Reseller hierarchy",
+      "portal": "客户门户"
     },
     "keys": {
       "billing.usage_rate_per_gb": "Rate per GB (minor units)",
@@ -1148,9 +1148,13 @@
       "payment.stripe_publishable_key": "Stripe publishable key",
       "payment.stripe_secret_key": "Stripe secret key",
       "payment.stripe_webhook_secret": "Stripe webhook secret",
+      "payment.centralpay_enabled": "Enable CentralPay",
+      "payment.centralpay_api_key": "CentralPay API key",
+      "payment.centralpay_merchant_id": "CentralPay merchant ID",
       "reseller.sub_reseller_max": "Max sub-resellers per parent",
       "reseller.default_commission_percent": "Default commission %",
-      "billing.currency_label": "货币单位"
+      "billing.currency_label": "货币单位",
+      "portal.max_child_accounts": "每个门户账号可额外拥有的账户数上限"
     },
     "hints": {
       "billing.usage_rate_per_gb": "0 disables automatic GB usage billing.",
@@ -1159,8 +1163,11 @@
       "billing.wallet_low_threshold": "Show low-balance warning on the overview when balance falls below this.",
       "payment.stripe_secret_key": "Leave blank to keep the current secret.",
       "payment.stripe_webhook_secret": "Leave blank to keep the current secret.",
+      "payment.centralpay_api_key": "Leave blank to keep the current secret.",
+      "payment.centralpay_merchant_id": "Display-only merchant code (e.g. EMG-VPN).",
       "reseller.default_commission_percent": "Applied when creating sub-resellers without an explicit commission.",
-      "billing.currency_label": "显示在门户价格旁（如 USD）。留空则不显示。"
+      "billing.currency_label": "显示在门户价格旁（如 USD）。留空则不显示。",
+      "portal.max_child_accounts": "单个客户可在门户创建或购买的额外账户数量。设为 0 表示不限制——此时一个客户可能耗尽整个代理商配额。"
     }
   },
   "errors": {
@@ -1178,5 +1185,21 @@
   "wg": {
     "portPillPlain": "WG：{{port}}",
     "portPillAwg": "AWG：{{port}}"
+  },
+  "push": {
+    "on": "通知开",
+    "off": "通知",
+    "enableTitle": "启用付款通知",
+    "disableTitle": "关闭通知",
+    "enabled": "已启用",
+    "disabled": "已关闭",
+    "denied": "未授权",
+    "unsupported": "不支持",
+    "unavailable": "不可用",
+    "failed": "失败",
+    "swFailed": "Service Worker 注册失败",
+    "iosHint": "安装到主屏幕",
+    "iosInstall": "iPhone：分享 → 添加到主屏幕，从图标打开后再开启通知",
+    "insecure": "需要 HTTPS"
   }
 }

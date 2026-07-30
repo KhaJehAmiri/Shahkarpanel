@@ -1,4 +1,4 @@
-"""Native WireGuard interface management for a NexusPanel node (Phase 11.2).
+"""Native WireGuard interface management for a Shahkar node (Phase 11.2).
 
 The panel pushes a declarative spec (interface keys, listen port, address and
 the full peer list) and reads back per-peer transfer counters. Those counters
@@ -20,13 +20,13 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Callable, Dict, Iterator, List, Optional, Sequence
 
-logger = logging.getLogger("nexus-node-wg")
+logger = logging.getLogger("shahkar-node-wg")
 
 
 @contextmanager
 def ephemeral_psk_file(psk: str) -> Iterator[str]:
     """Write a PSK to a short-lived temp file readable only by this process (L4)."""
-    fd, path = tempfile.mkstemp(prefix="nexus-wg-psk-", suffix=".key")
+    fd, path = tempfile.mkstemp(prefix="shahkar-wg-psk-", suffix=".key")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(psk.strip() + "\n")
@@ -185,7 +185,7 @@ def ensure_udp_input_ports(
                         "allow",
                         f"{port}/udp",
                         "comment",
-                        "nexuspanel-wg",
+                        "shahkar-wg",
                     ],
                     check=False,
                 )

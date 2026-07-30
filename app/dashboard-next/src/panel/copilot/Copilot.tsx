@@ -49,46 +49,46 @@ export const Copilot: FC = () => {
     <>
       {open && (
         <>
-          <div className="nx-copilot-scrim" onClick={() => setOpen(false)} />
-          <aside className="nx-copilot" role="dialog" aria-label={t("copilot.title")}>
-            <div className="nx-copilot-head">
-              <div className="nx-row" style={{ gap: 10 }}>
-                <span className="nx-copilot-avatar"><IcSpark /></span>
+          <div className="sk-copilot-scrim" onClick={() => setOpen(false)} />
+          <aside className="sk-copilot" role="dialog" aria-label={t("copilot.title")}>
+            <div className="sk-copilot-head">
+              <div className="sk-row" style={{ gap: 10 }}>
+                <span className="sk-copilot-avatar"><IcSpark /></span>
                 <div>
-                  <div className="nx-copilot-title">{t("copilot.title")}</div>
-                  <div className="nx-copilot-sub">{t("copilot.greeting", { name: admin.username })}</div>
+                  <div className="sk-copilot-title">{t("copilot.title")}</div>
+                  <div className="sk-copilot-sub">{t("copilot.greeting", { name: admin.username })}</div>
                 </div>
               </div>
-              <button className="nx-btn icon ghost" onClick={() => setOpen(false)} aria-label={t("common.cancel")}>✕</button>
+              <button className="sk-btn icon ghost" onClick={() => setOpen(false)} aria-label={t("common.cancel")}>✕</button>
             </div>
 
-            <div className="nx-copilot-body">
+            <div className="sk-copilot-body">
               {recipe
                 ? <RecipeView recipe={recipe} snap={snap} onBack={() => setActiveRecipe(null)} onAction={requestIntent} />
                 : (
                   <>
-                    <p className="nx-copilot-lead">{t("copilot.lead")}</p>
-                    <div className="nx-copilot-list">
+                    <p className="sk-copilot-lead">{t("copilot.lead")}</p>
+                    <div className="sk-copilot-list">
                       {recipes.map((r) => {
                         const p = recipeProgress(r, snap);
                         const pct = p.total ? Math.round((p.done / p.total) * 100) : 0;
                         const complete = p.total > 0 && p.done >= p.total;
                         return (
-                          <button key={r.id} className="nx-copilot-card" onClick={() => setActiveRecipe(r.id)}>
-                            <span className="nx-copilot-card-icon" aria-hidden>{r.icon}</span>
-                            <span className="nx-copilot-card-main">
-                              <span className="nx-copilot-card-title">
+                          <button key={r.id} className="sk-copilot-card" onClick={() => setActiveRecipe(r.id)}>
+                            <span className="sk-copilot-card-icon" aria-hidden>{r.icon}</span>
+                            <span className="sk-copilot-card-main">
+                              <span className="sk-copilot-card-title">
                                 {t(r.titleKey)}
-                                {complete && <span className="nx-copilot-badge ok">{t("copilot.done")}</span>}
+                                {complete && <span className="sk-copilot-badge ok">{t("copilot.done")}</span>}
                               </span>
-                              <span className="nx-copilot-card-desc">{t(r.descKey)}</span>
+                              <span className="sk-copilot-card-desc">{t(r.descKey)}</span>
                               {p.total > 0 && (
-                                <span className="nx-copilot-progress" aria-hidden>
-                                  <span className="nx-copilot-progress-fill" style={{ width: `${pct}%` }} />
+                                <span className="sk-copilot-progress" aria-hidden>
+                                  <span className="sk-copilot-progress-fill" style={{ width: `${pct}%` }} />
                                 </span>
                               )}
                             </span>
-                            <span className="nx-copilot-card-chev" aria-hidden>›</span>
+                            <span className="sk-copilot-card-chev" aria-hidden>›</span>
                           </button>
                         );
                       })}
@@ -97,9 +97,9 @@ export const Copilot: FC = () => {
                 )}
             </div>
 
-            <div className="nx-copilot-foot">
-              <button className="nx-btn ghost sm" onClick={dismiss}>{t("copilot.dismiss")}</button>
-              <span className="nx-faint" style={{ fontSize: 11 }}>{t("copilot.footnote")}</span>
+            <div className="sk-copilot-foot">
+              <button className="sk-btn ghost sm" onClick={dismiss}>{t("copilot.dismiss")}</button>
+              <span className="sk-faint" style={{ fontSize: 11 }}>{t("copilot.footnote")}</span>
             </div>
           </aside>
         </>
@@ -119,42 +119,42 @@ const RecipeView: FC<{
   const pct = p.total ? Math.round((p.done / p.total) * 100) : 0;
 
   return (
-    <div className="nx-copilot-recipe">
-      <button className="nx-copilot-back" onClick={onBack}>‹ {t("copilot.back")}</button>
-      <div className="nx-copilot-recipe-head">
-        <span className="nx-copilot-card-icon" aria-hidden>{recipe.icon}</span>
+    <div className="sk-copilot-recipe">
+      <button className="sk-copilot-back" onClick={onBack}>‹ {t("copilot.back")}</button>
+      <div className="sk-copilot-recipe-head">
+        <span className="sk-copilot-card-icon" aria-hidden>{recipe.icon}</span>
         <div>
-          <div className="nx-copilot-card-title">{t(recipe.titleKey)}</div>
-          <div className="nx-copilot-card-desc">{t(recipe.descKey)}</div>
+          <div className="sk-copilot-card-title">{t(recipe.titleKey)}</div>
+          <div className="sk-copilot-card-desc">{t(recipe.descKey)}</div>
         </div>
       </div>
       {p.total > 0 && (
-        <div className="nx-copilot-recipe-progress">
-          <span className="nx-copilot-progress"><span className="nx-copilot-progress-fill" style={{ width: `${pct}%` }} /></span>
-          <span className="nx-faint" style={{ fontSize: 11 }}>{t("copilot.stepsDone", { done: p.done, total: p.total })}</span>
+        <div className="sk-copilot-recipe-progress">
+          <span className="sk-copilot-progress"><span className="sk-copilot-progress-fill" style={{ width: `${pct}%` }} /></span>
+          <span className="sk-faint" style={{ fontSize: 11 }}>{t("copilot.stepsDone", { done: p.done, total: p.total })}</span>
         </div>
       )}
 
-      <ol className="nx-copilot-steps">
+      <ol className="sk-copilot-steps">
         {recipe.steps.map((step, i) => {
           const done = step.check ? step.check(snap) : false;
           const auto = !!step.check;
           return (
-            <li key={step.id} className={`nx-copilot-step ${done ? "done" : ""}`}>
-              <span className="nx-copilot-step-num" aria-hidden>{done ? "✓" : i + 1}</span>
-              <div className="nx-copilot-step-body">
-                <div className="nx-copilot-step-title">{t(step.titleKey)}</div>
-                <div className="nx-copilot-step-text">{t(step.bodyKey)}</div>
+            <li key={step.id} className={`sk-copilot-step ${done ? "done" : ""}`}>
+              <span className="sk-copilot-step-num" aria-hidden>{done ? "✓" : i + 1}</span>
+              <div className="sk-copilot-step-body">
+                <div className="sk-copilot-step-title">{t(step.titleKey)}</div>
+                <div className="sk-copilot-step-text">{t(step.bodyKey)}</div>
                 {step.cta && !done && (
                   <button
-                    className="nx-btn primary sm"
+                    className="sk-btn primary sm"
                     style={{ marginTop: 8 }}
                     onClick={() => onAction(step.cta!.intent ?? null, step.cta!.hash)}
                   >
                     {t(step.cta.labelKey)}
                   </button>
                 )}
-                {auto && !done && <span className="nx-copilot-step-hint">{t("copilot.autoDetect")}</span>}
+                {auto && !done && <span className="sk-copilot-step-hint">{t("copilot.autoDetect")}</span>}
               </div>
             </li>
           );

@@ -173,21 +173,24 @@ def _xray_online_device_count(dbuser: User) -> Optional[int]:
     return total
 
 
-def count_online_devices(dbuser: User) -> int:
+def count_online_devices(dbuser: User, *, live: bool = True) -> int:
     """Devices currently connected for the subscribe overview.
 
     Prefer live Xray online-IP counters (true concurrent VPN clients). Fall back
     to distinct subscription fingerprints (HWID / IP+UA) seen recently. When the
     account is online via traffic but nothing was tracked, return at least ``1``.
+
+    ``live=False`` skips Xray RPC (portal boot / list endpoints) — local data only.
     """
     now = datetime.utcnow()
     online = account_is_online(dbuser, now)
     if not online:
         return 0
 
-    live = _xray_online_device_count(dbuser)
-    if live is not None and live > 0:
-        return live
+    if live:
+        live_n = _xray_online_device_count(dbuser)
+        if live_n is not None and live_n > 0:
+            return live_n
 
     entries = _client_device_entries(
         _prune(

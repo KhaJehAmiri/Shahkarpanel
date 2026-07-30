@@ -23,7 +23,7 @@ from app.wireguard.sync import (WGUserPeer, amneziawg_enabled,
                                 direct_wg_enabled, plain_wg_enabled)
 from app.wireguard.transport import WireGuardTransportError, client_for_node
 
-logger = logging.getLogger("nexus-wg")
+logger = logging.getLogger("shahkar-wg")
 
 # Users in these statuses are actively served (carry a live peer). Anything
 # else (disabled / limited / expired / on_hold) is pushed as inactive so the

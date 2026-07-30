@@ -22,7 +22,7 @@ export const Button: FC<{
     title={title}
     disabled={disabled}
     onClick={onClick}
-    className={`nx-btn ${variant} ${size === "sm" ? "sm" : ""} ${className}`}
+    className={`sk-btn ${variant} ${size === "sm" ? "sm" : ""} ${className}`}
   >
     {children}
   </button>
@@ -30,31 +30,31 @@ export const Button: FC<{
 
 /* -------------------------------- Card --------------------------------- */
 export const Card: FC<{ children: ReactNode; className?: string; pad0?: boolean; style?: React.CSSProperties }> = ({ children, className = "", pad0, style }) => (
-  <div className={`nx-card ${pad0 ? "pad0 nx-card-table" : "nx-glass-card"} ${className}`} style={style}>{children}</div>
+  <div className={`sk-card ${pad0 ? "pad0 sk-card-table" : "sk-glass-card"} ${className}`} style={style}>{children}</div>
 );
 
 export const CardHead: FC<{ title: string; desc?: string; actions?: ReactNode }> = ({ title, desc, actions }) => (
-  <div className="nx-card-head">
+  <div className="sk-card-head">
     <div>
-      <div className="nx-card-title">{title}</div>
-      {desc && <div className="nx-card-desc">{desc}</div>}
+      <div className="sk-card-title">{title}</div>
+      {desc && <div className="sk-card-desc">{desc}</div>}
     </div>
-    {actions && <div className="nx-row">{actions}</div>}
+    {actions && <div className="sk-row">{actions}</div>}
   </div>
 );
 
 /* -------------------------------- Stat --------------------------------- */
 export const Stat: FC<{ label: string; value: ReactNode; sub?: ReactNode; icon?: ReactNode }> = ({ label, value, sub, icon }) => (
-  <div className="nx-stat">
-    <div className="nx-stat-label">{icon}{label}</div>
-    <div className="nx-stat-value">{value}</div>
-    {sub && <div className="nx-stat-sub">{sub}</div>}
+  <div className="sk-stat">
+    <div className="sk-stat-label">{icon}{label}</div>
+    <div className="sk-stat-value">{value}</div>
+    {sub && <div className="sk-stat-sub">{sub}</div>}
   </div>
 );
 
 /* -------------------------------- Pill --------------------------------- */
 export const Pill: FC<{ children: ReactNode; tone?: "ok" | "danger" | "warn" | "info" | "accent" | "default"; dot?: boolean }> = ({ children, tone = "default", dot }) => (
-  <span className={`nx-pill ${tone}`}>{dot && <span className="nx-dot" />}{children}</span>
+  <span className={`sk-pill ${tone}`}>{dot && <span className="sk-dot" />}{children}</span>
 );
 
 /* ------------------------------- Toggle -------------------------------- */
@@ -66,20 +66,20 @@ export const Toggle: FC<{ on: boolean; onChange: (v: boolean) => void; disabled?
     aria-label={label}
     title={label}
     disabled={disabled}
-    className={`nx-toggle ${on ? "on" : ""}`}
+    className={`sk-toggle ${on ? "on" : ""}`}
     onClick={() => !disabled && onChange(!on)}
     style={disabled ? { opacity: 0.5, cursor: "not-allowed" } : undefined}
   >
-    <span className="nx-toggle-knob" />
+    <span className="sk-toggle-knob" />
   </button>
 );
 
 /* ------------------------------- Inputs -------------------------------- */
 export const Field: FC<{ label?: string; hint?: string; children: ReactNode }> = ({ label, hint, children }) => (
-  <div className="nx-field">
-    {label && <label className="nx-label">{label}</label>}
+  <div className="sk-field">
+    {label && <label className="sk-label">{label}</label>}
     {children}
-    {hint && <span className="nx-hint">{hint}</span>}
+    {hint && <span className="sk-hint">{hint}</span>}
   </div>
 );
 
@@ -92,7 +92,7 @@ export const Input: FC<InputHTMLAttributes<HTMLInputElement>> = ({
   <input
     {...props}
     type={type}
-    className={`nx-input${type === "date" ? " nx-input-date" : ""} ${className}`.trim()}
+    className={`sk-input${type === "date" ? " sk-input-date" : ""} ${className}`.trim()}
     onClick={(e) => {
       onClick?.(e);
       if (e.defaultPrevented) return;
@@ -107,10 +107,10 @@ export const Input: FC<InputHTMLAttributes<HTMLInputElement>> = ({
   />
 );
 export const Textarea: FC<any> = ({ className = "", ...rest }) => (
-  <textarea className={`nx-textarea ${className}`.trim()} {...rest} />
+  <textarea className={`sk-textarea ${className}`.trim()} {...rest} />
 );
 export const Select: FC<any> = ({ children, ...rest }) => (
-  <select className="nx-select" {...rest}>{children}</select>
+  <select className="sk-select" {...rest}>{children}</select>
 );
 
 /* --------------------------- MultiSelect ------------------------------- */
@@ -154,14 +154,14 @@ export const MultiSelect: FC<{
   const allOptions = [...new Set([...options, ...values])];
 
   return (
-    <div className="nx-multiselect" ref={ref}>
-      <button type="button" className={`nx-ms-control ${open ? "open" : ""}`} onClick={() => setOpen((o) => !o)}>
+    <div className="sk-multiselect" ref={ref}>
+      <button type="button" className={`sk-ms-control ${open ? "open" : ""}`} onClick={() => setOpen((o) => !o)}>
         {values.length === 0 ? (
-          <span className="nx-ms-ph">{placeholder}</span>
+          <span className="sk-ms-ph">{placeholder}</span>
         ) : (
-          <span className="nx-ms-tags">
+          <span className="sk-ms-tags">
             {values.map((v) => (
-              <span key={v} className="nx-ms-tag">
+              <span key={v} className="sk-ms-tag">
                 {v}
                 <i
                   role="button"
@@ -172,24 +172,24 @@ export const MultiSelect: FC<{
             ))}
           </span>
         )}
-        <span className="nx-ms-caret" aria-hidden>▾</span>
+        <span className="sk-ms-caret" aria-hidden>▾</span>
       </button>
       {open && (
-        <div className="nx-ms-panel">
+        <div className="sk-ms-panel">
           {allOptions.length === 0 ? (
-            <div className="nx-ms-empty">—</div>
+            <div className="sk-ms-empty">—</div>
           ) : (
             allOptions.map((opt) => (
               <div
                 key={opt}
-                className={`nx-ms-opt ${values.includes(opt) ? "active" : ""}`}
+                className={`sk-ms-opt ${values.includes(opt) ? "active" : ""}`}
                 onClick={() => toggle(opt)}
               >
-                <span className="nx-ms-check" aria-hidden>{values.includes(opt) ? "✓" : ""}</span>
+                <span className="sk-ms-check" aria-hidden>{values.includes(opt) ? "✓" : ""}</span>
                 <span>
                   {opt}
                   {missing.has(opt) && (
-                    <span className="nx-faint" style={{ marginInlineStart: 6, fontSize: 11 }}>
+                    <span className="sk-faint" style={{ marginInlineStart: 6, fontSize: 11 }}>
                       ({missingLabel})
                     </span>
                   )}
@@ -198,7 +198,7 @@ export const MultiSelect: FC<{
             ))
           )}
           {allowCustom && (
-            <div className="nx-ms-custom" style={{ display: "flex", gap: 6, padding: 8, borderTop: "1px solid var(--nx-border)" }}>
+            <div className="sk-ms-custom" style={{ display: "flex", gap: 6, padding: 8, borderTop: "1px solid var(--sk-border)" }}>
               <Input
                 value={custom}
                 onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCustom(e.target.value)}
@@ -216,9 +216,9 @@ export const MultiSelect: FC<{
 
 /* -------------------------------- Tabs --------------------------------- */
 export const Tabs: FC<{ tabs: { id: string; label: string }[]; active: string; onChange: (id: string) => void }> = ({ tabs, active, onChange }) => (
-  <div className="nx-tabs">
+  <div className="sk-tabs">
     {tabs.map((t) => (
-      <button key={t.id} className={`nx-tab ${active === t.id ? "active" : ""}`} onClick={() => onChange(t.id)}>
+      <button key={t.id} className={`sk-tab ${active === t.id ? "active" : ""}`} onClick={() => onChange(t.id)}>
         {t.label}
       </button>
     ))}
@@ -227,9 +227,9 @@ export const Tabs: FC<{ tabs: { id: string; label: string }[]; active: string; o
 
 /* ------------------------------- Callout ------------------------------- */
 export const Callout: FC<{ tone?: "info" | "warn" | "danger" | "ok"; title?: string; className?: string; children: ReactNode }> = ({ tone = "info", title, className, children }) => (
-  <div className={["nx-callout", tone, className].filter(Boolean).join(" ")}>
+  <div className={["sk-callout", tone, className].filter(Boolean).join(" ")}>
     <div>
-      {title && <div className="nx-callout-title">{title}</div>}
+      {title && <div className="sk-callout-title">{title}</div>}
       <div>{children}</div>
     </div>
   </div>
@@ -237,16 +237,16 @@ export const Callout: FC<{ tone?: "info" | "warn" | "danger" | "ok"; title?: str
 
 /* ------------------------------ EmptyState ----------------------------- */
 export const EmptyState: FC<{ title: string; desc?: string; steps?: string[]; action?: ReactNode }> = ({ title, desc, steps, action }) => (
-  <div className="nx-empty">
-    <div className="nx-empty-icon" aria-hidden>○</div>
-    <div className="nx-empty-title">{title}</div>
-    {desc && <div className="nx-empty-desc">{desc}</div>}
+  <div className="sk-empty">
+    <div className="sk-empty-icon" aria-hidden>○</div>
+    <div className="sk-empty-title">{title}</div>
+    {desc && <div className="sk-empty-desc">{desc}</div>}
     {steps && steps.length > 0 && (
-      <ol className="nx-empty-steps">
+      <ol className="sk-empty-steps">
         {steps.map((s, i) => <li key={i}>{s}</li>)}
       </ol>
     )}
-    {action && <div className="nx-empty-action">{action}</div>}
+    {action && <div className="sk-empty-action">{action}</div>}
   </div>
 );
 
@@ -254,7 +254,7 @@ export const EmptyState: FC<{ title: string; desc?: string; steps?: string[]; ac
 const CloseButton: FC<{ onClose: () => void }> = ({ onClose }) => {
   const { t } = useTranslation();
   return (
-    <button className="nx-btn icon ghost" onClick={onClose} title={t("common.close")} aria-label={t("common.close")}>
+    <button className="sk-btn icon ghost" onClick={onClose} title={t("common.close")} aria-label={t("common.close")}>
       <IcClose />
     </button>
   );
@@ -309,22 +309,22 @@ export const Modal: FC<{
   }, [open, onClose]);
 
   if (!open || typeof document === "undefined") return null;
-  const modalCls = ["nx-modal", wide && "wide", formWide && "form-wide", className].filter(Boolean).join(" ");
-  const overlayCls = ["nx-overlay", overlayClassName].filter(Boolean).join(" ");
+  const modalCls = ["sk-modal", wide && "wide", formWide && "form-wide", className].filter(Boolean).join(" ");
+  const overlayCls = ["sk-overlay", overlayClassName].filter(Boolean).join(" ");
   return createPortal(
     <div className={overlayCls} onClick={dismissOnOverlay ? guardedDismiss(onClose) : undefined}>
       <div className={modalCls} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
         {!hideHead && (
-        <div className="nx-modal-head">
-          <div className="nx-modal-head-text">
-            <div className="nx-modal-title">{title}</div>
-            {subtitle ? <div className="nx-modal-subtitle">{subtitle}</div> : null}
+        <div className="sk-modal-head">
+          <div className="sk-modal-head-text">
+            <div className="sk-modal-title">{title}</div>
+            {subtitle ? <div className="sk-modal-subtitle">{subtitle}</div> : null}
           </div>
           <CloseButton onClose={onClose} />
         </div>
         )}
-        <div className="nx-modal-body">{children}</div>
-        {footer && <div className="nx-modal-foot">{footer}</div>}
+        <div className="sk-modal-body">{children}</div>
+        {footer && <div className="sk-modal-foot">{footer}</div>}
       </div>
     </div>,
     document.body,
@@ -358,18 +358,18 @@ export const Drawer: FC<{
   }, [open, onClose]);
 
   if (!open || typeof document === "undefined") return null;
-  const overlayCls = ["nx-drawer-overlay", overlayClassName].filter(Boolean).join(" ");
-  const drawerCls = ["nx-drawer", wide && "wide", drawerClassName].filter(Boolean).join(" ");
+  const overlayCls = ["sk-drawer-overlay", overlayClassName].filter(Boolean).join(" ");
+  const drawerCls = ["sk-drawer", wide && "wide", drawerClassName].filter(Boolean).join(" ");
   return createPortal(
     <div className={overlayCls} onClick={guardedDismiss(onClose)}>
       <div className={drawerCls} role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
         {!hideHead && (
-          <div className="nx-drawer-head">
-            <div className="nx-card-title">{title}</div>
+          <div className="sk-drawer-head">
+            <div className="sk-card-title">{title}</div>
             <CloseButton onClose={onClose} />
           </div>
         )}
-        <div className="nx-drawer-body">{children}</div>
+        <div className="sk-drawer-body">{children}</div>
       </div>
     </div>,
     document.body,
@@ -378,11 +378,11 @@ export const Drawer: FC<{
 
 /* ------------------------------ SectionHelp ----------------------------- */
 export const SectionHelp: FC<{ title: ReactNode; children: ReactNode; tone?: "info" | "warn" | "ok" }> = ({ title, children, tone = "info" }) => (
-  <div className={`nx-help ${tone}`}>
-    <div className="nx-help-mark" aria-hidden>?</div>
-    <div className="nx-help-body">
-      <div className="nx-help-title">{title}</div>
-      <div className="nx-help-text">{children}</div>
+  <div className={`sk-help ${tone}`}>
+    <div className="sk-help-mark" aria-hidden>?</div>
+    <div className="sk-help-body">
+      <div className="sk-help-title">{title}</div>
+      <div className="sk-help-text">{children}</div>
     </div>
   </div>
 );
@@ -391,9 +391,9 @@ export const SectionHelp: FC<{ title: ReactNode; children: ReactNode; tone?: "in
 export const HelpTip: FC<{ text: ReactNode; placement?: "top" | "bottom" }> = ({ text, placement = "top" }) => {
   const { t } = useTranslation();
   return (
-    <span className={`nx-tip nx-tip-${placement}`} tabIndex={0} aria-label={t("common.help")}>
-      <span className="nx-tip-mark" aria-hidden>?</span>
-      <span className="nx-tip-bubble" role="tooltip">{text}</span>
+    <span className={`sk-tip sk-tip-${placement}`} tabIndex={0} aria-label={t("common.help")}>
+      <span className="sk-tip-mark" aria-hidden>?</span>
+      <span className="sk-tip-bubble" role="tooltip">{text}</span>
     </span>
   );
 };
@@ -401,7 +401,7 @@ export const HelpTip: FC<{ text: ReactNode; placement?: "top" | "bottom" }> = ({
 /* ----------------------------- Checkbox -------------------------------- */
 export const Checkbox: FC<{ checked: boolean; onChange?: () => void; label?: string }> = ({ checked, onChange, label }) => (
   <span
-    className={`nx-checkbox ${checked ? "on" : ""}`}
+    className={`sk-checkbox ${checked ? "on" : ""}`}
     role="checkbox"
     aria-checked={checked}
     aria-label={label}
@@ -434,17 +434,17 @@ export const CopyField: FC<{ value: string; label?: string; mono?: boolean; mult
     }
   };
   return (
-    <div className="nx-copy-field">
-      {label && <label className="nx-label">{label}</label>}
-      <div className="nx-copy-row">
+    <div className="sk-copy-field">
+      {label && <label className="sk-label">{label}</label>}
+      <div className="sk-copy-row">
         {multiline ? (
-          <textarea className={`nx-input ${mono ? "nx-mono" : ""}`} readOnly value={value} rows={3} onFocus={(e) => e.target.select()} />
+          <textarea className={`sk-input ${mono ? "sk-mono" : ""}`} readOnly value={value} rows={3} onFocus={(e) => e.target.select()} />
         ) : (
-          <input className={`nx-input ${mono ? "nx-mono" : ""}`} readOnly value={value} onFocus={(e) => e.target.select()} />
+          <input className={`sk-input ${mono ? "sk-mono" : ""}`} readOnly value={value} onFocus={(e) => e.target.select()} />
         )}
-        <button type="button" className={`nx-copy-btn ${copied ? "ok" : ""}`} onClick={copy} aria-label={t("common.copy")}>
+        <button type="button" className={`sk-copy-btn ${copied ? "ok" : ""}`} onClick={copy} aria-label={t("common.copy")}>
           {copied ? <IcCheck size={14} /> : <span aria-hidden style={{ fontSize: 14 }}>⧉</span>}
-          <span className="nx-copy-btn-label">{copied ? t("common.copied") : t("common.copy")}</span>
+          <span className="sk-copy-btn-label">{copied ? t("common.copied") : t("common.copy")}</span>
         </button>
       </div>
     </div>
@@ -465,7 +465,7 @@ export const CopyButton: FC<{ value: string; size?: "sm" | "md"; label?: string;
   };
   const copyLabel = label || t("common.copy");
   return (
-    <button type="button" onClick={copy} className={`nx-btn ${size === "sm" ? "sm" : ""} ${className}`} aria-label={copyLabel} title={copyLabel}>
+    <button type="button" onClick={copy} className={`sk-btn ${size === "sm" ? "sm" : ""} ${className}`} aria-label={copyLabel} title={copyLabel}>
       {copied ? <IcCheck size={14} /> : <span aria-hidden style={{ fontSize: 14 }}>⧉</span>}
       {label ? <span>{copied ? t("common.copied") : label}</span> : null}
     </button>
@@ -477,8 +477,8 @@ export const UsageBar: FC<{ pct: number }> = ({ pct }) => {
   const v = Math.max(0, Math.min(100, pct));
   const tone = v >= 90 ? "danger" : v >= 70 ? "warn" : "";
   return (
-    <div className="nx-bar" title={`${v.toFixed(0)}%`}>
-      <div className={`nx-bar-fill ${tone}`} style={{ width: `${v}%` }} />
+    <div className="sk-bar" title={`${v.toFixed(0)}%`}>
+      <div className={`sk-bar-fill ${tone}`} style={{ width: `${v}%` }} />
     </div>
   );
 };
@@ -549,7 +549,7 @@ export const Pager: FC<{
   const pageWindow = buildPageWindow(page, pages);
 
   const controls = (
-    <div className="nx-pager">
+    <div className="sk-pager">
       <Button
         size="sm"
         variant="ghost"
@@ -563,15 +563,15 @@ export const Pager: FC<{
       <Button size="sm" variant="ghost" disabled={page === 0} onClick={() => goTo(page - 1)}>
         {t("users.prev")}
       </Button>
-      <div className="nx-pager-nums">
+      <div className="sk-pager-nums">
         {pageWindow.map((item, idx) =>
           item === "ellipsis" ? (
-            <span key={`e-${idx}`} className="nx-pager-ellipsis">…</span>
+            <span key={`e-${idx}`} className="sk-pager-ellipsis">…</span>
           ) : (
             <button
               key={item}
               type="button"
-              className={`nx-pager-num ${item === page + 1 ? "active" : ""}`}
+              className={`sk-pager-num ${item === page + 1 ? "active" : ""}`}
               onClick={() => goTo(item - 1)}
               aria-current={item === page + 1 ? "page" : undefined}
             >
@@ -594,7 +594,7 @@ export const Pager: FC<{
         »
       </Button>
       <form
-        className="nx-pager-jump"
+        className="sk-pager-jump"
         onSubmit={(e) => { e.preventDefault(); submitJump(); }}
       >
         <Input
@@ -616,8 +616,8 @@ export const Pager: FC<{
 
   if (summary) {
     return (
-      <div className="nx-pager-bar">
-        <span className="nx-faint" style={{ fontSize: 12 }}>{summary}</span>
+      <div className="sk-pager-bar">
+        <span className="sk-faint" style={{ fontSize: 12 }}>{summary}</span>
         {controls}
       </div>
     );
@@ -629,15 +629,15 @@ export const Pager: FC<{
 /* ------------------------------ Loading -------------------------------- */
 export const Loading: FC<{ label?: string }> = ({ label }) => {
   const { t } = useTranslation();
-  return <div className="nx-loading">{label || t("common.loading")}</div>;
+  return <div className="sk-loading">{label || t("common.loading")}</div>;
 };
 
 export const SkeletonRows: FC<{ rows?: number; cols?: number }> = ({ rows = 5, cols = 4 }) => (
-  <div className="nx-stack">
+  <div className="sk-stack">
     {Array.from({ length: rows }).map((_, i) => (
-      <div key={i} className="nx-row" style={{ gap: 16 }}>
+      <div key={i} className="sk-row" style={{ gap: 16 }}>
         {Array.from({ length: cols }).map((__, j) => (
-          <div key={j} className="nx-skel" style={{ height: 16, flex: j === 0 ? 2 : 1 }} />
+          <div key={j} className="sk-skel" style={{ height: 16, flex: j === 0 ? 2 : 1 }} />
         ))}
       </div>
     ))}
@@ -663,12 +663,12 @@ export const ToastProvider: FC<{ children: ReactNode }> = ({ children }) => {
   return (
     <ToastCtx.Provider value={{ push }}>
       {children}
-      <div className="nx-toasts" role="region" aria-live="polite">
+      <div className="sk-toasts" role="region" aria-live="polite">
         {toasts.map((t) => (
-          <div key={t.id} className={`nx-toast ${t.kind}`} role="status">
-            <span className="nx-toast-icon" aria-hidden>{TOAST_ICON[t.kind]}</span>
-            <span className="nx-toast-msg">{t.msg}</span>
-            <button className="nx-toast-x" onClick={() => dismiss(t.id)} aria-label={tr("common.dismiss")}>×</button>
+          <div key={t.id} className={`sk-toast ${t.kind}`} role="status">
+            <span className="sk-toast-icon" aria-hidden>{TOAST_ICON[t.kind]}</span>
+            <span className="sk-toast-msg">{t.msg}</span>
+            <button className="sk-toast-x" onClick={() => dismiss(t.id)} aria-label={tr("common.dismiss")}>×</button>
           </div>
         ))}
       </div>

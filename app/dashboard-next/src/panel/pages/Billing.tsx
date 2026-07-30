@@ -5,19 +5,19 @@ import {
 import { useTranslation } from "react-i18next";
 import { useSearchParams, Link } from "react-router-dom";
 import { api } from "../api/client";
-import { Invoice, Plan, Transaction, TrafficPackage, TrafficPurchase, UsageSummary, Wallet } from "../api/types";
+import { Invoice, Plan, Transaction, TrafficPackage, TrafficPurchase, UsageSummary, Wallet, GatewayIncome } from "../api/types";
 import { useApp } from "../context/AppContext";
 import { useFetch, useLiveReload } from "../lib/useFetch";
 import { formatBytes } from "../lib/format";
 import { PageHeader } from "../components/Shell";
 import {
-  Button, Callout, Card, EmptyState, Field, Input, Modal, Pager, Pill, Select, SkeletonRows, Stat, usePagedList, useToast,
+  Button, Callout, Card, EmptyState, Field, Input, Modal, Pager, Pill, Select, SkeletonRows, Stat, Toggle, usePagedList, useToast,
 } from "../components/ui";
 import { SectionRail, type RailGroup } from "../components/SectionRail";
 import { CommercialSettings } from "../components/CommercialSettings";
 import { IcPlus, IcTrash, IcWallet, IcEdit } from "../components/icons";
 
-const BILLING_TABS = ["plans", "packages", "usage", "invoices", "transactions", "settings"] as const;
+const BILLING_TABS = ["plans", "packages", "usage", "orders", "income", "invoices", "transactions", "card", "settings"] as const;
 
 export const Billing: FC<{ embedded?: boolean }> = ({ embedded }) => {
   const { t } = useTranslation();
@@ -34,6 +34,20 @@ export const Billing: FC<{ embedded?: boolean }> = ({ embedded }) => {
   const providers = useFetch<string[]>(() => api.get("/billing/payment-providers"), []);
   useLiveReload(() => { wallet.reload(); providers.reload(); }, 30000);
   const canTopUp = !admin?.is_sudo && (providers.data?.length ?? 0) > 0;
+  const toast = useToast();
+
+  useEffect(() => {
+    const pay = search.get("pay");
+    if (pay !== "ok" && pay !== "fail") return;
+    toast.push(
+      pay === "ok" ? t("billing.payOk", { defaultValue: "Payment successful" }) : t("billing.payFail", { defaultValue: "Payment failed or was cancelled" }),
+      pay === "ok" ? "success" : "error",
+    );
+    const next = new URLSearchParams(search);
+    next.delete("pay");
+    setSearch(next, { replace: true });
+    if (pay === "ok") wallet.reload();
+  }, [search.get("pay")]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (tabFromUrl && (BILLING_TABS as readonly string[]).includes(tabFromUrl) && tabFromUrl !== tab) {
@@ -47,6 +61,8 @@ export const Billing: FC<{ embedded?: boolean }> = ({ embedded }) => {
     next.set("billingTab", id);
     setSearch(next, { replace: true });
   };
+
+  const canSeeGatewayIncome = !!admin?.is_sudo || !!admin?.centralpay_enabled;
 
   const railGroups: RailGroup[] = [
     {
@@ -62,22 +78,29 @@ export const Billing: FC<{ embedded?: boolean }> = ({ embedded }) => {
       label: t("billing.groupLedger"),
       items: [
         { id: "usage", label: t("billing.tabUsage") },
+        { id: "orders", label: t("billing.tabOrders") },
+        ...(canSeeGatewayIncome
+          ? [{ id: "income", label: t("billing.tabIncome") }]
+          : []),
         { id: "invoices", label: t("billing.tabInvoices") },
         { id: "transactions", label: t("billing.tabTransactions") },
       ],
     },
-    ...(admin?.is_sudo
-      ? [{
-          id: "config",
-          label: t("billing.groupConfig"),
-          items: [{ id: "settings", label: t("billing.tabSettings") }],
-        }]
-      : []),
+    {
+      id: "config",
+      label: t("billing.groupConfig"),
+      items: [
+        { id: "card", label: t("billing.tabCardSettings") },
+        ...(admin?.is_sudo
+          ? [{ id: "settings", label: t("billing.tabSettings") }]
+          : []),
+      ],
+    },
   ];
 
   if (!isEnabled("billing")) {
     return (
-      <div className="nx-page nx-biz">
+      <div className="sk-page sk-biz">
         {!embedded && <PageHeader title={t("billing.title")} subtitle={t("billing.subtitle")} />}
         <Callout tone="warn">{t("billing.billingDisabled")}</Callout>
       </div>
@@ -85,7 +108,7 @@ export const Billing: FC<{ embedded?: boolean }> = ({ embedded }) => {
   }
 
   return (
-    <div className="nx-page nx-biz">
+    <div className="sk-page sk-biz">
       {!embedded && (
         <PageHeader
           title={t("billing.title")}
@@ -94,27 +117,27 @@ export const Billing: FC<{ embedded?: boolean }> = ({ embedded }) => {
         />
       )}
 
-      <div className="nx-money-bar">
-        <div className="nx-money-bar-main">
-          <span className="nx-money-bar-ico" aria-hidden><IcWallet className="nx-ico" /></span>
-          <div className="nx-money-bar-copy">
-            <span className="nx-money-bar-label">{t("billing.wallet")}</span>
+      <div className="sk-money-bar">
+        <div className="sk-money-bar-main">
+          <span className="sk-money-bar-ico" aria-hidden><IcWallet className="sk-ico" /></span>
+          <div className="sk-money-bar-copy">
+            <span className="sk-money-bar-label">{t("billing.wallet")}</span>
             {wallet.loading ? (
-              <span className="nx-money-bar-value nx-faint">…</span>
+              <span className="sk-money-bar-value sk-faint">…</span>
             ) : (
-              <span className="nx-money-bar-value">
+              <span className="sk-money-bar-value">
                 {(wallet.data?.balance ?? 0).toLocaleString()}
               </span>
             )}
           </div>
         </div>
-        <div className="nx-money-bar-actions">
+        <div className="sk-money-bar-actions">
           {admin?.is_sudo ? (
             <Button variant="primary" size="sm" onClick={() => setCreditOpen(true)}>{t("billing.addCredit")}</Button>
           ) : canTopUp ? (
             <Button variant="primary" size="sm" onClick={() => setTopupOpen(true)}>{t("billing.topUp")}</Button>
           ) : (
-            <span className="nx-money-bar-hint">{t("billing.resellerWalletHint")}</span>
+            <span className="sk-money-bar-hint">{t("billing.resellerWalletHint")}</span>
           )}
         </div>
       </div>
@@ -124,17 +147,20 @@ export const Billing: FC<{ embedded?: boolean }> = ({ embedded }) => {
         <TopUpModal providers={providers.data} onClose={() => setTopupOpen(false)} onDone={() => { setTopupOpen(false); wallet.reload(); }} />
       )}
 
-      <div className="nx-biz-layout">
+      <div className="sk-biz-layout">
         <SectionRail
           groups={railGroups}
           active={tab}
           onChange={onTabChange}
           label={t("billing.title")}
         />
-        <div className="nx-section-panel">
+        <div className="sk-section-panel">
           {tab === "plans" && <PlansTab canWrite={!!admin?.is_sudo || admin?.role === "reseller"} />}
           {tab === "packages" && <TrafficPackagesTab onPurchased={() => wallet.reload()} />}
           {tab === "usage" && <UsageTab />}
+          {tab === "orders" && <PortalOrdersTab />}
+          {tab === "income" && canSeeGatewayIncome && <GatewayIncomeTab />}
+          {tab === "card" && <ResellerCardSettingsTab />}
           {tab === "settings" && admin?.is_sudo && <CommercialSettings />}
           {tab === "invoices" && <InvoicesTab />}
           {tab === "transactions" && <TransactionsTab />}
@@ -160,8 +186,8 @@ const PlansTab: FC<{ canWrite?: boolean }> = ({ canWrite = false }) => {
   return (
     <>
       {canWrite && (
-        <div className="nx-row" style={{ justifyContent: "flex-end", marginBottom: 14 }}>
-          <Button variant="primary" onClick={() => setShow(true)}><IcPlus className="nx-ico" /> {t("billing.addPlan")}</Button>
+        <div className="sk-row" style={{ justifyContent: "flex-end", marginBottom: 14 }}>
+          <Button variant="primary" onClick={() => setShow(true)}><IcPlus className="sk-ico" /> {t("billing.addPlan")}</Button>
         </div>
       )}
       {!canWrite && (
@@ -174,27 +200,27 @@ const PlansTab: FC<{ canWrite?: boolean }> = ({ canWrite = false }) => {
           : error ? <EmptyState title={t("common.error")} desc={error} />
           : !data?.length ? <EmptyState title={t("common.noData")} desc={t("billing.plansReadOnly")} />
           : (
-            <div className="nx-table-wrap"><table className="nx-table">
+            <div className="sk-table-wrap"><table className="sk-table">
               <thead><tr>
                 <th>{t("common.name")}</th>
-                <th className="nx-num">{t("billing.price")}</th>
-                <th className="nx-num">{t("users.dataLimit")}</th>
-                <th className="nx-num">{t("billing.duration")}</th>
+                <th className="sk-num">{t("billing.price")}</th>
+                <th className="sk-num">{t("users.dataLimit")}</th>
+                <th className="sk-num">{t("billing.duration")}</th>
                 <th>{t("common.status")}</th>
-                <th className="nx-actions">{t("common.actions")}</th>
+                <th className="sk-actions">{t("common.actions")}</th>
               </tr></thead>
               <tbody>
                 {data.map((p) => (
                   <tr key={p.id}>
                     <td style={{ fontWeight: 600 }}>{p.name}</td>
-                    <td className="nx-num">{p.price.toLocaleString()}</td>
-                    <td className="nx-num">{p.data_limit ? formatBytes(p.data_limit) : t("users.unlimited")}</td>
-                    <td className="nx-num">{p.duration_days ? t("users.unitDays", { n: p.duration_days }) : t("users.unlimited")}</td>
+                    <td className="sk-num">{p.price.toLocaleString()}</td>
+                    <td className="sk-num">{p.data_limit ? formatBytes(p.data_limit) : t("users.unlimited")}</td>
+                    <td className="sk-num">{p.duration_days ? t("users.unitDays", { n: p.duration_days }) : t("users.unlimited")}</td>
                     <td><Pill tone={p.enabled ? "ok" : "default"} dot>{p.enabled ? t("common.enabled") : t("common.disabled")}</Pill></td>
-                    <td className="nx-actions">{canWrite ? (
-                      <div className="nx-row" style={{ justifyContent: "flex-end", gap: 6 }}>
-                        <Button size="sm" variant="ghost" onClick={() => setEdit(p)}><IcEdit className="nx-ico" /></Button>
-                        <Button variant="danger" size="sm" onClick={() => remove(p.id)}><IcTrash className="nx-ico" /></Button>
+                    <td className="sk-actions">{canWrite ? (
+                      <div className="sk-row" style={{ justifyContent: "flex-end", gap: 6 }}>
+                        <Button size="sm" variant="ghost" onClick={() => setEdit(p)}><IcEdit className="sk-ico" /></Button>
+                        <Button variant="danger" size="sm" onClick={() => remove(p.id)}><IcTrash className="sk-ico" /></Button>
                       </div>
                     ) : null}</td>
                   </tr>
@@ -243,16 +269,339 @@ const TopUpModal: FC<{ providers: string[]; onClose: () => void; onDone: () => v
     <Modal open title={t("billing.topUp")} onClose={onClose}
       footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
         <Button variant="primary" disabled={busy || !amount} onClick={submit}>{t("billing.topUpPay")}</Button></>}>
-      <div className="nx-stack nx-modal-stack">
+      <div className="sk-stack sk-modal-stack">
         <Field label={t("billing.creditAmount")}><Input type="number" value={amount} onChange={(e: any) => setAmount(e.target.value)} autoFocus /></Field>
         <Field label={t("billing.provider")}>
           <Select value={provider} onChange={(e: any) => setProvider(e.target.value)}>
             {providers.map((p) => <option key={p} value={p}>{p}</option>)}
           </Select>
         </Field>
-        <p className="nx-modal-lede">{t("billing.topUpHint")}</p>
+        <p className="sk-modal-lede">{t("billing.topUpHint")}</p>
       </div>
     </Modal>
+  );
+};
+
+const money = (n: number, label?: string) =>
+  `${(n || 0).toLocaleString()}${label ? ` ${label}` : ""}`;
+
+type MyCardSettings = {
+  card_enabled: boolean;
+  card_number: string;
+  card_holder: string;
+  card_bank: string;
+  uses_platform_settings?: boolean;
+};
+
+const ResellerCardSettingsTab: FC = () => {
+  const { t } = useTranslation();
+  const { admin } = useApp();
+  const toast = useToast();
+  const { data, loading, error, reload } = useFetch<MyCardSettings>(
+    () => api.get("/billing/my-card-settings"),
+    [],
+  );
+  const [enabled, setEnabled] = useState(false);
+  const [number, setNumber] = useState("");
+  const [holder, setHolder] = useState("");
+  const [bank, setBank] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    if (!data || hydrated) return;
+    setEnabled(Boolean(data.card_enabled));
+    setNumber(data.card_number || "");
+    setHolder(data.card_holder || "");
+    setBank(data.card_bank || "");
+    setHydrated(true);
+  }, [data, hydrated]);
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      await api.put("/billing/my-card-settings", {
+        card_enabled: enabled,
+        card_number: number.trim(),
+        card_holder: holder.trim(),
+        card_bank: bank.trim(),
+      });
+      toast.push(t("common.saved"), "success");
+      setHydrated(false);
+      reload();
+    } catch (e: any) {
+      toast.push(e.message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (loading && !hydrated) return <Card><SkeletonRows rows={4} cols={2} /></Card>;
+  if (error) return <EmptyState title={t("common.error")} desc={error} />;
+
+  return (
+    <div className="sk-stack" style={{ gap: 16 }}>
+      <Callout tone="info">
+        {admin?.is_sudo ? t("billing.cardSettingsSudoHint") : t("billing.cardSettingsResellerHint")}
+      </Callout>
+      <Card>
+        <div className="sk-stack" style={{ gap: 14, maxWidth: 480 }}>
+          <div className="sk-row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: 13 }}>{t("billing.cardEnabled")}</div>
+              <div className="sk-faint" style={{ fontSize: 12, marginTop: 4 }}>{t("billing.cardEnabledHint")}</div>
+            </div>
+            <Toggle on={enabled} onChange={() => setEnabled((v) => !v)} />
+          </div>
+          <Field label={t("billing.cardNumber")}>
+            <Input
+              dir="ltr"
+              value={number}
+              onChange={(e: any) => setNumber(e.target.value)}
+              placeholder="6037…"
+              disabled={!enabled && !number}
+            />
+          </Field>
+          <Field label={t("billing.cardHolder")}>
+            <Input value={holder} onChange={(e: any) => setHolder(e.target.value)} />
+          </Field>
+          <Field label={t("billing.cardBank")}>
+            <Input value={bank} onChange={(e: any) => setBank(e.target.value)} />
+          </Field>
+          <div className="sk-row" style={{ justifyContent: "flex-end" }}>
+            <Button variant="primary" disabled={busy} onClick={save}>{t("common.save")}</Button>
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+};
+
+const GatewayIncomeTab: FC = () => {
+  const { t } = useTranslation();
+  const { admin } = useApp();
+  const { data, loading, error, reload } = useFetch<GatewayIncome>(
+    () => api.get("/billing/gateway-income?payments_limit=100"),
+    [],
+  );
+  useLiveReload(() => { reload(); }, 60000);
+  const cur = data?.currency_label || "";
+
+  if (loading) return <Card><SkeletonRows rows={6} cols={4} /></Card>;
+  if (error) return <EmptyState title={t("common.error")} desc={error} />;
+
+  return (
+    <div className="sk-stack" style={{ gap: 16 }}>
+      <Callout tone="info">{t("billing.incomeHint")}</Callout>
+      <div className="sk-stat-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
+        <Stat label={t("billing.incomeToday")} value={money(data?.today ?? 0, cur)} />
+        <Stat label={t("billing.incomeYesterday")} value={money(data?.yesterday ?? 0, cur)} />
+        <Stat label={t("billing.incomeWeek")} value={money(data?.week ?? 0, cur)} />
+        <Stat label={t("billing.incomeTotal")} value={money(data?.total ?? 0, cur)} />
+      </div>
+
+      {admin?.is_sudo && (data?.resellers?.length ?? 0) > 0 && (
+        <Card pad0>
+          <div style={{ padding: "12px 16px", fontWeight: 600 }}>{t("billing.incomeByReseller")}</div>
+          <div className="sk-table-wrap">
+            <table className="sk-table">
+              <thead>
+                <tr>
+                  <th>{t("common.username")}</th>
+                  <th className="sk-num">{t("billing.incomeToday")}</th>
+                  <th className="sk-num">{t("billing.incomeYesterday")}</th>
+                  <th className="sk-num">{t("billing.incomeWeek")}</th>
+                  <th className="sk-num">{t("billing.incomeTotal")}</th>
+                  <th className="sk-num">{t("billing.paymentsCount")}</th>
+                  <th>{t("billing.provider")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data!.resellers.map((r) => (
+                  <tr key={r.admin_id}>
+                    <td>
+                      <div className="sk-ra-user">
+                        <span className="sk-ra-user-name">{r.username}</span>
+                        {r.centralpay_enabled && (
+                          <span className="sk-ra-user-role">CentralPay</span>
+                        )}
+                        {r.card_enabled && (
+                          <span className="sk-ra-user-role">{t("billing.cardBadge")}</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="sk-num">{money(r.today)}</td>
+                    <td className="sk-num">{money(r.yesterday)}</td>
+                    <td className="sk-num">{money(r.week)}</td>
+                    <td className="sk-num" style={{ fontWeight: 600 }}>{money(r.total)}</td>
+                    <td className="sk-num">{r.payments_count}</td>
+                    <td className="sk-muted">
+                      {Object.entries(r.by_provider || {}).map(([p, a]) => `${p}: ${a.toLocaleString()}`).join(" · ") || "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+
+      <Card pad0>
+        <div style={{ padding: "12px 16px", fontWeight: 600 }}>{t("billing.incomeRecent")}</div>
+        {!data?.recent_payments?.length ? (
+          <EmptyState title={t("billing.incomeEmpty")} />
+        ) : (
+          <div className="sk-table-wrap">
+            <table className="sk-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>{t("billing.date")}</th>
+                  <th>{t("billing.type")}</th>
+                  <th>{t("billing.provider")}</th>
+                  <th>{t("billing.orderUser")}</th>
+                  <th>{t("billing.orderPlan")}</th>
+                  <th className="sk-num">{t("billing.amount")}</th>
+                  <th>{t("billing.reference")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.recent_payments.map((p) => (
+                  <tr key={p.id}>
+                    <td className="sk-faint">#{p.id}</td>
+                    <td className="sk-muted">
+                      {p.completed_at ? new Date(p.completed_at).toLocaleString() : "—"}
+                    </td>
+                    <td>{t(`billing.kind_${p.kind}`, { defaultValue: p.kind })}</td>
+                    <td>{p.provider}</td>
+                    <td>{p.username || "—"}</td>
+                    <td>{p.plan_name || "—"}</td>
+                    <td className="sk-num" style={{ fontWeight: 600 }}>{money(p.amount, cur)}</td>
+                    <td className="sk-muted" style={{ maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {p.reference != null ? String(p.reference) : (p.card || "—")}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+};
+
+const PortalOrdersTab: FC = () => {
+  const { t } = useTranslation();
+  const toast = useToast();
+  const { data, loading, error, reload } = useFetch<Array<{
+    id: number;
+    status: string;
+    provider: string;
+    amount: number;
+    plan_name?: string | null;
+    username?: string | null;
+    user_note?: string | null;
+    has_receipt?: boolean;
+    receipt_name?: string | null;
+    created_at?: string | null;
+  }>>(() => api.get("/billing/portal-payments"), []);
+  const [busyId, setBusyId] = useState<number | null>(null);
+
+  const openReceipt = async (id: number, name?: string | null) => {
+    try {
+      await api.download(`/billing/portal-payments/${id}/receipt`, name || `receipt-${id}`);
+    } catch (e: any) {
+      toast.push(e.message, "error");
+    }
+  };
+
+  const approve = async (id: number) => {
+    setBusyId(id);
+    try {
+      await api.post(`/billing/portal-payments/${id}/approve`, {});
+      toast.push(t("billing.orderApproved"), "success");
+      reload();
+      try {
+        const { syncAdminAppBadge } = await import("../lib/webPush");
+        await syncAdminAppBadge();
+      } catch {
+        /* ignore */
+      }
+    } catch (e: any) {
+      toast.push(e.message, "error");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const reject = async (id: number) => {
+    if (!confirm(t("common.confirmDelete"))) return;
+    setBusyId(id);
+    try {
+      await api.post(`/billing/portal-payments/${id}/reject`, {});
+      toast.push(t("billing.orderRejected"), "success");
+      reload();
+      try {
+        const { syncAdminAppBadge } = await import("../lib/webPush");
+        await syncAdminAppBadge();
+      } catch {
+        /* ignore */
+      }
+    } catch (e: any) {
+      toast.push(e.message, "error");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const statusLabel = (s: string) => t(`billing.${s}`, { defaultValue: s });
+
+  return (
+    <Card pad0>
+      {loading ? <div style={{ padding: 20 }}><SkeletonRows rows={4} cols={5} /></div>
+        : error ? <EmptyState title={t("common.error")} desc={error} />
+        : !data?.length ? <EmptyState title={t("common.noData")} desc={t("billing.ordersEmpty")} />
+        : (
+          <div className="sk-table-wrap"><table className="sk-table">
+            <thead><tr>
+              <th>{t("billing.orderUser")}</th>
+              <th>{t("billing.orderPlan")}</th>
+              <th className="sk-num">{t("billing.price")}</th>
+              <th>{t("common.status")}</th>
+              <th>{t("billing.orderNote")}</th>
+              <th>{t("billing.orderReceipt")}</th>
+              <th />
+            </tr></thead>
+            <tbody>
+              {data.map((row) => (
+                <tr key={row.id}>
+                  <td dir="ltr">{row.username || "—"}</td>
+                  <td>{row.plan_name || `#${row.id}`}</td>
+                  <td className="sk-num">{row.amount.toLocaleString()}</td>
+                  <td><Pill tone={row.status === "awaiting_review" || row.status === "pending" ? "warn" : row.status === "completed" ? "ok" : "danger"}>{statusLabel(row.status)}</Pill></td>
+                  <td className="sk-faint" style={{ maxWidth: 180 }}>{row.user_note || "—"}</td>
+                  <td>
+                    {row.has_receipt ? (
+                      <Button size="sm" variant="ghost" onClick={() => openReceipt(row.id, row.receipt_name)}>
+                        {t("billing.viewReceipt")}
+                      </Button>
+                    ) : "—"}
+                  </td>
+                  <td>
+                    {(row.status === "awaiting_review" || row.status === "pending") && row.provider === "card" ? (
+                      <div className="sk-row" style={{ gap: 6, justifyContent: "flex-end" }}>
+                        <Button size="sm" variant="primary" disabled={busyId === row.id} onClick={() => approve(row.id)}>{t("billing.orderApprove")}</Button>
+                        <Button size="sm" variant="ghost" disabled={busyId === row.id} onClick={() => reject(row.id)}>{t("billing.orderReject")}</Button>
+                      </div>
+                    ) : null}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table></div>
+        )}
+    </Card>
   );
 };
 
@@ -280,10 +629,10 @@ const CreditModal: FC<{ onClose: () => void; onDone: () => void }> = ({ onClose,
     <Modal open title={t("resellers.adjustWallet")} onClose={onClose}
       footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
         <Button variant="primary" disabled={busy || !username || amount === ""} onClick={submit}>{t("common.save")}</Button></>}>
-      <div className="nx-stack nx-modal-stack">
+      <div className="sk-stack sk-modal-stack">
         <Field label={t("common.username")}><Input value={username} onChange={(e: any) => setUsername(e.target.value)} /></Field>
         <Field label={t("resellers.adjustMode")}>
-          <select className="nx-select" value={mode} onChange={(e: any) => setMode(e.target.value)}>
+          <select className="sk-select" value={mode} onChange={(e: any) => setMode(e.target.value)}>
             <option value="set">{t("resellers.modeSetBalance")}</option>
             <option value="delta">{t("resellers.modeDelta")}</option>
           </select>
@@ -328,11 +677,11 @@ const EditPlan: FC<{ plan: Plan; onClose: () => void; onDone: () => void }> = ({
     <Modal open title={`${t("common.edit")} — ${plan.name}`} onClose={onClose}
       footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
         <Button variant="primary" disabled={busy} onClick={submit}>{t("common.save")}</Button></>}>
-      <div className="nx-stack">
+      <div className="sk-stack">
         <Field label={t("common.name")}><Input value={f.name} onChange={upd("name")} /></Field>
         <Field label={t("billing.price")}><Input type="number" value={f.price} onChange={upd("price")} /></Field>
         <Field label={t("billing.dataLimit")}>
-          <div className="nx-row" style={{ gap: 8 }}>
+          <div className="sk-row" style={{ gap: 8 }}>
             <Input type="number" value={f.dataLimitValue} onChange={upd("dataLimitValue")} style={{ flex: 1 }} />
             <Select value={f.dataLimitUnit} onChange={upd("dataLimitUnit")} style={{ width: 88 }}>
               <option value="MB">MB</option>
@@ -340,7 +689,7 @@ const EditPlan: FC<{ plan: Plan; onClose: () => void; onDone: () => void }> = ({
             </Select>
           </div>
         </Field>
-        <label className="nx-row" style={{ gap: 8 }}><input type="checkbox" checked={f.enabled} onChange={upd("enabled")} /> {t("common.enabled")}</label>
+        <label className="sk-row" style={{ gap: 8 }}><input type="checkbox" checked={f.enabled} onChange={upd("enabled")} /> {t("common.enabled")}</label>
       </div>
     </Modal>
   );
@@ -370,12 +719,12 @@ const AddPlan: FC<{ onClose: () => void; onDone: () => void }> = ({ onClose, onD
     <Modal open title={t("billing.addPlan")} onClose={onClose}
       footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
         <Button variant="primary" disabled={busy || !f.name} onClick={submit}>{t("common.create")}</Button></>}>
-      <div className="nx-stack">
+      <div className="sk-stack">
         <Field label={t("common.name")}><Input value={f.name} onChange={upd("name")} autoFocus /></Field>
-        <div className="nx-row" style={{ gap: 12 }}>
+        <div className="sk-row" style={{ gap: 12 }}>
           <Field label={t("billing.price")}><Input type="number" value={f.price} onChange={upd("price")} /></Field>
           <Field label={t("billing.dataLimit")}>
-            <div className="nx-row" style={{ gap: 8 }}>
+            <div className="sk-row" style={{ gap: 8 }}>
               <Input type="number" value={f.dataLimitValue} onChange={upd("dataLimitValue")} style={{ flex: 1 }} />
               <Select value={f.dataLimitUnit} onChange={upd("dataLimitUnit")} style={{ width: 88 }}>
                 <option value="MB">MB</option>
@@ -384,7 +733,7 @@ const AddPlan: FC<{ onClose: () => void; onDone: () => void }> = ({ onClose, onD
             </div>
           </Field>
         </div>
-        <div className="nx-row" style={{ gap: 12 }}>
+        <div className="sk-row" style={{ gap: 12 }}>
           <Field label={t("billing.duration")}><Input type="number" value={f.days} onChange={upd("days")} /></Field>
           <Field label={t("billing.deviceLimit")}><Input type="number" value={f.devices} onChange={upd("devices")} /></Field>
         </div>
@@ -428,8 +777,8 @@ const TrafficPackagesTab: FC<{ onPurchased?: () => void }> = ({ onPurchased }) =
   };
 
   return (
-    <div className="nx-stack" style={{ gap: 14 }}>
-      <div className="nx-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+    <div className="sk-stack" style={{ gap: 14 }}>
+      <div className="sk-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
         <Stat label={t("billing.prepaidRemaining")} value={formatBytes(prepaid)} />
       </div>
       {packageEmpty ? (
@@ -440,9 +789,9 @@ const TrafficPackagesTab: FC<{ onPurchased?: () => void }> = ({ onPurchased }) =
         <Callout tone="info">{t("billing.trafficPackageHint")}</Callout>
       )}
       {isSudo && (
-        <div className="nx-row" style={{ justifyContent: "flex-end" }}>
+        <div className="sk-row" style={{ justifyContent: "flex-end" }}>
           <Button variant="primary" onClick={() => setShow(true)}>
-            <IcPlus className="nx-ico" /> {t("billing.addTrafficPackage")}
+            <IcPlus className="sk-ico" /> {t("billing.addTrafficPackage")}
           </Button>
         </div>
       )}
@@ -451,31 +800,31 @@ const TrafficPackagesTab: FC<{ onPurchased?: () => void }> = ({ onPurchased }) =
           : packages.error ? <EmptyState title={t("common.error")} desc={packages.error} />
           : !packages.data?.length ? <EmptyState title={t("common.noData")} desc={t("billing.noTrafficPackages")} />
           : (
-            <div className="nx-table-wrap">
-              <table className="nx-table">
+            <div className="sk-table-wrap">
+              <table className="sk-table">
                 <thead><tr>
                   <th>{t("common.name")}</th>
-                  <th className="nx-num">{t("billing.packageTraffic")}</th>
-                  <th className="nx-num">{t("billing.price")}</th>
+                  <th className="sk-num">{t("billing.packageTraffic")}</th>
+                  <th className="sk-num">{t("billing.price")}</th>
                   <th>{t("common.status")}</th>
-                  <th className="nx-actions">{t("common.actions")}</th>
+                  <th className="sk-actions">{t("common.actions")}</th>
                 </tr></thead>
                 <tbody>
                   {packages.data.map((pkg) => (
                     <tr key={pkg.id}>
                       <td>{pkg.name}</td>
-                      <td className="nx-num">{formatBytes(pkg.bytes)}</td>
-                      <td className="nx-num">{pkg.price.toLocaleString()}</td>
+                      <td className="sk-num">{formatBytes(pkg.bytes)}</td>
+                      <td className="sk-num">{pkg.price.toLocaleString()}</td>
                       <td><Pill tone={pkg.enabled ? "ok" : "default"}>{pkg.enabled ? t("common.enabled") : t("common.disabled")}</Pill></td>
-                      <td className="nx-actions">
-                        <div className="nx-row" style={{ justifyContent: "flex-end", gap: 6 }}>
+                      <td className="sk-actions">
+                        <div className="sk-row" style={{ justifyContent: "flex-end", gap: 6 }}>
                           {!isSudo && pkg.enabled && (
                             <Button size="sm" variant="primary" onClick={() => buy(pkg)}>{t("billing.buyPackage")}</Button>
                           )}
                           {isSudo && (
                             <>
-                              <Button size="sm" variant="ghost" onClick={() => setEdit(pkg)}><IcEdit className="nx-ico" /></Button>
-                              <Button size="sm" variant="danger" onClick={() => remove(pkg.id)}><IcTrash className="nx-ico" /></Button>
+                              <Button size="sm" variant="ghost" onClick={() => setEdit(pkg)}><IcEdit className="sk-ico" /></Button>
+                              <Button size="sm" variant="danger" onClick={() => remove(pkg.id)}><IcTrash className="sk-ico" /></Button>
                             </>
                           )}
                         </div>
@@ -489,23 +838,23 @@ const TrafficPackagesTab: FC<{ onPurchased?: () => void }> = ({ onPurchased }) =
       </Card>
       {(purchases.data?.length ?? 0) > 0 && (
         <Card pad0>
-          <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--nx-border, #e5e7eb)" }}>
+          <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--sk-border, #e5e7eb)" }}>
             <strong>{t("billing.purchaseHistory")}</strong>
           </div>
-          <div className="nx-table-wrap">
-            <table className="nx-table">
+          <div className="sk-table-wrap">
+            <table className="sk-table">
               <thead><tr>
                 <th>{t("billing.date")}</th>
-                <th className="nx-num">{t("billing.packageTraffic")}</th>
-                <th className="nx-num">{t("billing.price")}</th>
+                <th className="sk-num">{t("billing.packageTraffic")}</th>
+                <th className="sk-num">{t("billing.price")}</th>
                 <th>{t("billing.purchaseSource")}</th>
               </tr></thead>
               <tbody>
                 {purchases.data!.map((p) => (
                   <tr key={p.id}>
                     <td>{p.created_at ? new Date(p.created_at).toLocaleString() : "—"}</td>
-                    <td className="nx-num">{formatBytes(p.bytes)}</td>
-                    <td className="nx-num">{p.price_paid.toLocaleString()}</td>
+                    <td className="sk-num">{formatBytes(p.bytes)}</td>
+                    <td className="sk-num">{p.price_paid.toLocaleString()}</td>
                     <td>{p.source === "manual" ? t("billing.sourceManual") : t("billing.sourcePurchase")}</td>
                   </tr>
                 ))}
@@ -613,14 +962,14 @@ const TrafficPackageModal: FC<{
         </>
       }
     >
-      <div className="nx-stack">
+      <div className="sk-stack">
         <Field label={t("common.name")}><Input value={f.name} onChange={upd("name")} autoFocus /></Field>
-        <div className="nx-row" style={{ gap: 12 }}>
+        <div className="sk-row" style={{ gap: 12 }}>
           <Field label={t("billing.price")}>
             <Input type="number" value={f.price} onChange={upd("price")} />
           </Field>
           <Field label={t("billing.packageTraffic")}>
-            <div className="nx-row" style={{ gap: 8 }}>
+            <div className="sk-row" style={{ gap: 8 }}>
               <Input type="number" value={f.trafficValue} onChange={upd("trafficValue")} style={{ flex: 1 }} />
               <Select value={f.trafficUnit} onChange={upd("trafficUnit")} style={{ width: 88 }}>
                 <option value="MB">MB</option>
@@ -629,7 +978,7 @@ const TrafficPackageModal: FC<{
             </div>
           </Field>
         </div>
-        <label className="nx-row" style={{ gap: 8, alignItems: "center" }}>
+        <label className="sk-row" style={{ gap: 8, alignItems: "center" }}>
           <input type="checkbox" checked={f.enabled} onChange={upd("enabled")} />
           <span>{t("common.enabled")}</span>
         </label>
@@ -649,10 +998,10 @@ const UsageTab: FC = () => {
   if (!data) return <EmptyState title={t("common.noData")} />;
 
   return (
-    <div className="nx-stack" style={{ gap: 14 }}>
+    <div className="sk-stack" style={{ gap: 14 }}>
       {(data.prepaid_traffic_remaining ?? 0) <= 0 ? (
         <Callout tone="warn" title={t("billing.packageExhaustedTitle")}>
-          <div className="nx-stack" style={{ gap: 10 }}>
+          <div className="sk-stack" style={{ gap: 10 }}>
             <span>{t("billing.packageExhaustedHint")}</span>
             <div>
               <Link to="/billing?billingTab=packages">
@@ -678,7 +1027,7 @@ const UsageTab: FC = () => {
         <Callout tone="info">{t("billing.usageDisabled")}</Callout>
       ) : (
         <>
-          <div className="nx-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+          <div className="sk-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
             <Stat
               label={t("billing.usageRate")}
               value={`${data.rate_per_gb.toLocaleString()}${currency}`}
@@ -699,7 +1048,7 @@ const UsageTab: FC = () => {
           {data.discount_percent > 0 ? (
             <Callout tone="info">{t("billing.usageByoDiscount", { pct: data.discount_percent })}</Callout>
           ) : null}
-          <p className="nx-muted" style={{ fontSize: 12, margin: 0 }}>
+          <p className="sk-muted" style={{ fontSize: 12, margin: 0 }}>
             {t("billing.usagePeriod", {
               since: new Date(data.period_since).toLocaleString(),
               until: new Date(data.period_until).toLocaleString(),
@@ -734,8 +1083,8 @@ const InvoicesTab: FC = () => {
   return (
     <>
       {admin?.is_sudo && (
-        <div className="nx-row" style={{ justifyContent: "flex-end", marginBottom: 14 }}>
-          <Button variant="primary" onClick={() => setShowCreate(true)}><IcPlus className="nx-ico" /> {t("billing.createInvoice")}</Button>
+        <div className="sk-row" style={{ justifyContent: "flex-end", marginBottom: 14 }}>
+          <Button variant="primary" onClick={() => setShowCreate(true)}><IcPlus className="sk-ico" /> {t("billing.createInvoice")}</Button>
         </div>
       )}
       {!admin?.is_sudo && (
@@ -749,24 +1098,24 @@ const InvoicesTab: FC = () => {
         : error ? <EmptyState title={t("common.error")} desc={error} />
         : !data?.length ? <EmptyState title={t("common.noData")} />
         : (
-          <div className="nx-table-wrap"><table className="nx-table">
+          <div className="sk-table-wrap"><table className="sk-table">
             <thead><tr>
               <th>#</th>
-              <th className="nx-num">{t("billing.amount")}</th>
+              <th className="sk-num">{t("billing.amount")}</th>
               <th>{t("billing.description")}</th>
               <th>{t("billing.invoiceStatus")}</th>
               <th>{t("billing.provider")}</th>
-              <th className="nx-actions">{t("common.actions")}</th>
+              <th className="sk-actions">{t("common.actions")}</th>
             </tr></thead>
             <tbody>
               {pager.slice.map((inv) => (
                 <tr key={inv.id}>
-                  <td className="nx-faint">#{inv.id}</td>
-                  <td className="nx-num" style={{ fontWeight: 600 }}>{inv.amount.toLocaleString()}</td>
-                  <td className="nx-muted" style={{ maxWidth: 280 }}>{inv.description || "—"}</td>
+                  <td className="sk-faint">#{inv.id}</td>
+                  <td className="sk-num" style={{ fontWeight: 600 }}>{inv.amount.toLocaleString()}</td>
+                  <td className="sk-muted" style={{ maxWidth: 280 }}>{inv.description || "—"}</td>
                   <td><Pill tone={inv.status === "paid" ? "ok" : "warn"} dot>{t(`billing.status.${inv.status}`, inv.status)}</Pill></td>
                   <td>{inv.provider || "—"}</td>
-                  <td className="nx-actions"><div className="nx-row" style={{ justifyContent: "flex-end" }}>
+                  <td className="sk-actions"><div className="sk-row" style={{ justifyContent: "flex-end" }}>
                     {inv.status === "pending" && (
                       <Button size="sm" variant="primary" onClick={() => pay(inv.id)}>
                         {t("billing.payFromWallet")}
@@ -814,7 +1163,7 @@ const CreateInvoiceModal: FC<{ onClose: () => void; onDone: () => void }> = ({ o
     <Modal open title={t("billing.createInvoice")} onClose={onClose}
       footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
         <Button variant="primary" disabled={busy || !amount} onClick={submit}>{t("common.create")}</Button></>}>
-      <div className="nx-stack">
+      <div className="sk-stack">
         <Field label={t("billing.amount")}><Input type="number" min="1" value={amount} onChange={(e: any) => setAmount(e.target.value)} autoFocus /></Field>
         <Field label={t("common.username")} hint={t("billing.invoiceUserHint")}>
           <Input value={username} onChange={(e: any) => setUsername(e.target.value)} />
@@ -839,28 +1188,28 @@ const TransactionsTab: FC = () => {
         : error ? <EmptyState title={t("common.error")} desc={error} />
         : !data?.length ? <EmptyState title={t("common.noData")} desc={t("billing.transactionsEmpty")} />
         : (
-          <div className="nx-table-wrap"><table className="nx-table">
+          <div className="sk-table-wrap"><table className="sk-table">
             <thead>
               <tr>
                 <th>#</th>
                 <th>{t("billing.date")}</th>
                 <th>{t("billing.type")}</th>
-                <th className="nx-num">{t("billing.amount")}</th>
+                <th className="sk-num">{t("billing.amount")}</th>
                 <th>{t("billing.description")}</th>
               </tr>
             </thead>
             <tbody>
               {pager.slice.map((tx) => (
                 <tr key={tx.id}>
-                  <td className="nx-faint">#{tx.id}</td>
-                  <td className="nx-muted">
+                  <td className="sk-faint">#{tx.id}</td>
+                  <td className="sk-muted">
                     {tx.created_at ? new Date(tx.created_at).toLocaleString() : "—"}
                   </td>
                   <td><Pill tone={tx.amount >= 0 ? "ok" : "danger"}>{tx.type}</Pill></td>
-                  <td className="nx-num" style={{ fontWeight: 600, color: tx.amount >= 0 ? "var(--nx-ok)" : "var(--nx-danger)" }}>
+                  <td className="sk-num" style={{ fontWeight: 600, color: tx.amount >= 0 ? "var(--sk-ok)" : "var(--sk-danger)" }}>
                     {tx.amount >= 0 ? "+" : ""}{tx.amount.toLocaleString()}
                   </td>
-                  <td className="nx-muted">{tx.description || "—"}</td>
+                  <td className="sk-muted">{tx.description || "—"}</td>
                 </tr>
               ))}
             </tbody>

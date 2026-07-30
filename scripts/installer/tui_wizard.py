@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""NexusPanel terminal installer — multi-step TUI wizard (works via curl | bash)."""
+"""Shahkar terminal installer — multi-step TUI wizard (works via curl | bash)."""
 from __future__ import annotations
 
 import argparse
@@ -26,10 +26,10 @@ PANEL_LANGS = LANGS
 
 T = {
     "en": {
-        "title": "NexusPanel Installer",
+        "title": "Shahkar Installer",
         "tagline": "Professional VPN Control Plane",
         "steps": ["Welcome", "Language", "Network", "Admin", "Branding", "Advanced", "Review"],
-        "welcome_h": "Welcome to NexusPanel",
+        "welcome_h": "Welcome to Shahkar",
         "welcome_b": "Production-ready install: Docker, PostgreSQL, Redis, HTTPS, secret dashboard path.",
         "feat": ["One-click stack", "Auto TLS (Let's Encrypt)", "White-label resellers", "Xray: VLESS, VMess, Trojan…"],
         "press_key": "Press Enter to continue  ·  Esc to quit",
@@ -70,10 +70,10 @@ T = {
         "cancelled": "Install cancelled.",
     },
     "fa": {
-        "title": "نصب NexusPanel",
+        "title": "نصب Shahkar",
         "tagline": "کنترل‌پنل حرفه‌ای VPN",
         "steps": ["خوش‌آمد", "زبان", "شبکه", "ادمین", "برند", "پیشرفته", "بررسی"],
-        "welcome_h": "به NexusPanel خوش آمدید",
+        "welcome_h": "به Shahkar خوش آمدید",
         "welcome_b": "نصب production: Docker، PostgreSQL، Redis، HTTPS، مسیر مخفی داشبورد.",
         "feat": ["نصب یک‌کلیکی", "TLS خودکار (Let's Encrypt)", "وایت‌لیبل", "Xray: VLESS، VMess، Trojan…"],
         "press_key": "Enter ادامه  ·  Esc خروج",
@@ -184,7 +184,7 @@ class Config:
         self.admin_username = ""
         self.admin_password = ""
         self.dashboard_path = rand_path()
-        self.panel_title = "NexusPanel"
+        self.panel_title = "Shahkar"
         self.primary_color = "#5b8cff"
         self.support_url = ""
         self.panel_port = 8000
@@ -649,7 +649,7 @@ class Wizard:
 
 def run_wizard(config_path: Path) -> int:
     if not attach_tty():
-        sys.stderr.write("[nexuspanel] No TTY available — set SKIP_WIZARD=1 or run with: bash -c '... install'\n")
+        sys.stderr.write("[shahkar] No TTY available — set SKIP_WIZARD=1 or run with: bash -c '... install'\n")
         return 2
     preflight = detect_preflight()
     cfg = Config(preflight)
@@ -665,12 +665,12 @@ def run_wizard(config_path: Path) -> int:
     try:
         return curses.wrapper(_main)
     except curses.error as exc:
-        sys.stderr.write(f"[nexuspanel] TUI failed ({exc}) — try: SKIP_WIZARD=1 or WEB_WIZARD=1\n")
+        sys.stderr.write(f"[shahkar] TUI failed ({exc}) — try: SKIP_WIZARD=1 or WEB_WIZARD=1\n")
         return 2
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="NexusPanel terminal installer wizard")
+    parser = argparse.ArgumentParser(description="Shahkar terminal installer wizard")
     parser.add_argument("--config", required=True, help="Path to write install config JSON")
     args = parser.parse_args()
     code = run_wizard(Path(args.config))

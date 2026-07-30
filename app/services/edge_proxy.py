@@ -6,7 +6,7 @@ Xray may listen on a different port/security on the origin.
 * ``XRAY_CDN_RUNTIME_ENABLED`` — when True, runtime-only loopback + plain
   transport for grpc/ws/xhttp CDN hosts (default False keeps listen ``0.0.0.0``).
 * ``XRAY_CDN_ORIGIN_NGINX`` — auto-generate **proxy-domain-only** nginx vhosts
-  (``nexuspanel-cdn-*``). Panel HTTPS (``setup_https.sh``) is never touched.
+  (``shahkar-cdn-*``). Panel HTTPS (``setup_https.sh``) is never touched.
 
 Reality/tcp/shadowsocks CDN hosts keep Xray bound publicly; subscription still
 exports the host address/port with correct TLS/Reality params.
@@ -26,12 +26,12 @@ from typing import Any
 from app.subscription.tls_client import is_ip_literal
 from app.xray.inbound_ports import inbound_port, is_product_inbound
 
-logger = logging.getLogger("nexus-cdn")
+logger = logging.getLogger("shahkar-cdn")
 
-EDGE_DIR = Path(os.environ.get("NEXUSPANEL_EDGE_DIR", "/var/lib/nexuspanel/edge"))
+EDGE_DIR = Path(os.environ.get("SHAHKAR_EDGE_DIR", "/var/lib/shahkar/edge"))
 DESIRED_JSON = EDGE_DIR / "desired.json"
 NGINX_STAGING = EDGE_DIR / "nginx" / "sites"
-WEBROOT = Path(os.environ.get("NEXUSPANEL_ACME_WEBROOT", "/var/www/letsencrypt"))
+WEBROOT = Path(os.environ.get("SHAHKAR_ACME_WEBROOT", "/var/www/letsencrypt"))
 RECONCILE_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "reconcile_edge_nginx.sh"
 
 CDN_NGINX_NETWORKS = frozenset({"grpc", "ws", "httpupgrade", "splithttp", "xhttp"})
@@ -71,7 +71,7 @@ class EdgeRoute:
 
     def site_basename(self) -> str:
         safe = _DOMAIN_SAFE.sub("-", self.domain).strip("-") or "cdn"
-        return f"nexuspanel-cdn-{safe}-{self.public_port}"
+        return f"shahkar-cdn-{safe}-{self.public_port}"
 
 
 @dataclass
@@ -427,7 +427,7 @@ def render_nginx_site(routes: list[EdgeRoute]) -> str:
     # re-renders with TLS. Mirrors the subscription renderer's cert fallback.
     tls = _edge_cert_paths(primary.cert_domain)
     if not tls:
-        return f"""# CDN origin (cert pending for {primary.cert_domain}) — managed by NexusPanel
+        return f"""# CDN origin (cert pending for {primary.cert_domain}) — managed by Shahkar
 server {{
     listen 80;
     listen [::]:80;
@@ -448,7 +448,7 @@ server {{
     )
     proxy_blocks = "\n\n".join(_nginx_proxy_block(route) for route in routes)
 
-    return f"""# CDN origin TLS → Xray ({tags}) — managed by NexusPanel (not the panel web vhost)
+    return f"""# CDN origin TLS → Xray ({tags}) — managed by Shahkar (not the panel web vhost)
 server {{
     listen 80;
     listen [::]:80;
@@ -491,7 +491,7 @@ def build_desired_state(routes: list[EdgeRoute]) -> dict[str, Any]:
     merged_routes: list[EdgeRoute] = []
     for (domain, public_port), group in grouped.items():
         safe = _DOMAIN_SAFE.sub("-", domain).strip("-") or "cdn"
-        basename = f"nexuspanel-cdn-{safe}-{public_port}"
+        basename = f"shahkar-cdn-{safe}-{public_port}"
         sites[basename] = render_nginx_site(group)
         merged_routes.extend(group)
     return {
@@ -566,12 +566,12 @@ def _host_script_path(script: Path) -> str:
     """Map a container script path to the Docker host path.
 
     Postgres compose mounts the repo at ``/code`` while the host path is
-    typically ``/opt/nexuspanel``. Reconcile must run on the host so it can
+    typically ``/opt/shahkar``. Reconcile must run on the host so it can
     see nginx/certbot under ``/etc``.
     """
     resolved = str(script.resolve())
     if resolved.startswith("/code/"):
-        host_root = os.environ.get("NEXUSPANEL_HOST_ROOT", "/opt/nexuspanel").rstrip("/")
+        host_root = os.environ.get("SHAHKAR_HOST_ROOT", "/opt/shahkar").rstrip("/")
         return f"{host_root}/{resolved[len('/code/'):]}"
     return resolved
 
@@ -596,7 +596,7 @@ def _privileged_reconcile_script(script: Path) -> tuple[bool, str]:
     short-lived privileged helper container (docker.sock is mounted).
     """
     host_script = _host_script_path(script)
-    helper_image = os.environ.get("NEXUSPANEL_HOST_HELPER_IMAGE", "alpine:3.20")
+    helper_image = os.environ.get("SHAHKAR_HOST_HELPER_IMAGE", "alpine:3.20")
     cmd = [
         "docker",
         "run",
@@ -789,7 +789,7 @@ SUB_LEGACY_DIR = EDGE_DIR / "subscription"
 SUB_LEGACY_STAGING = SUB_LEGACY_DIR / "nginx" / "sites"
 SUB_LEGACY_JSON = SUB_LEGACY_DIR / "desired.json"
 SUB_LEGACY_BACKEND = os.environ.get(
-    "NEXUSPANEL_SUB_BACKEND", "http://127.0.0.1:8000"
+    "SHAHKAR_SUB_BACKEND", "http://127.0.0.1:8000"
 )
 SUB_LEGACY_RECONCILE_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "reconcile_subscription_nginx.sh"
 
@@ -813,7 +813,7 @@ def _subscription_tls_cert_paths(host: str) -> tuple[str, str] | None:
         pass
     # Reconcile / ensure_https stages a :443 vhost only after certbot succeeds.
     safe = _DOMAIN_SAFE.sub("-", domain).strip("-") or "legacy"
-    https_key = f"nexuspanel-sub-https-{safe}"
+    https_key = f"shahkar-sub-https-{safe}"
     if (SUB_LEGACY_STAGING / f"{https_key}.conf").is_file():
         return str(cert), str(key)
     if SUB_LEGACY_JSON.is_file():
@@ -828,7 +828,7 @@ def _subscription_tls_cert_paths(host: str) -> tuple[str, str] | None:
 
 def _render_subscription_acme_site(host: str) -> str:
     """Port 80 vhost for ACME HTTP-01 and HTTP→HTTPS redirect."""
-    return f"""# Subscription domain ACME — managed by NexusPanel
+    return f"""# Subscription domain ACME — managed by Shahkar
 server {{
     listen 80;
     listen [::]:80;
@@ -852,7 +852,7 @@ def _render_subscription_panel_https_site(host: str) -> str:
     if not tls:
         return ""
     cert, key = tls
-    return f"""# Subscription domain HTTPS (443) — managed by NexusPanel
+    return f"""# Subscription domain HTTPS (443) — managed by Shahkar
 server {{
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
@@ -876,7 +876,7 @@ server {{
         charset utf-8;
         add_header Cache-Control "no-store" always;
         add_header Retry-After "2" always;
-        root /var/lib/nexuspanel/nginx/html;
+        root /var/lib/shahkar/nginx/html;
         rewrite ^ /restarting.html break;
     }}
 
@@ -956,7 +956,7 @@ def _render_subscription_legacy_site(
     else:
         listen_directive = f"""    listen {listen_port};
     listen [::]:{listen_port};"""
-    return f"""# Legacy 3x-ui subscription port — managed by NexusPanel
+    return f"""# Legacy 3x-ui subscription port — managed by Shahkar
 server {{
 {listen_directive}
     server_name {server_name};
@@ -969,7 +969,7 @@ server {{
         charset utf-8;
         add_header Cache-Control "no-store" always;
         add_header Retry-After "2" always;
-        root /var/lib/nexuspanel/nginx/html;
+        root /var/lib/shahkar/nginx/html;
         rewrite ^ /restarting.html break;
     }}
 {locations}
@@ -993,7 +993,7 @@ def force_reload_subscription_nginx() -> tuple[bool, str]:
     # Prefer the privileged host path first — the panel container usually has no
     # live nginx master to HUP, so an in-container --reload-only is a no-op.
     host_script = _host_script_path(script)
-    helper_image = os.environ.get("NEXUSPANEL_HOST_HELPER_IMAGE", "alpine:3.20")
+    helper_image = os.environ.get("SHAHKAR_HOST_HELPER_IMAGE", "alpine:3.20")
     try:
         proc = subprocess.run(
             [
@@ -1198,7 +1198,7 @@ def subscription_domain_ssl_status(host: str) -> dict[str, Any]:
     dns = check_subscription_domain_dns(domain)
     cert_present = _subscription_tls_cert_paths(domain) is not None
     safe = _DOMAIN_SAFE.sub("-", domain).strip("-") or "legacy"
-    https_key = f"nexuspanel-sub-https-{safe}"
+    https_key = f"shahkar-sub-https-{safe}"
     https_name = f"{https_key}.conf"
     https_staged = (SUB_LEGACY_STAGING / https_name).is_file()
     if not https_staged and SUB_LEGACY_JSON.is_file():
@@ -1216,8 +1216,8 @@ def subscription_domain_ssl_status(host: str) -> dict[str, Any]:
         if (enabled_dir / https_name).exists():
             https_live = True
         else:
-            # Panel dashboard vhosts use nexuspanel-panel-https-<domain>.conf
-            for path in enabled_dir.glob("nexuspanel-*-https-*.conf"):
+            # Panel dashboard vhosts use shahkar-panel-https-<domain>.conf
+            for path in enabled_dir.glob("shahkar-*-https-*.conf"):
                 if safe in path.name:
                     https_live = True
                     break
@@ -1301,17 +1301,17 @@ def _build_subscription_sites(
         safe = _DOMAIN_SAFE.sub("-", host).strip("-") or "legacy"
         own_tls = _subscription_tls_cert_paths(host)
         if host and host != "_":
-            site_map[f"nexuspanel-sub-acme-{safe}"] = _render_subscription_acme_site(host)
+            site_map[f"shahkar-sub-acme-{safe}"] = _render_subscription_acme_site(host)
         if own_tls:
-            site_map[f"nexuspanel-sub-{safe}-{port}"] = _render_subscription_legacy_site(
+            site_map[f"shahkar-sub-{safe}-{port}"] = _render_subscription_legacy_site(
                 host, port, prefixes, tls=own_tls
             )
             https_body = _render_subscription_panel_https_site(host)
             if https_body:
-                site_map[f"nexuspanel-sub-https-{safe}"] = https_body
+                site_map[f"shahkar-sub-https-{safe}"] = https_body
         elif port not in ports_needing_tls:
             # Plain HTTP legacy port is fine until the first cert appears on this port.
-            site_map[f"nexuspanel-sub-{safe}-{port}"] = _render_subscription_legacy_site(
+            site_map[f"shahkar-sub-{safe}-{port}"] = _render_subscription_legacy_site(
                 host, port, prefixes, tls=None
             )
         else:
@@ -1326,10 +1326,10 @@ def _build_subscription_sites(
         if not host or host == "_":
             continue
         safe = _DOMAIN_SAFE.sub("-", host).strip("-") or "legacy"
-        site_map[f"nexuspanel-sub-acme-{safe}"] = _render_subscription_acme_site(host)
+        site_map[f"shahkar-sub-acme-{safe}"] = _render_subscription_acme_site(host)
         https_body = _render_subscription_panel_https_site(host)
         if https_body:
-            site_map[f"nexuspanel-sub-https-{safe}"] = https_body
+            site_map[f"shahkar-sub-https-{safe}"] = https_body
     return site_map
 
 

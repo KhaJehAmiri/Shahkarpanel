@@ -147,7 +147,7 @@ export const OutboundPoolDialog: FC<{
       title={t("outboundPool.title")}
       onClose={onClose}
       footer={
-        <div className="nx-row" style={{ gap: 8, justifyContent: "flex-end", width: "100%" }}>
+        <div className="sk-row" style={{ gap: 8, justifyContent: "flex-end", width: "100%" }}>
           <Button variant="ghost" onClick={onClose} disabled={busy}>
             {t("common.cancel")}
           </Button>
@@ -157,7 +157,7 @@ export const OutboundPoolDialog: FC<{
         </div>
       }
     >
-      <div className="nx-stack" style={{ gap: 16 }}>
+      <div className="sk-stack" style={{ gap: 16 }}>
         <Callout tone="info">{t("outboundPool.about")}</Callout>
 
         {presets.error && (
@@ -185,7 +185,7 @@ export const OutboundPoolDialog: FC<{
           <Input
             value={balancerTag}
             onChange={(e: ChangeEvent<HTMLInputElement>) => setBalancerTag(e.target.value)}
-            className="nx-mono"
+            className="sk-mono"
             dir="ltr"
           />
         </Field>
@@ -208,14 +208,14 @@ export const OutboundPoolDialog: FC<{
         </Field>
 
         <Field label={t("outboundPool.upstreams")} hint={t("outboundPool.upstreamsHint")}>
-          <div className="nx-stack" style={{ gap: 8 }}>
+          <div className="sk-stack" style={{ gap: 8 }}>
             {rows.map((row, idx) => (
-              <div key={idx} className="nx-row" style={{ gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+              <div key={idx} className="sk-row" style={{ gap: 6, flexWrap: "wrap", alignItems: "center" }}>
                 <Input
                   value={row.address}
                   onChange={(e) => updateRow(idx, { address: e.target.value })}
                   placeholder={t("outboundPool.address")}
-                  className="nx-mono"
+                  className="sk-mono"
                   dir="ltr"
                   style={{ minWidth: 140, flex: 1 }}
                 />
@@ -223,7 +223,7 @@ export const OutboundPoolDialog: FC<{
                   value={row.port}
                   onChange={(e) => updateRow(idx, { port: e.target.value })}
                   placeholder={t("outboundPool.port")}
-                  className="nx-mono"
+                  className="sk-mono"
                   dir="ltr"
                   style={{ width: 88 }}
                 />
@@ -231,7 +231,7 @@ export const OutboundPoolDialog: FC<{
                   value={row.user}
                   onChange={(e) => updateRow(idx, { user: e.target.value })}
                   placeholder={t("outboundPool.user")}
-                  className="nx-mono"
+                  className="sk-mono"
                   dir="ltr"
                   style={{ width: 100 }}
                 />
@@ -240,7 +240,7 @@ export const OutboundPoolDialog: FC<{
                   onChange={(e) => updateRow(idx, { pass: e.target.value })}
                   placeholder={t("outboundPool.pass")}
                   type="password"
-                  className="nx-mono"
+                  className="sk-mono"
                   dir="ltr"
                   style={{ width: 100 }}
                 />
@@ -255,7 +255,7 @@ export const OutboundPoolDialog: FC<{
           </div>
         </Field>
 
-        <label className="nx-row" style={{ gap: 8, alignItems: "center", cursor: "pointer" }}>
+        <label className="sk-row" style={{ gap: 8, alignItems: "center", cursor: "pointer" }}>
           <input
             type="checkbox"
             checked={enableObservatory}
@@ -264,7 +264,7 @@ export const OutboundPoolDialog: FC<{
           <span>{t("outboundPool.enableObservatory")}</span>
         </label>
 
-        <label className="nx-row" style={{ gap: 8, alignItems: "center", cursor: "pointer" }}>
+        <label className="sk-row" style={{ gap: 8, alignItems: "center", cursor: "pointer" }}>
           <input
             type="checkbox"
             checked={addRoutingRule}
@@ -278,5 +278,5 @@ export const OutboundPoolDialog: FC<{
 };
 
 const TextMuted: FC<{ children: ReactNode }> = ({ children }) => (
-  <div style={{ fontSize: 13, color: "var(--nx-muted)" }}>{children}</div>
+  <div style={{ fontSize: 13, color: "var(--sk-muted)" }}>{children}</div>
 );

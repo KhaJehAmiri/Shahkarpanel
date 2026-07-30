@@ -1,71 +1,85 @@
 #!/bin/bash
 set -euo pipefail
 
+# Resolve panel unix user by name, else by uid 1000 (image may still use an older username).
+if id shahkar >/dev/null 2>&1; then
+  PANEL_USER=shahkar
+else
+  PANEL_USER="$(getent passwd 1000 2>/dev/null | cut -d: -f1 || true)"
+  if [ -z "${PANEL_USER}" ]; then
+    PANEL_USER=1000
+  fi
+fi
+PANEL_GROUP="$PANEL_USER"
+
+# Compatibility for configs that still reference the old data path
+
+
 fix_runtime_permissions() {
-  if [ -f /var/lib/nexuspanel/.env ]; then
-    chown nexuspanel:nexuspanel /var/lib/nexuspanel/.env 2>/dev/null || true
-    chmod 600 /var/lib/nexuspanel/.env 2>/dev/null || true
+  if [ -f /var/lib/shahkar/.env ]; then
+    chown "$PANEL_USER:$PANEL_GROUP" /var/lib/shahkar/.env 2>/dev/null || true
+    chmod 600 /var/lib/shahkar/.env 2>/dev/null || true
   fi
-  if [ -f /var/lib/nexuspanel/xray_config.json ]; then
-    chown nexuspanel:nexuspanel /var/lib/nexuspanel/xray_config.json 2>/dev/null || true
-    chmod 664 /var/lib/nexuspanel/xray_config.json 2>/dev/null || true
+  if [ -f /var/lib/shahkar/xray_config.json ]; then
+    chown "$PANEL_USER:$PANEL_GROUP" /var/lib/shahkar/xray_config.json 2>/dev/null || true
+    chmod 664 /var/lib/shahkar/xray_config.json 2>/dev/null || true
   fi
-  if [ -f /var/lib/nexuspanel/install-meta.json ]; then
-    chown nexuspanel:nexuspanel /var/lib/nexuspanel/install-meta.json 2>/dev/null || true
-    chmod 664 /var/lib/nexuspanel/install-meta.json 2>/dev/null || true
+  if [ -f /var/lib/shahkar/install-meta.json ]; then
+    chown "$PANEL_USER:$PANEL_GROUP" /var/lib/shahkar/install-meta.json 2>/dev/null || true
+    chmod 664 /var/lib/shahkar/install-meta.json 2>/dev/null || true
   fi
-  mkdir -p /var/lib/nexuspanel/backups
-  chown -R nexuspanel:nexuspanel /var/lib/nexuspanel/backups 2>/dev/null || true
-  mkdir -p /var/lib/nexuspanel/backups/migrations
-  chown -R nexuspanel:nexuspanel /var/lib/nexuspanel/backups/migrations 2>/dev/null || true
-  mkdir -p /var/lib/nexuspanel/migrations
-  chown -R nexuspanel:nexuspanel /var/lib/nexuspanel/migrations 2>/dev/null || true
-  mkdir -p /var/lib/nexuspanel/xray-tls
-  chown -R nexuspanel:nexuspanel /var/lib/nexuspanel/xray-tls 2>/dev/null || true
-  chmod 750 /var/lib/nexuspanel/xray-tls 2>/dev/null || true
-  mkdir -p /var/lib/nexuspanel/xray-config-history
-  chown -R nexuspanel:nexuspanel /var/lib/nexuspanel/xray-config-history 2>/dev/null || true
-  mkdir -p /var/lib/nexuspanel/edge/nginx/sites
-  chown -R nexuspanel:nexuspanel /var/lib/nexuspanel/edge 2>/dev/null || true
-  chmod -R u+rwX,g+rwX /var/lib/nexuspanel/edge 2>/dev/null || true
-  mkdir -p /var/lib/nexuspanel/nginx/html
-  chmod -R a+rX /var/lib/nexuspanel/nginx 2>/dev/null || true
+  mkdir -p /var/lib/shahkar/backups
+  chown -R "$PANEL_USER:$PANEL_GROUP" /var/lib/shahkar/backups 2>/dev/null || true
+  mkdir -p /var/lib/shahkar/backups/migrations
+  chown -R "$PANEL_USER:$PANEL_GROUP" /var/lib/shahkar/backups/migrations 2>/dev/null || true
+  mkdir -p /var/lib/shahkar/migrations
+  chown -R "$PANEL_USER:$PANEL_GROUP" /var/lib/shahkar/migrations 2>/dev/null || true
+  mkdir -p /var/lib/shahkar/xray-tls
+  chown -R "$PANEL_USER:$PANEL_GROUP" /var/lib/shahkar/xray-tls 2>/dev/null || true
+  chmod 750 /var/lib/shahkar/xray-tls 2>/dev/null || true
+  mkdir -p /var/lib/shahkar/xray-config-history
+  chown -R "$PANEL_USER:$PANEL_GROUP" /var/lib/shahkar/xray-config-history 2>/dev/null || true
+  mkdir -p /var/lib/shahkar/edge/nginx/sites
+  chown -R "$PANEL_USER:$PANEL_GROUP" /var/lib/shahkar/edge 2>/dev/null || true
+  chmod -R u+rwX,g+rwX /var/lib/shahkar/edge 2>/dev/null || true
+  mkdir -p /var/lib/shahkar/nginx/html
+  chmod -R a+rX /var/lib/shahkar/nginx 2>/dev/null || true
   # Node SSH secrets (control-tunnel key/password fallback, app/provisioning/node_ssh.py).
   # These are frequently created/rotated by root (host SSH sessions, setup scripts run
-  # as root) while the panel process itself runs as nexuspanel (runuser below) — an
+  # as root) while the panel process itself runs as shahkar (runuser below) — an
   # owner mismatch here silently disables the SSH control-tunnel fallback (permission
   # denied is swallowed by a broad except-Exception in has_ssh_for_host), which then
   # looks like a flaky node connection instead of a config problem. Reclaim ownership
   # on every boot so this never depends on which user created the files.
-  if [ -d /var/lib/nexuspanel/secrets ]; then
-    chown -R nexuspanel:nexuspanel /var/lib/nexuspanel/secrets 2>/dev/null || true
-    chmod 700 /var/lib/nexuspanel/secrets 2>/dev/null || true
-    find /var/lib/nexuspanel/secrets -maxdepth 1 -type f -exec chmod 600 {} + 2>/dev/null || true
+  if [ -d /var/lib/shahkar/secrets ]; then
+    chown -R "$PANEL_USER:$PANEL_GROUP" /var/lib/shahkar/secrets 2>/dev/null || true
+    chmod 700 /var/lib/shahkar/secrets 2>/dev/null || true
+    find /var/lib/shahkar/secrets -maxdepth 1 -type f -exec chmod 600 {} + 2>/dev/null || true
   fi
   if [ -d /code/.git ]; then
-    chown -R nexuspanel:nexuspanel /code 2>/dev/null || true
+    chown -R "$PANEL_USER:$PANEL_GROUP" /code 2>/dev/null || true
   elif [ -f /code/.env ]; then
-    chown nexuspanel:nexuspanel /code/.env 2>/dev/null || true
+    chown "$PANEL_USER:$PANEL_GROUP" /code/.env 2>/dev/null || true
     chmod 600 /code/.env 2>/dev/null || true
   fi
-  # In-panel Xray upgrade/downgrade runs as nexuspanel (not root).
+  # In-panel Xray upgrade/downgrade runs as shahkar (not root).
   # /usr/local/bin is not writable for that user, so keep a private copy under
-  # /var/lib/nexuspanel/bin (see app/utils/xray_upgrade.py fallback paths).
-  mkdir -p /var/lib/nexuspanel/bin /var/lib/nexuspanel/share/xray
-  if [ -x /usr/local/bin/xray ] && [ ! -x /var/lib/nexuspanel/bin/xray ]; then
-    cp -f /usr/local/bin/xray /var/lib/nexuspanel/bin/xray 2>/dev/null || true
-    chmod 755 /var/lib/nexuspanel/bin/xray 2>/dev/null || true
+  # /var/lib/shahkar/bin (see app/utils/xray_upgrade.py fallback paths).
+  mkdir -p /var/lib/shahkar/bin /var/lib/shahkar/share/xray
+  if [ -x /usr/local/bin/xray ] && [ ! -x /var/lib/shahkar/bin/xray ]; then
+    cp -f /usr/local/bin/xray /var/lib/shahkar/bin/xray 2>/dev/null || true
+    chmod 755 /var/lib/shahkar/bin/xray 2>/dev/null || true
   fi
   if [ -d /usr/local/share/xray ]; then
     for dat in /usr/local/share/xray/*.dat; do
       [ -f "$dat" ] || continue
       base="$(basename "$dat")"
-      if [ ! -f "/var/lib/nexuspanel/share/xray/$base" ]; then
-        cp -f "$dat" "/var/lib/nexuspanel/share/xray/$base" 2>/dev/null || true
+      if [ ! -f "/var/lib/shahkar/share/xray/$base" ]; then
+        cp -f "$dat" "/var/lib/shahkar/share/xray/$base" 2>/dev/null || true
       fi
     done
   fi
-  chown -R nexuspanel:nexuspanel /var/lib/nexuspanel/bin /var/lib/nexuspanel/share/xray 2>/dev/null || true
+  chown -R "$PANEL_USER:$PANEL_GROUP" /var/lib/shahkar/bin /var/lib/shahkar/share/xray 2>/dev/null || true
 }
 
 # Skip full ``alembic upgrade`` when already at head — cold upgrade takes ~6s+
@@ -82,7 +96,7 @@ def db_url() -> str:
     url = os.environ.get("SQLALCHEMY_DATABASE_URL") or os.environ.get("DATABASE_URL") or ""
     if url:
         return url
-    for path in (Path("/var/lib/nexuspanel/.env"), Path("/code/.env")):
+    for path in (Path("/var/lib/shahkar/.env"), Path("/code/.env")):
         if not path.is_file():
             continue
         for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -127,7 +141,7 @@ PY
 }
 
 # ``runuser`` drops all supplementary groups and rebuilds the group list purely
-# from nexuspanel's own /etc/group membership (initgroups), so compose's
+# from shahkar's own /etc/group membership (initgroups), so compose's
 # ``group_add: [DOCKER_GID]`` — granted only to this root entrypoint process —
 # never reaches the unprivileged app process. Without docker.sock access the
 # app's own privileged-kill escalation (root-owned stray Xray from an
@@ -148,7 +162,16 @@ fix_docker_socket_group() {
     groupadd -g "$sock_gid" dockerhost 2>/dev/null || true
     grp_name="dockerhost"
   fi
-  usermod -aG "$grp_name" nexuspanel 2>/dev/null || true
+  # Use resolved PANEL_USER (shahkar on new images, shahkar on older ones).
+  # Hardcoding ``shahkar`` silently no-ops on legacy images → app loses docker.sock
+  # after runuser rebuilds groups from /etc/group, and branding domain reconcile fails.
+  usermod -aG "$grp_name" "$PANEL_USER" 2>/dev/null || true
+  # Best-effort for whichever alias exists in this image.
+  for _u in shahkar; do
+    if [ "$_u" != "$PANEL_USER" ] && id "$_u" >/dev/null 2>&1; then
+      usermod -aG "$grp_name" "$_u" 2>/dev/null || true
+    fi
+  done
   return 0
 }
 
@@ -185,13 +208,13 @@ if [ "$(id -u)" -eq 0 ]; then
   # Skip when compose created a stub directory for a missing host nginx binary.
   if [ -f /usr/sbin/nginx ] && [ ! -d /usr/sbin/nginx ] \
     && [ -f /code/scripts/ensure_nginx_restarting_page.sh ]; then
-    bash /code/scripts/ensure_nginx_restarting_page.sh >>/var/lib/nexuspanel/ensure-nginx-restarting.log 2>&1 || true
+    bash /code/scripts/ensure_nginx_restarting_page.sh >>/var/lib/shahkar/ensure-nginx-restarting.log 2>&1 || true
   fi
   if [ "${1:-panel}" = "panel" ]; then
-    # Re-enter this script as nexuspanel so migrate+main share one code path.
-    exec runuser -u nexuspanel -- bash /code/docker-entrypoint.sh panel
+    # Re-enter this script as shahkar so migrate+main share one code path.
+    exec runuser -u "$PANEL_USER" -- bash /code/docker-entrypoint.sh panel
   fi
-  exec runuser -u nexuspanel -- "$@"
+  exec runuser -u "$PANEL_USER" -- "$@"
 fi
 
 if [ "${1:-panel}" = "panel" ]; then

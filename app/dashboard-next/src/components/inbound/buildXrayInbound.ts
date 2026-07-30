@@ -12,7 +12,7 @@ import type {
 } from "./types";
 import { findProtocolDef } from "./types";
 
-const NXPANEL_INBOUND_KIND = "nexusPanelKind";
+const SHAHKAR_INBOUND_KIND = "shahkarPanelKind";
 
 function omitEmpty<T extends Record<string, unknown>>(obj: T): T {
   const out = { ...obj };
@@ -393,7 +393,7 @@ function buildProtocolSettings(
         domainStrategy: wg.domainStrategy.trim() || undefined,
       });
       if (proto === "amneziawg") {
-        settings[NXPANEL_INBOUND_KIND] = "amneziawg";
+        settings[SHAHKAR_INBOUND_KIND] = "amneziawg";
         try {
           const extra = JSON.parse(state.amneziaExtraJson) as Record<string, unknown>;
           Object.assign(settings, extra);

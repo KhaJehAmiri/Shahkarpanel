@@ -81,7 +81,7 @@ class AgentUpdateCheckResponse(BaseModel):
     package_error: Optional[str] = None
     mirror_url: Optional[str] = None
     mirror_reachable: bool = False
-    agent_image: str = "nexuspanel/node:latest"
+    agent_image: str = "shahkar/node:latest"
     nodes_total: int = 0
     nodes_eligible: int = 0
     nodes_skipped: int = 0
@@ -121,7 +121,7 @@ class NodeXrayVersionBody(BaseModel):
 
 class PanelVersionInfo(BaseModel):
     version: str
-    product: str = "NexusPanel"
+    product: str = "Shahkar"
 
 
 class XrayUpgradeBody(BaseModel):

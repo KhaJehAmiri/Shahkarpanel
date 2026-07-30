@@ -8,6 +8,27 @@ export const setPortalToken = (t: string) => localStorage.setItem(TOKEN_KEY, t);
 
 export const clearPortalToken = () => localStorage.removeItem(TOKEN_KEY);
 
+export const PORTAL_UNAUTHORIZED_EVENT = "sk-portal-unauthorized";
+
+/** A 401 anywhere means the session is gone — tell the app to show the login. */
+function onUnauthorized() {
+  clearPortalToken();
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent(PORTAL_UNAUTHORIZED_EVENT));
+  }
+}
+
+async function errorFromResponse(res: Response): Promise<Error> {
+  let msg = `HTTP ${res.status}`;
+  try {
+    const j = await res.json();
+    if (j.detail) msg = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail);
+  } catch {
+    /* ignore */
+  }
+  return new Error(msg);
+}
+
 function apiUrl(path: string): string {
   const base = API_BASE.endsWith("/") ? API_BASE.slice(0, -1) : API_BASE;
   const p = path.startsWith("/") ? path : `/${path}`;
@@ -37,17 +58,11 @@ async function portalFetch<T>(
 
   const res = await fetch(apiUrl(path), { method, headers, body: payload });
   if (res.status === 401) {
-    clearPortalToken();
+    // The login form itself must not trigger a global session reset.
+    if (!path.endsWith("/portal/token")) onUnauthorized();
     throw new Error("401");
   }
-  if (!res.ok) {
-    let msg = `HTTP ${res.status}`;
-    try {
-      const j = await res.json();
-      if (j.detail) msg = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail);
-    } catch { /* ignore */ }
-    throw new Error(msg);
-  }
+  if (!res.ok) throw await errorFromResponse(res);
   if (res.status === 204) return undefined as T;
   return res.json();
 }
@@ -74,16 +89,39 @@ export async function portalPost<T>(path: string, body: object): Promise<T> {
     body: JSON.stringify(body),
   });
   if (res.status === 401) {
-    clearPortalToken();
+    onUnauthorized();
     throw new Error("401");
   }
-  if (!res.ok) {
-    let msg = `HTTP ${res.status}`;
-    try {
-      const j = await res.json();
-      if (j.detail) msg = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail);
-    } catch { /* ignore */ }
-    throw new Error(msg);
+  if (!res.ok) throw await errorFromResponse(res);
+  if (res.status === 204) return undefined as T;
+  return res.json();
+}
+
+/** Multipart upload (card receipt). Do not set Content-Type — browser sets boundary. */
+export async function portalUpload<T>(path: string, form: FormData): Promise<T> {
+  const headers: Record<string, string> = {};
+  const token = getPortalToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(apiUrl(path), { method: "POST", headers, body: form });
+  if (res.status === 401) {
+    onUnauthorized();
+    throw new Error("401");
   }
+  if (!res.ok) throw await errorFromResponse(res);
+  if (res.status === 204) return undefined as T;
+  return res.json();
+}
+
+export async function portalDelete<T>(path: string): Promise<T> {
+  const headers: Record<string, string> = {};
+  const token = getPortalToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(apiUrl(path), { method: "DELETE", headers });
+  if (res.status === 401) {
+    onUnauthorized();
+    throw new Error("401");
+  }
+  if (!res.ok) throw await errorFromResponse(res);
+  if (res.status === 204) return undefined as T;
   return res.json();
 }

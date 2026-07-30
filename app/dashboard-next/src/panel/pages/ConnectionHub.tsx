@@ -78,8 +78,8 @@ export const ConnectionHub: FC = () => {
           );
         }
         return (
-          <div className="nx-stack nx-hub-panel">
-            <p className="nx-hub-lede">
+          <div className="sk-stack sk-hub-panel">
+            <p className="sk-hub-lede">
               <strong>{t("hub.inboundHintTitle")}. </strong>
               {t("hub.inboundHintBody")}
             </p>

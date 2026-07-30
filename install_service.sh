@@ -1,18 +1,18 @@
 #!/bin/bash
-# Install (or refresh) the nexuspanel systemd unit for a non-Docker deployment.
+# Install (or refresh) the shahkar systemd unit for a non-Docker deployment.
 # The panel binds to 127.0.0.1 (see .env UVICORN_HOST); put nginx in front for
 # TLS with: sudo scripts/setup_https.sh
 set -euo pipefail
 
-SERVICE_NAME="nexuspanel"
+SERVICE_NAME="shahkar"
 APP_DIR="$(cd "$(dirname "$0")" && pwd)"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 PYTHON_BIN="$(command -v python3 || echo /usr/bin/python3)"
 
 cat > "$SERVICE_FILE" <<EOF
 [Unit]
-Description=NexusPanel
-Documentation=https://github.com/KhaJehAmiri/nexuspanel
+Description=Shahkar
+Documentation=https://github.com/KhaJehAmiri/shahkar
 Wants=network-online.target
 After=network-online.target nss-lookup.target
 # Never give up restarting: a proxy panel must stay up.

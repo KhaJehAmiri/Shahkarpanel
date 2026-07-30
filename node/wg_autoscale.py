@@ -17,7 +17,7 @@ try:
 except ImportError:
     from node.wireguard import ephemeral_psk_file
 
-logger = logging.getLogger("nexus-node-wg-autoscale")
+logger = logging.getLogger("shahkar-node-wg-autoscale")
 
 # Soft-disable: keep the peer entry but black-hole traffic. Prefer a host
 # loopback /32 — some ``wg``/``awg`` builds reject ``0.0.0.0/32``.

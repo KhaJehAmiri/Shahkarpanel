@@ -5,7 +5,7 @@ from .bus import Event, Sink
 
 logger = logging.getLogger("uvicorn.error")
 
-STREAM_KEY = "nexuspanel:events"
+STREAM_KEY = "shahkar:events"
 STREAM_MAXLEN = 50_000
 
 

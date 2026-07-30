@@ -91,15 +91,15 @@ export const System: FC = () => {
   };
 
   return (
-    <div className="nx-page">
+    <div className="sk-page">
       <PageHeader title={t("system.title")} subtitle={t("system.subtitle")} description={t("system.description")} />
       {groups.length > 1 && (
-        <div className="nx-system-groups">
+        <div className="sk-system-groups">
           {groups.map((g) => (
             <button
               key={g.id}
               type="button"
-              className={`nx-system-group-btn ${group === g.id ? "active" : ""}`}
+              className={`sk-system-group-btn ${group === g.id ? "active" : ""}`}
               onClick={() => onGroup(g.id)}
             >
               {g.label}
@@ -111,7 +111,7 @@ export const System: FC = () => {
       {tab === "flags" && <FlagsTab />}
       {tab === "commercial" && (
         <Callout tone="info" title={t("system.commercialMovedTitle")}>
-          <div className="nx-stack" style={{ gap: 12 }}>
+          <div className="sk-stack" style={{ gap: 12 }}>
             <span>{t("system.commercialMovedBody")}</span>
             <div>
               <Link to="/billing?billingTab=settings">
@@ -122,7 +122,7 @@ export const System: FC = () => {
         </Callout>
       )}
       {tab === "updates" && (
-        <div className="nx-stack" style={{ gap: 16 }}>
+        <div className="sk-stack" style={{ gap: 16 }}>
           <UpdatesTab />
           <AgentAgentsTab />
         </div>
@@ -160,19 +160,19 @@ const FlagsTab: FC = () => {
   if (error) return <EmptyState title={t("common.error")} desc={error} />;
 
   return (
-    <div className="nx-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))" }}>
+    <div className="sk-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))" }}>
       {data?.map((flag) => (
         <Card key={flag.name}>
-          <div className="nx-row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div className="sk-row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
             <div style={{ flex: 1 }}>
-              <div className="nx-row" style={{ gap: 8 }}>
-                <span className="nx-code">{flag.name}</span>
+              <div className="sk-row" style={{ gap: 8 }}>
+                <span className="sk-code">{flag.name}</span>
                 {flag.enabled !== flag.default && <Pill tone="accent">{t("system.flagOverride")}</Pill>}
               </div>
-              <div className="nx-muted" style={{ fontSize: 12.5, marginTop: 8 }}>
+              <div className="sk-muted" style={{ fontSize: 12.5, marginTop: 8 }}>
                 {t(flag.label_key, { defaultValue: flag.description || flag.name })}
               </div>
-              <div className="nx-faint" style={{ fontSize: 11, marginTop: 6 }}>{t("system.flagDefault", { v: flag.default ? "on" : "off" })}</div>
+              <div className="sk-faint" style={{ fontSize: 11, marginTop: 6 }}>{t("system.flagDefault", { v: flag.default ? "on" : "off" })}</div>
             </div>
             <Toggle on={flag.enabled} onChange={() => toggle(flag)} />
           </div>
@@ -189,26 +189,26 @@ const DeploymentTab: FC = () => {
   if (error) return <EmptyState title={t("common.error")} desc={error} />;
   return (
     <Card>
-      <div className="nx-stack" style={{ gap: 10 }}>
-        <div className="nx-row" style={{ justifyContent: "space-between" }}>
-          <span className="nx-muted">{t("system.panelRegion")}</span>
+      <div className="sk-stack" style={{ gap: 10 }}>
+        <div className="sk-row" style={{ justifyContent: "space-between" }}>
+          <span className="sk-muted">{t("system.panelRegion")}</span>
           <Pill tone="accent">{data?.panel_region}</Pill>
         </div>
-        <div className="nx-row" style={{ justifyContent: "space-between" }}>
-          <span className="nx-muted">{t("system.detectedBy")}</span>
-          <span className="nx-code">{data?.detected_by}</span>
+        <div className="sk-row" style={{ justifyContent: "space-between" }}>
+          <span className="sk-muted">{t("system.detectedBy")}</span>
+          <span className="sk-code">{data?.detected_by}</span>
         </div>
-        <div className="nx-row" style={{ justifyContent: "space-between" }}>
-          <span className="nx-muted">{t("system.deployIp")}</span>
-          <span className="nx-code">{data?.public_ip || "—"}</span>
+        <div className="sk-row" style={{ justifyContent: "space-between" }}>
+          <span className="sk-muted">{t("system.deployIp")}</span>
+          <span className="sk-code">{data?.public_ip || "—"}</span>
         </div>
-        <div className="nx-row" style={{ justifyContent: "space-between" }}>
-          <span className="nx-muted">{t("system.gitSha")}</span>
-          <span className="nx-code">{data?.git_sha || "—"}</span>
+        <div className="sk-row" style={{ justifyContent: "space-between" }}>
+          <span className="sk-muted">{t("system.gitSha")}</span>
+          <span className="sk-code">{data?.git_sha || "—"}</span>
         </div>
-        <div className="nx-row" style={{ justifyContent: "space-between" }}>
-          <span className="nx-muted">{t("system.xrayLocal")}</span>
-          <span className="nx-faint" style={{ fontSize: 12 }}>{data?.xray_local_version || "—"}</span>
+        <div className="sk-row" style={{ justifyContent: "space-between" }}>
+          <span className="sk-muted">{t("system.xrayLocal")}</span>
+          <span className="sk-faint" style={{ fontSize: 12 }}>{data?.xray_local_version || "—"}</span>
         </div>
       </div>
     </Card>
@@ -292,10 +292,10 @@ const XrayCoreTab: FC = () => {
   return (
     <Card>
       <CardHead title={t("system.tabXray")} desc={t("system.xrayTabDesc")} />
-      <div className="nx-stack" style={{ gap: 14 }}>
-        <div className="nx-row" style={{ justifyContent: "space-between" }}>
-          <span className="nx-muted">{t("system.xrayPanelLocal")}</span>
-          <span className="nx-code" style={{ fontSize: 12 }}>{deploy.data?.xray_local_version || "—"}</span>
+      <div className="sk-stack" style={{ gap: 14 }}>
+        <div className="sk-row" style={{ justifyContent: "space-between" }}>
+          <span className="sk-muted">{t("system.xrayPanelLocal")}</span>
+          <span className="sk-code" style={{ fontSize: 12 }}>{deploy.data?.xray_local_version || "—"}</span>
         </div>
         <Field label={t("system.xrayUpgradeScope")}>
           <Select value={scope} onChange={(e: any) => setScope(e.target.value)}>
@@ -319,7 +319,7 @@ const XrayCoreTab: FC = () => {
             {(releases.data || []).map((r) => <option key={r.tag} value={r.tag}>{r.tag}</option>)}
           </Select>
         </Field>
-        <div className="nx-row" style={{ justifyContent: "flex-end", gap: 8 }}>
+        <div className="sk-row" style={{ justifyContent: "flex-end", gap: 8 }}>
           <Button
             variant="ghost"
             disabled={busy}
@@ -347,19 +347,19 @@ const XrayCoreTab: FC = () => {
 
         <Card style={{ marginTop: 8 }}>
           <CardHead title={t("system.xrayAutoUpgrade", { defaultValue: "Fleet auto-upgrade" })} />
-          <div className="nx-stack" style={{ gap: 12 }}>
-            <label className="nx-row" style={{ gap: 8 }}>
+          <div className="sk-stack" style={{ gap: 12 }}>
+            <label className="sk-row" style={{ gap: 8 }}>
               <input type="checkbox" checked={autoEnabled} onChange={(e) => setAutoEnabled(e.target.checked)} />
               {t("system.xrayAutoUpgradeEnabled", { defaultValue: "Enable scheduled auto-upgrade" })}
             </label>
             <Field label={t("system.xrayAutoUpgradeInterval", { defaultValue: "Check interval (hours)" })}>
               <Input type="number" min="1" max="168" value={autoIntervalHours} onChange={(e: any) => setAutoIntervalHours(e.target.value)} style={{ maxWidth: 120 }} />
             </Field>
-            <label className="nx-row" style={{ gap: 8, fontSize: 13 }}>
+            <label className="sk-row" style={{ gap: 8, fontSize: 13 }}>
               <input type="checkbox" checked={autoPrerelease} onChange={(e) => setAutoPrerelease(e.target.checked)} />
               {t("system.xrayAutoUpgradePrerelease", { defaultValue: "Include pre-releases" })}
             </label>
-            <div className="nx-row" style={{ gap: 8, justifyContent: "flex-end" }}>
+            <div className="sk-row" style={{ gap: 8, justifyContent: "flex-end" }}>
               <Button disabled={busy} onClick={saveAutoSchedule}>{t("common.save")}</Button>
               <Button variant="primary" disabled={busy} onClick={triggerAutoUpgrade}>
                 {t("system.xrayAutoUpgradeRun", { defaultValue: "Run now" })}
@@ -398,16 +398,16 @@ const UpdatesTab: FC = () => {
         </>}
       />
       {check && (
-        <div className="nx-stack" style={{ marginTop: 12, gap: 10 }}>
-          <div className="nx-row" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+        <div className="sk-stack" style={{ marginTop: 12, gap: 10 }}>
+          <div className="sk-row" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
             <div>
-              <div className="nx-muted" style={{ fontSize: 12 }}>{t("system.updateCurrent")}</div>
-              <div className="nx-code" style={{ fontSize: 18, fontWeight: 600 }}>v{check.current_version}</div>
+              <div className="sk-muted" style={{ fontSize: 12 }}>{t("system.updateCurrent")}</div>
+              <div className="sk-code" style={{ fontSize: 18, fontWeight: 600 }}>v{check.current_version}</div>
             </div>
             {hasUpdate ? (
               <div style={{ textAlign: "end" }}>
-                <div className="nx-muted" style={{ fontSize: 12 }}>{t("system.updateAvailable")}</div>
-                <div className="nx-code" style={{ fontSize: 18, fontWeight: 600, color: "var(--nx-accent)" }}>v{check.remote_version}</div>
+                <div className="sk-muted" style={{ fontSize: 12 }}>{t("system.updateAvailable")}</div>
+                <div className="sk-code" style={{ fontSize: 18, fontWeight: 600, color: "var(--sk-accent)" }}>v{check.remote_version}</div>
               </div>
             ) : null}
           </div>
@@ -419,7 +419,7 @@ const UpdatesTab: FC = () => {
           )}
           {hasUpdate && noteLines.length > 0 && (
             <div>
-              <div className="nx-muted" style={{ fontSize: 12, marginBottom: 6 }}>{t("system.updateReleaseNotes")}</div>
+              <div className="sk-muted" style={{ fontSize: 12, marginBottom: 6 }}>{t("system.updateReleaseNotes")}</div>
               <ul style={{ margin: 0, paddingInlineStart: 18, fontSize: 13, lineHeight: 1.5 }}>
                 {noteLines.map((line) => (
                   <li key={line}>{line}</li>
@@ -523,19 +523,19 @@ const AgentAgentsTab: FC = () => {
             </Button>
           </>}
         />
-        <div className="nx-stack" style={{ marginTop: 12, gap: 10 }}>
-          <p className="nx-muted" style={{ fontSize: 13, margin: 0 }}>{t("system.agentUpdatesHint")}</p>
+        <div className="sk-stack" style={{ marginTop: 12, gap: 10 }}>
+          <p className="sk-muted" style={{ fontSize: 13, margin: 0 }}>{t("system.agentUpdatesHint")}</p>
           {check && (
             <>
-              <div className="nx-row" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+              <div className="sk-row" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
                 <div>
-                  <div className="nx-muted" style={{ fontSize: 12 }}>{t("system.agentEligible")}</div>
-                  <div className="nx-code" style={{ fontSize: 18, fontWeight: 600 }}>
+                  <div className="sk-muted" style={{ fontSize: 12 }}>{t("system.agentEligible")}</div>
+                  <div className="sk-code" style={{ fontSize: 18, fontWeight: 600 }}>
                     {check.nodes_eligible} / {check.nodes_total}
                   </div>
                 </div>
                 <div style={{ textAlign: "end" }}>
-                  <div className="nx-muted" style={{ fontSize: 12 }}>{t("system.agentPackage")}</div>
+                  <div className="sk-muted" style={{ fontSize: 12 }}>{t("system.agentPackage")}</div>
                   <Pill tone={check.package_reachable || check.mirror_reachable ? "ok" : "danger"} dot>
                     {check.package_reachable || check.mirror_reachable
                       ? t("system.agentPackageOk")
@@ -566,19 +566,19 @@ const AgentAgentsTab: FC = () => {
         )}
       >
         {!job ? (
-          <p className="nx-muted">{t("common.loading")}</p>
+          <p className="sk-muted">{t("common.loading")}</p>
         ) : (
-          <div className="nx-stack" style={{ gap: 8 }}>
-            {job.message && <p className="nx-muted" style={{ margin: 0 }}>{job.message}</p>}
+          <div className="sk-stack" style={{ gap: 8 }}>
+            {job.message && <p className="sk-muted" style={{ margin: 0 }}>{job.message}</p>}
             {job.nodes.map((n) => {
               const tone = n.status === "success" ? "ok"
                 : n.status === "failed" ? "danger"
                   : n.status === "running" ? "accent"
                     : n.status === "skipped" ? "default" : "default";
               return (
-                <div key={n.node_id} className="nx-row" style={{ gap: 8, fontSize: 13, alignItems: "flex-start" }}>
+                <div key={n.node_id} className="sk-row" style={{ gap: 8, fontSize: 13, alignItems: "flex-start" }}>
                   <Pill tone={tone} dot>{n.node_name}</Pill>
-                  <span className="nx-muted" style={{ flex: 1 }}>{n.message || n.error || n.status}</span>
+                  <span className="sk-muted" style={{ flex: 1 }}>{n.message || n.error || n.status}</span>
                 </div>
               );
             })}
@@ -610,7 +610,7 @@ const BackupTab: FC = () => {
   const downloadNow = async () => {
     setBusy(true);
     try {
-      await api.download("/backup/download", "nexuspanel-backup.dump");
+      await api.download("/backup/download", "shahkar-backup.dump");
       toast.push(t("system.backupDownloaded"), "success");
       reload();
     } catch (e: any) {
@@ -665,12 +665,12 @@ const BackupTab: FC = () => {
   return (
     <Card>
       <CardHead title={t("system.tabBackup")} />
-      <p className="nx-card-desc" style={{ marginBottom: 16 }}>
+      <p className="sk-card-desc" style={{ marginBottom: 16 }}>
         {t("system.backupIntro")}
       </p>
-      <div className="nx-row" style={{ gap: 10, flexWrap: "wrap", marginBottom: 18 }}>
+      <div className="sk-row" style={{ gap: 10, flexWrap: "wrap", marginBottom: 18 }}>
         <Button variant="primary" disabled={busy} onClick={downloadNow}>
-          <IcDownload className="nx-ico" /> {t("system.downloadBackup")}
+          <IcDownload className="sk-ico" /> {t("system.downloadBackup")}
         </Button>
         {canWrite && (
           <>
@@ -688,7 +688,7 @@ const BackupTab: FC = () => {
         )}
       </div>
       {schedule.data && (
-        <div className="nx-stack" style={{ gap: 10, marginBottom: 18 }}>
+        <div className="sk-stack" style={{ gap: 10, marginBottom: 18 }}>
           <Callout tone={schedule.data.enabled ? "ok" : "info"}>
             {schedule.data.enabled
               ? t("system.backupScheduleOn", {
@@ -699,7 +699,7 @@ const BackupTab: FC = () => {
           </Callout>
           {canWrite && (
             <Field label={t("system.backupIntervalHours", { defaultValue: "Backup interval (hours, 0=off)" })}>
-              <div className="nx-row" style={{ gap: 8 }}>
+              <div className="sk-row" style={{ gap: 8 }}>
                 <Input type="number" min="0" max="168" value={scheduleHours} onChange={(e: any) => setScheduleHours(e.target.value)} style={{ maxWidth: 120 }} />
                 <Button disabled={busy} onClick={saveSchedule}>{t("common.save")}</Button>
               </div>
@@ -707,16 +707,16 @@ const BackupTab: FC = () => {
           )}
         </div>
       )}
-      <div className="nx-card-desc" style={{ marginBottom: 14 }}>{t("system.backupList")}</div>
+      <div className="sk-card-desc" style={{ marginBottom: 14 }}>{t("system.backupList")}</div>
       {loading ? <SkeletonRows rows={3} cols={1} />
-        : !data?.length ? <div className="nx-muted">{t("common.noData")}</div>
-        : <div className="nx-stack" style={{ gap: 8 }}>
+        : !data?.length ? <div className="sk-muted">{t("common.noData")}</div>
+        : <div className="sk-stack" style={{ gap: 8 }}>
             {data.map((b) => (
-              <div key={b} className="nx-row" style={{ justifyContent: "space-between", background: "var(--nx-surface-2)", padding: "10px 14px", borderRadius: 8 }}>
-                <span className="nx-mono" style={{ fontSize: 12 }}>{b}</span>
-                <div className="nx-row" style={{ gap: 6 }}>
+              <div key={b} className="sk-row" style={{ justifyContent: "space-between", background: "var(--sk-surface-2)", padding: "10px 14px", borderRadius: 8 }}>
+                <span className="sk-mono" style={{ fontSize: 12 }}>{b}</span>
+                <div className="sk-row" style={{ gap: 6 }}>
                   <Button size="sm" variant="ghost" onClick={() => downloadStored(b)}>
-                    <IcDownload className="nx-ico" /> {t("system.download")}
+                    <IcDownload className="sk-ico" /> {t("system.download")}
                   </Button>
                   {canWrite && (
                     <Button size="sm" variant="danger" disabled={busy} onClick={async () => {
@@ -751,24 +751,24 @@ const ApiKeysTab: FC = () => {
 
   return (
     <>
-      <div className="nx-row" style={{ justifyContent: "flex-end", marginBottom: 14 }}>
-        <Button variant="primary" onClick={() => setShow(true)}><IcPlus className="nx-ico" /> {t("system.createKey")}</Button>
+      <div className="sk-row" style={{ justifyContent: "flex-end", marginBottom: 14 }}>
+        <Button variant="primary" onClick={() => setShow(true)}><IcPlus className="sk-ico" /> {t("system.createKey")}</Button>
       </div>
       <Card pad0>
         {loading ? <div style={{ padding: 20 }}><SkeletonRows rows={3} cols={3} /></div>
           : error ? <EmptyState title={t("common.error")} desc={error} />
-          : !data?.length ? <EmptyState title={t("common.noData")} action={<Button variant="primary" onClick={() => setShow(true)}><IcKey className="nx-ico" /> {t("system.createKey")}</Button>} />
+          : !data?.length ? <EmptyState title={t("common.noData")} action={<Button variant="primary" onClick={() => setShow(true)}><IcKey className="sk-ico" /> {t("system.createKey")}</Button>} />
           : (
-            <div className="nx-table-wrap"><table className="nx-table">
-              <thead><tr><th>{t("common.name")}</th><th>{t("system.prefix")}</th><th>{t("system.scopes")}</th><th>{t("common.status")}</th><th className="nx-actions">{t("common.actions")}</th></tr></thead>
+            <div className="sk-table-wrap"><table className="sk-table">
+              <thead><tr><th>{t("common.name")}</th><th>{t("system.prefix")}</th><th>{t("system.scopes")}</th><th>{t("common.status")}</th><th className="sk-actions">{t("common.actions")}</th></tr></thead>
               <tbody>
                 {data.map((k) => (
                   <tr key={k.id}>
                     <td style={{ fontWeight: 600 }}>{k.name}</td>
-                    <td><span className="nx-code">{k.prefix}…</span></td>
-                    <td className="nx-faint" style={{ fontSize: 12 }}>{k.scopes?.join(", ") || "—"}</td>
+                    <td><span className="sk-code">{k.prefix}…</span></td>
+                    <td className="sk-faint" style={{ fontSize: 12 }}>{k.scopes?.join(", ") || "—"}</td>
                     <td><Pill tone={k.revoked ? "danger" : "ok"} dot>{k.revoked ? t("system.keyRevoked") : t("system.keyActive")}</Pill></td>
-                    <td><div className="nx-row" style={{ justifyContent: "flex-end" }}>{!k.revoked && <Button variant="danger" size="sm" onClick={() => revoke(k.id)}>{t("system.revoke")}</Button>}</div></td>
+                    <td><div className="sk-row" style={{ justifyContent: "flex-end" }}>{!k.revoked && <Button variant="danger" size="sm" onClick={() => revoke(k.id)}>{t("system.revoke")}</Button>}</div></td>
                   </tr>
                 ))}
               </tbody>
@@ -806,10 +806,10 @@ const CreateKey: FC<{ onClose: () => void; onDone: () => void }> = ({ onClose, o
         : <><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button><Button variant="primary" disabled={busy || !name} onClick={submit}>{t("common.create")}</Button></>}>
       {created ? (
         <Callout tone="ok" title={t("system.keyOnceWarning")}>
-          <code className="nx-mono" style={{ wordBreak: "break-all", display: "block", marginTop: 8 }}>{created}</code>
+          <code className="sk-mono" style={{ wordBreak: "break-all", display: "block", marginTop: 8 }}>{created}</code>
         </Callout>
       ) : (
-        <div className="nx-stack">
+        <div className="sk-stack">
           <Field label={t("system.keyName")}><Input value={name} onChange={(e: any) => setName(e.target.value)} autoFocus /></Field>
           <Field label={`${t("system.scopes")} (${t("common.optional")})`}><Input value={scopes} onChange={(e: any) => setScopes(e.target.value)} placeholder="users:read, users:write, branding:read, branding:write, reseller:read" /></Field>
         </div>
@@ -835,18 +835,18 @@ const AboutTab: FC = () => {
   };
 
   return (
-    <div className="nx-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))" }}>
-      <Card className="nx-glass-card">
+    <div className="sk-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))" }}>
+      <Card className="sk-glass-card">
         <CardHead title={t("system.appearance")} />
         <Field label={t("system.theme")}>
-          <div className="nx-row">
-            <Button variant={theme === "dark" ? "primary" : "default"} onClick={() => setTheme("dark")}><IcMoon className="nx-ico" /> {t("system.themeDark")}</Button>
-            <Button variant={theme === "light" ? "primary" : "default"} onClick={() => setTheme("light")}><IcSun className="nx-ico" /> {t("system.themeLight")}</Button>
+          <div className="sk-row">
+            <Button variant={theme === "dark" ? "primary" : "default"} onClick={() => setTheme("dark")}><IcMoon className="sk-ico" /> {t("system.themeDark")}</Button>
+            <Button variant={theme === "light" ? "primary" : "default"} onClick={() => setTheme("light")}><IcSun className="sk-ico" /> {t("system.themeLight")}</Button>
           </div>
         </Field>
         <div style={{ height: 14 }} />
         <Field label={t("system.language")}>
-          <div className="nx-row" style={{ flexWrap: "wrap" }}>
+          <div className="sk-row" style={{ flexWrap: "wrap" }}>
             {LANGUAGES.map((l) => (
               <Button key={l.code} variant={i18n.language === l.code ? "primary" : "default"} size="sm" onClick={() => setLanguage(l.code)}>{l.flag} {l.label}</Button>
             ))}
@@ -859,10 +859,10 @@ const AboutTab: FC = () => {
       </Card>
       <Card>
         <CardHead title={t("system.tabAbout")} />
-        <div className="nx-muted" style={{ fontSize: 13, marginBottom: 14 }}>{t("system.aboutText")}</div>
-        <div className="nx-row" style={{ justifyContent: "space-between" }}>
-          <span className="nx-muted">{t("system.panelVersion")}</span>
-          <span className="nx-code">{sys.data?.version || "…"}</span>
+        <div className="sk-muted" style={{ fontSize: 13, marginBottom: 14 }}>{t("system.aboutText")}</div>
+        <div className="sk-row" style={{ justifyContent: "space-between" }}>
+          <span className="sk-muted">{t("system.panelVersion")}</span>
+          <span className="sk-code">{sys.data?.version || "…"}</span>
         </div>
       </Card>
       {admin?.is_sudo && (
@@ -920,18 +920,18 @@ const AdminsTab: FC = () => {
 
   return (
     <>
-      <div className="nx-row" style={{ justifyContent: "flex-end", marginBottom: 14 }}>
-        <Button variant="primary" onClick={() => setShow(true)}><IcPlus className="nx-ico" /> {t("system.addAdmin")}</Button>
+      <div className="sk-row" style={{ justifyContent: "flex-end", marginBottom: 14 }}>
+        <Button variant="primary" onClick={() => setShow(true)}><IcPlus className="sk-ico" /> {t("system.addAdmin")}</Button>
       </div>
       <Card pad0>
         {loading ? <div style={{ padding: 20 }}><SkeletonRows rows={4} cols={4} /></div>
           : error ? <EmptyState title={t("common.error")} desc={error} />
           : (
-            <div className="nx-table-wrap">
-            <table className="nx-table">
+            <div className="sk-table-wrap">
+            <table className="sk-table">
               <thead><tr>
                 <th>{t("common.username")}</th><th>{t("common.status")}</th><th>{t("system.role")}</th>
-                <th>{t("resellers.usersCount")}</th><th className="nx-actions">{t("common.actions")}</th>
+                <th>{t("resellers.usersCount")}</th><th className="sk-actions">{t("common.actions")}</th>
               </tr></thead>
               <tbody>
                 {(data || []).map((a) => (
@@ -941,17 +941,17 @@ const AdminsTab: FC = () => {
                     <td>{a.role || "—"}</td>
                     <td>
                       {(a.users_count ?? 0).toLocaleString()}
-                      <span className="nx-faint">
+                      <span className="sk-faint">
                         {" / "}
                         {a.max_users != null ? a.max_users.toLocaleString() : "∞"}
                       </span>
                     </td>
                     <td>
-                      <div className="nx-row" style={{ justifyContent: "flex-end", gap: 6 }}>
+                      <div className="sk-row" style={{ justifyContent: "flex-end", gap: 6 }}>
                         {!a.is_sudo && (
                           <>
-                            <Button size="sm" variant="ghost" title={t("common.edit")} onClick={() => setEdit(a)}><IcEdit className="nx-ico" /></Button>
-                            <Button size="sm" variant="danger" title={t("common.delete")} onClick={() => remove(a)}><IcTrash className="nx-ico" /></Button>
+                            <Button size="sm" variant="ghost" title={t("common.edit")} onClick={() => setEdit(a)}><IcEdit className="sk-ico" /></Button>
+                            <Button size="sm" variant="danger" title={t("common.delete")} onClick={() => remove(a)}><IcTrash className="sk-ico" /></Button>
                           </>
                         )}
                       </div>
@@ -966,11 +966,11 @@ const AdminsTab: FC = () => {
       <Modal open={show} title={t("system.addAdmin")} onClose={() => setShow(false)}
         footer={<><Button variant="ghost" onClick={() => setShow(false)}>{t("common.cancel")}</Button>
           <Button variant="primary" disabled={!username || !password} onClick={create}>{t("common.create")}</Button></>}>
-        <div className="nx-stack">
+        <div className="sk-stack">
           <Field label={t("common.username")}><Input value={username} onChange={(e: any) => setUsername(e.target.value)} /></Field>
           <Field label={t("common.password")}><Input type="password" value={password} onChange={(e: any) => setPassword(e.target.value)} /></Field>
           <Field label={t("system.role")}>
-            <select className="nx-input" value={role} onChange={(e) => setRole(e.target.value)}>
+            <select className="sk-input" value={role} onChange={(e) => setRole(e.target.value)}>
               <option value="reseller">{t("resellers.roleReseller")}</option>
               <option value="support">{t("resellers.roleSupport")}</option>
             </select>
@@ -1015,9 +1015,9 @@ const EditAdminModal: FC<{ admin: AdminRow; onClose: () => void; onDone: () => v
     <Modal open title={`${t("common.edit")} — ${admin.username}`} onClose={onClose}
       footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
         <Button variant="primary" disabled={busy} onClick={save}>{t("common.save")}</Button></>}>
-      <div className="nx-stack">
+      <div className="sk-stack">
         <Field label={t("system.role")}>
-          <select className="nx-input" value={role} onChange={(e) => setRole(e.target.value)}>
+          <select className="sk-input" value={role} onChange={(e) => setRole(e.target.value)}>
             <option value="reseller">{t("resellers.roleReseller")}</option>
             <option value="support">{t("resellers.roleSupport")}</option>
           </select>
@@ -1057,23 +1057,23 @@ const AuditTab: FC = () => {
   };
 
   return (
-    <div className="nx-stack" style={{ gap: 16 }}>
+    <div className="sk-stack" style={{ gap: 16 }}>
       <Card pad0>
         <CardHead title={t("system.adminSessions", { defaultValue: "Admin login sessions" })} />
         {sessions.loading ? <div style={{ padding: 20 }}><SkeletonRows rows={3} cols={4} /></div>
           : !sessions.data?.sessions?.length ? <EmptyState title={t("common.noData")} />
           : (
-            <div className="nx-table-wrap">
-              <table className="nx-table">
-                <thead><tr><th>{t("common.username")}</th><th>IP</th><th>{t("common.time")}</th><th className="nx-actions">{t("common.actions")}</th></tr></thead>
+            <div className="sk-table-wrap">
+              <table className="sk-table">
+                <thead><tr><th>{t("common.username")}</th><th>IP</th><th>{t("common.time")}</th><th className="sk-actions">{t("common.actions")}</th></tr></thead>
                 <tbody>
                   {sessions.data.sessions.map((s, idx) => (
                     <tr key={`${s.username}-${s.logged_at}-${idx}`}>
                       <td>{s.username}{s.is_sudo ? " · sudo" : ""}</td>
-                      <td className="nx-mono" style={{ fontSize: 12 }}>{s.ip || "—"}</td>
-                      <td className="nx-faint" style={{ fontSize: 12 }}>{new Date(s.logged_at).toLocaleString()}</td>
+                      <td className="sk-mono" style={{ fontSize: 12 }}>{s.ip || "—"}</td>
+                      <td className="sk-faint" style={{ fontSize: 12 }}>{new Date(s.logged_at).toLocaleString()}</td>
                       <td>
-                        <div className="nx-row" style={{ justifyContent: "flex-end" }}>
+                        <div className="sk-row" style={{ justifyContent: "flex-end" }}>
                           <Button size="sm" variant="danger" onClick={() => revokeSessions(s.username)}>
                             {t("system.revokeSessions", { defaultValue: "Revoke all" })}
                           </Button>
@@ -1093,16 +1093,16 @@ const AuditTab: FC = () => {
           : error ? <EmptyState title={t("common.error")} desc={error} />
           : !data?.length ? <EmptyState title={t("common.noData")} />
           : (
-            <div className="nx-table-wrap">
-              <table className="nx-table">
+            <div className="sk-table-wrap">
+              <table className="sk-table">
                 <thead><tr><th>ID</th><th>{t("common.type", { defaultValue: "Type" })}</th><th>{t("common.time", { defaultValue: "Time" })}</th><th>{t("common.details", { defaultValue: "Details" })}</th></tr></thead>
                 <tbody>
                   {data.map((ev) => (
                     <tr key={ev.id}>
-                      <td className="nx-mono">{ev.id}</td>
+                      <td className="sk-mono">{ev.id}</td>
                       <td><Pill>{ev.type}</Pill></td>
-                      <td className="nx-faint" style={{ fontSize: 12 }}>{new Date(ev.created_at).toLocaleString()}</td>
-                      <td className="nx-mono" style={{ fontSize: 11, maxWidth: 420, overflow: "hidden", textOverflow: "ellipsis" }}>
+                      <td className="sk-faint" style={{ fontSize: 12 }}>{new Date(ev.created_at).toLocaleString()}</td>
+                      <td className="sk-mono" style={{ fontSize: 11, maxWidth: 420, overflow: "hidden", textOverflow: "ellipsis" }}>
                         {ev.payload ? JSON.stringify(ev.payload) : "—"}
                       </td>
                     </tr>
@@ -1149,8 +1149,8 @@ const RbacTab: FC = () => {
   return (
     <Card pad0>
       <CardHead title={t("system.tabRbac", { defaultValue: "Access matrix" })} />
-      <div className="nx-table-wrap" style={{ overflowX: "auto" }}>
-        <table className="nx-table">
+      <div className="sk-table-wrap" style={{ overflowX: "auto" }}>
+        <table className="sk-table">
           <thead>
             <tr>
               <th>{t("system.permission", { defaultValue: "Permission" })}</th>
@@ -1160,7 +1160,7 @@ const RbacTab: FC = () => {
           <tbody>
             {data.permissions.map((perm) => (
               <tr key={perm}>
-                <td className="nx-mono" style={{ fontSize: 12 }}>{perm}</td>
+                <td className="sk-mono" style={{ fontSize: 12 }}>{perm}</td>
                 {roles.map((role) => {
                   const on = (data.roles[role] || []).includes(perm);
                   return (

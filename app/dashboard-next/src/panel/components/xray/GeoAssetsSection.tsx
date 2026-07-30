@@ -99,22 +99,22 @@ export const GeoAssetsSection: FC = () => {
   };
 
   return (
-    <div className="nx-stack">
+    <div className="sk-stack">
       <Callout tone="info">{t("xray.geoAssetsDesc")}</Callout>
       {assetsPath && (
-        <p className="nx-mono" style={{ fontSize: 12, opacity: 0.75 }}>
+        <p className="sk-mono" style={{ fontSize: 12, opacity: 0.75 }}>
           {assetsPath}
         </p>
       )}
-      <div className="nx-row" style={{ gap: 8, flexWrap: "wrap" }}>
+      <div className="sk-row" style={{ gap: 8, flexWrap: "wrap" }}>
         <Button variant="primary" disabled={busy} onClick={updateFromSource}>
-          <IcRefresh className="nx-ico" /> {t("xray.geoUpdateDefault")}
+          <IcRefresh className="sk-ico" /> {t("xray.geoUpdateDefault")}
         </Button>
         <Button disabled={busy} onClick={() => fileRef.current?.click()}>
-          <IcDownload className="nx-ico" /> {t("xray.geoUpload")}
+          <IcDownload className="sk-ico" /> {t("xray.geoUpload")}
         </Button>
         <Button variant="ghost" disabled={busy || loading} onClick={reload}>
-          <IcRefresh className="nx-ico" /> {t("common.refresh")}
+          <IcRefresh className="sk-ico" /> {t("common.refresh")}
         </Button>
         <input
           ref={fileRef}
@@ -130,35 +130,35 @@ export const GeoAssetsSection: FC = () => {
       </div>
       <Card pad0>
         {loading ? (
-          <div className="nx-pad">{t("common.loading")}</div>
+          <div className="sk-pad">{t("common.loading")}</div>
         ) : !assets.length ? (
           <EmptyState title={t("common.noData")} desc={t("xray.geoEmpty")} />
         ) : (
-          <div className="nx-table-wrap">
-            <table className="nx-table">
+          <div className="sk-table-wrap">
+            <table className="sk-table">
               <thead>
                 <tr>
                   <th>{t("common.name")}</th>
                   <th>{t("xray.geoSize")}</th>
                   <th>{t("xray.geoModified")}</th>
                   <th>SHA256</th>
-                  <th className="nx-actions">{t("common.actions")}</th>
+                  <th className="sk-actions">{t("common.actions")}</th>
                 </tr>
               </thead>
               <tbody>
                 {assets.map((a) => (
                   <tr key={a.name}>
-                    <td><span className="nx-proto-name-main nx-mono">{a.name}</span></td>
-                    <td className="nx-num">{formatBytes(a.size)}</td>
-                    <td className="nx-proto-meta">{new Date(a.modified_at * 1000).toLocaleString()}</td>
-                    <td className="nx-mono nx-proto-meta">{a.sha256.slice(0, 16)}…</td>
-                    <td className="nx-actions">
+                    <td><span className="sk-proto-name-main sk-mono">{a.name}</span></td>
+                    <td className="sk-num">{formatBytes(a.size)}</td>
+                    <td className="sk-proto-meta">{new Date(a.modified_at * 1000).toLocaleString()}</td>
+                    <td className="sk-mono sk-proto-meta">{a.sha256.slice(0, 16)}…</td>
+                    <td className="sk-actions">
                       <TableRowMenu
                         items={[
                           {
                             id: "del",
                             label: t("common.delete"),
-                            icon: <IcTrash className="nx-ico" />,
+                            icon: <IcTrash className="sk-ico" />,
                             danger: true,
                             disabled: busy,
                             onClick: () => remove(a.name),

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Generate starter config: non-secrets in repo .env, secrets in /var/lib/nexuspanel/.env
+# Generate starter config: non-secrets in repo .env, secrets in /var/lib/shahkar/.env
 # Run once per host. The sudo admin password is RANDOM and stored only as bcrypt hash.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-DATA_DIR="${DATA_DIR:-/var/lib/nexuspanel}"
+DATA_DIR="${DATA_DIR:-/var/lib/shahkar}"
 RUNTIME_ENV="${DATA_DIR}/.env"
 
 if [ -f .env ] || [ -f "$RUNTIME_ENV" ]; then
@@ -53,7 +53,7 @@ append_repo "UVICORN_HOST" "127.0.0.1"
 append_repo "UVICORN_PORT" "8000"
 append_repo "ALLOWED_ORIGINS" "http://127.0.0.1:8000"
 append_repo "PANEL_PUBLIC_ADDRESS" "http://${PUBLIC_IP}:8000"
-append_repo "SQLALCHEMY_DATABASE_URL" "sqlite:////var/lib/nexuspanel/db.sqlite3"
+append_repo "SQLALCHEMY_DATABASE_URL" "sqlite:////var/lib/shahkar/db.sqlite3"
 
 chmod 600 .env
 

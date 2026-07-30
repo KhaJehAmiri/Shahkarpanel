@@ -225,9 +225,9 @@ def register_warp(tag: str = "warp") -> dict:
     private_key, public_key = generate_wireguard_keys()
     tos = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
     try:
-        hostname = socket.gethostname() or "nexuspanel"
+        hostname = socket.gethostname() or "shahkar"
     except Exception:
-        hostname = "nexuspanel"
+        hostname = "shahkar"
 
     try:
         resp = requests.post(
@@ -237,7 +237,7 @@ def register_warp(tag: str = "warp") -> dict:
                     "key": public_key,
                     "tos": tos,
                     "type": "PC",
-                    "model": "NexusPanel",
+                    "model": "Shahkar",
                     "name": hostname,
                     "locale": "en_US",
                 }

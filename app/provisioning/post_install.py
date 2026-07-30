@@ -12,7 +12,7 @@ from app.tls.acme import DEFAULT_CERT, DEFAULT_KEY, issue_certificate, normalize
 from app.tls.self_signed import install_self_signed
 from app.utils.panel_region import node_region_is_iran
 
-logger = logging.getLogger("nexus-provision")
+logger = logging.getLogger("shahkar-provision")
 
 
 @dataclass

@@ -228,25 +228,25 @@ const AmneziaNodeCard: FC<{
 
   return (
     <Card style={{ padding: 16, marginBottom: 12 }}>
-      <div className="nx-row" style={{ justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-        <div className="nx-card-title" style={{ fontSize: 14 }}>{node.name}</div>
+      <div className="sk-row" style={{ justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <div className="sk-card-title" style={{ fontSize: 14 }}>{node.name}</div>
         {statusPill()}
       </div>
-      <div className="nx-row" style={{ gap: 16, marginBottom: 12, flexWrap: "wrap" }}>
-        <label className="nx-row" style={{ gap: 8, fontSize: 13 }}>
+      <div className="sk-row" style={{ gap: 16, marginBottom: 12, flexWrap: "wrap" }}>
+        <label className="sk-row" style={{ gap: 8, fontSize: 13 }}>
           <input type="checkbox" checked={plainOn} onChange={(e) => setPlainOn(e.target.checked)} />
           {t("infra.enablePlainWg")}
         </label>
-        <label className="nx-row" style={{ gap: 8, fontSize: 13 }}>
+        <label className="sk-row" style={{ gap: 8, fontSize: 13 }}>
           <input type="checkbox" checked={awgOn} onChange={(e) => setAwgOn(e.target.checked)} />
           {t("infra.enableAwgWg")}
         </label>
-        <label className="nx-row" style={{ gap: 8, fontSize: 13 }} title={t("wireguard.xrayHint")}>
+        <label className="sk-row" style={{ gap: 8, fontSize: 13 }} title={t("wireguard.xrayHint")}>
           <input type="checkbox" checked={xrayOn} onChange={(e) => setXrayOn(e.target.checked)} />
           {t("wireguard.xrayEnable")}
         </label>
         {sgWireFlag && (
-          <label className="nx-row" style={{ gap: 8, fontSize: 13 }} title={t("wireguard.sgWireHint")}>
+          <label className="sk-row" style={{ gap: 8, fontSize: 13 }} title={t("wireguard.sgWireHint")}>
             <input
               type="checkbox"
               checked={sgWireOn}
@@ -259,7 +259,7 @@ const AmneziaNodeCard: FC<{
           </label>
         )}
       </div>
-      <div className="nx-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10, marginBottom: 12 }}>
+      <div className="sk-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10, marginBottom: 12 }}>
         <Field label={t("wireguard.clientHost")} hint={t("wireguard.clientHostHint")}>
           <Input
             value={clientHost}
@@ -302,7 +302,7 @@ const AmneziaNodeCard: FC<{
           </Callout>
         </div>
       )}
-      {awgOn && <div className="nx-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
+      {awgOn && <div className="sk-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
         {AWG_FIELDS.map((f) => (
           <Field key={f} label={f.replace("awg_", "").toUpperCase()}>
             <Input
@@ -314,7 +314,7 @@ const AmneziaNodeCard: FC<{
           </Field>
         ))}
       </div>}
-      <div className="nx-row" style={{ gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+      <div className="sk-row" style={{ gap: 8, marginTop: 12, flexWrap: "wrap" }}>
         {awgOn && (
           <>
             <Button size="sm" onClick={() => fill(amneziaPreset())}>{t("wireguard.awgPreset")}</Button>
@@ -387,23 +387,23 @@ export const WireGuard: FC<{ embedded?: boolean }> = ({ embedded }) => {
         {t("wireguard.notXrayBody")}
       </Callout>}
 
-      <div className="nx-row" style={{ gap: 12, margin: "16px 0" }}>
+      <div className="sk-row" style={{ gap: 12, margin: "16px 0" }}>
         <Card style={{ flex: 1, padding: 16 }}>
-          <div className="nx-faint" style={{ fontSize: 12 }}>{t("wireguard.nodesCount")}</div>
+          <div className="sk-faint" style={{ fontSize: 12 }}>{t("wireguard.nodesCount")}</div>
           {nodes.loading ? <SkeletonRows rows={1} cols={1} /> : <div style={{ fontSize: 28, fontWeight: 700, marginTop: 4 }}>{wgNodes}</div>}
         </Card>
         <Card style={{ flex: 1, padding: 16 }}>
-          <div className="nx-faint" style={{ fontSize: 12 }}>{t("overview.totalUsers")}</div>
+          <div className="sk-faint" style={{ fontSize: 12 }}>{t("overview.totalUsers")}</div>
           {users.loading ? <SkeletonRows rows={1} cols={1} /> : <div style={{ fontSize: 28, fontWeight: 700, marginTop: 4 }}>{users.data?.total ?? "—"}</div>}
         </Card>
       </div>
 
       <Card>
-        <div className="nx-card-title" style={{ marginBottom: 14 }}>{t("wireguard.setupTitle")}</div>
-        <div className="nx-stack" style={{ gap: 10 }}>
+        <div className="sk-card-title" style={{ marginBottom: 14 }}>{t("wireguard.setupTitle")}</div>
+        <div className="sk-stack" style={{ gap: 10 }}>
           {steps.map((s) => (
-            <div key={s.n} className="nx-step-row">
-              <div className={`nx-step-num ${s.done ? "done" : ""}`}>{s.done ? "✓" : s.n}</div>
+            <div key={s.n} className="sk-step-row">
+              <div className={`sk-step-num ${s.done ? "done" : ""}`}>{s.done ? "✓" : s.n}</div>
               <div style={{ flex: 1 }}>{s.title}</div>
               {s.done ? <Pill tone="ok">{t("common.done")}</Pill> : (
                 <Button size="sm" variant="primary" onClick={s.action}>{t("common.start")}</Button>
@@ -415,20 +415,20 @@ export const WireGuard: FC<{ embedded?: boolean }> = ({ embedded }) => {
 
       {wgNodes > 0 && (
         <div style={{ marginTop: 20 }}>
-          <div className="nx-card-title" style={{ marginBottom: 4 }}>{t("wireguard.awgTitle")}</div>
-          <p className="nx-faint" style={{ fontSize: 12, margin: "0 0 12px" }}>{t("wireguard.awgDescription")}</p>
+          <div className="sk-card-title" style={{ marginBottom: 4 }}>{t("wireguard.awgTitle")}</div>
+          <p className="sk-faint" style={{ fontSize: 12, margin: "0 0 12px" }}>{t("wireguard.awgDescription")}</p>
           {wgNodeList.map((n) => (
             <AmneziaNodeCard key={n.id} node={n} onSaved={() => nodes.reload()} sgWireFlag={sgWireFlag} />
           ))}
         </div>
       )}
 
-      <div className="nx-row" style={{ marginTop: 16, gap: 10 }}>
+      <div className="sk-row" style={{ marginTop: 16, gap: 10 }}>
         <Button variant="primary" onClick={() => { requestIntent("add-wg-node"); nav("/servers?tab=nodes"); }}>
-          <IcPlus className="nx-ico" /> {t("wireguard.addNode")}
+          <IcPlus className="sk-ico" /> {t("wireguard.addNode")}
         </Button>
         <Button onClick={() => { requestIntent("create-wg-user"); nav("/users"); }}>
-          <IcUsers className="nx-ico" /> {t("wireguard.addUser")}
+          <IcUsers className="sk-ico" /> {t("wireguard.addUser")}
         </Button>
       </div>
     </div>

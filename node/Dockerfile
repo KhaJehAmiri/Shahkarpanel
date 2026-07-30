@@ -54,8 +54,8 @@ COPY requirements.txt /code/
 RUN python3 -m pip install --upgrade pip setuptools \
     && pip install --no-cache-dir --upgrade -r /code/requirements.txt \
     && SITE="$(python3 -c 'import site; print(site.getsitepackages()[0])')" \
-    && mkdir -p /nexuspanel-export/site-packages \
-    && cp -a "${SITE}/." /nexuspanel-export/site-packages/
+    && mkdir -p /shahkar-export/site-packages \
+    && cp -a "${SITE}/." /shahkar-export/site-packages/
 
 FROM python:$PYTHON_VERSION-slim
 
@@ -70,17 +70,17 @@ RUN apt-get update \
 
 RUN SITE="$(python3 -c 'import site; print(site.getsitepackages()[0])')" \
     && rm -rf "${SITE:?}"/* \
-    && mkdir -p /var/lib/nexuspanel-node "${SITE}"
+    && mkdir -p /var/lib/shahkar-node "${SITE}"
 
-COPY --from=build /nexuspanel-export/site-packages/ /tmp/nexuspanel-site-packages/
+COPY --from=build /shahkar-export/site-packages/ /tmp/shahkar-site-packages/
 RUN SITE="$(python3 -c 'import site; print(site.getsitepackages()[0])')" \
-    && cp -a /tmp/nexuspanel-site-packages/. "${SITE}/" \
-    && rm -rf /tmp/nexuspanel-site-packages
+    && cp -a /tmp/shahkar-site-packages/. "${SITE}/" \
+    && rm -rf /tmp/shahkar-site-packages
 COPY --from=build /usr/local/bin /usr/local/bin
 COPY --from=build /usr/local/share/xray /usr/local/share/xray
 COPY . /code
 
 ENV SERVICE_PROTOCOL=rpyc
-VOLUME ["/var/lib/nexuspanel-node"]
+VOLUME ["/var/lib/shahkar-node"]
 
 CMD ["bash", "-c", "python main.py"]

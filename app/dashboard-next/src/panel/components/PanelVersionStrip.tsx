@@ -29,12 +29,12 @@ export const PanelVersionStrip: FC<{ sudo?: boolean }> = ({ sudo }) => {
     return (
       <button
         type="button"
-        className="nx-side-version nx-side-version-update"
+        className="sk-side-version sk-side-version-update"
         onClick={openUpdateModal}
       >
-        <span className="nx-side-version-label">{t("overview.version")}</span>
-        <span className="nx-side-version-val">v{version}</span>
-        <span className="nx-side-version-new">
+        <span className="sk-side-version-label">{t("overview.version")}</span>
+        <span className="sk-side-version-val">v{version}</span>
+        <span className="sk-side-version-new">
           → v{remote} · {t("system.applyUpdates")}
         </span>
       </button>
@@ -42,9 +42,9 @@ export const PanelVersionStrip: FC<{ sudo?: boolean }> = ({ sudo }) => {
   }
 
   return (
-    <div className="nx-side-version">
-      <span className="nx-side-version-label">{t("overview.version")}</span>
-      <span className="nx-side-version-val">v{version}</span>
+    <div className="sk-side-version">
+      <span className="sk-side-version-label">{t("overview.version")}</span>
+      <span className="sk-side-version-val">v{version}</span>
     </div>
   );
 };

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Apply NexusPanel legacy subscription nginx configs from
-# /var/lib/nexuspanel/edge/subscription/desired.json
+# Apply Shahkar legacy subscription nginx configs from
+# /var/lib/shahkar/edge/subscription/desired.json
 #
 # Usage:
 #   sudo scripts/reconcile_subscription_nginx.sh --apply
@@ -8,12 +8,12 @@
 #   sudo scripts/reconcile_subscription_nginx.sh --reload-only
 set -euo pipefail
 
-EDGE_DIR="${NEXUSPANEL_EDGE_DIR:-/var/lib/nexuspanel/edge}"
+EDGE_DIR="${SHAHKAR_EDGE_DIR:-/var/lib/shahkar/edge}"
 DESIRED="${EDGE_DIR}/subscription/desired.json"
 STAGING="${EDGE_DIR}/subscription/nginx/sites"
 NGINX_AVAILABLE="${NGINX_AVAILABLE:-/etc/nginx/sites-available}"
 NGINX_ENABLED="${NGINX_ENABLED:-/etc/nginx/sites-enabled}"
-WEBROOT="${NEXUSPANEL_ACME_WEBROOT:-/var/www/letsencrypt}"
+WEBROOT="${SHAHKAR_ACME_WEBROOT:-/var/www/letsencrypt}"
 CERTBOT="${CERTBOT:-/opt/certbot-venv/bin/certbot}"
 APPLY=0
 DRY_RUN=0
@@ -161,7 +161,7 @@ issue_cert() {
 }
 
 # Remove stale subscription symlinks only (never touch panel or CDN vhosts).
-for link in "$NGINX_ENABLED"/nexuspanel-sub-*; do
+for link in "$NGINX_ENABLED"/shahkar-sub-*; do
   [ -e "$link" ] || continue
   if [ "$DRY_RUN" -eq 1 ]; then
     log "Would remove stale $link"
@@ -222,11 +222,11 @@ ensure_https_vhost() {
   [ -f "/etc/letsencrypt/live/${domain}/privkey.pem" ] || return 0
   safe=$(echo "$domain" | tr -c 'A-Za-z0-9._-' '-' | sed 's/^-*//;s/-*$//')
   [ -n "$safe" ] || return 0
-  base="nexuspanel-sub-https-${safe}"
+  base="shahkar-sub-https-${safe}"
   conf="${STAGING}/${base}.conf"
   dest="${NGINX_AVAILABLE}/${base}.conf"
   cat > "$conf" <<NGINX
-# Subscription domain HTTPS (443) — managed by NexusPanel
+# Subscription domain HTTPS (443) — managed by Shahkar
 server {
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
@@ -249,7 +249,7 @@ server {
         charset utf-8;
         add_header Cache-Control "no-store" always;
         add_header Retry-After "2" always;
-        root /var/lib/nexuspanel/nginx/html;
+        root /var/lib/shahkar/nginx/html;
         rewrite ^ /restarting.html break;
     }
 

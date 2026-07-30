@@ -4,17 +4,17 @@
 #
 # Usage:
 #   bash scripts/sync_agent_github.sh
-#   NODE_AGENT_GITHUB_REPO=KhaJehAmiri/nexuspanel \
+#   NODE_AGENT_GITHUB_REPO=KhaJehAmiri/shahkar \
 #   NODE_AGENT_GITHUB_TAG=node-agent \
 #   bash scripts/sync_agent_github.sh
 #
 # Requires ``gh`` authenticated with permission to upload release assets.
 set -euo pipefail
 
-APP_DIR="${APP_DIR:-/opt/nexuspanel}"
-CACHE_DIR="${CACHE_DIR:-/var/lib/nexuspanel/cache/agent-images}"
-IMAGE="${NODE_AGENT_IMAGE:-nexuspanel/node:latest}"
-ASSET_NAME="${NODE_AGENT_GITHUB_ASSET:-nexuspanel-node-agent-image.tar.gz}"
+APP_DIR="${APP_DIR:-/opt/shahkar}"
+CACHE_DIR="${CACHE_DIR:-/var/lib/shahkar/cache/agent-images}"
+IMAGE="${NODE_AGENT_IMAGE:-shahkar/node:latest}"
+ASSET_NAME="${NODE_AGENT_GITHUB_ASSET:-shahkar-node-agent-image.tar.gz}"
 TAG="${NODE_AGENT_GITHUB_TAG:-node-agent}"
 REPO="${NODE_AGENT_GITHUB_REPO:-}"
 
@@ -29,7 +29,7 @@ if [ -z "$REPO" ]; then
   fi
 fi
 if [ -z "$REPO" ]; then
-  REPO="KhaJehAmiri/nexuspanel"
+  REPO="KhaJehAmiri/shahkar"
 fi
 
 if ! gh auth status >/dev/null 2>&1; then
@@ -56,7 +56,7 @@ echo "Uploading $(du -h "$SRC" | awk '{print $1}') → github.com/${REPO}/releas
 if ! gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
   gh release create "$TAG" --repo "$REPO" \
     --title "Node agent image" \
-    --notes "Prebuilt nexuspanel/node docker-save tarball for SSH provision."
+    --notes "Prebuilt shahkar/node docker-save tarball for SSH provision."
 fi
 
 gh release upload "$TAG" "$SRC" --repo "$REPO" --clobber

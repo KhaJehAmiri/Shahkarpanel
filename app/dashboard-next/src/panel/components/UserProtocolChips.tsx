@@ -40,24 +40,24 @@ export const UserProtocolChips: FC<{ protos: string[]; maxVisible?: number }> = 
   protos,
   maxVisible = 4,
 }) => {
-  if (!protos.length) return <span className="nx-faint">—</span>;
+  if (!protos.length) return <span className="sk-faint">—</span>;
 
   const visible = protos.slice(0, maxVisible);
   const rest = protos.length - visible.length;
   const title = protos.map((p) => PROTO_LABEL[p] || p).join(", ");
 
   return (
-    <div className="nx-user-proto-chips" title={title}>
+    <div className="sk-user-proto-chips" title={title}>
       {visible.map((p) => (
         <span
           key={p}
-          className="nx-user-proto-chip"
-          style={{ "--proto-hue": PROTO_HUE[p] || "var(--nx-accent)" } as React.CSSProperties}
+          className="sk-user-proto-chip"
+          style={{ "--proto-hue": PROTO_HUE[p] || "var(--sk-accent)" } as React.CSSProperties}
         >
           {PROTO_ABBR[p] || p.slice(0, 2).toUpperCase()}
         </span>
       ))}
-      {rest > 0 ? <span className="nx-user-proto-more">+{rest}</span> : null}
+      {rest > 0 ? <span className="sk-user-proto-more">+{rest}</span> : null}
     </div>
   );
 };

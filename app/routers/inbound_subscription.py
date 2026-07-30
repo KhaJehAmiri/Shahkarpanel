@@ -3,7 +3,7 @@
 Lets an admin pin an inbound to its own Listen Domain / Listen Port / URI
 Path / Reverse Proxy URI, independent of every other inbound — the
 differentiator requested when consolidating several 3x-ui panels (each on its
-own domain) into a single NexusPanel instance without breaking any already
+own domain) into a single Shahkar instance without breaking any already
 bookmarked subscription link.
 """
 from __future__ import annotations
@@ -28,7 +28,7 @@ from app.subscription.inbound_endpoint import (
 )
 from app.utils import responses
 
-logger = logging.getLogger("nexus-inbound-sub")
+logger = logging.getLogger("shahkar-inbound-sub")
 
 router = APIRouter(
     tags=["Inbound Subscription Settings"],

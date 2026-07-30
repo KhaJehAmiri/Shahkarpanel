@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/KhaJehAmiri/nexuspanel/master/docs/logo.svg" width="88" alt="NexusPanel" />
+<img src="https://raw.githubusercontent.com/KhaJehAmiri/shahkar/master/docs/logo.svg" width="88" alt="Shahkar" />
 
-# NexusPanel
+# Shahkar
 
 **Профессиональная платформа управления прокси — мультинод, мультипротоколы, white-label, готова к продаже**
 
@@ -15,13 +15,13 @@
 
 [English](./README.md) · [فارسی](./README-fa.md) · [简体中文](./README-zh-cn.md) · **Русский**
 
-[Установка](#-установка-одной-командой-vps) · [Архитектура](#-архитектура) · [Возможности](#-матрица-возможностей) · [Протоколы](#-протоколы-и-подписки) · [Безопасность](#-безопасность-папка-tests-на-github) · [Репозиторий](https://github.com/KhaJehAmiri/nexuspanel)
+[Установка](#-установка-одной-командой-vps) · [Архитектура](#-архитектура) · [Возможности](#-матрица-возможностей) · [Протоколы](#-протоколы-и-подписки) · [Безопасность](#-безопасность-папка-tests-на-github) · [Репозиторий](https://github.com/KhaJehAmiri/shahkar)
 
 </div>
 
 ---
 
-## Что такое NexusPanel?
+## Что такое Shahkar?
 
 Полноценная **control plane** для Xray, WireGuard и sing-box: пользователи, ноды, подписки, **реселлеры, биллинг, HA, автоматизация и аналитика** — с современным React-дашбордом (EN / FA / RU / ZH).
 
@@ -41,16 +41,16 @@
 На чистом **Ubuntu / Debian** от **root**:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/nexuspanel/master/scripts/nexuspanel.sh) install
+bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/shahkar/master/scripts/shahkar.sh) install
 ```
 
 | Элемент | Значение |
 |---------|----------|
 | Панель | `http://SERVER_IP:8000/dashboard/` |
 | Feature flags | `http://SERVER_IP:8000/dashboard/#/system` |
-| Управление | `nexuspanel status` · `logs` · `update` · `backup` · `https` |
+| Управление | `shahkar status` · `logs` · `update` · `backup` · `https` |
 
-Скрипт ставит Docker, клонирует репозиторий в `/opt/nexuspanel`, поднимает Compose (PostgreSQL по умолчанию), собирает образ `nexuspanel/node` и печатает логин админа.
+Скрипт ставит Docker, клонирует репозиторий в `/opt/shahkar`, поднимает Compose (PostgreSQL по умолчанию), собирает образ `shahkar/node` и печатает логин админа.
 
 ---
 
@@ -62,7 +62,7 @@ flowchart TB
     U[Пользователь]
   end
 
-  subgraph panel [NexusPanel]
+  subgraph panel [Shahkar]
     API[FastAPI + React]
     DB[(PostgreSQL / SQLite)]
     R[Redis / HA]
@@ -181,7 +181,7 @@ flowchart TB
 | Метрики | Prometheus `/api/metrics` + опциональный Grafana |
 | Auto-heal | Рестарт проблемных нод |
 | Бэкапы / обновления | CLI и дашборд |
-| HTTPS | `nexuspanel https` (nginx + Let’s Encrypt) |
+| HTTPS | `shahkar https` (nginx + Let’s Encrypt) |
 | Миграция | Импорт 3x-ui |
 
 ---
@@ -199,8 +199,8 @@ flowchart TB
 ## Разработка
 
 ```bash
-git clone https://github.com/KhaJehAmiri/nexuspanel.git
-cd nexuspanel
+git clone https://github.com/KhaJehAmiri/shahkar.git
+cd shahkar
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
@@ -208,7 +208,7 @@ alembic upgrade head
 python3 main.py
 ```
 
-Данные продакшена: `/var/lib/nexuspanel` · Compose: `docker-compose.postgres.yml`
+Данные продакшена: `/var/lib/shahkar` · Compose: `docker-compose.postgres.yml`
 
 ---
 
@@ -224,4 +224,4 @@ python3 main.py
 
 ## Лицензия
 
-**[AGPL-3.0](LICENSE)** · [Репозиторий](https://github.com/KhaJehAmiri/nexuspanel) · [CONTRIBUTING.md](CONTRIBUTING.md)
+**[AGPL-3.0](LICENSE)** · [Репозиторий](https://github.com/KhaJehAmiri/shahkar) · [CONTRIBUTING.md](CONTRIBUTING.md)

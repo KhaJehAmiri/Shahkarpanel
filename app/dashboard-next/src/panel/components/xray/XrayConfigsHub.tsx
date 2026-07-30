@@ -59,7 +59,7 @@ export const XrayConfigsHub: FC<{
       <EmptyState
         title={t("common.error")}
         desc={error}
-        action={<Button onClick={reload}><IcRefresh className="nx-ico" /> {t("common.retry")}</Button>}
+        action={<Button onClick={reload}><IcRefresh className="sk-ico" /> {t("common.retry")}</Button>}
       />
     );
   }
@@ -69,9 +69,9 @@ export const XrayConfigsHub: FC<{
 
   return (
     <div>
-      <div className="nx-row" style={{ justifyContent: "flex-end", marginBottom: 12 }}>
+      <div className="sk-row" style={{ justifyContent: "flex-end", marginBottom: 12 }}>
         <Button variant="ghost" onClick={reload} disabled={saving}>
-          <IcRefresh className="nx-ico" /> {t("common.refresh")}
+          <IcRefresh className="sk-ico" /> {t("common.refresh")}
         </Button>
       </div>
       {tabs.length > 1 && <Tabs active={tab} onChange={setTab} tabs={tabs} />}

@@ -22,25 +22,25 @@ import {
 import { Button, HelpTip, Input, Select, Toggle } from "../ui";
 import { IcPlus } from "../icons";
 
-const Req = () => <span className="nx-req" aria-hidden> *</span>;
+const Req = () => <span className="sk-req" aria-hidden> *</span>;
 
 const FormRow: FC<{ label: ReactNode; help?: string; children: ReactNode }> = ({ label, help, children }) => (
-  <div className="nx-form-h-row">
-    <div className="nx-form-h-label">
+  <div className="sk-form-h-row">
+    <div className="sk-form-h-label">
       <span>{label}</span>
       {help && <HelpTip text={help} placement="bottom" />}
     </div>
-    <div className="nx-form-h-ctrl">{children}</div>
+    <div className="sk-form-h-ctrl">{children}</div>
   </div>
 );
 
 const SegSecurity: FC<{ value: string; onChange: (v: string) => void }> = ({ value, onChange }) => (
-  <div className="nx-seg nx-seg-stretch">
+  <div className="sk-seg sk-seg-stretch">
     {OUTBOUND_SECURITIES.map((s) => (
       <button
         key={s}
         type="button"
-        className={`nx-seg-btn ${value === s ? "active" : ""}`}
+        className={`sk-seg-btn ${value === s ? "active" : ""}`}
         onClick={() => onChange(s)}
       >
         {s === "none" ? "None" : s.toUpperCase()}
@@ -81,7 +81,7 @@ export const OutboundFormFields: FC<{
   const showMux = outboundSupportsMux(f.protocol, f.flow, f.network);
 
   return (
-    <div className="nx-form-h nx-outbound-form">
+    <div className="sk-form-h sk-outbound-form">
       <FormRow label={t("inbounds.protocol")}>
         <Select value={f.protocol} onChange={(e: ChangeEvent<HTMLSelectElement>) => setProtocol(e.target.value)}>
           {OUTBOUND_PROTOCOLS.map((p) => <option key={p} value={p}>{p}</option>)}
@@ -153,7 +153,7 @@ export const OutboundFormFields: FC<{
       {isVnext && (
         <>
           <FormRow label="ID">
-            <Input value={f.id} onChange={upd("id")} placeholder="UUID" className="nx-mono" />
+            <Input value={f.id} onChange={upd("id")} placeholder="UUID" className="sk-mono" />
           </FormRow>
           {f.protocol === "vless" && (
             <>
@@ -219,7 +219,7 @@ export const OutboundFormFields: FC<{
             <Input type="number" value={f.port} onChange={upd("port")} />
           </FormRow>
           <FormRow label={t("outbounds.hyAuth")}>
-            <Input value={f.pass} onChange={upd("pass")} className="nx-mono" />
+            <Input value={f.pass} onChange={upd("pass")} className="sk-mono" />
           </FormRow>
           <FormRow label={t("outbounds.hyUp")}>
             <Input value={f.hyUp} onChange={upd("hyUp")} placeholder="100 mbps" />
@@ -251,10 +251,10 @@ export const OutboundFormFields: FC<{
         <>
           {f.protocol === "amneziawg" && (
             <FormRow label={t("outbounds.amneziaHint")}>
-              <span className="nx-faint" style={{ fontSize: 12 }}>{t("outbounds.amneziaJsonHint")}</span>
+              <span className="sk-faint" style={{ fontSize: 12 }}>{t("outbounds.amneziaJsonHint")}</span>
             </FormRow>
           )}
-          <FormRow label="secretKey"><Input value={f.wgSecretKey} onChange={upd("wgSecretKey")} className="nx-mono" /></FormRow>
+          <FormRow label="secretKey"><Input value={f.wgSecretKey} onChange={upd("wgSecretKey")} className="sk-mono" /></FormRow>
           <FormRow label={t("xray.wgInterfaceAddress")}><Input value={f.wgAddress} onChange={upd("wgAddress")} /></FormRow>
           <FormRow label="reserved"><Input value={f.wgReserved} onChange={upd("wgReserved")} placeholder="0,0,0" /></FormRow>
           <FormRow label={t("xray.wgPeerPublicKey")}><Input value={f.wgPeerPublicKey} onChange={upd("wgPeerPublicKey")} /></FormRow>
@@ -372,7 +372,7 @@ export const OutboundFormFields: FC<{
 
           <FormRow label={t("outbounds.tcpMasks")} help={t("outbounds.tcpMasksHint")}>
             <Button size="sm" variant="primary" type="button" disabled title={t("outbounds.tcpMasksHint")}>
-              <IcPlus className="nx-ico" />
+              <IcPlus className="sk-ico" />
             </Button>
           </FormRow>
 

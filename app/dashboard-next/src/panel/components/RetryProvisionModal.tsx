@@ -65,12 +65,12 @@ export const RetryProvisionModal: FC<{
         </Button>
       </>}
     >
-      <div className="nx-stack" style={{ gap: 12 }}>
+      <div className="sk-stack" style={{ gap: 12 }}>
         <Callout tone="info" className="compact">{t("infra.provisionRetryHint")}</Callout>
         <Field label={t("infra.serverIp")}>
-          <Input value={host} readOnly className="nx-mono" />
+          <Input value={host} readOnly className="sk-mono" />
         </Field>
-        <div className="nx-form-grid">
+        <div className="sk-form-grid">
           <Field label={t("infra.sshUser")}>
             <Input value={f.username} onChange={upd("username")} placeholder="root" />
           </Field>

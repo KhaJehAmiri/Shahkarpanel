@@ -484,7 +484,7 @@ def ensure_reseller_subscription_endpoint(
         detail = re.sub(r"\x1b\[[0-9;]*m", "", detail).strip()
         raise ValueError(
             "Domain saved in the database, but host nginx is not serving it yet "
-            f"({detail}). Install/fix nginx (nexuspanel https) then save branding again, "
+            f"({detail}). Install/fix nginx (shahkar https) then save branding again, "
             "or run: sudo scripts/reconcile_subscription_nginx.sh --apply"
         )
 

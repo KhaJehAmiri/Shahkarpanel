@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none" role="img" aria-label="NexusPanel">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none" role="img" aria-label="Shahkar">
   <defs>
     <linearGradient id="nx" x1="28" y1="30" x2="100" y2="98" gradientUnits="userSpaceOnUse">
       <stop stop-color="#2ee0c4"/>
@@ -9,7 +9,7 @@
   <rect width="128" height="128" rx="30" fill="#09090b"/>
   <rect x="1" y="1" width="126" height="126" rx="29" stroke="url(#nx)" stroke-opacity="0.16" stroke-width="1"/>
 
-  <!-- Twin portals meeting at a nexus seam -->
+  <!-- Twin portals meeting at a shahkar seam -->
   <path fill="url(#nx)" d="
     M22 64
     L46 34
@@ -29,7 +29,7 @@
     C75.5 97 79.5 97 82 94
     L106 64Z"/>
 
-  <!-- Nexus core -->
+  <!-- Shahkar core -->
   <rect x="61.5" y="40" width="5" height="48" rx="2.5" fill="#09090b"/>
   <rect x="62.75" y="48" width="2.5" height="32" rx="1.25" fill="#2ee0c4"/>
 

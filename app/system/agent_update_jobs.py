@@ -26,7 +26,7 @@ from config import (
     NODE_PROVISION_SSH_TIMEOUT,
 )
 
-logger = logging.getLogger("nexus-agent-update")
+logger = logging.getLogger("shahkar-agent-update")
 
 JobStatus = Literal["pending", "running", "success", "failed", "partial"]
 NodeStatus = Literal["pending", "running", "success", "failed", "skipped"]
@@ -345,6 +345,16 @@ def _update_one_node(step: NodeUpdateStep) -> None:
         step.status = "success"
         step.message = "Agent updated"
         step.error = None
+        try:
+            from app.wireguard.finalmask_reload import clear_agent_hot_cache
+
+            clear_agent_hot_cache(step.node_id)
+        except Exception:
+            logger.debug(
+                "clear_agent_hot_cache after update node %s failed",
+                step.node_id,
+                exc_info=True,
+            )
     except Exception as exc:
         step.status = "failed"
         step.error = str(exc)[:800]

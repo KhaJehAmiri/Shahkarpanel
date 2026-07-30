@@ -1,9 +1,9 @@
-"""Hide the default /dashboard/ mount when a custom DASHBOARD_PATH is configured."""
+"""Hide or remap the default /dashboard/ mount when a custom DASHBOARD_PATH is set."""
 
 from __future__ import annotations
 
 from fastapi import Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import RedirectResponse
 
 from config import DASHBOARD_PATH
 
@@ -28,8 +28,14 @@ def uses_custom_dashboard_path() -> bool:
 
 
 async def hide_default_dashboard_middleware(request: Request, call_next):
+    """PWA / bookmarks may still open /dashboard/ — send them to the real path."""
     if uses_custom_dashboard_path():
         path = request.url.path
         if path == "/dashboard" or path.startswith("/dashboard/"):
-            return JSONResponse(status_code=404, content={"detail": "Not Found"})
+            dest = custom_dashboard_path()
+            # Preserve hash is client-only; keep query string.
+            if request.url.query:
+                dest = f"{dest}?{request.url.query}"
+            # Sub-path under /dashboard/... → map onto custom root (SPA).
+            return RedirectResponse(url=dest, status_code=302)
     return await call_next(request)

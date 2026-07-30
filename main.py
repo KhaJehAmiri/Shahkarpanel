@@ -16,7 +16,7 @@ def validate_cert_and_key(cert_file_path, key_file_path, ca_type):
     if ca_type == "private":
         logger.warning(f"""
 {click.style('IMPORTANT!', blink=True, bold=True, fg="yellow")} 
-You're running NexusPanel with: {click.style('UVICORN_SSL_CA_TYPE', italic=True, fg="magenta")}: {click.style(f'{ca_type}', bold=True, fg="yellow")}. 
+You're running Shahkar with: {click.style('UVICORN_SSL_CA_TYPE', italic=True, fg="magenta")}: {click.style(f'{ca_type}', bold=True, fg="yellow")}. 
 Self-signed CAs are useful in testing or internal use cases, they’re not suitable for secure public internet communications.
         """)
         return
@@ -72,13 +72,13 @@ if __name__ == "__main__":
             bind_args['port'] = UVICORN_PORT
             if UVICORN_HOST in ("0.0.0.0", "::"):
                 logger.info(
-                    "NexusPanel listening on %s:%s (no TLS — use a reverse proxy for HTTPS in production).",
+                    "Shahkar listening on %s:%s (no TLS — use a reverse proxy for HTTPS in production).",
                     UVICORN_HOST,
                     UVICORN_PORT,
                 )
             else:
                 logger.warning(
-                    "NexusPanel listening on %s:%s without TLS. Set UVICORN_HOST=0.0.0.0 for external access "
+                    "Shahkar listening on %s:%s without TLS. Set UVICORN_HOST=0.0.0.0 for external access "
                     "or terminate TLS with Nginx/Caddy.",
                     UVICORN_HOST,
                     UVICORN_PORT,

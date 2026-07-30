@@ -96,9 +96,9 @@ def _user_create_from_db_template(db_tpl, *, username: str, status: UserStatusCr
             elif tag_kind == "wireguard":
                 wg_kind = "wireguard" if wg_kind != "amneziawg" else "both"
     if wg_kind and ProxyTypes.WireGuard in proxies:
-        from app.wireguard.kind import NXPANEL_WG_KIND
+        from app.wireguard.kind import SHAHKAR_WG_KIND
 
-        proxies[ProxyTypes.WireGuard] = {NXPANEL_WG_KIND: wg_kind}
+        proxies[ProxyTypes.WireGuard] = {SHAHKAR_WG_KIND: wg_kind}
 
     expire = 0
     if tpl.expire_duration:

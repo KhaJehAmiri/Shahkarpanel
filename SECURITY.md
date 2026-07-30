@@ -12,7 +12,7 @@ Contact the repository owner privately (GitHub Security Advisories or direct mes
 | `.env` with real secrets | **Gitignored** — use `.env.example` only |
 | Production database dumps | Not tracked |
 | TLS private keys / JWT secrets | Generated on install, not in git |
-| SSH passwords / node credentials | Under `/var/lib/nexuspanel/secrets/` on the server only |
+| SSH passwords / node credentials | Under `/var/lib/shahkar/secrets/` on the server only |
 | User passwords | Never in source |
 | Internal handoff / audit / e2e scripts | **Gitignored** — stay on development servers |
 
@@ -28,22 +28,22 @@ Contact the repository owner privately (GitHub Security Advisories or direct mes
 
 ## Runtime secrets layout (on the server)
 
-Keep secrets **outside** the git checkout (`/opt/nexuspanel`):
+Keep secrets **outside** the git checkout (`/opt/shahkar`):
 
 | Path | Purpose |
 |------|---------|
-| `/opt/nexuspanel/.env` | Non-secret panel config (Uvicorn, CORS, titles) |
-| `/var/lib/nexuspanel/.env` | Runtime secrets (DB URL, JWT, bootstrap/metrics tokens) |
-| `/var/lib/nexuspanel/secrets/` | Panel → node SSH key / optional password file |
+| `/opt/shahkar/.env` | Non-secret panel config (Uvicorn, CORS, titles) |
+| `/var/lib/shahkar/.env` | Runtime secrets (DB URL, JWT, bootstrap/metrics tokens) |
+| `/var/lib/shahkar/secrets/` | Panel → node SSH key / optional password file |
 
-Fresh installs split these automatically via `nexuspanel install` / `scripts/setup_env.sh`.
+Fresh installs split these automatically via `shahkar install` / `scripts/setup_env.sh`.
 
 ## Production hardening checklist
 
 - Change the default admin password immediately after install.
 - Set strong `NODE_BOOTSTRAP_TOKEN` and `METRICS_TOKEN` in the runtime `.env`.
 - Use PostgreSQL + Redis for production; restrict network access to DB/Redis.
-- Enable HTTPS in front of the panel (`nexuspanel https` or your reverse proxy).
+- Enable HTTPS in front of the panel (`shahkar https` or your reverse proxy).
 - Revoke unused Personal Access Tokens and API keys.
-- Run panel updates via `nexuspanel update` from tagged releases.
+- Run panel updates via `shahkar update` from tagged releases.
 - Never paste real IPs, passwords, or `.env` contents into public issues or commits.

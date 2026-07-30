@@ -1,6 +1,6 @@
 /* Edit Host — scrollable shell (form-wide modals default to overflow:visible and clip content) */
 
-.nx-overlay.nx-host-editor-overlay {
+.sk-overlay.sk-host-editor-overlay {
   display: flex;
   align-items: flex-start;
   justify-content: center;
@@ -9,7 +9,7 @@
   padding: 24px 16px 32px;
 }
 
-.nx-modal.nx-host-editor-shell {
+.sk-modal.sk-host-editor-shell {
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
@@ -20,11 +20,11 @@
   overflow: hidden;
 }
 
-.nx-host-editor-shell .nx-modal-head {
+.sk-host-editor-shell .sk-modal-head {
   flex-shrink: 0;
 }
 
-.nx-host-editor-shell .nx-modal-body {
+.sk-host-editor-shell .sk-modal-body {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
@@ -33,26 +33,26 @@
   overflow: hidden;
 }
 
-.nx-host-editor-shell .nx-modal-foot {
+.sk-host-editor-shell .sk-modal-foot {
   flex-shrink: 0;
-  background: var(--nx-surface-2);
+  background: var(--sk-surface-2);
 }
 
-.nx-host-editor-body {
+.sk-host-editor-body {
   display: flex;
   flex-direction: column;
   min-height: 0;
   flex: 1 1 auto;
 }
 
-.nx-host-editor-shell .nx-host-modal-tabs {
+.sk-host-editor-shell .sk-host-modal-tabs {
   flex-shrink: 0;
   margin: 0;
   padding: 0 20px;
-  border-bottom: 1px solid var(--nx-border);
+  border-bottom: 1px solid var(--sk-border);
 }
 
-.nx-host-editor-scroll {
+.sk-host-editor-scroll {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
@@ -60,27 +60,27 @@
   overscroll-behavior: contain;
 }
 
-.nx-host-section {
+.sk-host-section {
   display: flex;
   flex-direction: column;
   gap: 12px;
   margin-bottom: 20px;
 }
 
-.nx-host-section:last-child {
+.sk-host-section:last-child {
   margin-bottom: 0;
 }
 
-.nx-host-section-title {
+.sk-host-section-title {
   margin: 0;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--nx-text-faint);
+  color: var(--sk-text-faint);
 }
 
-.nx-host-modal-grid {
+.sk-host-modal-grid {
   display: grid;
   gap: 14px 16px;
   grid-template-columns: 1fr;
@@ -88,24 +88,24 @@
 }
 
 @media (min-width: 640px) {
-  .nx-host-modal-grid {
+  .sk-host-modal-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
-.nx-host-span-2 {
+.sk-host-span-2 {
   grid-column: 1 / -1;
 }
 
-.nx-host-token-panel {
+.sk-host-token-panel {
   grid-column: 1 / -1;
   padding: 10px 12px;
-  border-radius: var(--nx-radius-sm, 8px);
-  border: 1px solid var(--nx-border);
-  background: var(--nx-surface-2);
+  border-radius: var(--sk-radius-sm, 8px);
+  border: 1px solid var(--sk-border);
+  background: var(--sk-surface-2);
 }
 
-.nx-host-token-panel-head {
+.sk-host-token-panel-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -113,13 +113,13 @@
   margin-bottom: 8px;
 }
 
-.nx-host-placeholder-label {
+.sk-host-placeholder-label {
   font-size: 11px;
   font-weight: 600;
-  color: var(--nx-text-dim);
+  color: var(--sk-text-dim);
 }
 
-.nx-host-placeholders {
+.sk-host-placeholders {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -127,76 +127,76 @@
   overflow-y: auto;
 }
 
-.nx-host-chip {
+.sk-host-chip {
   padding: 4px 9px;
   border-radius: 6px;
-  border: 1px solid var(--nx-border);
-  background: var(--nx-surface);
+  border: 1px solid var(--sk-border);
+  background: var(--sk-surface);
   font-size: 10.5px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  color: var(--nx-accent, #818cf8);
+  color: var(--sk-accent, #818cf8);
   cursor: pointer;
   transition: background 0.15s ease, border-color 0.15s ease;
 }
 
-.nx-host-chip:hover {
+.sk-host-chip:hover {
   border-color: rgba(99, 102, 241, 0.45);
   background: rgba(99, 102, 241, 0.08);
 }
 
-.nx-host-callout {
+.sk-host-callout {
   grid-column: 1 / -1;
   margin: 0;
   font-size: 12px;
   line-height: 1.5;
-  color: var(--nx-text-dim);
+  color: var(--sk-text-dim);
   padding: 10px 12px;
-  border-radius: var(--nx-radius-sm, 8px);
-  border: 1px solid var(--nx-border);
-  background: var(--nx-surface-2);
+  border-radius: var(--sk-radius-sm, 8px);
+  border: 1px solid var(--sk-border);
+  background: var(--sk-surface-2);
 }
 
-.nx-host-callout.warn {
-  border-color: color-mix(in srgb, var(--nx-warn) 35%, var(--nx-border));
-  background: var(--nx-warn-soft);
-  color: var(--nx-text);
+.sk-host-callout.warn {
+  border-color: color-mix(in srgb, var(--sk-warn) 35%, var(--sk-border));
+  background: var(--sk-warn-soft);
+  color: var(--sk-text);
 }
 
-.nx-host-toggles {
+.sk-host-toggles {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 10px 14px;
   grid-column: 1 / -1;
 }
 
-.nx-host-toggle-row {
+.sk-host-toggle-row {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.nx-host-toggle-label {
+.sk-host-toggle-label {
   font-size: 12px;
   font-weight: 600;
-  color: var(--nx-text);
+  color: var(--sk-text);
 }
 
-.nx-host-editor-shell .nx-field .nx-hint {
+.sk-host-editor-shell .sk-field .sk-hint {
   font-size: 11px;
   line-height: 1.45;
   max-width: 52ch;
 }
 
-.nx-host-json-field {
+.sk-host-json-field {
   grid-column: 1 / -1;
 }
 
 @media (max-width: 639px) {
-  .nx-host-span-2,
-  .nx-host-token-panel,
-  .nx-host-callout,
-  .nx-host-toggles,
-  .nx-host-json-field {
+  .sk-host-span-2,
+  .sk-host-token-panel,
+  .sk-host-callout,
+  .sk-host-toggles,
+  .sk-host-json-field {
     grid-column: auto;
   }
 }

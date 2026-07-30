@@ -214,10 +214,10 @@ export const InboundSubscriptionModal: FC<Props> = ({ inboundTag, onClose }) => 
         </>
       }
     >
-      <p className="nx-faint" style={{ fontSize: 13, marginBottom: 12 }}>{t("inboundSub.desc")}</p>
+      <p className="sk-faint" style={{ fontSize: 13, marginBottom: 12 }}>{t("inboundSub.desc")}</p>
 
       {loading ? (
-        <div className="nx-faint">{t("common.loading")}</div>
+        <div className="sk-faint">{t("common.loading")}</div>
       ) : (
         <>
           {data?.inherited && effective && (
@@ -232,7 +232,7 @@ export const InboundSubscriptionModal: FC<Props> = ({ inboundTag, onClose }) => 
             </div>
           )}
 
-          <div className="nx-row" style={{ marginBottom: 14, gap: 10, alignItems: "center" }}>
+          <div className="sk-row" style={{ marginBottom: 14, gap: 10, alignItems: "center" }}>
             <Toggle on={enabled} onChange={(on) => { setSaveError(null); enableOverride(on); }} label={t("inboundSub.enableOverride")} />
           </div>
 

@@ -788,10 +788,10 @@ def process_inbounds_and_tags(
 def _sanitize_proxy_remark(remark: str) -> str:
     """Strip legacy Marzban branding from host remarks in exported configs."""
     for old, new in (
-        ("🚀 Marz", "Nexus"),
-        ("Marz (", "Nexus ("),
-        ("Marzban", "NexusPanel"),
-        ("marzban", "NexusPanel"),
+        ("🚀 Marz", "Shahkar"),
+        ("Marz (", "Shahkar ("),
+        ("Marzban", "Shahkar"),
+        ("marzban", "Shahkar"),
     ):
         remark = remark.replace(old, new)
     return remark

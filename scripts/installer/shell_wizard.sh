@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# NexusPanel shell installer wizard — branded host console (EN/FA).
-# Invoked by: nexuspanel.sh install → run_install_wizard
+# Shahkar shell installer wizard — branded host console (EN/FA).
+# Invoked by: shahkar.sh install → run_install_wizard
 set -euo pipefail
 
 CONFIG_PATH=""
-DATA_DIR="${DATA_DIR:-/var/lib/nexuspanel}"
+DATA_DIR="${DATA_DIR:-/var/lib/shahkar}"
 
-# Brand palette (matches dashboard --nx-accent / console `nexus`)
+# Brand palette (matches dashboard accent / console `shahkar`)
 if [ -t 1 ] || [ -t 2 ]; then
   C_RESET=$'\033[0m'; C_BOLD=$'\033[1m'; C_DIM=$'\033[2m'
   C_RED=$'\033[0;31m'; C_YELLOW=$'\033[0;33m'; C_WHITE=$'\033[0;37m'
@@ -31,7 +31,7 @@ AUTO_CREDENTIALS="1"
 ADMIN_USERNAME=""
 ADMIN_PASSWORD=""
 DASHBOARD_PATH=""
-PANEL_TITLE="NexusPanel"
+PANEL_TITLE="Shahkar"
 PRIMARY_COLOR="#2ee0c4"
 SUPPORT_URL=""
 PANEL_PORT="8000"
@@ -107,9 +107,8 @@ nx_banner() {
       ╰──╯
 EOF
   printf "%b" "$C_RESET"
-  printf "  %bNEXUS%b %bPANEL%b  %binstaller%b  %b·%b  %bv1%b\n" \
+  printf "  %bSHAHKAR%b  %binstaller%b  %b·%b  %bv1%b\n" \
     "${C_BOLD}${C_BRAND}" "$C_RESET" \
-    "${C_BOLD}${C_WHITE}" "$C_RESET" \
     "$C_MUTED" "$C_RESET" \
     "$C_MUTED" "$C_RESET" \
     "$C_BRAND_DIM" "$C_RESET"
@@ -175,7 +174,7 @@ msg() {
         dash_p) echo "مسیر مخفی داشبورد (Enter = خودکار)" ;;
         brand) echo "برندینگ" ;;
         brand_d) echo "اختیاری — می‌توانید بعداً از پنل تغییر دهید" ;;
-        title_p) echo "عنوان پنل [NexusPanel]" ;;
+        title_p) echo "عنوان پنل [Shahkar]" ;;
         color_p) echo "رنگ اصلی [#2ee0c4]" ;;
         support_p) echo "لینک پشتیبانی (اختیاری)" ;;
         adv) echo "تنظیمات پیشرفته" ;;
@@ -211,7 +210,7 @@ msg() {
         dash_p) echo "Secret dashboard path (Enter = auto)" ;;
         brand) echo "Branding" ;;
         brand_d) echo "Optional — you can change this later in the panel" ;;
-        title_p) echo "Panel title [NexusPanel]" ;;
+        title_p) echo "Panel title [Shahkar]" ;;
         color_p) echo "Primary color [#2ee0c4]" ;;
         support_p) echo "Support URL (optional)" ;;
         adv) echo "Advanced options" ;;
@@ -406,7 +405,7 @@ cfg = {
     "admin_password": os.environ.get("ADMIN_PASSWORD", ""),
     "auto_credentials": os.environ.get("AUTO_CREDENTIALS", "1") == "1",
     "dashboard_path": os.environ.get("DASHBOARD_PATH", ""),
-    "panel_title": os.environ.get("PANEL_TITLE", "NexusPanel"),
+    "panel_title": os.environ.get("PANEL_TITLE", "Shahkar"),
     "primary_color": os.environ.get("PRIMARY_COLOR", "#2ee0c4"),
     "support_url": os.environ.get("SUPPORT_URL", ""),
     "panel_port": int(os.environ.get("PANEL_PORT", "8000") or 8000),

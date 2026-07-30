@@ -16,7 +16,7 @@ from app.singbox.operations import _node_object, collect_singbox_users
 from app.singbox.sync import build_name_user_map
 from app.singbox.transport import client_for_node
 
-logger = logging.getLogger("nexus-singbox")
+logger = logging.getLogger("shahkar-singbox")
 
 
 class SingBoxUsageTracker:

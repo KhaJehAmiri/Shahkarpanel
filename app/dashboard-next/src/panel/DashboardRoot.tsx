@@ -20,10 +20,10 @@ import "./i18n";
 const Splash: FC = () => (
   <div style={{ minHeight: "100vh", display: "grid", placeItems: "center" }}>
     <img
-      src="/sub-assets/brand/nexuspanel-logo.png"
+      src="/sub-assets/brand/shahkar.png"
       alt=""
-      className="nx-brand-logo nx-brand-logo-img"
-      style={{ width: 48, height: 48, animation: "nx-shimmer 1.3s infinite" }}
+      className="sk-brand-logo sk-brand-logo-img"
+      style={{ width: 48, height: 48, animation: "sk-shimmer 1.3s infinite" }}
     />
   </div>
 );

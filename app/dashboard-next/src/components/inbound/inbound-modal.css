@@ -1,22 +1,22 @@
 /* Theme tokens for wizard form fields (FieldRow, inputs, etc.) */
 .inbound-modal-theme {
-  --bg: var(--nx-surface, #10151c);
-  --surface: var(--nx-surface-2, #161c25);
-  --surface-2: var(--nx-surface-3, #1d242f);
-  --border: var(--nx-border, #1f2733);
-  --border-focus: var(--nx-accent, #6366f1);
-  --accent: var(--nx-accent, #6366f1);
-  --accent-hover: var(--nx-accent-2, #4f46e5);
-  --success: var(--nx-success, #22c55e);
-  --warning: var(--nx-warning, #f59e0b);
-  --danger: var(--nx-danger, #ef4444);
-  --text: var(--nx-text, #eef2f8);
-  --text-muted: var(--nx-text-muted, #94a3b8);
-  --text-hint: var(--nx-text-dim, #64748b);
+  --bg: var(--sk-surface, #10151c);
+  --surface: var(--sk-surface-2, #161c25);
+  --surface-2: var(--sk-surface-3, #1d242f);
+  --border: var(--sk-border, #1f2733);
+  --border-focus: var(--sk-accent, #6366f1);
+  --accent: var(--sk-accent, #6366f1);
+  --accent-hover: var(--sk-accent-2, #4f46e5);
+  --success: var(--sk-success, #22c55e);
+  --warning: var(--sk-warning, #f59e0b);
+  --danger: var(--sk-danger, #ef4444);
+  --text: var(--sk-text, #eef2f8);
+  --text-muted: var(--sk-text-muted, #94a3b8);
+  --text-hint: var(--sk-text-dim, #64748b);
 }
 
 /* Overlay: solid dim (no glass blur), scrolls when content is tall */
-.nx-overlay.nx-inbound-wizard-overlay {
+.sk-overlay.sk-inbound-wizard-overlay {
   display: flex;
   align-items: flex-start;
   justify-content: center;
@@ -29,7 +29,7 @@
 }
 
 /* Panel: opaque, grows with content — no inner scroll trap */
-.nx-modal.nx-inbound-wizard-shell {
+.sk-modal.sk-inbound-wizard-shell {
   position: relative;
   flex-shrink: 0;
   width: 100%;
@@ -37,40 +37,40 @@
   max-height: none;
   overflow: visible;
   margin: auto;
-  background: var(--nx-surface, #10151c);
-  border: 1px solid var(--nx-border, #1f2733);
-  box-shadow: var(--nx-shadow-lg, 0 25px 50px -12px rgba(0, 0, 0, 0.55));
+  background: var(--sk-surface, #10151c);
+  border: 1px solid var(--sk-border, #1f2733);
+  box-shadow: var(--sk-shadow-lg, 0 25px 50px -12px rgba(0, 0, 0, 0.55));
 }
 
-.nx-inbound-wizard-shell .nx-modal-head {
+.sk-inbound-wizard-shell .sk-modal-head {
   position: relative;
   justify-content: center;
 }
 
-.nx-inbound-wizard-shell .nx-modal-head .nx-card-title {
+.sk-inbound-wizard-shell .sk-modal-head .sk-card-title {
   flex: 1;
   text-align: center;
   justify-content: center;
 }
 
-.nx-inbound-wizard-shell .nx-modal-head .nx-btn.icon {
+.sk-inbound-wizard-shell .sk-modal-head .sk-btn.icon {
   position: absolute;
   inset-inline-end: 16px;
   top: 50%;
   transform: translateY(-50%);
 }
 
-.nx-inbound-wizard-shell .nx-modal-body {
+.sk-inbound-wizard-shell .sk-modal-body {
   padding: 0 !important;
 }
 
-.nx-inbound-wizard-shell .nx-modal-foot {
+.sk-inbound-wizard-shell .sk-modal-foot {
   justify-content: stretch;
   padding-top: 12px;
   padding-bottom: 12px;
 }
 
-.nx-inbound-wizard-foot {
+.sk-inbound-wizard-foot {
   display: flex;
   width: 100%;
   align-items: center;
@@ -81,8 +81,8 @@
 /* Tab bar — equal-width tabs, no inner scroll */
 .inbound-tab-bar {
   display: flex;
-  border-bottom: 1px solid var(--nx-border, #1f2733);
-  background: var(--nx-surface-2, #161c25);
+  border-bottom: 1px solid var(--sk-border, #1f2733);
+  background: var(--sk-surface-2, #161c25);
 }
 
 .inbound-tab {
@@ -93,7 +93,7 @@
   border-bottom: 2px solid transparent;
   margin-bottom: -1px;
   background: transparent;
-  color: var(--nx-text-dim, #64748b);
+  color: var(--sk-text-dim, #64748b);
   font-size: 12px;
   font-weight: 500;
   text-align: center;
@@ -112,28 +112,28 @@
 }
 
 .inbound-tab:hover {
-  color: var(--nx-text-muted, #94a3b8);
+  color: var(--sk-text-muted, #94a3b8);
 }
 
 .inbound-tab--active {
-  color: var(--nx-accent, #6366f1);
-  border-bottom-color: var(--nx-accent, #6366f1);
+  color: var(--sk-accent, #6366f1);
+  border-bottom-color: var(--sk-accent, #6366f1);
 }
 
 .inbound-tab--error {
-  color: var(--nx-danger, #ef4444);
+  color: var(--sk-danger, #ef4444);
 }
 
 .inbound-tab--active.inbound-tab--error {
-  color: var(--nx-danger, #ef4444);
-  border-bottom-color: var(--nx-danger, #ef4444);
+  color: var(--sk-danger, #ef4444);
+  border-bottom-color: var(--sk-danger, #ef4444);
 }
 
 .inbound-wizard-body {
   /* steps already have px-6 py-4 */
 }
 
-/* Radix/shadcn portals — above nx-overlay (z-index 500) */
+/* Radix/shadcn portals — above sk-overlay (z-index 500) */
 [data-radix-popper-content-wrapper],
 [data-radix-select-content] {
   z-index: 1100 !important;

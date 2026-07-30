@@ -1,7 +1,7 @@
 # Optional monitoring stack: Prometheus + Grafana.
 # Usage: docker compose -f docker-compose.monitoring.yml up -d
 #
-# 1) Set METRICS_TOKEN in NexusPanel's .env and enable the `prometheus_metrics`
+# 1) Set METRICS_TOKEN in Shahkar's .env and enable the `prometheus_metrics`
 #    feature flag (PUT /api/feature-flags/prometheus_metrics {"enabled": true}).
 # 2) Put the same token in monitoring/prometheus.yml.
 

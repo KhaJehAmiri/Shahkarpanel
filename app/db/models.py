@@ -73,6 +73,13 @@ class Admin(Base):
     parent = relationship("Admin", remote_side=[id], foreign_keys=[parent_admin_id])
     # Commission (phase 6): % of child spend credited to parent_admin.
     commission_percent = Column(Integer, nullable=False, default=0, server_default=text("0"))
+    # Opt-in: reseller's portal customers / top-up may use platform CentralPay.
+    centralpay_enabled = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+    # Per-reseller card-to-card (never inherits master's platform card).
+    card_enabled = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+    card_number = Column(String(64), nullable=True)
+    card_holder = Column(String(128), nullable=True)
+    card_bank = Column(String(128), nullable=True)
 
 
 
@@ -153,6 +160,19 @@ class User(Base):
     portal_enabled = Column(Boolean, nullable=False, default=False)
     hashed_portal_password = Column(String(128), nullable=True)
     portal_password_reset_at = Column(DateTime, nullable=True)
+    # First portal login must change VPN username + portal password.
+    must_change_credentials = Column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
+    # Unread push count for installed portal PWA home-screen badge.
+    portal_unread = Column(Integer, nullable=False, server_default=text("0"), default=0)
+    # Payment intent ids the portal user has opened (message-style read receipts).
+    portal_tx_reads = Column(JSON, nullable=True)
+    # Portal login user that owns this VPN account (self-service multi-account).
+    # NULL = this row is a portal login (or legacy standalone account).
+    portal_owner_user_id = Column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     # True when the user was auto-disabled because its owning reseller exceeded
     # its ``max_total_traffic`` cap (phase 3). Only these users are auto-
@@ -1040,6 +1060,40 @@ class PaymentIntent(Base):
     admin = relationship("Admin")
     user = relationship("User")
     plan = relationship("Plan")
+
+
+class AdminPushSubscription(Base):
+    """Browser Web Push endpoint for an admin/reseller (card payment alerts)."""
+
+    __tablename__ = "admin_push_subscriptions"
+
+    id = Column(Integer, primary_key=True)
+    admin_id = Column(Integer, ForeignKey("admins.id"), index=True, nullable=False)
+    endpoint = Column(String(2048), unique=True, nullable=False)
+    p256dh = Column(String(512), nullable=False)
+    auth = Column(String(256), nullable=False)
+    user_agent = Column(String(512), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    admin = relationship("Admin")
+
+
+class PortalPushSubscription(Base):
+    """Browser Web Push endpoint for a portal end-user."""
+
+    __tablename__ = "portal_push_subscriptions"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+    endpoint = Column(String(2048), unique=True, nullable=False)
+    p256dh = Column(String(512), nullable=False)
+    auth = Column(String(256), nullable=False)
+    user_agent = Column(String(512), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("User")
 
 
 class Invoice(Base):

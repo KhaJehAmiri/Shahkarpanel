@@ -8,6 +8,8 @@ export interface AdminInfo {
   tenant_id?: number | null;
   telegram_id?: number | null;
   discord_webhook?: string | null;
+  centralpay_enabled?: boolean;
+  card_enabled?: boolean;
 }
 
 export interface SystemStats {
@@ -461,6 +463,57 @@ export interface MrrSummary {
   active_resellers: number;
   sub_resellers: number;
   top_resellers: { admin_id: number; username: string; revenue: number }[];
+}
+
+export interface GatewayIncomeReseller {
+  admin_id: number;
+  username: string;
+  is_sudo?: boolean;
+  centralpay_enabled?: boolean;
+  card_enabled?: boolean;
+  today: number;
+  yesterday: number;
+  week: number;
+  total: number;
+  payments_count: number;
+  by_provider: Record<string, number>;
+  by_kind: Record<string, number>;
+}
+
+export interface GatewayIncomePayment {
+  id: number;
+  kind: string;
+  provider: string;
+  amount: number;
+  status: string;
+  admin_id: number;
+  username?: string | null;
+  plan_id?: number | null;
+  plan_name?: string | null;
+  reference?: string | number | null;
+  card?: string | null;
+  created_at?: string | null;
+  completed_at?: string | null;
+}
+
+export interface GatewayIncome {
+  today: number;
+  yesterday: number;
+  week: number;
+  total: number;
+  today_count?: number;
+  yesterday_count?: number;
+  week_count?: number;
+  payments_count: number;
+  currency_label: string;
+  by_provider: Record<string, number>;
+  by_kind: Record<string, number>;
+  today_by_kind?: Record<string, number>;
+  yesterday_by_kind?: Record<string, number>;
+  week_by_kind?: Record<string, number>;
+  total_by_kind?: Record<string, number>;
+  resellers: GatewayIncomeReseller[];
+  recent_payments: GatewayIncomePayment[];
 }
 
 export interface SubResellerAccount {

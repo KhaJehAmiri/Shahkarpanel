@@ -76,25 +76,25 @@ export const ServicesManager: FC<{ embedded?: boolean }> = () => {
   if (loading) return <Card><SkeletonRows rows={4} cols={2} /></Card>;
 
   return (
-    <div className="nx-stack" style={{ gap: 16 }}>
+    <div className="sk-stack" style={{ gap: 16 }}>
       <Callout tone="info" title={t("services.hintTitle")}>{t("services.hintBody")}</Callout>
 
       <Card style={{ padding: 16 }}>
-        <div className="nx-faint" style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>{t("services.catalogTitle")}</div>
-        <div className="nx-row" style={{ gap: 8, flexWrap: "wrap" }}>
+        <div className="sk-faint" style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>{t("services.catalogTitle")}</div>
+        <div className="sk-row" style={{ gap: 8, flexWrap: "wrap" }}>
           {catalog.map((s) => (
-            <span key={s.slug} className="nx-pill" style={{ fontSize: 12 }}>
-              {s.display_name} <span className="nx-faint">({s.engine})</span>
+            <span key={s.slug} className="sk-pill" style={{ fontSize: 12 }}>
+              {s.display_name} <span className="sk-faint">({s.engine})</span>
             </span>
           ))}
         </div>
       </Card>
 
       <Card style={{ padding: 16 }}>
-        <div className="nx-row" style={{ gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
-          <label className="nx-label" style={{ margin: 0 }}>{t("services.pickNode")}</label>
+        <div className="sk-row" style={{ gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
+          <label className="sk-label" style={{ margin: 0 }}>{t("services.pickNode")}</label>
           <select
-            className="nx-input"
+            className="sk-input"
             value={selectedId ?? ""}
             onChange={(e) => setSelectedId(Number(e.target.value))}
           >
@@ -108,12 +108,12 @@ export const ServicesManager: FC<{ embedded?: boolean }> = () => {
           </Button>
         </div>
 
-        <div className="nx-stack" style={{ gap: 8 }}>
+        <div className="sk-stack" style={{ gap: 8 }}>
           {bindings.map((b) => (
-            <label key={b.service_slug} className="nx-row" style={{ gap: 8, cursor: "pointer" }}>
+            <label key={b.service_slug} className="sk-row" style={{ gap: 8, cursor: "pointer" }}>
               <input type="checkbox" checked={b.enabled} onChange={() => toggle(b.service_slug)} />
               <span>{b.display_name}</span>
-              <span className="nx-faint" style={{ fontSize: 11 }}>{b.service_slug}</span>
+              <span className="sk-faint" style={{ fontSize: 11 }}>{b.service_slug}</span>
             </label>
           ))}
         </div>

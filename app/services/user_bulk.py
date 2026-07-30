@@ -83,7 +83,7 @@ def _proxy_type_for_inbound(inbound: dict) -> Optional[ProxyTypes]:
     proto = str(inbound.get("protocol") or "").lower()
     settings = inbound.get("settings") or {}
     if proto == "wireguard":
-        if settings.get("nexusPanelKind") == "amneziawg":
+        if settings.get("shahkarPanelKind") == "amneziawg":
             return ProxyTypes.WireGuard
         return ProxyTypes.WireGuard
     try:
@@ -917,7 +917,7 @@ def _user_has_native(user: User, protocol: BulkNativeProtocol) -> bool:
 def _apply_native_change(user: User, protocol: BulkNativeProtocol, action: BulkNativeAction) -> bool:
     """Mutate user proxies. Returns True if something changed."""
     from app.models.proxy import apply_proxy_patch
-    from app.wireguard.kind import NXPANEL_WG_KIND
+    from app.wireguard.kind import SHAHKAR_WG_KIND
 
     proxy_type = _native_proxy_type(protocol)
 
@@ -935,7 +935,7 @@ def _apply_native_change(user: User, protocol: BulkNativeProtocol, action: BulkN
             settings = apply_proxy_patch(
                 ProxyTypes.WireGuard,
                 wg.settings if wg else None,
-                {NXPANEL_WG_KIND: new_kind},
+                {SHAHKAR_WG_KIND: new_kind},
             )
             if wg:
                 wg.settings = settings
@@ -957,7 +957,7 @@ def _apply_native_change(user: User, protocol: BulkNativeProtocol, action: BulkN
         wg.settings = apply_proxy_patch(
             ProxyTypes.WireGuard,
             wg.settings,
-            {NXPANEL_WG_KIND: new_kind},
+            {SHAHKAR_WG_KIND: new_kind},
         )
         return True
 

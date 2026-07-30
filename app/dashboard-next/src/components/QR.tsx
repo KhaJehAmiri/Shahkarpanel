@@ -32,6 +32,7 @@ export function QR({ value, size = 180 }: { value: string; size?: number }) {
       height={size}
       alt="QR"
       className="block rounded-lg bg-white p-2"
+      style={{ marginInline: "auto", direction: "ltr" }}
     />
   );
 }

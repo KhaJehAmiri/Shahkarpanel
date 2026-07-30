@@ -27,20 +27,20 @@ export const JsonSection: FC<{
   };
 
   return (
-    <div className="nx-stack">
+    <div className="sk-stack">
       <Callout tone="warn" title={t("xray.jsonTitle")}>{t("xray.jsonDesc")}</Callout>
       <Card>
         <textarea
-          className="nx-code-editor"
+          className="sk-code-editor"
           rows={22}
           value={text}
           onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setText(e.target.value)}
           dir="ltr"
           spellCheck={false}
         />
-        {err && <div style={{ color: "var(--nx-danger)", fontSize: 12, marginTop: 8 }}>{err}</div>}
+        {err && <div style={{ color: "var(--sk-danger)", fontSize: 12, marginTop: 8 }}>{err}</div>}
       </Card>
-      <div className="nx-row" style={{ justifyContent: "flex-end", gap: 8 }}>
+      <div className="sk-row" style={{ justifyContent: "flex-end", gap: 8 }}>
         <Button variant="ghost" onClick={syncFromConfig}>{t("common.retry")}</Button>
         <Button variant="primary" disabled={saving} onClick={apply}>{t("common.save")}</Button>
       </div>

@@ -147,7 +147,7 @@ export const ObservatorySection: FC<{
       <EmptyState
         title={t("common.error")}
         desc={remote.error}
-        action={<Button onClick={remote.reload}><IcRefresh className="nx-ico" /> {t("common.retry")}</Button>}
+        action={<Button onClick={remote.reload}><IcRefresh className="sk-ico" /> {t("common.retry")}</Button>}
       />
     );
   }
@@ -155,13 +155,13 @@ export const ObservatorySection: FC<{
   const obsPing = (burst.pingConfig || {}) as Record<string, unknown>;
 
   return (
-    <div className="nx-stack">
+    <div className="sk-stack">
       <Callout tone="info" title={t("xray.observatoryTitle")}>
         {t("xray.observatoryDesc")}
       </Callout>
 
       <Card>
-        <div className="nx-row" style={{ justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <div className="sk-row" style={{ justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <strong>{t("xray.observatoryClassic")}</strong>
           <Toggle on={obsEnabled} onChange={toggleObs} label={obsEnabled ? t("common.enabled") : t("common.disabled")} />
         </div>
@@ -213,7 +213,7 @@ export const ObservatorySection: FC<{
       </Card>
 
       <Card>
-        <div className="nx-row" style={{ justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <div className="sk-row" style={{ justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <strong>{t("xray.burstObservatoryTitle")}</strong>
           <Toggle on={burstEnabled} onChange={toggleBurst} label={burstEnabled ? t("common.enabled") : t("common.disabled")} />
         </div>
@@ -278,9 +278,9 @@ export const ObservatorySection: FC<{
         )}
       </Card>
 
-      <div className="nx-row" style={{ justifyContent: "flex-end", gap: 8 }}>
+      <div className="sk-row" style={{ justifyContent: "flex-end", gap: 8 }}>
         <Button variant="ghost" disabled={remote.loading} onClick={remote.reload}>
-          <IcRefresh className="nx-ico" /> {t("common.refresh")}
+          <IcRefresh className="sk-ico" /> {t("common.refresh")}
         </Button>
         <Button variant="primary" disabled={saving} onClick={() => void save()}>
           {saving ? t("common.loading") : t("common.save")}

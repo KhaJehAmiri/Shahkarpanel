@@ -1,5 +1,5 @@
 import { InboundsByProtocol, NodeItem } from "../api/types";
-import { NXPANEL_INBOUND_KIND } from "./xrayHelpers";
+import { SHAHKAR_INBOUND_KIND } from "./xrayHelpers";
 
 const USERNAME_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
 
@@ -14,13 +14,13 @@ export function generateRandomUsername(length = 8): string {
 type WgSettings = {
   address?: string | null;
   awg_address?: string | null;
-  nexusPanelKind?: string;
+  shahkarPanelKind?: string;
 };
 
 /** UI protocol badges for a user row (wireguard proxy may represent AWG). */
 export function userWgStackLabels(settings: WgSettings | undefined): string[] {
   const s = settings || {};
-  const kind = s.nexusPanelKind;
+  const kind = s.shahkarPanelKind;
   if (kind === "both") return ["wireguard", "amneziawg"];
   if (kind === "amneziawg") return ["amneziawg"];
   if (kind === "wireguard") return ["wireguard"];
@@ -103,7 +103,7 @@ export function protocolAssignable(
   }
 }
 
-export { NXPANEL_INBOUND_KIND as NXPANEL_WG_KIND };
+export { SHAHKAR_INBOUND_KIND as SHAHKAR_WG_KIND };
 
 export type SsInboundMeta = { tag: string; ss_method?: string | null };
 

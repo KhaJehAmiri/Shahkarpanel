@@ -12,7 +12,7 @@ from app.db import crud
 from app.db.models import Admin, User
 from app.models.user import UserStatus
 
-logger = logging.getLogger("nexus-quota")
+logger = logging.getLogger("shahkar-quota")
 
 _force_disconnect_after: dict[int, float] = {}
 _FORCE_DISCONNECT_COOLDOWN_SEC = 15.0

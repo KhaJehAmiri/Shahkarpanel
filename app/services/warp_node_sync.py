@@ -33,7 +33,7 @@ def sync_node_warp_tproxy(dbnode, *, node_object=None) -> bool:
     if apply is None:
         logger.warning(
             "WARP TPROXY sync skipped for node %s: agent has no wg_warp_tproxy "
-            "(update nexusnode). Finalmask/Xray path still uses WARP.",
+            "(update shahkarnode). Finalmask/Xray path still uses WARP.",
             dbnode.id,
         )
         return False

@@ -87,7 +87,7 @@ export const UserImportWizard: FC<{
       )}
     >
       <Callout tone="info" title={dumpFocus ? t("resellers.migrationDumpHintTitle") : t("users.importWhere")}>
-        <div className="nx-stack" style={{ gap: 6, fontSize: 13 }}>
+        <div className="sk-stack" style={{ gap: 6, fontSize: 13 }}>
           {dumpFocus && <div>{t("users.importFmt3xuiDump")}</div>}
           <div>{t("users.importFmtMarzban")}</div>
           <div>{t("users.importFmt3xui")}</div>
@@ -109,26 +109,26 @@ export const UserImportWizard: FC<{
           />
         </Field>
       </div>
-      <label className="nx-row" style={{ gap: 8, marginTop: 8, fontSize: 13 }}>
+      <label className="sk-row" style={{ gap: 8, marginTop: 8, fontSize: 13 }}>
         <input type="checkbox" checked={skipExisting} onChange={(e) => setSkipExisting(e.target.checked)} />
         {t("users.importSkipExisting")}
       </label>
       {preview && (
-        <div className="nx-row" style={{ gap: 10, marginTop: 10, flexWrap: "wrap", fontSize: 12 }}>
+        <div className="sk-row" style={{ gap: 10, marginTop: 10, flexWrap: "wrap", fontSize: 12 }}>
           <Pill tone="accent">{t("users.importSource")}: {preview.source || "—"}</Pill>
           <Pill>{t("users.importTotal")}: {counts?.total ?? preview.total}</Pill>
           <Pill tone="ok">{t("users.importNew")}: {counts?.new ?? 0}</Pill>
           <Pill>{t("users.importExists")}: {counts?.exists ?? 0}</Pill>
           {(counts?.invalid ?? 0) > 0 && <Pill tone="warn">{t("users.importInvalid")}: {counts?.invalid}</Pill>}
-          {preview.truncated && <span className="nx-faint">{t("users.importTruncated")}</span>}
+          {preview.truncated && <span className="sk-faint">{t("users.importTruncated")}</span>}
         </div>
       )}
       {unmapped.length > 0 && (
         <Callout tone="warn" title={t("users.importMapTitle")}>
-          <div className="nx-stack" style={{ gap: 8, marginTop: 8 }}>
+          <div className="sk-stack" style={{ gap: 8, marginTop: 8 }}>
             {unmapped.map((tag) => (
-              <div key={tag} className="nx-row" style={{ gap: 8, flexWrap: "wrap" }}>
-                <span className="nx-code">{tag}</span>
+              <div key={tag} className="sk-row" style={{ gap: 8, flexWrap: "wrap" }}>
+                <span className="sk-code">{tag}</span>
                 <span>→</span>
                 <Select
                   value={mapping[tag] || ""}
@@ -144,8 +144,8 @@ export const UserImportWizard: FC<{
         </Callout>
       )}
       {rows.length > 0 && (
-        <div className="nx-table-wrap" style={{ marginTop: 12, maxHeight: 300, overflow: "auto" }}>
-          <table className="nx-table">
+        <div className="sk-table-wrap" style={{ marginTop: 12, maxHeight: 300, overflow: "auto" }}>
+          <table className="sk-table">
             <thead>
               <tr>
                 <th>{t("common.username")}</th>
@@ -160,9 +160,9 @@ export const UserImportWizard: FC<{
                 <tr key={`${r.username}-${i}`}>
                   <td>{r.username}</td>
                   <td>{t(`users.status.${r.status}`, r.status)}</td>
-                  <td className="nx-faint" style={{ fontSize: 11 }}>{r.proxies ? Object.keys(r.proxies).join(", ") : "—"}</td>
-                  <td className="nx-faint" style={{ fontSize: 11 }}>{r.data_limit ? formatBytes(r.data_limit) : t("users.unlimited")}</td>
-                  <td className="nx-faint">{r.conflict ? t(`users.importConflict.${r.conflict}`, r.conflict) : "—"}</td>
+                  <td className="sk-faint" style={{ fontSize: 11 }}>{r.proxies ? Object.keys(r.proxies).join(", ") : "—"}</td>
+                  <td className="sk-faint" style={{ fontSize: 11 }}>{r.data_limit ? formatBytes(r.data_limit) : t("users.unlimited")}</td>
+                  <td className="sk-faint">{r.conflict ? t(`users.importConflict.${r.conflict}`, r.conflict) : "—"}</td>
                 </tr>
               ))}
             </tbody>

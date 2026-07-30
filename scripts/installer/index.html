@@ -3,22 +3,22 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>NexusPanel — Installer</title>
+  <title>Shahkar — Installer</title>
   <link rel="stylesheet" href="/installer.css" />
 </head>
 <body>
-  <div class="nx-install-bg"></div>
-  <div class="nx-install-wrap">
-    <header class="nx-install-header">
-      <div class="nx-logo-block">
-        <div class="nx-logo-mark" aria-hidden="true">N</div>
-        <div class="nx-logo-text">
-          <h1>NexusPanel</h1>
+  <div class="sk-install-bg"></div>
+  <div class="sk-install-wrap">
+    <header class="sk-install-header">
+      <div class="sk-logo-block">
+        <div class="sk-logo-mark" aria-hidden="true">N</div>
+        <div class="sk-logo-text">
+          <h1>Shahkar</h1>
           <p data-i18n="tagline">Professional VPN Control Plane</p>
         </div>
       </div>
-      <div class="nx-header-actions">
-        <select id="ui-lang" class="nx-select nx-lang-select" aria-label="Language">
+      <div class="sk-header-actions">
+        <select id="ui-lang" class="sk-select sk-lang-select" aria-label="Language">
           <option value="en">🇬🇧 English</option>
           <option value="fa">🇮🇷 فارسی</option>
           <option value="ru">🇷🇺 Русский</option>
@@ -27,52 +27,52 @@
       </div>
     </header>
 
-    <div class="nx-install-grid">
-      <aside class="nx-steps-panel">
-        <ol class="nx-steps" id="step-list"></ol>
-        <div class="nx-preflight" id="preflight-box">
-          <div class="nx-preflight-title" data-i18n="serverInfo">Server</div>
-          <div class="nx-preflight-row"><span data-i18n="ip">IP</span><code id="pf-ip">…</code></div>
-          <div class="nx-preflight-row"><span data-i18n="ram">RAM</span><code id="pf-ram">…</code></div>
-          <div class="nx-preflight-row"><span data-i18n="docker">Docker</span><span id="pf-docker" class="nx-badge">…</span></div>
+    <div class="sk-install-grid">
+      <aside class="sk-steps-panel">
+        <ol class="sk-steps" id="step-list"></ol>
+        <div class="sk-preflight" id="preflight-box">
+          <div class="sk-preflight-title" data-i18n="serverInfo">Server</div>
+          <div class="sk-preflight-row"><span data-i18n="ip">IP</span><code id="pf-ip">…</code></div>
+          <div class="sk-preflight-row"><span data-i18n="ram">RAM</span><code id="pf-ram">…</code></div>
+          <div class="sk-preflight-row"><span data-i18n="docker">Docker</span><span id="pf-docker" class="sk-badge">…</span></div>
         </div>
       </aside>
 
-      <main class="nx-main-panel">
+      <main class="sk-main-panel">
         <!-- Step 0: Welcome -->
-        <section class="nx-step-view" data-step="0">
-          <h2 data-i18n="welcomeTitle">Welcome to NexusPanel</h2>
-          <p class="nx-lead" data-i18n="welcomeLead">This wizard will guide you through a production-ready install — HTTPS, PostgreSQL, Redis, secret dashboard path, and admin credentials.</p>
-          <div class="nx-feature-grid">
-            <div class="nx-feature"><span>⚡</span><div><b data-i18n="feat1t">One-click stack</b><small data-i18n="feat1d">Docker + PostgreSQL + Redis</small></div></div>
-            <div class="nx-feature"><span>🔒</span><div><b data-i18n="feat2t">Auto TLS</b><small data-i18n="feat2d">Let's Encrypt domain or IP cert</small></div></div>
-            <div class="nx-feature"><span>🎨</span><div><b data-i18n="feat3t">White-label</b><small data-i18n="feat3d">Multi-tenant resellers</small></div></div>
-            <div class="nx-feature"><span>🌐</span><div><b data-i18n="feat4t">Xray core</b><small data-i18n="feat4d">VLESS, VMess, Trojan, WG, TUIC…</small></div></div>
+        <section class="sk-step-view" data-step="0">
+          <h2 data-i18n="welcomeTitle">Welcome to Shahkar</h2>
+          <p class="sk-lead" data-i18n="welcomeLead">This wizard will guide you through a production-ready install — HTTPS, PostgreSQL, Redis, secret dashboard path, and admin credentials.</p>
+          <div class="sk-feature-grid">
+            <div class="sk-feature"><span>⚡</span><div><b data-i18n="feat1t">One-click stack</b><small data-i18n="feat1d">Docker + PostgreSQL + Redis</small></div></div>
+            <div class="sk-feature"><span>🔒</span><div><b data-i18n="feat2t">Auto TLS</b><small data-i18n="feat2d">Let's Encrypt domain or IP cert</small></div></div>
+            <div class="sk-feature"><span>🎨</span><div><b data-i18n="feat3t">White-label</b><small data-i18n="feat3d">Multi-tenant resellers</small></div></div>
+            <div class="sk-feature"><span>🌐</span><div><b data-i18n="feat4t">Xray core</b><small data-i18n="feat4d">VLESS, VMess, Trojan, WG, TUIC…</small></div></div>
           </div>
         </section>
 
         <!-- Step 1: Language -->
-        <section class="nx-step-view nx-hidden" data-step="1">
+        <section class="sk-step-view sk-hidden" data-step="1">
           <h2 data-i18n="langTitle">Panel language</h2>
-          <p class="nx-lead" data-i18n="langLead">Default language for the admin dashboard (users can change it later).</p>
-          <div class="nx-lang-cards" id="panel-lang-cards"></div>
+          <p class="sk-lead" data-i18n="langLead">Default language for the admin dashboard (users can change it later).</p>
+          <div class="sk-lang-cards" id="panel-lang-cards"></div>
         </section>
 
         <!-- Step 2: Network & SSL -->
-        <section class="nx-step-view nx-hidden" data-step="2">
+        <section class="sk-step-view sk-hidden" data-step="2">
           <h2 data-i18n="netTitle">Network &amp; HTTPS</h2>
-          <p class="nx-lead" data-i18n="netLead">Choose how users reach your panel securely.</p>
-          <div class="nx-form">
-            <label class="nx-field">
+          <p class="sk-lead" data-i18n="netLead">Choose how users reach your panel securely.</p>
+          <div class="sk-form">
+            <label class="sk-field">
               <span data-i18n="domainLabel">Domain (optional)</span>
               <input type="text" id="domain" placeholder="panel.example.com" autocomplete="off" />
               <small data-i18n="domainHint">Leave empty to use a certificate on your public IP.</small>
             </label>
-            <label class="nx-field">
+            <label class="sk-field">
               <span data-i18n="emailLabel">Let's Encrypt email (optional)</span>
               <input type="email" id="email" placeholder="admin@example.com" autocomplete="email" />
             </label>
-            <label class="nx-toggle-row">
+            <label class="sk-toggle-row">
               <input type="checkbox" id="skip-https" />
               <span><b data-i18n="skipHttps">Skip HTTPS setup</b><small data-i18n="skipHttpsHint">Panel stays on HTTP port (not recommended for production).</small></span>
             </label>
@@ -80,47 +80,47 @@
         </section>
 
         <!-- Step 3: Admin -->
-        <section class="nx-step-view nx-hidden" data-step="3">
+        <section class="sk-step-view sk-hidden" data-step="3">
           <h2 data-i18n="adminTitle">Admin account</h2>
-          <p class="nx-lead" data-i18n="adminLead">Sudo owner credentials — shown once after install.</p>
-          <label class="nx-toggle-row nx-mb">
+          <p class="sk-lead" data-i18n="adminLead">Sudo owner credentials — shown once after install.</p>
+          <label class="sk-toggle-row sk-mb">
             <input type="checkbox" id="auto-creds" checked />
             <span><b data-i18n="autoCreds">Generate random username &amp; password</b></span>
           </label>
-          <div class="nx-form" id="admin-fields">
-            <label class="nx-field">
+          <div class="sk-form" id="admin-fields">
+            <label class="sk-field">
               <span data-i18n="username">Username</span>
               <input type="text" id="admin-user" disabled autocomplete="username" />
             </label>
-            <label class="nx-field">
+            <label class="sk-field">
               <span data-i18n="password">Password</span>
               <input type="text" id="admin-pass" disabled autocomplete="new-password" />
             </label>
           </div>
-          <label class="nx-field nx-mt">
+          <label class="sk-field sk-mt">
             <span data-i18n="dashPath">Secret dashboard path</span>
-            <div class="nx-row-input">
+            <div class="sk-row-input">
               <input type="text" id="dash-path" readonly />
-              <button type="button" class="nx-btn nx-btn-ghost" id="regen-path" data-i18n="regen">Regenerate</button>
+              <button type="button" class="sk-btn sk-btn-ghost" id="regen-path" data-i18n="regen">Regenerate</button>
             </div>
             <small data-i18n="dashPathHint">Only the admin UI uses this path — /sub/ and /portal/ stay public.</small>
           </label>
         </section>
 
         <!-- Step 4: Branding -->
-        <section class="nx-step-view nx-hidden" data-step="4">
+        <section class="sk-step-view sk-hidden" data-step="4">
           <h2 data-i18n="brandTitle">Branding</h2>
-          <p class="nx-lead" data-i18n="brandLead">Optional — customize how the panel appears.</p>
-          <div class="nx-form">
-            <label class="nx-field">
+          <p class="sk-lead" data-i18n="brandLead">Optional — customize how the panel appears.</p>
+          <div class="sk-form">
+            <label class="sk-field">
               <span data-i18n="panelTitle">Panel title</span>
-              <input type="text" id="panel-title" value="NexusPanel" />
+              <input type="text" id="panel-title" value="Shahkar" />
             </label>
-            <label class="nx-field">
+            <label class="sk-field">
               <span data-i18n="primaryColor">Primary color</span>
               <input type="color" id="primary-color" value="#5b8cff" />
             </label>
-            <label class="nx-field">
+            <label class="sk-field">
               <span data-i18n="supportUrl">Support URL (optional)</span>
               <input type="url" id="support-url" placeholder="https://t.me/support" />
             </label>
@@ -128,19 +128,19 @@
         </section>
 
         <!-- Step 5: Advanced -->
-        <section class="nx-step-view nx-hidden" data-step="5">
+        <section class="sk-step-view sk-hidden" data-step="5">
           <h2 data-i18n="advTitle">Advanced</h2>
-          <div class="nx-form">
-            <label class="nx-field">
+          <div class="sk-form">
+            <label class="sk-field">
               <span data-i18n="panelPort">Internal panel port</span>
               <input type="number" id="panel-port" value="8000" min="1024" max="65535" />
               <small data-i18n="panelPortHint">Bound to 0.0.0.0 inside Docker; nginx terminates TLS on 443.</small>
             </label>
-            <label class="nx-toggle-row">
+            <label class="sk-toggle-row">
               <input type="checkbox" id="skip-node-build" checked />
               <span><b data-i18n="skipNode">Skip node-agent image build</b><small data-i18n="skipNodeHint">Faster install — build later on the server.</small></span>
             </label>
-            <label class="nx-toggle-row">
+            <label class="sk-toggle-row">
               <input type="checkbox" id="enable-firewall" checked />
               <span><b data-i18n="ufw">Configure UFW rules</b><small data-i18n="ufwHint">Opens 80, 443, SSH and Xray inbound ports.</small></span>
             </label>
@@ -148,33 +148,33 @@
         </section>
 
         <!-- Step 6: Review -->
-        <section class="nx-step-view nx-hidden" data-step="6">
+        <section class="sk-step-view sk-hidden" data-step="6">
           <h2 data-i18n="reviewTitle">Review &amp; install</h2>
-          <div class="nx-review" id="review-box"></div>
+          <div class="sk-review" id="review-box"></div>
         </section>
 
         <!-- Step 7: Progress -->
-        <section class="nx-step-view nx-hidden" data-step="7">
+        <section class="sk-step-view sk-hidden" data-step="7">
           <h2 data-i18n="progressTitle">Installing…</h2>
-          <div class="nx-progress-wrap">
-            <div class="nx-progress-bar"><div class="nx-progress-fill" id="progress-fill"></div></div>
-            <div class="nx-progress-pct" id="progress-pct">0%</div>
+          <div class="sk-progress-wrap">
+            <div class="sk-progress-bar"><div class="sk-progress-fill" id="progress-fill"></div></div>
+            <div class="sk-progress-pct" id="progress-pct">0%</div>
           </div>
-          <p class="nx-progress-msg" id="progress-msg">…</p>
-          <pre class="nx-progress-log" id="progress-log"></pre>
+          <p class="sk-progress-msg" id="progress-msg">…</p>
+          <pre class="sk-progress-log" id="progress-log"></pre>
         </section>
 
         <!-- Step 8: Done -->
-        <section class="nx-step-view nx-hidden" data-step="8">
-          <div class="nx-done-banner">✓</div>
+        <section class="sk-step-view sk-hidden" data-step="8">
+          <div class="sk-done-banner">✓</div>
           <h2 data-i18n="doneTitle">Installation complete</h2>
-          <div class="nx-creds" id="done-creds"></div>
-          <p class="nx-lead" data-i18n="doneHint">Save your credentials now. The password is stored only as a bcrypt hash.</p>
+          <div class="sk-creds" id="done-creds"></div>
+          <p class="sk-lead" data-i18n="doneHint">Save your credentials now. The password is stored only as a bcrypt hash.</p>
         </section>
 
-        <footer class="nx-install-footer" id="nav-footer">
-          <button type="button" class="nx-btn nx-btn-ghost" id="btn-back" data-i18n="back">Back</button>
-          <button type="button" class="nx-btn nx-btn-primary" id="btn-next" data-i18n="next">Next</button>
+        <footer class="sk-install-footer" id="nav-footer">
+          <button type="button" class="sk-btn sk-btn-ghost" id="btn-back" data-i18n="back">Back</button>
+          <button type="button" class="sk-btn sk-btn-primary" id="btn-next" data-i18n="next">Next</button>
         </footer>
       </main>
     </div>

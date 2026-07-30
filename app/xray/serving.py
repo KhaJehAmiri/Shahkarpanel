@@ -32,7 +32,7 @@ from xray_api.types.account import XTLSFlows
 if TYPE_CHECKING:
     from xray_api.types.account import Account
 
-logger = logging.getLogger("nexus-xray-serving")
+logger = logging.getLogger("shahkar-xray-serving")
 
 _sync_lock = threading.Lock()
 _sync_timer: threading.Timer | None = None

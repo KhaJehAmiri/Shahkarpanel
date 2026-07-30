@@ -8,7 +8,7 @@ from typing import Literal, Optional, Tuple
 
 from app.provisioning import ProvisioningError, SSHCredentials, run_remote_command
 
-DEFAULT_TLS_DIR = "/var/lib/nexuspanel-node/tls"
+DEFAULT_TLS_DIR = "/var/lib/shahkar-node/tls"
 DEFAULT_CERT = f"{DEFAULT_TLS_DIR}/cert.pem"
 DEFAULT_KEY = f"{DEFAULT_TLS_DIR}/key.pem"
 
@@ -68,8 +68,8 @@ def build_issue_command(
         f"0 3 * * * root certbot renew --quiet --deploy-hook "
         f"\"cp {le_dir}/fullchain.pem {cert_path} && "
         f"cp {le_dir}/privkey.pem {key_path} && "
-        f"docker restart nexusnode >/dev/null 2>&1 || true\" "
-        f">> /var/log/nexuspanel-le-renew.log 2>&1"
+        f"docker restart shahkarnode >/dev/null 2>&1 || true\" "
+        f">> /var/log/shahkar-le-renew.log 2>&1"
     )
     # IP certs are short-lived (~6 days); cron renew handles both kinds.
     return (
@@ -90,8 +90,8 @@ def build_issue_command(
         f"cp \"{le_dir}/fullchain.pem\" \"$CERT\"; "
         f"cp \"{le_dir}/privkey.pem\" \"$KEY\"; "
         "chmod 644 \"$CERT\"; chmod 600 \"$KEY\"; "
-        f"grep -q nexuspanel-le-renew /etc/crontab 2>/dev/null || echo {q(cron_line)} >> /etc/crontab; "
-        "docker restart nexusnode >/dev/null 2>&1 || true; "
+        f"grep -q shahkar-le-renew /etc/crontab 2>/dev/null || echo {q(cron_line)} >> /etc/crontab; "
+        "docker restart shahkarnode >/dev/null 2>&1 || true; "
         "echo ISSUED"
     )
 
@@ -112,7 +112,7 @@ def build_renew_command(
         "certbot renew --quiet; "
         f"cp \"{le_dir}/fullchain.pem\" \"$CERT\"; "
         f"cp \"{le_dir}/privkey.pem\" \"$KEY\"; "
-        "docker restart nexusnode >/dev/null 2>&1 || true; "
+        "docker restart shahkarnode >/dev/null 2>&1 || true; "
         "echo RENEWED"
     )
 

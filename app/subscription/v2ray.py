@@ -918,7 +918,7 @@ class V2rayJsonConfig(str):
                         {
                             "id": id,
                             "alterId": 0,
-                            "email": "NexusPanel",
+                            "email": "Shahkar",
                             "security": "auto"
                         }
                     ],
@@ -932,7 +932,7 @@ class V2rayJsonConfig(str):
             "id": id,
             "security": "auto",
             "encryption": encryption or "none",
-            "email": "NexusPanel",
+            "email": "Shahkar",
             "alterId": 0,
         }
         if flow:
@@ -955,7 +955,7 @@ class V2rayJsonConfig(str):
                     "address": address,
                     "port": port,
                     "password": password,
-                    "email": "NexusPanel",
+                    "email": "Shahkar",
                 }
             ]
         }
@@ -968,7 +968,7 @@ class V2rayJsonConfig(str):
                     "address": address,
                     "port": port,
                     "password": password,
-                    "email": "NexusPanel",
+                    "email": "Shahkar",
                     "method": method,
                     "uot": False,
                 }

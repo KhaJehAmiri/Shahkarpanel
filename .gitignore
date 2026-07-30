@@ -15,7 +15,7 @@ eggs/
 .eggs/
 lib/
 lib64/
-# NexusPanel dashboard (TypeScript utilities — not Python lib/)
+# Shahkar dashboard (TypeScript utilities — not Python lib/)
 !app/dashboard-next/src/panel/lib/
 !app/dashboard-next/src/panel/lib/**
 !app/dashboard-next/src/lib/
@@ -158,7 +158,7 @@ cython_debug/
 .env.production
 .env.*.local
 
-# Host-local autostart policy from `nexus` menu (options 15/16)
+# Host-local autostart policy from `shahkar` menu (options 15/16)
 docker-compose.override.yml
 .wg_node_ssh
 .ssh/
@@ -195,7 +195,7 @@ data/
 
 # Internal handoff / audit / ops docs (local only — never public)
 docs/CENTRAL-HANDOFF.md
-docs/NEXUSPANEL_FULL_REPORT.md
+docs/SHAHKAR_FULL_REPORT.md
 docs/AUDIT-CLOSURE.md
 docs/PROJECT_STATUS.md
 docs/GIT-COMMITS.md
@@ -207,7 +207,7 @@ docs/SIGMAGUARD_WIRE.md
 tests/
 pytest.ini
 
-# Dev / e2e / internal ops scripts (install + nexus CLI stay tracked)
+# Dev / e2e / internal ops scripts (install + shahkar CLI stay tracked)
 scripts/*_test.py
 scripts/*_test.sh
 scripts/*smoke*.py

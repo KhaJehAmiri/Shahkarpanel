@@ -7,7 +7,7 @@ from typing import Dict, List, Optional
 from app.services.catalog import SINGBOX_SLUGS, WIREGUARD_SLUGS, merge_overrides, service_port
 from app.tls.acme import DEFAULT_CERT, DEFAULT_KEY
 
-logger = logging.getLogger("nexus-services-materialize")
+logger = logging.getLogger("shahkar-services-materialize")
 
 
 def _binding_map(bindings) -> Dict[str, object]:

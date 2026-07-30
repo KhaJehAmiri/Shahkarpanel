@@ -101,7 +101,7 @@ export const SingboxInboundModal: FC<{
       title={meta?.label || presetId}
       onClose={onClose}
       footer={
-        <div className="nx-row" style={{ gap: 8, justifyContent: "flex-end", width: "100%" }}>
+        <div className="sk-row" style={{ gap: 8, justifyContent: "flex-end", width: "100%" }}>
           <Button variant="ghost" onClick={onClose} disabled={busy}>
             {t("common.cancel")}
           </Button>
@@ -111,7 +111,7 @@ export const SingboxInboundModal: FC<{
         </div>
       }
     >
-      <div className="nx-stack" style={{ gap: 14 }}>
+      <div className="sk-stack" style={{ gap: 14 }}>
         <Callout tone="info">{t("singboxInbound.about")}</Callout>
         {meta?.note && <Muted>{meta.note}</Muted>}
 
@@ -135,12 +135,12 @@ export const SingboxInboundModal: FC<{
         )}
 
         <Field label={t("singboxInbound.port")}>
-          <Input value={port} onChange={(e) => setPort(e.target.value)} type="number" dir="ltr" className="nx-mono" />
+          <Input value={port} onChange={(e) => setPort(e.target.value)} type="number" dir="ltr" className="sk-mono" />
         </Field>
 
         {isTuic && (
           <Field label={t("singbox.tuicCc")}>
-            <Input value={cc} onChange={(e) => setCc(e.target.value)} dir="ltr" className="nx-mono" />
+            <Input value={cc} onChange={(e) => setCc(e.target.value)} dir="ltr" className="sk-mono" />
           </Field>
         )}
 
@@ -156,7 +156,7 @@ export const SingboxInboundModal: FC<{
 };
 
 const Muted: FC<{ children: ReactNode }> = ({ children }) => (
-  <div style={{ fontSize: 13, color: "var(--nx-muted)" }}>{children}</div>
+  <div style={{ fontSize: 13, color: "var(--sk-muted)" }}>{children}</div>
 );
 
 export type { SingboxInboundEntry };

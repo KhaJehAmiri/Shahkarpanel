@@ -58,7 +58,7 @@
 ## 0.21.18 — 2026-07-16
 
 - Found the real reason a relay's tunnel-captured WireGuard kept failing to actually establish (not just the false-positive health check fixed in 0.21.17): pushing the relay's tunnel/Finalmask Xray config (which can be 100+ KB with many peers) over the direct panel→node RPyC socket reliably dropped mid-write (`EOFError: stream has been closed`) on this Iran↔abroad route, even though the socket connected fine and the config itself was valid. `connect_node`/`restart_node` now automatically fail over to the SSH control tunnel for the retry after the first such failure, instead of endlessly retrying the same unreliable direct path.
-- Fixed the SSH control-tunnel fallback being silently unusable in the first place: its key/password secret files under `/var/lib/nexuspanel/secrets/` were root-owned while the panel process runs as the unprivileged `nexuspanel` user, so every read failed with a permission error that was swallowed and reported as "no SSH access". `docker-entrypoint.sh` now reclaims ownership of that directory on every boot, so this can't silently regress again.
+- Fixed the SSH control-tunnel fallback being silently unusable in the first place: its key/password secret files under `/var/lib/shahkar/secrets/` were root-owned while the panel process runs as the unprivileged `shahkar` user, so every read failed with a permission error that was swallowed and reported as "no SSH access". `docker-entrypoint.sh` now reclaims ownership of that directory on every boot, so this can't silently regress again.
 - SSH control-tunnel connection now tries every configured credential (key, then password) instead of only the key — a stored key file no longer permanently blocks the password fallback just because its pubkey was never installed on a particular node's `authorized_keys`.
 
 ## 0.21.17 — 2026-07-16
@@ -82,7 +82,7 @@
 ## 0.21.14 — 2026-07-16
 
 - Node packages live on GitHub Releases (`NODE_AGENT_PACKAGE_URL`); provision downloads from GitHub first (3 attempts), then the Iran HTTP mirror. The panel is no longer used as an image CDN and no longer SSH-uploads the ~135MB agent image.
-- `nexuspanel update` can refresh the GitHub Release asset via `scripts/sync_agent_github.sh`.
+- `shahkar update` can refresh the GitHub Release asset via `scripts/sync_agent_github.sh`.
 
 ## 0.21.13 — 2026-07-16
 
@@ -95,7 +95,7 @@
 ## 0.21.11 — 2026-07-16
 
 - Iran agent-image mirror: when a node is in Iran (`region=ir` or GeoIP), provision downloads the node package from `NODE_AGENT_MIRROR_URL` (domestic) instead of SSH-uploading ~135MB from an abroad panel.
-- `nexuspanel update` can sync the cached tarball to the mirror host via `NODE_AGENT_MIRROR_SSH`.
+- `shahkar update` can sync the cached tarball to the mirror host via `NODE_AGENT_MIRROR_SSH`.
 
 ## 0.21.10 — 2026-07-16
 
@@ -117,10 +117,10 @@
 
 ## 0.21.6 — 2026-07-14
 
-- Node SSH provision: never fall back to on-node `docker build` when Docker Hub / CloudFront returns HTTP 403. The panel now uploads its prebuilt `nexuspanel/node` image over the SSH session (`docker load`) before starting the agent, so restricted node DCs no longer hit CloudFront blob 403 after a failed HTTP image download.
+- Node SSH provision: never fall back to on-node `docker build` when Docker Hub / CloudFront returns HTTP 403. The panel now uploads its prebuilt `shahkar/node` image over the SSH session (`docker load`) before starting the agent, so restricted node DCs no longer hit CloudFront blob 403 after a failed HTTP image download.
 - Install curls use `-k` so a self-signed / IP panel cert does not force a failed image download.
 - 3x-ui reimport: skip port-remap when the live listener belongs to the inbound tag being replaced (fixes 8443→8444 remaps on same-panel re-import).
-- Branding: built-in NexusPanel logo/favicon assets, `/brand` + `/favicon.ico` routes, subscription page layout refresh and i18n cleanup.
+- Branding: built-in Shahkar logo/favicon assets, `/brand` + `/favicon.ico` routes, subscription page layout refresh and i18n cleanup.
 
 ## 0.21.5 — 2026-07-14
 
@@ -128,11 +128,11 @@
 
 ## 0.21.4 — 2026-07-14
 
-- Agent-image cache: fall back to `/tmp` when `/var/lib/nexuspanel/cache` is not writable for the unprivileged panel user (same root-owned data-dir issue as the update log), so `/api/nodes/agent-image` no longer 500s during provision.
+- Agent-image cache: fall back to `/tmp` when `/var/lib/shahkar/cache` is not writable for the unprivileged panel user (same root-owned data-dir issue as the update log), so `/api/nodes/agent-image` no longer 500s during provision.
 
 ## 0.21.3 — 2026-07-14
 
-- Node SSH provision: when Docker Hub / CloudFront returns HTTP 403 during on-node `docker build` (common in restricted DCs), load a prebuilt `nexuspanel/node` image from the panel (`GET /api/nodes/agent-image`) via `docker load` instead. Falls back to source bundle + build only if the panel image is unavailable.
+- Node SSH provision: when Docker Hub / CloudFront returns HTTP 403 during on-node `docker build` (common in restricted DCs), load a prebuilt `shahkar/node` image from the panel (`GET /api/nodes/agent-image`) via `docker load` instead. Falls back to source bundle + build only if the panel image is unavailable.
 
 ## 0.21.2 — 2026-07-14
 
@@ -140,7 +140,7 @@
 
 ## 0.21.1 — 2026-07-14
 
-- Fix in-dashboard "Update" saying it succeeded while the panel kept running the old code (only the on-server manager updated correctly): the restart step wrote to `/var/lib/nexuspanel/update-rebuild.log`, but the panel runs unprivileged (uid 1000) and that data dir is usually `root:root 0755`, so creating the log raised `PermissionError` and aborted the restart *before* it ran — the pulled code sat on disk but the container never reloaded it. Logging is now best-effort (falls back to `/tmp`, then to no log) so the restart always fires.
+- Fix in-dashboard "Update" saying it succeeded while the panel kept running the old code (only the on-server manager updated correctly): the restart step wrote to `/var/lib/shahkar/update-rebuild.log`, but the panel runs unprivileged (uid 1000) and that data dir is usually `root:root 0755`, so creating the log raised `PermissionError` and aborted the restart *before* it ran — the pulled code sat on disk but the container never reloaded it. Logging is now best-effort (falls back to `/tmp`, then to no log) so the restart always fires.
 
 ## 0.21.0 — 2026-07-14
 
@@ -180,7 +180,7 @@
 - 3x-ui migration: preserve source `email` (3x-ui username) in user `note` for panel search.
 - 3x-ui migration: merge multi-inbound clients by subId; per-user savepoints; faster bulk import.
 - Reseller `max_total_traffic`: block new users and auto-suspend when cap is exceeded.
-- `nexus password`: reset owner login without the previous username; clearer install summary with password recovery.
+- `shahkar password`: reset owner login without the previous username; clearer install summary with password recovery.
 
 ## 0.14.0 — 2026-07-07
 
@@ -214,19 +214,19 @@
 
 ## 0.12.8 — 2026-06-10
 
-- Fix in-dashboard update creating a wrong Docker stack (`code-*` instead of `nexuspanel-*`) by pinning compose project name to `nexuspanel`.
+- Fix in-dashboard update creating a wrong Docker stack (`code-*` instead of `shahkar-*`) by pinning compose project name to `shahkar`.
 - Smart update paths: code-only changes → fast container restart (bind-mounted `/code`); `requirements.txt` → in-container pip; Dockerfile/entrypoint → image rebuild.
-- Fix `nexuspanel update` CLI when `.env` uses spaced `KEY = value` lines.
+- Fix `shahkar update` CLI when `.env` uses spaced `KEY = value` lines.
 
 ## 0.12.7 — 2026-06-10
 
 - Users page: selecting **AmneziaWG** shows the correct badge (not WireGuard).
-- Persist `nexusPanelKind` on user WireGuard proxy settings; allocate plain vs AWG peer IPs based on user intent.
+- Persist `shahkarPanelKind` on user WireGuard proxy settings; allocate plain vs AWG peer IPs based on user intent.
 
 ## 0.12.6 — 2026-06-10
 
 - AmneziaWG inbounds display as **amneziawg** / **AWG** in the Inbounds table (Xray JSON still uses `wireguard`).
-- Persist `nexusPanelKind` marker in inbound settings so the label survives save and reload.
+- Persist `shahkarPanelKind` marker in inbound settings so the label survives save and reload.
 
 ## 0.12.5 — 2026-06-11
 
@@ -235,7 +235,7 @@
 
 ## 0.12.4 — 2026-06-11
 
-- Docker entrypoint (root → runuser) fixes `/var/lib/nexuspanel/xray_config.json` and `.env` permissions on start.
+- Docker entrypoint (root → runuser) fixes `/var/lib/shahkar/xray_config.json` and `.env` permissions on start.
 - AmneziaWG preset and Save pre-generate `secretKey` in the dashboard before PUT `/core/config`.
 
 ## 0.12.3 — 2026-06-10

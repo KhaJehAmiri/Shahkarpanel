@@ -1,21 +1,20 @@
-# Production-oriented stack: NexusPanel + PostgreSQL + Redis.
+# Production-oriented stack: Shahkar + PostgreSQL + Redis.
 # Use with: docker compose -f docker-compose.postgres.yml up -d
 #
-# Set the matching values in /var/lib/nexuspanel/.env (runtime secrets), e.g.:
-#   SQLALCHEMY_DATABASE_URL=postgresql://nexuspanel:STRONG_SECRET@127.0.0.1:5432/nexuspanel
+# Set the matching values in /var/lib/shahkar/.env (runtime secrets), e.g.:
+#   SQLALCHEMY_DATABASE_URL=postgresql://shahkar:STRONG_SECRET@127.0.0.1:5432/shahkar
 #   REDIS_URL=redis://127.0.0.1:6379/0
 #
 # Build the panel image from this repo (recommended) instead of the upstream image.
 
-name: nexuspanel
-
+name: shahkar
 services:
-  nexuspanel:
+  shahkar:
     build: .
     restart: always
     env_file:
       - .env
-      - /var/lib/nexuspanel/.env
+      - /var/lib/shahkar/.env
     network_mode: host
     cap_add:
       - NET_ADMIN
@@ -25,7 +24,7 @@ services:
     group_add:
       - "${DOCKER_GID:-988}"
     volumes:
-      - /var/lib/nexuspanel:/var/lib/nexuspanel
+      - /var/lib/shahkar:/var/lib/shahkar
       - .:/code
       # SigmaGuard Wire presets (sigma_preset.py) — required when feature flag
       # sigmaguard_wire is on; same mount as docker-compose.yml.
@@ -49,11 +48,11 @@ services:
     network_mode: host
     env_file:
       - .env
-      - /var/lib/nexuspanel/.env
+      - /var/lib/shahkar/.env
     volumes:
-      - /var/lib/nexuspanel/postgres:/var/lib/postgresql/data
+      - /var/lib/shahkar/postgres:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-nexuspanel} -d $${POSTGRES_DB:-nexuspanel}"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-shahkar} -d $${POSTGRES_DB:-shahkar}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -64,7 +63,7 @@ services:
     network_mode: host
     env_file:
       - .env
-      - /var/lib/nexuspanel/.env
+      - /var/lib/shahkar/.env
     command:
       - sh
       - -c
@@ -75,7 +74,7 @@ services:
           exec redis-server --appendonly yes
         fi
     volumes:
-      - /var/lib/nexuspanel/redis:/data
+      - /var/lib/shahkar/redis:/data
     healthcheck:
       test:
         - CMD-SHELL

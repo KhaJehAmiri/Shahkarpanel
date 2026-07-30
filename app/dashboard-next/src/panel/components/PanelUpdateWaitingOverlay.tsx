@@ -19,19 +19,19 @@ export const PanelUpdateWaitingOverlay: FC<{
     : t("system.updateWaitingInstallHint");
 
   return (
-    <div className="nx-update-wait-overlay" role="alertdialog" aria-live="polite" aria-busy="true">
-      <div className="nx-update-wait-card">
-        <div className="nx-update-wait-brand">NexusPanel</div>
-        <h2 className="nx-update-wait-title">{title}</h2>
+    <div className="sk-update-wait-overlay" role="alertdialog" aria-live="polite" aria-busy="true">
+      <div className="sk-update-wait-card">
+        <div className="sk-update-wait-brand">Shahkar</div>
+        <h2 className="sk-update-wait-title">{title}</h2>
         {(fromVersion || toVersion) && (
-          <p className="nx-update-wait-ver">
+          <p className="sk-update-wait-ver">
             {fromVersion ? `v${fromVersion}` : "…"}
             <span aria-hidden> → </span>
             {toVersion ? `v${toVersion}` : "…"}
           </p>
         )}
-        <p className="nx-update-wait-hint">{hint}</p>
-        <div className="nx-update-wait-spinner" aria-hidden />
+        <p className="sk-update-wait-hint">{hint}</p>
+        <div className="sk-update-wait-spinner" aria-hidden />
       </div>
     </div>
   );

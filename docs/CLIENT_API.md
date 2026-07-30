@@ -1,6 +1,6 @@
 # SigmaGuard Client API (`/api/v2`)
 
-The client API is the contract between **NexusPanel** (server) and the
+The client API is the contract between **Shahkar** (server) and the
 **SigmaGuard** app (Flutter UI + Rust core). It is intentionally small and
 versioned: the app negotiates protocols, fetches connection material, and
 reports network probes so the panel can recommend the best node.

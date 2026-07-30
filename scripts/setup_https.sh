@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# setup_https.sh — put NexusPanel behind nginx with a real TLS certificate and
+# setup_https.sh — put Shahkar behind nginx with a real TLS certificate and
 # stop exposing the raw app port to the internet.
 #
 # It handles BOTH deployment targets:
@@ -15,7 +15,7 @@
 #   * certificates renew automatically and reload nginx via a deploy hook
 #   * HSTS + sane security headers are set at the edge
 #
-# Usage (run as root from the repo root or via the `nexuspanel https` command):
+# Usage (run as root from the repo root or via the `shahkar https` command):
 #   sudo scripts/setup_https.sh                      # auto-detect public IP, IP cert
 #   sudo scripts/setup_https.sh --domain panel.x.com --email you@x.com
 #   sudo scripts/setup_https.sh --ip 203.0.113.10    # force a specific IP
@@ -126,17 +126,17 @@ write_self_signed() {
   if [ "$MODE" = "ip" ]; then san="IP:${SERVER_NAME}"; else san="DNS:${SERVER_NAME}"; fi
   openssl req -x509 -nodes -newkey rsa:2048 -days 3650 \
     -keyout "${SELF_DIR}/bootstrap.key" -out "${SELF_DIR}/bootstrap.crt" \
-    -subj "/CN=${SERVER_NAME}/O=NexusPanel" -addext "subjectAltName=${san}" >/dev/null 2>&1
+    -subj "/CN=${SERVER_NAME}/O=Shahkar" -addext "subjectAltName=${san}" >/dev/null 2>&1
   chmod 600 "${SELF_DIR}/bootstrap.key"
 }
 
-NGINX_SITE="/etc/nginx/sites-available/nexuspanel"
+NGINX_SITE="/etc/nginx/sites-available/shahkar"
 write_nginx_conf() {
   local cert_path="$1" key_path="$2"
   mkdir -p "${WEBROOT}/.well-known/acme-challenge"
   chmod -R a+rX "${WEBROOT}"
   cat > "${NGINX_SITE}" <<EOF
-# Managed by NexusPanel scripts/setup_https.sh — re-run that script to regenerate.
+# Managed by Shahkar scripts/setup_https.sh — re-run that script to regenerate.
 map \$http_upgrade \$connection_upgrade {
     default upgrade;
     ''      close;
@@ -185,7 +185,7 @@ server {
         charset utf-8;
         add_header Cache-Control "no-store" always;
         add_header Retry-After "2" always;
-        root /var/lib/nexuspanel/nginx/html;
+        root /var/lib/shahkar/nginx/html;
         rewrite ^ /restarting.html break;
     }
 
@@ -213,12 +213,12 @@ EOF
   if [ -f "$ensure" ]; then
     PANEL_PORT="${PANEL_PORT}" bash "$ensure" >/dev/null 2>&1 || true
   else
-    mkdir -p /var/lib/nexuspanel/nginx/html
-    cat > /var/lib/nexuspanel/nginx/html/restarting.html <<'HTML'
+    mkdir -p /var/lib/shahkar/nginx/html
+    cat > /var/lib/shahkar/nginx/html/restarting.html <<'HTML'
 <!DOCTYPE html>
 <html lang="fa" dir="rtl"><head>
 <meta charset="utf-8"/><meta http-equiv="refresh" content="2"/>
-<title>NexusPanel — starting</title>
+<title>Shahkar — starting</title>
 <style>body{margin:0;min-height:100vh;display:grid;place-items:center;font-family:Tahoma,sans-serif;background:#0f1419;color:#e8eef4}
 .card{max-width:420px;padding:2rem;background:#1a222c;border-radius:16px;text-align:center}
 .spinner{width:40px;height:40px;margin:1.2rem auto;border:3px solid rgba(61,156,240,.2);border-top-color:#3d9cf0;border-radius:50%;animation:s .8s linear infinite}
@@ -227,9 +227,9 @@ EOF
 <p>Panel is starting — refreshing automatically.</p><div class="spinner"></div></div>
 <script>setTimeout(function(){location.reload()},2000)</script></body></html>
 HTML
-    chmod -R a+rX /var/lib/nexuspanel/nginx 2>/dev/null || true
+    chmod -R a+rX /var/lib/shahkar/nginx 2>/dev/null || true
   fi
-  ln -sf "${NGINX_SITE}" /etc/nginx/sites-enabled/nexuspanel
+  ln -sf "${NGINX_SITE}" /etc/nginx/sites-enabled/shahkar
   rm -f /etc/nginx/sites-enabled/default
   nginx -t >/dev/null 2>&1 || die "nginx config test failed (see: nginx -t)."
 }
@@ -269,7 +269,7 @@ setup_renewal() {
   fi
   cat > /etc/systemd/system/certbot-renew.service <<EOF
 [Unit]
-Description=Renew Let's Encrypt certificates (NexusPanel)
+Description=Renew Let's Encrypt certificates (Shahkar)
 After=network-online.target
 Wants=network-online.target
 
@@ -323,20 +323,20 @@ restart_panel() {
   elif [ -f "${ROOT}/docker-compose.yml" ]; then
     compose_file="docker-compose.yml"
   fi
-  if systemctl is-enabled nexuspanel.service >/dev/null 2>&1 || systemctl is-active nexuspanel.service >/dev/null 2>&1; then
-    log "Restarting nexuspanel.service..."
-    systemctl restart nexuspanel.service || warn "Could not restart nexuspanel.service — restart it manually."
+  if systemctl is-enabled shahkar.service >/dev/null 2>&1 || systemctl is-active shahkar.service >/dev/null 2>&1; then
+    log "Restarting shahkar.service..."
+    systemctl restart shahkar.service || warn "Could not restart shahkar.service — restart it manually."
   elif command -v docker >/dev/null 2>&1 && [ -n "$compose_file" ]; then
     log "Recreating docker compose stack (picks up .env changes)..."
     if docker compose version >/dev/null 2>&1; then
-      (cd "${ROOT}" && docker compose -f "$compose_file" up -d --force-recreate nexuspanel) \
-        || warn "Could not restart docker stack — run: nexuspanel restart"
+      (cd "${ROOT}" && docker compose -f "$compose_file" up -d --force-recreate shahkar) \
+        || warn "Could not restart docker stack — run: shahkar restart"
     else
-      (cd "${ROOT}" && docker-compose -f "$compose_file" up -d --force-recreate nexuspanel) \
-        || warn "Could not restart docker stack — run: nexuspanel restart"
+      (cd "${ROOT}" && docker-compose -f "$compose_file" up -d --force-recreate shahkar) \
+        || warn "Could not restart docker stack — run: shahkar restart"
     fi
   else
-    warn "Panel not managed by systemd/docker here — restart manually: nexuspanel restart"
+    warn "Panel not managed by systemd/docker here — restart manually: shahkar restart"
   fi
 }
 

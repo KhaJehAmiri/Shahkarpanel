@@ -58,10 +58,10 @@ export const NodeWarpSection: FC = () => {
 
   return (
     <Card>
-      <div className="nx-stack" style={{ gap: 12 }}>
+      <div className="sk-stack" style={{ gap: 12 }}>
         <div>
           <div style={{ fontWeight: 600 }}>{t("warp.nodeSectionTitle")}</div>
-          <div className="nx-faint" style={{ fontSize: 12, marginTop: 4 }}>
+          <div className="sk-faint" style={{ fontSize: 12, marginTop: 4 }}>
             {t("warp.nodeSectionDesc")}
           </div>
         </div>
@@ -69,18 +69,18 @@ export const NodeWarpSection: FC = () => {
           <Callout tone="warn">{t("warp.nodeNeedAccount")}</Callout>
         )}
         {nodes.loading ? (
-          <div className="nx-faint">{t("common.loading")}</div>
+          <div className="sk-faint">{t("common.loading")}</div>
         ) : !eligibleNodes.length ? (
           <EmptyState title={t("common.noData")} desc={t("warp.nodeEmpty")} />
         ) : (
-          <div className="nx-table-wrap">
-            <table className="nx-table">
+          <div className="sk-table-wrap">
+            <table className="sk-table">
               <thead>
                 <tr>
                   <th>{t("common.name")}</th>
                   <th>{t("common.status")}</th>
                   <th>{t("warp.newTag")}</th>
-                  <th className="nx-actions">{t("common.actions")}</th>
+                  <th className="sk-actions">{t("common.actions")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -91,9 +91,9 @@ export const NodeWarpSection: FC = () => {
                   return (
                     <tr key={n.id}>
                       <td>
-                        <div className="nx-proto-name">
-                          <span className="nx-proto-name-main">{n.name}</span>
-                          <span className="nx-proto-name-sub">{kindLabel(n)}</span>
+                        <div className="sk-proto-name">
+                          <span className="sk-proto-name-main">{n.name}</span>
+                          <span className="sk-proto-name-sub">{kindLabel(n)}</span>
                         </div>
                       </td>
                       <td>
@@ -118,7 +118,7 @@ export const NodeWarpSection: FC = () => {
                           ))}
                         </Select>
                       </td>
-                      <td className="nx-actions">
+                      <td className="sk-actions">
                         {enabled ? (
                           <Button size="sm" disabled={busy} onClick={() => void apply(n, false, tag)}>
                             {t("common.disable")}

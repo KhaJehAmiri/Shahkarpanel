@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
-# Ensure host nginx shows the NexusPanel "starting" page when the panel
+# Ensure host nginx shows the Shahkar "starting" page when the panel
 # upstream (:UVICORN_PORT) is down — instead of the stock nginx 502 HTML.
 #
 # Must run as root (writes /etc/nginx + reload). Safe to re-run.
 #
 # Typical callers:
-#   - host CLI:  nexuspanel update / https  (root on host)
+#   - host CLI:  shahkar update / https  (root on host)
 #   - panel:     update_jobs sidecar (docker run --privileged --pid=host + mounts)
 #   - entrypoint: after recreate, when /usr/sbin/nginx is bind-mounted
 set -euo pipefail
 
 PANEL_PORT="${PANEL_PORT:-${UVICORN_PORT:-8000}}"
-HTML_DIR="${NEXUSPANEL_NGINX_HTML:-/var/lib/nexuspanel/nginx/html}"
+HTML_DIR="${SHAHKAR_NGINX_HTML:-/var/lib/shahkar/nginx/html}"
 HTML_FILE="${HTML_DIR}/restarting.html"
 SNIPPET_MARKER="@panel_restarting"
-LOG="${NEXUSPANEL_ENSURE_NGINX_LOG:-/var/lib/nexuspanel/ensure-nginx-restarting.log}"
+LOG="${SHAHKAR_ENSURE_NGINX_LOG:-/var/lib/shahkar/ensure-nginx-restarting.log}"
 
 resolve_nginx() {
   local c
@@ -50,7 +50,7 @@ write_html() {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta http-equiv="refresh" content="2" />
   <meta name="robots" content="noindex" />
-  <title>NexusPanel — در حال راه‌اندازی</title>
+  <title>Shahkar — در حال راه‌اندازی</title>
   <style>
     :root { --bg:#0f1419; --card:#1a222c; --text:#e8eef4; --muted:#8b9aab; --accent:#3d9cf0; }
     * { box-sizing: border-box; }
@@ -88,7 +88,7 @@ write_html() {
 </head>
 <body>
   <div class="card" role="status" aria-live="polite">
-    <div class="brand">NexusPanel</div>
+    <div class="brand">Shahkar</div>
     <h1>پنل در حال راه‌اندازی است</h1>
     <p>پس از به‌روزرسانی یا ریستارت، چند لحظه صبر کنید. این صفحه به‌صورت خودکار باز می‌شود.</p>
     <div class="spinner" aria-hidden="true"></div>
@@ -98,7 +98,7 @@ write_html() {
 </body>
 </html>
 HTML
-  chmod -R a+rX /var/lib/nexuspanel/nginx 2>/dev/null || true
+  chmod -R a+rX /var/lib/shahkar/nginx 2>/dev/null || true
   log "wrote ${HTML_FILE}"
 }
 
@@ -144,7 +144,7 @@ block = f"""    error_page 502 503 504 = @panel_restarting;
         charset utf-8;
         add_header Cache-Control "no-store" always;
         add_header Retry-After "2" always;
-        root /var/lib/nexuspanel/nginx/html;
+        root /var/lib/shahkar/nginx/html;
         rewrite ^ /restarting.html break;
     }}
 
@@ -218,9 +218,9 @@ main() {
   local f real
   shopt -s nullglob
   for f in \
-    /etc/nginx/sites-available/nexuspanel \
-    /etc/nginx/sites-available/nexuspanel*.conf \
-    /etc/nginx/sites-enabled/nexuspanel \
+    /etc/nginx/sites-available/shahkar \
+    /etc/nginx/sites-available/shahkar*.conf \
+    /etc/nginx/sites-enabled/shahkar \
     /etc/nginx/sites-enabled/*
   do
     [ -e "$f" ] || continue

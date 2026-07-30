@@ -1,45 +1,45 @@
 /* Subscription hosts — 3x-ui style table + modal */
 
-.nx-hosts-page {
+.sk-hosts-page {
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
 
-.nx-hosts-stats {
+.sk-hosts-stats {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
   padding: 16px 18px;
   border-radius: 14px;
-  border: 1px solid var(--nx-border);
-  background: var(--nx-surface-2);
+  border: 1px solid var(--sk-border);
+  background: var(--sk-surface-2);
 }
 
 @media (max-width: 640px) {
-  .nx-hosts-stats {
+  .sk-hosts-stats {
     grid-template-columns: 1fr;
   }
 }
 
-.nx-hosts-actions {
+.sk-hosts-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
 }
 
-.nx-hosts-table-card {
+.sk-hosts-table-card {
   overflow: hidden;
 }
 
-.nx-hosts-row-actions {
+.sk-hosts-row-actions {
   display: flex;
   align-items: center;
   gap: 4px;
   flex-wrap: nowrap;
 }
 
-.nx-hosts-remark {
+.sk-hosts-remark {
   font-weight: 600;
   max-width: 220px;
   overflow: hidden;
@@ -47,29 +47,29 @@
   white-space: nowrap;
 }
 
-.nx-hosts-mono {
+.sk-hosts-mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
 }
 
-.nx-table tbody tr.is-muted {
+.sk-table tbody tr.is-muted {
   opacity: 0.65;
 }
 
 /* Modal tabs (shared) */
-.nx-host-modal-tabs {
+.sk-host-modal-tabs {
   display: flex;
   gap: 4px;
   margin-bottom: 18px;
-  border-bottom: 1px solid var(--nx-border);
+  border-bottom: 1px solid var(--sk-border);
   padding-bottom: 0;
 }
 
-.nx-host-modal-tab {
+.sk-host-modal-tab {
   padding: 10px 16px;
   border: none;
   background: transparent;
-  color: var(--nx-muted);
+  color: var(--sk-muted);
   font-size: 13px;
   font-weight: 700;
   cursor: pointer;
@@ -78,11 +78,11 @@
   transition: color 0.15s ease, border-color 0.15s ease;
 }
 
-.nx-host-modal-tab:hover {
-  color: var(--nx-text);
+.sk-host-modal-tab:hover {
+  color: var(--sk-text);
 }
 
-.nx-host-modal-tab.active {
-  color: var(--nx-accent, #818cf8);
-  border-bottom-color: var(--nx-accent, #818cf8);
+.sk-host-modal-tab.active {
+  color: var(--sk-accent, #818cf8);
+  border-bottom-color: var(--sk-accent, #818cf8);
 }

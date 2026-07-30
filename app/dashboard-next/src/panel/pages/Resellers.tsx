@@ -9,7 +9,7 @@ import { useFetch } from "../lib/useFetch";
 import { formatBytes } from "../lib/format";
 import { PageHeader } from "../components/Shell";
 import {
-  Button, Callout, Card, CardHead, EmptyState, Field, Input, Modal, Pager, Pill, SkeletonRows, Textarea, usePagedList, useToast,
+  Button, Callout, Card, CardHead, EmptyState, Field, Input, Modal, Pager, Pill, SkeletonRows, Textarea, Toggle, usePagedList, useToast,
 } from "../components/ui";
 import { SectionRail, type RailGroup } from "../components/SectionRail";
 import { IcPlus, IcTrash, IcServer, IcEdit, IcWallet, IcMore } from "../components/icons";
@@ -26,6 +26,8 @@ type ResellerAccount = {
   users_usage?: number | null;
   wallet_balance?: number | null;
   prepaid_traffic_remaining?: number | null;
+  centralpay_enabled?: boolean;
+  card_enabled?: boolean;
 };
 
 export const Resellers: FC<{ embedded?: boolean }> = ({ embedded }) => {
@@ -96,7 +98,7 @@ export const Resellers: FC<{ embedded?: boolean }> = ({ embedded }) => {
   };
 
   return (
-    <div className="nx-page nx-biz">
+    <div className="sk-page sk-biz">
       {!embedded && (
         <PageHeader
           title={t("resellers.title")}
@@ -104,14 +106,14 @@ export const Resellers: FC<{ embedded?: boolean }> = ({ embedded }) => {
           description={t("resellers.description")}
         />
       )}
-      <div className="nx-biz-layout">
+      <div className="sk-biz-layout">
         <SectionRail
           groups={railGroups}
           active={tab}
           onChange={onTabChange}
           label={t("resellers.title")}
         />
-        <div className="nx-section-panel">
+        <div className="sk-section-panel">
           {tab === "accounts" && <ResellerAccountsTab />}
           {tab === "subaccounts" && <SubResellersTab />}
           {tab === "tenants" && <TenantsTab />}
@@ -136,33 +138,33 @@ const SubResellersTab: FC = () => {
       <div style={{ marginBottom: 14 }}>
         <Callout tone="info">{t("resellers.subAccountsHint")}</Callout>
       </div>
-      <div className="nx-row" style={{ justifyContent: "flex-end", marginBottom: 14 }}>
-        <Button variant="primary" onClick={() => setShow(true)}><IcPlus className="nx-ico" /> {t("resellers.addSubAccount")}</Button>
+      <div className="sk-row" style={{ justifyContent: "flex-end", marginBottom: 14 }}>
+        <Button variant="primary" onClick={() => setShow(true)}><IcPlus className="sk-ico" /> {t("resellers.addSubAccount")}</Button>
       </div>
       <Card pad0>
         {loading ? <div style={{ padding: 20 }}><SkeletonRows rows={3} cols={4} /></div>
           : error ? <EmptyState title={t("common.error")} desc={error} />
           : !data?.length ? <EmptyState title={t("resellers.noSubAccounts")} desc={t("resellers.subAccountsHint")} />
           : (
-            <div className="nx-table-wrap">
-              <table className="nx-table">
+            <div className="sk-table-wrap">
+              <table className="sk-table">
                 <thead><tr>
                   <th>{t("common.username")}</th>
-                  <th className="nx-num">{t("system.maxUsers")}</th>
-                  <th className="nx-num">{t("system.maxNodes")}</th>
-                  <th className="nx-num">{t("resellers.commission")}</th>
-                  <th className="nx-actions">{t("common.actions")}</th>
+                  <th className="sk-num">{t("system.maxUsers")}</th>
+                  <th className="sk-num">{t("system.maxNodes")}</th>
+                  <th className="sk-num">{t("resellers.commission")}</th>
+                  <th className="sk-actions">{t("common.actions")}</th>
                 </tr></thead>
                 <tbody>
                   {data.map((a) => (
                     <tr key={a.username}>
                       <td><code>{a.username}</code></td>
-                      <td className="nx-num">{a.max_users ?? "∞"}</td>
-                      <td className="nx-num">{a.max_nodes ?? "∞"}</td>
-                      <td className="nx-num">{a.commission_percent ?? 0}%</td>
-                      <td className="nx-actions">
-                        <div className="nx-row" style={{ justifyContent: "flex-end" }}>
-                          <Button size="sm" variant="ghost" onClick={() => setEdit(a)}><IcEdit className="nx-ico" /></Button>
+                      <td className="sk-num">{a.max_users ?? "∞"}</td>
+                      <td className="sk-num">{a.max_nodes ?? "∞"}</td>
+                      <td className="sk-num">{a.commission_percent ?? 0}%</td>
+                      <td className="sk-actions">
+                        <div className="sk-row" style={{ justifyContent: "flex-end" }}>
+                          <Button size="sm" variant="ghost" onClick={() => setEdit(a)}><IcEdit className="sk-ico" /></Button>
                         </div>
                       </td>
                     </tr>
@@ -219,7 +221,7 @@ const EditSubReseller: FC<{ account: SubResellerAccount; onClose: () => void; on
         </>
       }
     >
-      <div className="nx-stack nx-modal-stack">
+      <div className="sk-stack sk-modal-stack">
         <Field label={t("system.maxUsers")} hint={t("common.optional")}>
           <Input type="number" value={maxUsers} onChange={(e: any) => setMaxUsers(e.target.value)} placeholder="∞" />
         </Field>
@@ -268,10 +270,10 @@ const AddSubReseller: FC<{ onClose: () => void; onDone: () => void }> = ({ onClo
     <Modal open title={t("resellers.addSubAccount")} onClose={onClose}
       footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
         <Button variant="primary" disabled={busy || !username.trim() || !password} onClick={submit}>{t("common.create")}</Button></>}>
-      <div className="nx-stack">
+      <div className="sk-stack">
         <Field label={t("common.username")}><Input value={username} onChange={(e: any) => setUsername(e.target.value)} autoFocus /></Field>
         <Field label={t("common.password")}><Input type="password" value={password} onChange={(e: any) => setPassword(e.target.value)} /></Field>
-        <div className="nx-row" style={{ gap: 12 }}>
+        <div className="sk-row" style={{ gap: 12 }}>
           <Field label={`${t("system.maxUsers")} (${t("common.optional")})`}>
             <Input type="number" value={maxUsers} onChange={(e: any) => setMaxUsers(e.target.value)} placeholder="∞" />
           </Field>
@@ -340,7 +342,7 @@ const ResellerRowMenu: FC<{
     ? createPortal(
         <div
           ref={menuRef}
-          className={`nx-reseller-menu nx-reseller-menu--fixed${pos.openUp ? " is-up" : ""}`}
+          className={`sk-reseller-menu sk-reseller-menu--fixed${pos.openUp ? " is-up" : ""}`}
           role="menu"
           style={{
             top: pos.openUp ? undefined : pos.top,
@@ -348,25 +350,25 @@ const ResellerRowMenu: FC<{
             left: pos.left,
           }}
         >
-          <button type="button" role="menuitem" className="nx-reseller-menu-item" onClick={() => { setOpen(false); onEdit(); }}>
-            <IcEdit className="nx-ico" /> {t("common.edit")}
+          <button type="button" role="menuitem" className="sk-reseller-menu-item" onClick={() => { setOpen(false); onEdit(); }}>
+            <IcEdit className="sk-ico" /> {t("common.edit")}
           </button>
           {billingOn && (
             <>
-              <button type="button" role="menuitem" className="nx-reseller-menu-item" onClick={() => { setOpen(false); onWallet(); }}>
-                <IcWallet className="nx-ico" /> {t("resellers.adjustWallet")}
+              <button type="button" role="menuitem" className="sk-reseller-menu-item" onClick={() => { setOpen(false); onWallet(); }}>
+                <IcWallet className="sk-ico" /> {t("resellers.adjustWallet")}
               </button>
-              <button type="button" role="menuitem" className="nx-reseller-menu-item" onClick={() => { setOpen(false); onTraffic(); }}>
+              <button type="button" role="menuitem" className="sk-reseller-menu-item" onClick={() => { setOpen(false); onTraffic(); }}>
                 {t("resellers.creditTraffic")}
               </button>
-              <button type="button" role="menuitem" className="nx-reseller-menu-item" onClick={() => { setOpen(false); onPricing(); }}>
+              <button type="button" role="menuitem" className="sk-reseller-menu-item" onClick={() => { setOpen(false); onPricing(); }}>
                 {t("resellers.trafficPricing")}
               </button>
-              <div className="nx-reseller-menu-sep" />
+              <div className="sk-reseller-menu-sep" />
             </>
           )}
-          <button type="button" role="menuitem" className="nx-reseller-menu-item is-danger" onClick={() => { setOpen(false); onDelete(); }}>
-            <IcTrash className="nx-ico" /> {t("common.delete")}
+          <button type="button" role="menuitem" className="sk-reseller-menu-item is-danger" onClick={() => { setOpen(false); onDelete(); }}>
+            <IcTrash className="sk-ico" /> {t("common.delete")}
           </button>
         </div>,
         document.body,
@@ -374,17 +376,17 @@ const ResellerRowMenu: FC<{
     : null;
 
   return (
-    <div className="nx-ra-menu">
+    <div className="sk-ra-menu">
       <button
         ref={btnRef}
         type="button"
-        className="nx-ra-icon-btn"
+        className="sk-ra-icon-btn"
         title={t("common.actions")}
         aria-label={t("common.actions")}
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >
-        <IcMore className="nx-ico" />
+        <IcMore className="sk-ico" />
       </button>
       {menu}
     </div>
@@ -423,18 +425,18 @@ const ResellerAccountsTab: FC = () => {
   };
 
   return (
-    <div className="nx-reseller-accounts">
-      <div className="nx-reseller-toolbar">
-        <p className="nx-reseller-hint">{t("resellers.accountsHint")}</p>
-        <div className="nx-reseller-toolbar-actions">
+    <div className="sk-reseller-accounts">
+      <div className="sk-reseller-toolbar">
+        <p className="sk-reseller-hint">{t("resellers.accountsHint")}</p>
+        <div className="sk-reseller-toolbar-actions">
           <Input
             value={search}
             onChange={(e: any) => { setSearch(e.target.value); pager.setPage(0); }}
             placeholder={t("common.search")}
-            className="nx-reseller-search"
+            className="sk-reseller-search"
           />
           <Button variant="primary" size="sm" onClick={() => setShow(true)}>
-            <IcPlus className="nx-ico" /> {t("resellers.addAccount")}
+            <IcPlus className="sk-ico" /> {t("resellers.addAccount")}
           </Button>
         </div>
       </div>
@@ -442,27 +444,27 @@ const ResellerAccountsTab: FC = () => {
       {!billingOn && <Callout tone="warn">{t("resellers.billingDisabledHint")}</Callout>}
 
       {loading ? (
-        <div className="nx-table-wrap" style={{ padding: 16 }}><SkeletonRows rows={5} cols={6} /></div>
+        <div className="sk-table-wrap" style={{ padding: 16 }}><SkeletonRows rows={5} cols={6} /></div>
       ) : error ? (
         <EmptyState title={t("common.error")} desc={error} />
       ) : !accounts.length ? (
         <EmptyState
           title={t("resellers.noAccounts")}
           desc={t("resellers.accountsHint")}
-          action={<Button variant="primary" size="sm" onClick={() => setShow(true)}><IcPlus className="nx-ico" /> {t("resellers.addAccount")}</Button>}
+          action={<Button variant="primary" size="sm" onClick={() => setShow(true)}><IcPlus className="sk-ico" /> {t("resellers.addAccount")}</Button>}
         />
       ) : (
         <>
-          <div className="nx-table-wrap">
-              <table className="nx-table">
+          <div className="sk-table-wrap">
+              <table className="sk-table">
                 <thead>
                   <tr>
                     <th>{t("common.username")}</th>
-                    <th className="nx-num">{t("resellers.usersCount")}</th>
-                    <th className="nx-num">{t("billing.wallet")}</th>
-                    <th className="nx-num">{t("billing.prepaidRemaining")}</th>
-                    <th className="nx-num">{t("resellers.trafficUsed")}</th>
-                    <th className="nx-actions" />
+                    <th className="sk-num">{t("resellers.usersCount")}</th>
+                    <th className="sk-num">{t("billing.wallet")}</th>
+                    <th className="sk-num">{t("billing.prepaidRemaining")}</th>
+                    <th className="sk-num">{t("resellers.trafficUsed")}</th>
+                    <th className="sk-actions" />
                   </tr>
                 </thead>
                 <tbody>
@@ -472,26 +474,26 @@ const ResellerAccountsTab: FC = () => {
                     return (
                       <tr key={a.username}>
                         <td>
-                          <div className="nx-ra-user">
-                            <span className="nx-ra-user-name">{a.username}</span>
-                            <span className="nx-ra-user-role">{a.role || "reseller"}</span>
+                          <div className="sk-ra-user">
+                            <span className="sk-ra-user-name">{a.username}</span>
+                            <span className="sk-ra-user-role">{a.role || "reseller"}</span>
                           </div>
                         </td>
-                        <td className="nx-num">
+                        <td className="sk-num">
                           {(a.users_count ?? 0).toLocaleString()}
-                          <span className="nx-muted">/{usersMax}</span>
+                          <span className="sk-muted">/{usersMax}</span>
                         </td>
-                        <td className="nx-num">
+                        <td className="sk-num">
                           {billingOn ? (a.wallet_balance ?? 0).toLocaleString() : "—"}
                         </td>
-                        <td className="nx-num">
+                        <td className="sk-num">
                           {billingOn ? formatBytes(a.prepaid_traffic_remaining ?? 0) : "—"}
                         </td>
-                        <td className="nx-num">
+                        <td className="sk-num">
                           {formatBytes(a.users_usage ?? 0)}
-                          <span className="nx-muted">/{trafficCap}</span>
+                          <span className="sk-muted">/{trafficCap}</span>
                         </td>
-                        <td className="nx-actions">
+                        <td className="sk-actions">
                           <ResellerRowMenu
                             billingOn={billingOn}
                             onWallet={() => setCredit(a)}
@@ -612,13 +614,13 @@ const ResellerTrafficPricingModal: FC<{ account: ResellerAccount; onClose: () =>
         </>
       }
     >
-      <div className="nx-price-modal">
-        <p className="nx-price-hint">{t("resellers.trafficPricingHint")}</p>
+      <div className="sk-price-modal">
+        <p className="sk-price-hint">{t("resellers.trafficPricingHint")}</p>
         {loading ? <SkeletonRows rows={4} cols={2} />
           : error ? <EmptyState title={t("common.error")} desc={error} />
           : data && (
             <>
-              <div className="nx-price-rate">
+              <div className="sk-price-rate">
                 <Field
                   label={t("resellers.usageRatePerGb")}
                   hint={t("resellers.usageRatePerGbHint", { rate: data.platform_usage_rate_per_gb.toLocaleString() })}
@@ -629,21 +631,21 @@ const ResellerTrafficPricingModal: FC<{ account: ResellerAccount; onClose: () =>
               {!data.packages.length ? (
                 <EmptyState title={t("common.noData")} desc={t("billing.noTrafficPackages")} />
               ) : (
-                <div className="nx-price-pkgs">
-                  <div className="nx-price-pkgs-label">{t("billing.tabTrafficPackages")}</div>
+                <div className="sk-price-pkgs">
+                  <div className="sk-price-pkgs-label">{t("billing.tabTrafficPackages")}</div>
                   {data.packages.map((pkg) => {
                     const row = rows[pkg.id] || { price: "", bytesGb: "" };
                     return (
-                      <div key={pkg.id} className="nx-price-pkg">
-                        <div className="nx-price-pkg-top">
-                          <strong className="nx-price-pkg-name">{pkg.name}</strong>
-                          <span className="nx-price-pkg-meta">
+                      <div key={pkg.id} className="sk-price-pkg">
+                        <div className="sk-price-pkg-top">
+                          <strong className="sk-price-pkg-name">{pkg.name}</strong>
+                          <span className="sk-price-pkg-meta">
                             {pkg.catalog_price.toLocaleString()}
                             <span aria-hidden> · </span>
                             {formatBytes(pkg.catalog_bytes)}
                           </span>
                         </div>
-                        <div className="nx-price-pkg-fields">
+                        <div className="sk-price-pkg-fields">
                           <Field label={t("resellers.packageOverridePrice")}>
                             <Input
                               type="number"
@@ -707,8 +709,8 @@ const CreditResellerTraffic: FC<{ account: ResellerAccount; onClose: () => void;
         </>
       }
     >
-      <div className="nx-stack nx-modal-stack">
-        <p className="nx-modal-lede">
+      <div className="sk-stack sk-modal-stack">
+        <p className="sk-modal-lede">
           {t("resellers.prepaidHint", { remaining: formatBytes(account.prepaid_traffic_remaining ?? 0) })}
         </p>
         <Field label={t("billing.packageTrafficGb")} hint={t("resellers.creditTrafficHint")}>
@@ -759,12 +761,12 @@ const CreditResellerAccount: FC<{ account: ResellerAccount; onClose: () => void;
         </>
       }
     >
-      <div className="nx-stack nx-modal-stack">
-        <p className="nx-modal-lede">
+      <div className="sk-stack sk-modal-stack">
+        <p className="sk-modal-lede">
           {t("resellers.creditBalanceHint", { balance: (account.wallet_balance ?? 0).toLocaleString() })}
         </p>
         <Field label={t("resellers.adjustMode")}>
-          <select className="nx-select" value={mode} onChange={(e: any) => setMode(e.target.value)}>
+          <select className="sk-select" value={mode} onChange={(e: any) => setMode(e.target.value)}>
             <option value="set">{t("resellers.modeSetBalance")}</option>
             <option value="delta">{t("resellers.modeDelta")}</option>
           </select>
@@ -823,7 +825,7 @@ const AddResellerAccount: FC<{ onClose: () => void; onDone: () => void }> = ({ o
         </>
       }
     >
-      <div className="nx-stack nx-modal-stack">
+      <div className="sk-stack sk-modal-stack">
         <Field label={t("common.username")} hint={t("resellers.loginUsernameHint")}>
           <Input value={username} onChange={(e: any) => setUsername(e.target.value)} autoFocus />
         </Field>
@@ -831,12 +833,12 @@ const AddResellerAccount: FC<{ onClose: () => void; onDone: () => void }> = ({ o
           <Input type="password" value={password} onChange={(e: any) => setPassword(e.target.value)} />
         </Field>
         <Field label={t("system.role")}>
-          <select className="nx-select" value={role} onChange={(e) => setRole(e.target.value)}>
+          <select className="sk-select" value={role} onChange={(e) => setRole(e.target.value)}>
             <option value="reseller">reseller</option>
             <option value="support">support</option>
           </select>
         </Field>
-        <div className="nx-form-grid">
+        <div className="sk-form-grid">
           <Field label={`${t("system.maxUsers")} (${t("common.optional")})`}>
             <Input type="number" min={1} value={maxUsers} onChange={(e: any) => setMaxUsers(e.target.value)} placeholder="∞" />
           </Field>
@@ -864,12 +866,13 @@ const EditResellerAccount: FC<{ account: ResellerAccount; onClose: () => void; o
     account.max_total_traffic != null ? String(+(account.max_total_traffic / BYTES_PER_GB).toFixed(2)) : ""
   );
   const [password, setPassword] = useState("");
+  const [centralpay, setCentralpay] = useState(Boolean(account.centralpay_enabled));
   const [busy, setBusy] = useState(false);
 
   const save = async () => {
     setBusy(true);
     try {
-      const body: Record<string, unknown> = { is_sudo: false, role };
+      const body: Record<string, unknown> = { is_sudo: false, role, centralpay_enabled: centralpay };
       if (maxUsers.trim()) body.max_users = parseInt(maxUsers, 10);
       if (maxNodes.trim()) body.max_nodes = parseInt(maxNodes, 10);
       body.max_total_traffic = maxTraffic.trim() ? Math.round(parseFloat(maxTraffic) * BYTES_PER_GB) : null;
@@ -897,14 +900,14 @@ const EditResellerAccount: FC<{ account: ResellerAccount; onClose: () => void; o
         </>
       }
     >
-      <div className="nx-stack nx-modal-stack">
+      <div className="sk-stack sk-modal-stack">
         <Field label={t("system.role")}>
-          <select className="nx-select" value={role} onChange={(e) => setRole(e.target.value)}>
+          <select className="sk-select" value={role} onChange={(e) => setRole(e.target.value)}>
             <option value="reseller">reseller</option>
             <option value="support">support</option>
           </select>
         </Field>
-        <div className="nx-form-grid">
+        <div className="sk-form-grid">
           <Field label={`${t("system.maxUsers")} (${t("common.optional")})`}>
             <Input type="number" min={1} value={maxUsers} onChange={(e: any) => setMaxUsers(e.target.value)} placeholder="∞" />
           </Field>
@@ -915,6 +918,17 @@ const EditResellerAccount: FC<{ account: ResellerAccount; onClose: () => void; o
         <Field label={`${t("system.maxTotalTraffic")} (${t("common.optional")})`} hint={t("system.maxTotalTrafficHint")}>
           <Input type="number" min={0} step="0.1" value={maxTraffic} onChange={(e: any) => setMaxTraffic(e.target.value)} placeholder="∞" />
         </Field>
+        <div className="sk-row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div>
+            <div style={{ fontWeight: 600, fontSize: 13 }}>{t("resellers.centralpayEnabled")}</div>
+            <div className="sk-faint" style={{ fontSize: 12, marginTop: 4 }}>{t("resellers.centralpayEnabledHint")}</div>
+          </div>
+          <Toggle on={centralpay} onChange={() => setCentralpay((v) => !v)} />
+        </div>
+        <Callout tone="info">
+          {t("resellers.cardOwnedByReseller")}
+          {account.card_enabled ? ` — ${t("resellers.cardActive")}` : ` — ${t("resellers.cardInactive")}`}
+        </Callout>
         <Field label={`${t("common.password")} (${t("common.optional")})`}>
           <Input type="password" value={password} onChange={(e: any) => setPassword(e.target.value)} placeholder={t("resellers.newPasswordPlaceholder")} />
         </Field>
@@ -943,35 +957,35 @@ const TenantsTab: FC = () => {
 
   return (
     <>
-      <div className="nx-row" style={{ justifyContent: "flex-end", marginBottom: 14 }}>
-        <Button variant="primary" onClick={() => setShow(true)}><IcPlus className="nx-ico" /> {t("resellers.addTenant")}</Button>
+      <div className="sk-row" style={{ justifyContent: "flex-end", marginBottom: 14 }}>
+        <Button variant="primary" onClick={() => setShow(true)}><IcPlus className="sk-ico" /> {t("resellers.addTenant")}</Button>
       </div>
       <Card pad0>
         {loading ? <div style={{ padding: 20 }}><SkeletonRows rows={3} cols={4} /></div>
           : error ? <EmptyState title={t("common.error")} desc={error} />
-          : !data?.length ? <EmptyState title={t("common.noData")} action={<Button variant="primary" onClick={() => setShow(true)}><IcPlus className="nx-ico" /> {t("resellers.addTenant")}</Button>} />
+          : !data?.length ? <EmptyState title={t("common.noData")} action={<Button variant="primary" onClick={() => setShow(true)}><IcPlus className="sk-ico" /> {t("resellers.addTenant")}</Button>} />
           : (
-            <div className="nx-table-wrap">
-              <table className="nx-table">
+            <div className="sk-table-wrap">
+              <table className="sk-table">
                 <thead><tr>
                   <th>{t("common.name")}</th><th>{t("resellers.slug")}</th><th>{t("common.status")}</th>
-                  <th className="nx-num">{t("resellers.maxUsers")}</th>
-                  <th className="nx-num">{t("resellers.maxNodes")}</th>
-                  <th className="nx-num">{t("resellers.byoDiscount")}</th>
-                  <th className="nx-actions">{t("common.actions")}</th>
+                  <th className="sk-num">{t("resellers.maxUsers")}</th>
+                  <th className="sk-num">{t("resellers.maxNodes")}</th>
+                  <th className="sk-num">{t("resellers.byoDiscount")}</th>
+                  <th className="sk-actions">{t("common.actions")}</th>
                 </tr></thead>
                 <tbody>
                   {data.map((tn) => (
                     <tr key={tn.id}>
                       <td style={{ fontWeight: 600 }}>{tn.name}</td>
-                      <td className="nx-mono">{tn.slug}</td>
+                      <td className="sk-mono">{tn.slug}</td>
                       <td><Pill tone={tn.enabled ? "ok" : "danger"} dot>{tn.enabled ? t("common.enabled") : t("common.disabled")}</Pill></td>
-                      <td className="nx-num">{tn.max_users ?? "∞"}</td>
-                      <td className="nx-num">{tn.max_nodes ?? "∞"}</td>
-                      <td className="nx-num">{tn.byo_node_discount_percent}%</td>
-                      <td className="nx-actions"><div className="nx-row" style={{ justifyContent: "flex-end", gap: 6 }}>
-                        <Button size="sm" variant="ghost" onClick={() => setEdit(tn)}><IcEdit className="nx-ico" /></Button>
-                        <Button variant="danger" size="sm" onClick={() => remove(tn.id)}><IcTrash className="nx-ico" /></Button>
+                      <td className="sk-num">{tn.max_users ?? "∞"}</td>
+                      <td className="sk-num">{tn.max_nodes ?? "∞"}</td>
+                      <td className="sk-num">{tn.byo_node_discount_percent}%</td>
+                      <td className="sk-actions"><div className="sk-row" style={{ justifyContent: "flex-end", gap: 6 }}>
+                        <Button size="sm" variant="ghost" onClick={() => setEdit(tn)}><IcEdit className="sk-ico" /></Button>
+                        <Button variant="danger" size="sm" onClick={() => remove(tn.id)}><IcTrash className="sk-ico" /></Button>
                       </div></td>
                     </tr>
                   ))}
@@ -1016,10 +1030,10 @@ const EditTenant: FC<{ tenant: Tenant; onClose: () => void; onDone: () => void }
     <Modal open title={`${t("common.edit")} — ${tenant.name}`} onClose={onClose}
       footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
         <Button variant="primary" disabled={busy} onClick={submit}>{t("common.save")}</Button></>}>
-      <div className="nx-stack">
+      <div className="sk-stack">
         <Field label={t("common.name")}><Input value={f.name} onChange={upd("name")} /></Field>
-        <label className="nx-row" style={{ gap: 8 }}><input type="checkbox" checked={f.enabled} onChange={upd("enabled")} /> {t("common.enabled")}</label>
-        <div className="nx-row" style={{ gap: 12 }}>
+        <label className="sk-row" style={{ gap: 8 }}><input type="checkbox" checked={f.enabled} onChange={upd("enabled")} /> {t("common.enabled")}</label>
+        <div className="sk-row" style={{ gap: 12 }}>
           <Field label={t("resellers.maxUsers")}><Input type="number" value={f.maxUsers} onChange={upd("maxUsers")} /></Field>
           <Field label={t("resellers.maxNodes")}><Input type="number" value={f.maxNodes} onChange={upd("maxNodes")} /></Field>
           <Field label={t("resellers.byoDiscount")}><Input type="number" value={f.discount} onChange={upd("discount")} /></Field>
@@ -1055,13 +1069,13 @@ const AddTenant: FC<{ onClose: () => void; onDone: () => void }> = ({ onClose, o
     <Modal open title={t("resellers.addTenant")} onClose={onClose}
       footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
         <Button variant="primary" disabled={busy || !f.name} onClick={submit}>{t("common.create")}</Button></>}>
-      <div className="nx-stack">
+      <div className="sk-stack">
         <Field label={t("common.name")}><Input value={f.name} onChange={upd("name")} autoFocus /></Field>
-        <div className="nx-row" style={{ gap: 12 }}>
+        <div className="sk-row" style={{ gap: 12 }}>
           <Field label={`${t("resellers.slug")} (${t("common.optional")})`}><Input value={f.slug} onChange={upd("slug")} /></Field>
           <Field label={`${t("resellers.ownerUsername")} (${t("common.optional")})`}><Input value={f.owner} onChange={upd("owner")} /></Field>
         </div>
-        <div className="nx-row" style={{ gap: 12 }}>
+        <div className="sk-row" style={{ gap: 12 }}>
           <Field label={t("resellers.maxUsers")}><Input type="number" value={f.maxUsers} onChange={upd("maxUsers")} /></Field>
           <Field label={t("resellers.maxNodes")}><Input type="number" value={f.maxNodes} onChange={upd("maxNodes")} /></Field>
           <Field label={t("resellers.byoDiscount")}><Input type="number" value={f.discount} onChange={upd("discount")} /></Field>
@@ -1226,18 +1240,18 @@ const BrandingTab: FC = () => {
   return (
     <Card style={{ maxWidth: 640 }}>
       <CardHead title={t("resellers.tabBranding")} desc={t("resellers.brandingDesc")} />
-      <div className="nx-stack">
+      <div className="sk-stack">
         <Callout tone="info">
           {sslStatus?.panel_ip
             ? t("resellers.domainDnsHintWithIp", { ip: sslStatus.panel_ip })
             : t("resellers.domainDnsHint")}
         </Callout>
         <Field label={t("resellers.panelTitle")}><Input value={model.panel_title || ""} onChange={upd("panel_title")} /></Field>
-        <div className="nx-row" style={{ gap: 12 }}>
+        <div className="sk-row" style={{ gap: 12 }}>
           <Field label={t("resellers.logoUrl")}><Input value={model.logo_url || ""} onChange={upd("logo_url")} /></Field>
           <Field label={t("resellers.faviconUrl")}><Input value={model.favicon_url || ""} onChange={upd("favicon_url")} /></Field>
         </div>
-        <div className="nx-row" style={{ gap: 12 }}>
+        <div className="sk-row" style={{ gap: 12 }}>
           <Field label={t("resellers.primaryColor")}><Input type="text" value={model.primary_color || ""} onChange={upd("primary_color")} placeholder="#2dd4bf" /></Field>
           <Field label={t("resellers.supportUrl")}><Input value={model.support_url || ""} onChange={upd("support_url")} /></Field>
         </div>
@@ -1245,7 +1259,7 @@ const BrandingTab: FC = () => {
         <Field label={t("resellers.domain")} hint={t("resellers.domainHint")}>
           <Input value={model.domain || ""} onChange={upd("domain")} placeholder="sub.example.com" />
         </Field>
-        <div className="nx-row" style={{ gap: 12 }}>
+        <div className="sk-row" style={{ gap: 12 }}>
           <Field label={t("resellers.subPath")} hint={t("resellers.subPathHint")}>
             <Input value={model.sub_path || ""} onChange={upd("sub_path")} placeholder="sub" />
           </Field>
@@ -1283,7 +1297,7 @@ const BrandingTab: FC = () => {
             tone={sslStatus?.https_ready ? "ok" : sslStatus?.dns_ok ? "warn" : "danger"}
             title={t("resellers.subDomainReadyTitle")}
           >
-            <div className="nx-stack" style={{ gap: 8 }}>
+            <div className="sk-stack" style={{ gap: 8 }}>
               <div>
                 {t("resellers.subDomainReadyHint")}: <code>{suggestedSub}</code>
               </div>
@@ -1302,7 +1316,7 @@ const BrandingTab: FC = () => {
                 </div>
               ) : null}
               {model.domain && !sslStatus?.https_ready && (
-                <div className="nx-row" style={{ justifyContent: "flex-start" }}>
+                <div className="sk-row" style={{ justifyContent: "flex-start" }}>
                   <Button
                     variant="ghost"
                     disabled={busy || sslBusy || !!portConflict}
@@ -1315,7 +1329,7 @@ const BrandingTab: FC = () => {
             </div>
           </Callout>
         )}
-        <div className="nx-row" style={{ justifyContent: "flex-end" }}>
+        <div className="sk-row" style={{ justifyContent: "flex-end" }}>
           <Button variant="primary" disabled={busy || !!portConflict} onClick={save}>{t("resellers.saveBranding")}</Button>
         </div>
       </div>
@@ -1367,10 +1381,10 @@ const AccountTab: FC = () => {
   };
 
   return (
-    <div className="nx-stack" style={{ maxWidth: 560 }}>
+    <div className="sk-stack" style={{ maxWidth: 560 }}>
       <Card>
         <CardHead title={t("resellers.changePassword")} desc={t("resellers.changePasswordDesc")} />
-        <div className="nx-stack">
+        <div className="sk-stack">
           <Field label={t("resellers.currentPassword")}>
             <Input type="password" value={pw.current} onChange={(e: any) => setPw({ ...pw, current: e.target.value })} />
           </Field>
@@ -1380,7 +1394,7 @@ const AccountTab: FC = () => {
           <Field label={t("resellers.confirmPassword")}>
             <Input type="password" value={pw.confirm} onChange={(e: any) => setPw({ ...pw, confirm: e.target.value })} />
           </Field>
-          <div className="nx-row" style={{ justifyContent: "flex-end" }}>
+          <div className="sk-row" style={{ justifyContent: "flex-end" }}>
             <Button variant="primary" disabled={busyPw || !pw.current || !pw.next} onClick={changePassword}>
               {t("resellers.changePassword")}
             </Button>
@@ -1389,7 +1403,7 @@ const AccountTab: FC = () => {
       </Card>
       <Card>
         <CardHead title={t("resellers.changeUsername")} desc={t("resellers.changeUsernameDesc")} />
-        <div className="nx-stack">
+        <div className="sk-stack">
           <Callout tone="info">{t("resellers.currentUsernameHint", { username: admin?.username || "" })}</Callout>
           <Field label={t("resellers.newUsername")} hint={t("resellers.usernameRules")}>
             <Input value={un.next} onChange={(e: any) => setUn({ ...un, next: e.target.value })} />
@@ -1397,7 +1411,7 @@ const AccountTab: FC = () => {
           <Field label={t("resellers.currentPassword")}>
             <Input type="password" value={un.password} onChange={(e: any) => setUn({ ...un, password: e.target.value })} />
           </Field>
-          <div className="nx-row" style={{ justifyContent: "flex-end" }}>
+          <div className="sk-row" style={{ justifyContent: "flex-end" }}>
             <Button variant="primary" disabled={busyUn || !un.next.trim() || !un.password} onClick={changeUsername}>
               {t("resellers.changeUsername")}
             </Button>
@@ -1414,7 +1428,7 @@ const MigrationTab: FC = () => {
   return (
     <Card style={{ maxWidth: 720 }}>
       <CardHead title={t("resellers.tabMigration")} desc={t("resellers.migrationDesc")} />
-      <div className="nx-stack">
+      <div className="sk-stack">
         <Callout tone="ok" title={t("resellers.migrationDumpTitle")}>
           {t("resellers.migrationDumpBody")}
         </Callout>
@@ -1425,8 +1439,8 @@ const MigrationTab: FC = () => {
           <div>{t("users.importFmtCsv")}</div>
           <div>{t("users.importFmtLinks")}</div>
         </Callout>
-        <p className="nx-faint" style={{ margin: 0 }}>{t("resellers.migrationHint")}</p>
-        <div className="nx-row" style={{ justifyContent: "flex-start", gap: 10, flexWrap: "wrap" }}>
+        <p className="sk-faint" style={{ margin: 0 }}>{t("resellers.migrationHint")}</p>
+        <div className="sk-row" style={{ justifyContent: "flex-start", gap: 10, flexWrap: "wrap" }}>
           <Button variant="primary" onClick={() => setShowImport(true)}>
             {t("resellers.openDumpImport")}
           </Button>
@@ -1480,18 +1494,18 @@ const ProvisionTab: FC = () => {
   return (
     <Card style={{ maxWidth: 680 }}>
       <CardHead title={t("infra.addNode")} desc={t("resellers.provisionDesc")} />
-      <div className="nx-stack">
-        <div className="nx-row" style={{ gap: 12 }}>
+      <div className="sk-stack">
+        <div className="sk-row" style={{ gap: 12 }}>
           <Field label={t("common.name")}><Input value={f.name} onChange={upd("name")} /></Field>
-          <Field label={t("resellers.roleLabel")}><select className="nx-select" value={f.role} onChange={upd("role")}>{["direct", "relay", "exit"].map((r) => <option key={r}>{r}</option>)}</select></Field>
+          <Field label={t("resellers.roleLabel")}><select className="sk-select" value={f.role} onChange={upd("role")}>{["direct", "relay", "exit"].map((r) => <option key={r}>{r}</option>)}</select></Field>
         </div>
         <Field label={`${t("infra.address")} (${t("resellers.sshHost")})`}><Input value={f.host} onChange={upd("host")} placeholder="1.2.3.4" /></Field>
-        <div className="nx-row" style={{ gap: 12 }}>
+        <div className="sk-row" style={{ gap: 12 }}>
           <Field label={t("resellers.sshUser")}><Input value={f.username} onChange={upd("username")} /></Field>
           <Field label={t("resellers.sshPassword")}><Input type="password" value={f.password} onChange={upd("password")} /></Field>
         </div>
-        <div className="nx-row" style={{ justifyContent: "flex-end", gap: 8 }}>
-          <Button onClick={getCommand} disabled={busy}><IcServer className="nx-ico" /> {t("resellers.copyCommand")}</Button>
+        <div className="sk-row" style={{ justifyContent: "flex-end", gap: 8 }}>
+          <Button onClick={getCommand} disabled={busy}><IcServer className="sk-ico" /> {t("resellers.copyCommand")}</Button>
           <Button variant="primary" onClick={provision} disabled={busy || !f.host || !f.name}>{t("common.create")}</Button>
         </div>
         {result && (

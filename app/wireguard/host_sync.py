@@ -17,7 +17,7 @@ import types
 from pathlib import Path
 from typing import List, Optional
 
-logger = logging.getLogger("nexus-wg")
+logger = logging.getLogger("shahkar-wg")
 
 
 def _panel_container_id() -> Optional[str]:
@@ -32,7 +32,7 @@ def _panel_container_id() -> Optional[str]:
 class _HostCommandRunner:
     """Run ``wg``/``awg``/``ip``/``iptables`` commands on the panel host.
 
-    The panel runs unprivileged (``runuser -u nexuspanel``); the container was
+    The panel runs unprivileged (``runuser -u shahkar``); the container was
     granted ``CAP_NET_ADMIN`` but a non-root process can't use it, so mutating
     the host WireGuard interface fails with "Operation not permitted" (the
     recurring ``WireGuard apply for wg0 failed`` warnings). When a direct call
@@ -202,7 +202,7 @@ def _parse_wg_transfer(output: str) -> dict:
 def _wg_show_transfer_raw(interface: str) -> str:
     """Return raw ``wg show <iface> transfer`` output, escalating if needed.
 
-    The panel runs unprivileged (``runuser -u nexuspanel``) while the host
+    The panel runs unprivileged (``runuser -u shahkar``) while the host
     ``wg`` netlink API needs ``CAP_NET_ADMIN``, which a non-root process does
     not carry even though the container was granted it. The shared
     :data:`_host_command_runner` transparently falls back to ``docker exec

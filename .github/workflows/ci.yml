@@ -48,18 +48,18 @@ jobs:
       postgres:
         image: postgres:17
         env:
-          POSTGRES_USER: nexuspanel
-          POSTGRES_PASSWORD: nexuspanel
-          POSTGRES_DB: nexuspanel
+          POSTGRES_USER: shahkar
+          POSTGRES_PASSWORD: shahkar
+          POSTGRES_DB: shahkar
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U nexuspanel"
+          --health-cmd "pg_isready -U shahkar"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
     env:
-      SQLALCHEMY_DATABASE_URL: postgresql://nexuspanel:nexuspanel@127.0.0.1:5432/nexuspanel
+      SQLALCHEMY_DATABASE_URL: postgresql://shahkar:shahkar@127.0.0.1:5432/shahkar
       XRAY_EXECUTABLE_PATH: /usr/local/bin/xray
     steps:
       - uses: actions/checkout@v4

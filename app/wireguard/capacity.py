@@ -15,7 +15,7 @@ import ipaddress
 import logging
 from typing import List, Optional, Sequence, Union
 
-logger = logging.getLogger("nexus-wg")
+logger = logging.getLogger("shahkar-wg")
 
 # Floor for auto-widen. /12 ≈ 1M usable IPv4 hosts — practical "unlimited"
 # for a single WG interface without crossing into multi-homed designs.

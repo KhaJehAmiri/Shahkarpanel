@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 RUNTIME_ENV_PATH = Path(
-    os.environ.get("NEXUSPANEL_RUNTIME_ENV", "/var/lib/nexuspanel/.env")
+    os.environ.get("SHAHKAR_RUNTIME_ENV", "/var/lib/shahkar/.env")
 )
 
 
@@ -61,7 +61,7 @@ METRICS_TOKEN = config("METRICS_TOKEN", default="")
 # Token allowing a node to self-register via POST /api/node/bootstrap.
 # Leave empty to disable auto-discovery.
 NODE_BOOTSTRAP_TOKEN = config("NODE_BOOTSTRAP_TOKEN", default="")
-# Shared secret for REST node control API (header X-Nexus-Control-Secret). Empty = disabled.
+# Shared secret for REST node control API (header X-Shahkar-Control-Secret). Empty = disabled.
 NODE_CONTROL_SECRET = config("NODE_CONTROL_SECRET", default="")
 # Node agent certs are self-signed with no SAN (see node/certificate.py), so the
 # panel always pins the exact cert content on first connect and rejects any later
@@ -89,7 +89,7 @@ PROVISIONING_SSH_STRICT_HOST_KEY = config("PROVISIONING_SSH_STRICT_HOST_KEY", ca
 CLUSTER_FAILOVER_CHECK_INTERVAL = config("CLUSTER_FAILOVER_CHECK_INTERVAL", cast=int, default=0)
 
 # Panel self-update: GitHub repo for version check when git is unavailable (Docker).
-PANEL_GITHUB_REPO = config("PANEL_GITHUB_REPO", default="KhaJehAmiri/nexuspanel")
+PANEL_GITHUB_REPO = config("PANEL_GITHUB_REPO", default="KhaJehAmiri/shahkar")
 PANEL_GITHUB_BRANCH = config("PANEL_GITHUB_BRANCH", default="master")
 # A node must stay in error for this many seconds before being considered down.
 CLUSTER_NODE_DOWN_SECONDS = config("CLUSTER_NODE_DOWN_SECONDS", cast=int, default=180)
@@ -102,7 +102,7 @@ CLUSTER_AUTO_RECONNECT_DOWN_NODES = config("CLUSTER_AUTO_RECONNECT_DOWN_NODES", 
 # OpenTelemetry tracing
 OTEL_ENABLED = config("OTEL_ENABLED", cast=bool, default=False)
 OTEL_EXPORTER_OTLP_ENDPOINT = config("OTEL_EXPORTER_OTLP_ENDPOINT", default="http://127.0.0.1:4317")
-OTEL_SERVICE_NAME = config("OTEL_SERVICE_NAME", default="nexuspanel")
+OTEL_SERVICE_NAME = config("OTEL_SERVICE_NAME", default="shahkar")
 
 # High availability (phase 4). When multiple panel instances share one DB,
 # only the elected leader runs singleton scheduler jobs (usage recording,
@@ -141,18 +141,18 @@ PANEL_PUBLIC_ADDRESS = config("PANEL_PUBLIC_ADDRESS", default="")
 # Container image deployed on a reseller server when provisioning a node.
 # Must be a node-agent image reachable by the target server's Docker. Override
 # with your own published image (see scripts/ for building a node image).
-NODE_AGENT_IMAGE = config("NODE_AGENT_IMAGE", default="nexuspanel/node:latest")
+NODE_AGENT_IMAGE = config("NODE_AGENT_IMAGE", default="shahkar/node:latest")
 # Primary online URL for the gzipped ``docker save`` of NODE_AGENT_IMAGE
 # (GitHub Releases). Nodes curl this first (3 attempts), then Iran mirror.
 NODE_AGENT_PACKAGE_URL = config(
     "NODE_AGENT_PACKAGE_URL",
     default=(
-        "https://github.com/KhaJehAmiri/nexuspanel/releases/download/"
-        "node-agent/nexuspanel-node-agent-image.tar.gz"
+        "https://github.com/KhaJehAmiri/shahkar/releases/download/"
+        "node-agent/shahkar-node-agent-image.tar.gz"
     ),
 )
 # Domestic HTTP mirror — used only after online/GitHub fetch fails 3x.
-# Example: http://mirror.example.com/nexuspanel/node-agent-image.tar.gz
+# Example: http://mirror.example.com/shahkar/node-agent-image.tar.gz
 NODE_AGENT_MIRROR_URL = config("NODE_AGENT_MIRROR_URL", default="")
 # SSH connect timeout (seconds) when auto-provisioning a node.
 NODE_PROVISION_SSH_TIMEOUT = config("NODE_PROVISION_SSH_TIMEOUT", cast=int, default=30)
@@ -163,7 +163,7 @@ NODE_DEFAULT_PORT = config("NODE_DEFAULT_PORT", cast=int, default=62050)
 NODE_DEFAULT_API_PORT = config("NODE_DEFAULT_API_PORT", cast=int, default=62051)
 
 # Backup & disaster recovery
-BACKUP_DIR = config("BACKUP_DIR", default="/var/lib/nexuspanel/backups")
+BACKUP_DIR = config("BACKUP_DIR", default="/var/lib/shahkar/backups")
 # Interval between automatic backups in hours. 0 disables scheduled backups.
 BACKUP_INTERVAL_HOURS = config("BACKUP_INTERVAL_HOURS", cast=int, default=0)
 # Number of most-recent backups to keep on disk. <= 0 keeps all.
@@ -330,12 +330,12 @@ SUDOERS = (
 
 if SUDO_PASSWORD and SUDO_PASSWORD_HASH:
     import logging
-    logging.getLogger("nexuspanel.config").warning(
+    logging.getLogger("shahkar.config").warning(
         "SUDO_PASSWORD is ignored when SUDO_PASSWORD_HASH is set"
     )
 elif SUDO_PASSWORD and not SUDO_PASSWORD_HASH:
     import logging
-    logging.getLogger("nexuspanel.config").warning(
+    logging.getLogger("shahkar.config").warning(
         "SUDO_PASSWORD is set without SUDO_PASSWORD_HASH — use bcrypt hash in production"
     )
 
@@ -373,12 +373,12 @@ DISABLE_RECORDING_NODE_USAGE = config("DISABLE_RECORDING_NODE_USAGE", cast=bool,
 # headers: profile-update-interval, support-url, profile-title
 SUB_UPDATE_INTERVAL = config("SUB_UPDATE_INTERVAL", default="12")
 SUB_SUPPORT_URL = config("SUB_SUPPORT_URL", default="https://t.me/")
-SUB_PROFILE_TITLE = config("SUB_PROFILE_TITLE", default="NexusPanel")
+SUB_PROFILE_TITLE = config("SUB_PROFILE_TITLE", default="Shahkar")
 SUB_PROFILE_TITLE_DYNAMIC = config("SUB_PROFILE_TITLE_DYNAMIC", default=True, cast=bool)
 
 # Installer / first-run defaults
 PANEL_DEFAULT_LANG = config("PANEL_DEFAULT_LANG", default="en")
-PANEL_TITLE = config("PANEL_TITLE", default="NexusPanel")
+PANEL_TITLE = config("PANEL_TITLE", default="Shahkar")
 PRIMARY_COLOR = config("PRIMARY_COLOR", default="#2ee0c4")
 
 # discord webhook log
@@ -451,6 +451,8 @@ WALLET_LOW_BALANCE_THRESHOLD = config("WALLET_LOW_BALANCE_THRESHOLD", cast=int, 
 # Payment gateways (phase 4). Demo provider is staging-only; opt in explicitly.
 PAYMENT_DEMO_ENABLED = config("PAYMENT_DEMO_ENABLED", cast=bool, default=False)
 PORTAL_DIRECT_PAYMENT = config("PORTAL_DIRECT_PAYMENT", cast=bool, default=True)
+# Extra VPN accounts one portal login may own. 0 disables the cap.
+PORTAL_MAX_CHILD_ACCOUNTS = config("PORTAL_MAX_CHILD_ACCOUNTS", cast=int, default=20)
 PAYMENT_MIN_AMOUNT = config("PAYMENT_MIN_AMOUNT", cast=int, default=100)
 PAYMENT_MAX_AMOUNT = config("PAYMENT_MAX_AMOUNT", cast=int, default=100_000_000)
 

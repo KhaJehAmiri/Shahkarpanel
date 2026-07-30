@@ -12,7 +12,7 @@ import subprocess
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Tuple
 
-logger = logging.getLogger("nexus-node-speed-limit")
+logger = logging.getLogger("shahkar-node-speed-limit")
 
 RunFn = Callable[..., subprocess.CompletedProcess]
 IFB_DEV = "ifb0"

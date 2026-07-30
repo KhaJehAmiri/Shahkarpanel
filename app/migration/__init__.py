@@ -1,1 +1,1 @@
-"""3x-ui panel migration into NexusPanel."""
+"""3x-ui panel migration into Shahkar."""

@@ -198,7 +198,7 @@ export const OutboundsSection: FC<{
   const connectedNodes = (nodes.data || []).filter((n) => n.status === "connected" && n.core_kind !== "wireguard");
 
   return (
-    <div className="nx-stack">
+    <div className="sk-stack">
       <Callout tone="info" title={t("xray.outboundsTitle")}>{t("xray.outboundsDesc")}</Callout>
       <Callout tone="info">{t("outbounds.orderHint")}</Callout>
       <Callout tone="info">{t("inbounds.autoPersistHint")}</Callout>
@@ -212,7 +212,7 @@ export const OutboundsSection: FC<{
         </Select>
       </Field>
 
-      <div className="nx-row nx-page-actions" style={{ flexWrap: "wrap", gap: 8 }}>
+      <div className="sk-row sk-page-actions" style={{ flexWrap: "wrap", gap: 8 }}>
         {!hasDirect && (
           <Button size="sm" disabled={busy} onClick={() => addPreset(freedomOutboundForm("DIRECT"))}>
             DIRECT
@@ -233,10 +233,10 @@ export const OutboundsSection: FC<{
           {t("outboundPool.addPool")}
         </Button>
         <Button size="sm" onClick={pingAll} disabled={!outbounds.length || pingAllRunning}>
-          <IcRefresh className="nx-ico" /> {pingAllRunning ? t("outbounds.pingingAll") : t("outbounds.pingAll")}
+          <IcRefresh className="sk-ico" /> {pingAllRunning ? t("outbounds.pingingAll") : t("outbounds.pingAll")}
         </Button>
         <Button variant="primary" onClick={() => openNew(null)} disabled={busy}>
-          <IcPlus className="nx-ico" /> {t("xray.addOutbound")}
+          <IcPlus className="sk-ico" /> {t("xray.addOutbound")}
         </Button>
       </div>
 
@@ -247,13 +247,13 @@ export const OutboundsSection: FC<{
             desc={t("outbounds.emptyDesc")}
             action={
               <Button variant="primary" onClick={() => openNew(null)} disabled={busy}>
-                <IcPlus className="nx-ico" /> {t("xray.addOutbound")}
+                <IcPlus className="sk-ico" /> {t("xray.addOutbound")}
               </Button>
             }
           />
         ) : (
-          <div className="nx-table-wrap">
-            <table className="nx-table">
+          <div className="sk-table-wrap">
+            <table className="sk-table">
               <thead>
                 <tr>
                   <th>#</th>
@@ -263,7 +263,7 @@ export const OutboundsSection: FC<{
                   <th>{t("infra.transport")}</th>
                   <th>{t("outbounds.ping")}</th>
                   <th>{t("outbounds.extra")}</th>
-                  <th className="nx-actions">{t("common.actions")}</th>
+                  <th className="sk-actions">{t("common.actions")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -274,19 +274,19 @@ export const OutboundsSection: FC<{
                   const ping = pingMap[pk];
                   return (
                     <tr key={`${o.tag}-${idx}`}>
-                      <td className="nx-faint">{idx + 1}</td>
-                      <td><span className="nx-proto-name-main">{String(o.tag)}</span></td>
-                      <td><span className="nx-proto-chip">{String(o.protocol)}</span></td>
-                      <td className="nx-mono nx-proto-meta" dir="ltr">{sum.address}</td>
-                      <td className="nx-proto-meta">{sum.transport}</td>
+                      <td className="sk-faint">{idx + 1}</td>
+                      <td><span className="sk-proto-name-main">{String(o.tag)}</span></td>
+                      <td><span className="sk-proto-chip">{String(o.protocol)}</span></td>
+                      <td className="sk-mono sk-proto-meta" dir="ltr">{sum.address}</td>
+                      <td className="sk-proto-meta">{sum.transport}</td>
                       <td>
-                        <div className="nx-outbound-ping">
+                        <div className="sk-outbound-ping">
                           {ping?.loading ? (
-                            <span className="nx-outbound-ping-loading">{t("outbounds.pingRunning")}</span>
+                            <span className="sk-outbound-ping-loading">{t("outbounds.pingRunning")}</span>
                           ) : ping?.delay != null ? (
                             <button
                               type="button"
-                              className="nx-outbound-ping-ok"
+                              className="sk-outbound-ping-ok"
                               title={ping.mode === "tcp" ? t("outbounds.pingTcpHint") : t("outbounds.pingRetry")}
                               onClick={() => runPing(idx)}
                             >
@@ -295,21 +295,21 @@ export const OutboundsSection: FC<{
                           ) : ping?.error ? (
                             <button
                               type="button"
-                              className="nx-outbound-ping-err"
+                              className="sk-outbound-ping-err"
                               title={ping.error}
                               onClick={() => runPing(idx)}
                             >
                               {t("outbounds.pingFailedShort")}
                             </button>
                           ) : (
-                            <button type="button" className="nx-ra-icon-btn" title={t("outbounds.ping")} onClick={() => runPing(idx)}>
-                              <IcBolt className="nx-ico" />
+                            <button type="button" className="sk-ra-icon-btn" title={t("outbounds.ping")} onClick={() => runPing(idx)}>
+                              <IcBolt className="sk-ico" />
                             </button>
                           )}
                         </div>
                       </td>
-                      <td className="nx-proto-meta">{sum.extra || "—"}</td>
-                      <td className="nx-actions">
+                      <td className="sk-proto-meta">{sum.extra || "—"}</td>
+                      <td className="sk-actions">
                         <TableRowMenu
                           items={[
                             {
@@ -327,14 +327,14 @@ export const OutboundsSection: FC<{
                             {
                               id: "clone",
                               label: t("outbounds.clone"),
-                              icon: <IcShare className="nx-ico" />,
+                              icon: <IcShare className="sk-ico" />,
                               disabled: busy,
                               onClick: () => clone(idx),
                             },
                             {
                               id: "edit",
                               label: t("common.edit"),
-                              icon: <IcEdit className="nx-ico" />,
+                              icon: <IcEdit className="sk-ico" />,
                               disabled: busy,
                               onClick: () => openEdit(idx),
                             },
@@ -342,7 +342,7 @@ export const OutboundsSection: FC<{
                               ? [{
                                   id: "del",
                                   label: t("common.delete"),
-                                  icon: <IcTrash className="nx-ico" />,
+                                  icon: <IcTrash className="sk-ico" />,
                                   danger: true,
                                   disabled: busy,
                                   onClick: () => remove(idx),

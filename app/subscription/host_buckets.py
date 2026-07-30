@@ -33,6 +33,7 @@ def native_host_label(tag: str) -> str:
         "__native:amneziawg": "AmneziaWG",
         "__native:hysteria2": "Hysteria2",
         "__native:tuic": "TUIC",
+        "__native:anytls": "AnyTLS",
     }
     return labels.get(tag, tag)
 

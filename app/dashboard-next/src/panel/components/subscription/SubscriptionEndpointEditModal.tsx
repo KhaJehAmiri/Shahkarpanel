@@ -206,7 +206,7 @@ export const SubscriptionEndpointEditModal: FC<Props> = ({
       wide
       title={t("subEndpoints.editTitle", { slug: group.label })}
       onClose={onClose}
-      className="nx-sub-ep-modal"
+      className="sk-sub-ep-modal"
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={saving}>
@@ -223,7 +223,7 @@ export const SubscriptionEndpointEditModal: FC<Props> = ({
         </>
       }
     >
-      <p className="nx-faint" style={{ fontSize: 13, marginBottom: 14 }}>
+      <p className="sk-faint" style={{ fontSize: 13, marginBottom: 14 }}>
         {t("subEndpoints.editDescGrouped")}
       </p>
 
@@ -244,17 +244,17 @@ export const SubscriptionEndpointEditModal: FC<Props> = ({
       )}
 
       {!form || !active ? (
-        <div className="nx-faint">{t("common.noData")}</div>
+        <div className="sk-faint">{t("common.noData")}</div>
       ) : (
-        <div className="nx-sub-ep-form">
-          <div className="nx-sub-ep-form-head">
+        <div className="sk-sub-ep-form">
+          <div className="sk-sub-ep-form-head">
             <div>
-              <div className="nx-sub-ep-channel">{t(`subEndpoints.kind.${active.id}`)}</div>
-              <code className="nx-sub-ep-slug" dir="ltr">
+              <div className="sk-sub-ep-channel">{t(`subEndpoints.kind.${active.id}`)}</div>
+              <code className="sk-sub-ep-slug" dir="ltr">
                 {form.slug}
               </code>
             </div>
-            <label className="nx-sub-ep-toggle">
+            <label className="sk-sub-ep-toggle">
               <Toggle
                 on={form.enabled}
                 onChange={(on) => patchForm(form.id, { enabled: on })}
@@ -264,7 +264,7 @@ export const SubscriptionEndpointEditModal: FC<Props> = ({
             </label>
           </div>
 
-          <div className="nx-sub-ep-grid">
+          <div className="sk-sub-ep-grid">
             <Field label={t("inboundSub.listenDomain")} hint={t("inboundSub.listenDomainHint")}>
               <Input
                 dir="ltr"
@@ -304,14 +304,14 @@ export const SubscriptionEndpointEditModal: FC<Props> = ({
             />
           </Field>
 
-          <div className="nx-sub-ep-preview">
-            <div className="nx-sub-ep-preview-label">{t("subEndpoints.previewTitle")}</div>
+          <div className="sk-sub-ep-preview">
+            <div className="sk-sub-ep-preview-label">{t("subEndpoints.previewTitle")}</div>
             <code dir="ltr">{preview}</code>
           </div>
 
           {form.host.trim() && (
-            <div className="nx-sub-ep-ssl">
-              <div className="nx-sub-ep-ssl-text">
+            <div className="sk-sub-ep-ssl">
+              <div className="sk-sub-ep-ssl-text">
                 <strong>{t("inboundSub.sslTitle")}</strong>
                 <span>
                   {ssl?.https_ready

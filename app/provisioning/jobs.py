@@ -13,7 +13,7 @@ from app.db import GetDB, crud
 from app.models.node import NodeStatus
 from app.provisioning.post_install import ProvisionExtras, run_post_provision
 
-logger = logging.getLogger("nexus-provision")
+logger = logging.getLogger("shahkar-provision")
 
 JobStatus = Literal["pending", "running", "success", "failed"]
 STEP_LABELS = ("queued", "ssh", "docker", "image", "agent", "register", "done")

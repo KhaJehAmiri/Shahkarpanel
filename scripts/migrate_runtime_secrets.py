@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Move production secrets out of the git-bound repo .env (AUDIT_FINDINGS.md M16).
 
-Secrets are written to /var/lib/nexuspanel/.env (runtime) and stripped from the
-repo .env under /opt/nexuspanel. Weak Postgres passwords are replaced and the
+Secrets are written to /var/lib/shahkar/.env (runtime) and stripped from the
+repo .env under /opt/shahkar. Weak Postgres passwords are replaced and the
 live database user is updated when reachable.
 
 Usage:
@@ -36,7 +36,7 @@ def _load_runtime_env_constants():
     import importlib.util
 
     path = ROOT / "app" / "runtime_env.py"
-    spec = importlib.util.spec_from_file_location("nexuspanel_runtime_env", path)
+    spec = importlib.util.spec_from_file_location("shahkar_runtime_env", path)
     if spec is None or spec.loader is None:
         raise ImportError(f"Cannot load runtime env constants from {path}")
     mod = importlib.util.module_from_spec(spec)
@@ -86,10 +86,10 @@ def _rand(n: int = 32) -> str:
 
 def _postgres_url_with_password(url: str, password: str) -> str:
     parsed = urlparse(url)
-    user = parsed.username or "nexuspanel"
+    user = parsed.username or "shahkar"
     host = parsed.hostname or "127.0.0.1"
     port = parsed.port or 5432
-    db = (parsed.path or "/nexuspanel").lstrip("/") or "nexuspanel"
+    db = (parsed.path or "/shahkar").lstrip("/") or "shahkar"
     netloc = f"{quote_plus(user)}:{quote_plus(password)}@{host}:{port}"
     return urlunparse(parsed._replace(netloc=netloc, path=f"/{db}"))
 
@@ -101,7 +101,7 @@ def _alter_postgres_password(
     new_password: str,
     host: str = "127.0.0.1",
     port: int = 5432,
-    database: str = "nexuspanel",
+    database: str = "shahkar",
 ) -> bool:
     env = os.environ.copy()
     env["PGPASSWORD"] = old_password
@@ -131,7 +131,7 @@ def _alter_postgres_password(
 
     compose = ROOT / "docker-compose.postgres.yml"
     if compose.is_file():
-        project = os.environ.get("COMPOSE_PROJECT_NAME", "nexuspanel").strip() or "nexuspanel"
+        project = os.environ.get("COMPOSE_PROJECT_NAME", "shahkar").strip() or "shahkar"
         docker_cmd = [
             "docker",
             "compose",
@@ -199,8 +199,8 @@ def migrate(
         old_pg = pg_pass or "change-me"
         pg_pass = _rand(40)
         moved["POSTGRES_PASSWORD"] = pg_pass
-        user = moved.get("POSTGRES_USER") or repo.get("POSTGRES_USER") or "nexuspanel"
-        db = moved.get("POSTGRES_DB") or repo.get("POSTGRES_DB") or "nexuspanel"
+        user = moved.get("POSTGRES_USER") or repo.get("POSTGRES_USER") or "shahkar"
+        db = moved.get("POSTGRES_DB") or repo.get("POSTGRES_DB") or "shahkar"
         moved["POSTGRES_USER"] = user
         moved["POSTGRES_DB"] = db
         url = moved.get("SQLALCHEMY_DATABASE_URL") or repo.get("SQLALCHEMY_DATABASE_URL", "")
@@ -264,8 +264,8 @@ def migrate(
     try:
         import pwd
 
-        uid = pwd.getpwnam("nexuspanel").pw_uid
-        gid = pwd.getpwnam("nexuspanel").pw_gid
+        uid = pwd.getpwnam("shahkar").pw_uid
+        gid = pwd.getpwnam("shahkar").pw_gid
         os.chown(runtime_env, uid, gid)
     except (ImportError, KeyError, OSError):
         pass

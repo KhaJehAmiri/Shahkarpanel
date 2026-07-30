@@ -348,7 +348,7 @@ class XRayCore:
     def _signal_pids(pids: list[int], sig: int) -> None:
         """Send ``sig`` to ``pids``, escalating immediately for cross-user targets.
 
-        The panel runs as ``nexuspanel`` while stray ``docker exec`` sessions can
+        The panel runs as ``shahkar`` while stray ``docker exec`` sessions can
         leave root-owned stdin Xray children. Waiting out the normal SIGTERM grace
         loop on EPERM lets the health job time out and start another core on ports
         that are still held — the recurring bind storm users see.
@@ -379,7 +379,7 @@ class XRayCore:
     def _self_container_id() -> str | None:
         """Resolve this container's own ID via the mounted docker.sock.
 
-        The panel runs unprivileged (``runuser -u nexuspanel``) while stray
+        The panel runs unprivileged (``runuser -u shahkar``) while stray
         processes created by out-of-band root ``docker exec`` sessions (e.g. a
         one-off admin script) are owned by root — ``os.kill``/shell ``kill``
         both fail with EPERM on those since the panel's own uid lacks CAP_KILL
@@ -391,7 +391,7 @@ class XRayCore:
             out = subprocess.run(
                 [
                     "docker", "ps", "-q",
-                    "--filter", "label=com.docker.compose.service=nexuspanel",
+                    "--filter", "label=com.docker.compose.service=shahkar",
                 ],
                 capture_output=True, text=True, timeout=5,
             )

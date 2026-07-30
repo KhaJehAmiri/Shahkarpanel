@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""NexusPanel web installer wizard — serves UI, collects config, streams progress."""
+"""Shahkar web installer wizard — serves UI, collects config, streams progress."""
 from __future__ import annotations
 
 import argparse
@@ -72,7 +72,7 @@ def _safe_static(rel: str) -> Path | None:
 
 
 class WizardHandler(BaseHTTPRequestHandler):
-    server_version = "NexusPanelInstaller/1.0"
+    server_version = "ShahkarInstaller/1.0"
 
     def log_message(self, fmt: str, *args) -> None:
         sys.stderr.write("[installer] %s\n" % (fmt % args))
@@ -156,7 +156,7 @@ class WizardHandler(BaseHTTPRequestHandler):
 
 def main() -> None:
     global CONFIG_PATH, PROGRESS_PATH
-    parser = argparse.ArgumentParser(description="NexusPanel web installer")
+    parser = argparse.ArgumentParser(description="Shahkar web installer")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--config", required=True, help="Path to write install config JSON")
     parser.add_argument("--progress", required=True, help="Path for install progress JSON")
@@ -165,7 +165,7 @@ def main() -> None:
     PROGRESS_PATH = Path(args.progress)
 
     httpd = ThreadingHTTPServer(("0.0.0.0", args.port), WizardHandler)
-    print(f"NexusPanel installer UI → http://0.0.0.0:{args.port}/", flush=True)
+    print(f"Shahkar installer UI → http://0.0.0.0:{args.port}/", flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

@@ -143,9 +143,9 @@ export const RoutingSection: FC<{
   };
 
   return (
-    <div className="nx-stack">
+    <div className="sk-stack">
       <Callout tone="info" title={t("xray.routingTitle")}>{t("xray.routingDesc")}</Callout>
-      <div className="nx-row" style={{ gap: 8, flexWrap: "wrap" }}>
+      <div className="sk-row" style={{ gap: 8, flexWrap: "wrap" }}>
         <Button size="sm" variant={tab === "rules" ? "primary" : "ghost"} onClick={() => setTab("rules")}>
           {t("xray.rulesTab", { defaultValue: "Rules" })}
         </Button>
@@ -178,7 +178,7 @@ export const RoutingSection: FC<{
       {warpRouting && (
         <Callout tone="warn" title={t("xray.warpRoutingWarnTitle")}>
           {t("xray.warpRoutingWarnBody")}
-          <div className="nx-row" style={{ marginTop: 10 }}>
+          <div className="sk-row" style={{ marginTop: 10 }}>
             <Button size="sm" onClick={() => onChange(applyWarpSafeRouting(config))}>
               {t("xray.warpRoutingFix")}
             </Button>
@@ -198,10 +198,10 @@ export const RoutingSection: FC<{
       </Card>
       {presets.data && Object.keys(presets.data.presets || {}).length > 0 && (
         <Card>
-          <div className="nx-faint" style={{ fontSize: 12, marginBottom: 8 }}>
+          <div className="sk-faint" style={{ fontSize: 12, marginBottom: 8 }}>
             {t("xray.routingPresetsHint", { defaultValue: "Import built-in rule packs (prepended to current rules)" })}
           </div>
-          <div className="nx-row" style={{ gap: 8, flexWrap: "wrap" }}>
+          <div className="sk-row" style={{ gap: 8, flexWrap: "wrap" }}>
             {Object.entries(presets.data.presets).map(([id, meta]) => (
               <Button key={id} size="sm" disabled={busy} onClick={() => void importPreset(id)}>
                 {meta.label || id}
@@ -210,38 +210,38 @@ export const RoutingSection: FC<{
           </div>
         </Card>
       )}
-      <div className="nx-row" style={{ justifyContent: "flex-end" }}>
+      <div className="sk-row" style={{ justifyContent: "flex-end" }}>
         <Button variant="primary" onClick={() => { setEditIdx(null); setShow(true); }}>
-          <IcPlus className="nx-ico" /> {t("xray.addRule")}
+          <IcPlus className="sk-ico" /> {t("xray.addRule")}
         </Button>
       </div>
       <Card pad0>
         {!rules.length ? (
           <EmptyState title={t("common.noData")} desc={t("xray.noRulesHint")} />
         ) : (
-          <div className="nx-table-wrap">
-            <table className="nx-table">
+          <div className="sk-table-wrap">
+            <table className="sk-table">
               <thead>
                 <tr>
                   <th>#</th>
                   <th>{t("xray.ruleTag")}</th>
                   <th>{t("xray.matchCols")}</th>
                   <th>{t("xray.target")}</th>
-                  <th className="nx-actions">{t("common.actions")}</th>
+                  <th className="sk-actions">{t("common.actions")}</th>
                 </tr>
               </thead>
               <tbody>
                 {rules.map((r, idx) => (
                   <tr key={idx}>
-                    <td className="nx-faint">{idx + 1}</td>
+                    <td className="sk-faint">{idx + 1}</td>
                     <td>{String(r.ruleTag || "—")}</td>
-                    <td className="nx-mono" style={{ fontSize: 11 }}>{ruleMatch(r)}</td>
+                    <td className="sk-mono" style={{ fontSize: 11 }}>{ruleMatch(r)}</td>
                     <td>
                       <Pill tone={r.balancerTag ? "warn" : "accent"}>
                         {String(r.balancerTag || r.outboundTag || "—")}
                       </Pill>
                     </td>
-                    <td className="nx-actions">
+                    <td className="sk-actions">
                       <TableRowMenu
                         items={[
                           {
@@ -259,14 +259,14 @@ export const RoutingSection: FC<{
                           {
                             id: "edit",
                             label: t("common.edit"),
-                            icon: <IcEdit className="nx-ico" />,
+                            icon: <IcEdit className="sk-ico" />,
                             disabled: busy,
                             onClick: () => { setEditIdx(idx); setShow(true); },
                           },
                           {
                             id: "del",
                             label: t("common.delete"),
-                            icon: <IcTrash className="nx-ico" />,
+                            icon: <IcTrash className="sk-ico" />,
                             danger: true,
                             disabled: busy,
                             onClick: () => void remove(idx),
@@ -342,21 +342,21 @@ const BalancersSection: FC<{
   return (
     <>
       <Callout tone="info">{t("xray.balancersHint", { defaultValue: "Balancers load-balance traffic across multiple outbounds. Reference a balancer tag from a routing rule." })}</Callout>
-      <div className="nx-row" style={{ justifyContent: "flex-end" }}>
-        <Button variant="primary" size="sm" onClick={add}><IcPlus className="nx-ico" /> {t("xray.addBalancer", { defaultValue: "Add balancer" })}</Button>
+      <div className="sk-row" style={{ justifyContent: "flex-end" }}>
+        <Button variant="primary" size="sm" onClick={add}><IcPlus className="sk-ico" /> {t("xray.addBalancer", { defaultValue: "Add balancer" })}</Button>
       </div>
       <Card pad0>
         {!balancers.length ? (
           <EmptyState title={t("common.noData")} desc={t("xray.noBalancersHint", { defaultValue: "No balancers yet." })} />
         ) : (
-          <div className="nx-table-wrap">
-            <table className="nx-table">
+          <div className="sk-table-wrap">
+            <table className="sk-table">
               <thead>
                 <tr>
                   <th>{t("xray.ruleTag")}</th>
                   <th>{t("xray.balancerSelectors", { defaultValue: "Selectors" })}</th>
                   <th>{t("xray.balancerStrategy", { defaultValue: "Strategy" })}</th>
-                  <th className="nx-actions">{t("common.actions")}</th>
+                  <th className="sk-actions">{t("common.actions")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -381,13 +381,13 @@ const BalancersSection: FC<{
                         ))}
                       </Select>
                     </td>
-                    <td className="nx-actions">
+                    <td className="sk-actions">
                       <TableRowMenu
                         items={[
                           {
                             id: "del",
                             label: t("common.delete"),
-                            icon: <IcTrash className="nx-ico" />,
+                            icon: <IcTrash className="sk-ico" />,
                             danger: true,
                             onClick: () => remove(idx),
                           },
@@ -401,7 +401,7 @@ const BalancersSection: FC<{
           </div>
         )}
       </Card>
-      <div className="nx-row" style={{ justifyContent: "flex-end" }}>
+      <div className="sk-row" style={{ justifyContent: "flex-end" }}>
         <Button variant="primary" disabled={saving} onClick={() => onSave?.()}>{t("common.save")}</Button>
       </div>
     </>
@@ -409,13 +409,13 @@ const BalancersSection: FC<{
 };
 
 const FormRow: FC<{ label: string; help?: string; sep?: boolean; children: ReactNode }> = ({ label, help, sep, children }) => (
-  <div className="nx-form-h-row">
-    {sep && <div className="nx-form-h-sep" aria-hidden />}
-    <div className="nx-form-h-label">
+  <div className="sk-form-h-row">
+    {sep && <div className="sk-form-h-sep" aria-hidden />}
+    <div className="sk-form-h-label">
       <span>{label}</span>
       {help && <HelpTip text={help} placement="bottom" />}
     </div>
-    <div className="nx-form-h-ctrl">{children}</div>
+    <div className="sk-form-h-ctrl">{children}</div>
   </div>
 );
 
@@ -462,7 +462,7 @@ const RuleModal: FC<{
         </>
       }
     >
-      <div className="nx-form-h">
+      <div className="sk-form-h">
         <FormRow label={t("xray.sourceIp")} help={t("xray.useComma")}>
           <Input value={f.sourceIP} onChange={upd("sourceIP")} placeholder="0.0.0.0/8, fc00::/7, geoip:ir" />
         </FormRow>
@@ -485,13 +485,13 @@ const RuleModal: FC<{
           />
         </FormRow>
         <FormRow label={t("xray.attrs")} help={t("xray.attrsHint")}>
-          <div className="nx-form-h-attrs">
-            <Button size="sm" onClick={addAttr}><IcPlus className="nx-ico" /></Button>
+          <div className="sk-form-h-attrs">
+            <Button size="sm" onClick={addAttr}><IcPlus className="sk-ico" /></Button>
             {f.attrs.map((a, idx) => (
-              <div className="nx-attr-row" key={idx}>
+              <div className="sk-attr-row" key={idx}>
                 <Input value={a.key} onChange={(e: React.ChangeEvent<HTMLInputElement>) => updAttr(idx, "key", e.target.value)} placeholder=":method" />
                 <Input value={a.value} onChange={(e: React.ChangeEvent<HTMLInputElement>) => updAttr(idx, "value", e.target.value)} placeholder="GET" />
-                <Button variant="danger" size="sm" onClick={() => removeAttr(idx)}><IcTrash className="nx-ico" /></Button>
+                <Button variant="danger" size="sm" onClick={() => removeAttr(idx)}><IcTrash className="sk-ico" /></Button>
               </div>
             ))}
           </div>

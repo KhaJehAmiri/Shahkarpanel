@@ -41,6 +41,11 @@ class Admin(BaseModel):
     wallet_balance: Optional[int] = None
     prepaid_traffic_remaining: Optional[int] = None
     users_count: Optional[int] = None
+    centralpay_enabled: bool = False
+    card_enabled: bool = False
+    card_number: Optional[str] = None
+    card_holder: Optional[str] = None
+    card_bank: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
 
     @property
@@ -149,6 +154,13 @@ class AdminModify(BaseModel):
     max_total_traffic: Optional[int] = None
     max_nodes: Optional[int] = None
     commission_percent: Optional[int] = None
+    centralpay_enabled: Optional[bool] = None
+    # Master may only toggle gateway; card fields are reseller self-service
+    # (also accepted on AdminModify for sudo override if needed).
+    card_enabled: Optional[bool] = None
+    card_number: Optional[str] = None
+    card_holder: Optional[str] = None
+    card_bank: Optional[str] = None
 
     @property
     def hashed_password(self):

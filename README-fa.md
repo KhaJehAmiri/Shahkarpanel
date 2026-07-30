@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/KhaJehAmiri/nexuspanel/master/docs/logo.svg" width="88" alt="NexusPanel" />
+<img src="https://raw.githubusercontent.com/KhaJehAmiri/shahkar/master/docs/logo.svg" width="88" alt="Shahkar" />
 
-# NexusPanel
+# Shahkar
 
 **پلتفرم حرفه‌ای مدیریت پراکسی — چندنود، چندپروتکل، وایت‌لیبل، آماده فروش**
 
@@ -15,7 +15,7 @@
 
 [English](./README.md) · **فارسی** · [简体中文](./README-zh-cn.md) · [Русский](./README-ru.md)
 
-[نصب سریع](#-نصب-یکخطی-vps) · [معماری](#-معماری) · [امکانات](#-امکانات-کلیدی) · [پروتکل‌ها](#-پروتکلها-و-سابسکرایب) · [امنیت](#-امنیت-و-پوشه-tests-روی-گیتهاب) · [مخزن](https://github.com/KhaJehAmiri/nexuspanel)
+[نصب سریع](#-نصب-یکخطی-vps) · [معماری](#-معماری) · [امکانات](#-امکانات-کلیدی) · [پروتکل‌ها](#-پروتکلها-و-سابسکرایب) · [امنیت](#-امنیت-و-پوشه-tests-روی-گیتهاب) · [مخزن](https://github.com/KhaJehAmiri/shahkar)
 
 </div>
 
@@ -23,7 +23,7 @@
 
 ## فهرست
 
-- [NexusPanel چیست؟](#nexuspanel-چیست)
+- [Shahkar چیست؟](#shahkar-چیست)
 - [نصب یک‌خطی (VPS)](#-نصب-یکخطی-vps)
 - [معماری](#-معماری)
 - [امکانات کلیدی](#-امکانات-کلیدی)
@@ -41,7 +41,7 @@
 
 ---
 
-## NexusPanel چیست؟
+## Shahkar چیست؟
 
 پنل کنترل **تمام‌عیار** برای Xray، WireGuard و sing-box: از مدیریت کاربر و نود تا **فروش، ریسلر، HA، اتوماسیون و تحلیل ترافیک** — با داشبورد مدرن React (فارسی / انگلیسی / روسی / چینی).
 
@@ -61,7 +61,7 @@
 روی **اوبونتو / دبیان** تازه، با کاربر **root**:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/nexuspanel/master/scripts/nexuspanel.sh) install
+bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/shahkar/master/scripts/shahkar.sh) install
 ```
 
 <details>
@@ -70,10 +70,10 @@ bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/nexuspanel/maste
 | مرحله | عملیات |
 |--------|--------|
 | 1 | نصب Docker و git؛ در صورت کم‌بود RAM، swap خودکار |
-| 2 | Clone از `KhaJehAmiri/nexuspanel` → `/opt/nexuspanel` |
+| 2 | Clone از `KhaJehAmiri/shahkar` → `/opt/shahkar` |
 | 3 | ساخت `.env` (رمز ادمین، JWT، توکن bootstrap) |
 | 4 | Build و اجرای پنل با Docker Compose (پیش‌فرض PostgreSQL) |
-| 5 | Build ایمیج `nexuspanel/node` برای provisioning با SSH |
+| 5 | Build ایمیج `shahkar/node` برای provisioning با SSH |
 | 6 | چاپ آدرس داشبورد و اعتبار ادمین |
 
 </details>
@@ -82,7 +82,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/nexuspanel/maste
 |------|----------------|
 | داشبورد | `http://SERVER_IP:8000/dashboard/` |
 | Feature flags | `http://SERVER_IP:8000/dashboard/#/system` |
-| مدیریت | `nexuspanel status` · `logs` · `update` · `backup` · `https` |
+| مدیریت | `shahkar status` · `logs` · `update` · `backup` · `https` |
 
 ---
 
@@ -94,7 +94,7 @@ flowchart TB
     U[کاربر نهایی]
   end
 
-  subgraph panel [NexusPanel — یک نصب]
+  subgraph panel [Shahkar — یک نصب]
     API[FastAPI + داشبورد React]
     DB[(PostgreSQL / SQLite)]
     R[Redis — Event Bus / HA]
@@ -224,10 +224,10 @@ Webhook استرایپ: `https://YOUR_PANEL/api/billing/webhook/stripe`
 | **HA** | انتخاب leader با Redis |
 | **متریک** | Prometheus `/api/metrics` + استک اختیاری Grafana |
 | **Auto-heal** | ری‌استارت نود ناسالم |
-| **بکاپ** | `nexuspanel backup` / restore |
+| **بکاپ** | `shahkar backup` / restore |
 | **به‌روزرسانی** | از داشبورد یا CLI |
 | **مهاجرت** | ایمپورت 3x-ui |
-| **HTTPS** | `nexuspanel https` — nginx + Let's Encrypt |
+| **HTTPS** | `shahkar https` — nginx + Let's Encrypt |
 
 ---
 
@@ -244,8 +244,8 @@ Webhook استرایپ: `https://YOUR_PANEL/api/billing/webhook/stripe`
 ## توسعه محلی
 
 ```bash
-git clone https://github.com/KhaJehAmiri/nexuspanel.git
-cd nexuspanel
+git clone https://github.com/KhaJehAmiri/shahkar.git
+cd shahkar
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
@@ -254,7 +254,7 @@ python3 main.py
 ```
 
 ```bash
-python3 nexuspanel-cli.py admin create --sudo
+python3 shahkar-cli.py admin create --sudo
 python3 -m pytest -q
 ```
 
@@ -267,7 +267,7 @@ docker compose -f docker-compose.postgres.yml up -d --build
 docker compose -f docker-compose.monitoring.yml up -d
 ```
 
-داده: `/var/lib/nexuspanel`
+داده: `/var/lib/shahkar`
 
 ---
 
@@ -278,7 +278,7 @@ docker compose -f docker-compose.monitoring.yml up -d
 | `SQLALCHEMY_DATABASE_URL` | SQLite (dev) / PostgreSQL (prod) |
 | `REDIS_URL` | Event Bus + HA |
 | `NODE_BOOTSTRAP_TOKEN` | ثبت خودکار نود |
-| `NODE_AGENT_IMAGE` | ایمیج نود (`nexuspanel/node:latest`) |
+| `NODE_AGENT_IMAGE` | ایمیج نود (`shahkar/node:latest`) |
 | `PANEL_PUBLIC_ADDRESS` | آدرس عمومی برای نودهای provision شده |
 | `HA_ENABLED` | چند instance پنل |
 | `USAGE_BILLING_RATE_PER_GB` | نرخ GB پیش‌فرض (در UI بازنویسی می‌شود) |
@@ -311,4 +311,4 @@ docker compose -f docker-compose.monitoring.yml up -d
 
 ## مشارکت
 
-[CONTRIBUTING.md](CONTRIBUTING.md) — [github.com/KhaJehAmiri/nexuspanel](https://github.com/KhaJehAmiri/nexuspanel)
+[CONTRIBUTING.md](CONTRIBUTING.md) — [github.com/KhaJehAmiri/shahkar](https://github.com/KhaJehAmiri/shahkar)

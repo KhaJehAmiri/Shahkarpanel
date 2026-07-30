@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/KhaJehAmiri/nexuspanel/master/docs/logo.svg" width="88" alt="NexusPanel" />
+<img src="https://raw.githubusercontent.com/KhaJehAmiri/shahkar/master/docs/logo.svg" width="88" alt="Shahkar" />
 
-# NexusPanel
+# Shahkar
 
 **专业代理控制面板 — 多节点、多协议、白标、可商用**
 
@@ -15,13 +15,13 @@
 
 [English](./README.md) · [فارسی](./README-fa.md) · **简体中文** · [Русский](./README-ru.md)
 
-[一键安装](#-一键安装-vps) · [架构](#-架构) · [功能](#-功能矩阵) · [协议](#-协议与订阅) · [安全](#-安全公开仓库中的-tests) · [仓库](https://github.com/KhaJehAmiri/nexuspanel)
+[一键安装](#-一键安装-vps) · [架构](#-架构) · [功能](#-功能矩阵) · [协议](#-协议与订阅) · [安全](#-安全公开仓库中的-tests) · [仓库](https://github.com/KhaJehAmiri/shahkar)
 
 </div>
 
 ---
 
-## NexusPanel 是什么？
+## Shahkar 是什么？
 
 面向 **Xray、WireGuard、sing-box** 的完整控制平面：用户、节点、订阅，以及**经销商、计费、高可用、自动化与流量智能**——配套现代 React 管理后台（中 / 英 / 法波 / 俄）。
 
@@ -41,16 +41,16 @@
 在全新 **Ubuntu / Debian** 上以 **root** 执行：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/nexuspanel/master/scripts/nexuspanel.sh) install
+bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/shahkar/master/scripts/shahkar.sh) install
 ```
 
 | 项目 | 值 |
 |------|-----|
 | 面板 | `http://SERVER_IP:8000/dashboard/` |
 | 功能开关 | `http://SERVER_IP:8000/dashboard/#/system` |
-| 管理 | `nexuspanel status` · `logs` · `update` · `backup` · `https` |
+| 管理 | `shahkar status` · `logs` · `update` · `backup` · `https` |
 
-安装脚本会安装 Docker、克隆到 `/opt/nexuspanel`、默认以 PostgreSQL Compose 启动、构建 `nexuspanel/node` 镜像并打印管理员凭证。
+安装脚本会安装 Docker、克隆到 `/opt/shahkar`、默认以 PostgreSQL Compose 启动、构建 `shahkar/node` 镜像并打印管理员凭证。
 
 ---
 
@@ -62,7 +62,7 @@ flowchart TB
     U[终端用户]
   end
 
-  subgraph panel [NexusPanel 单机部署]
+  subgraph panel [Shahkar 单机部署]
     API[FastAPI + React]
     DB[(PostgreSQL / SQLite)]
     R[Redis / HA]
@@ -181,7 +181,7 @@ flowchart TB
 | 指标 | Prometheus `/api/metrics` + 可选 Grafana |
 | 自愈 | 重启异常节点 |
 | 备份 / 更新 | CLI 与面板内 |
-| HTTPS | `nexuspanel https`（nginx + Let's Encrypt） |
+| HTTPS | `shahkar https`（nginx + Let's Encrypt） |
 | 迁移 | 3x-ui 导入 |
 
 ---
@@ -199,8 +199,8 @@ flowchart TB
 ## 开发
 
 ```bash
-git clone https://github.com/KhaJehAmiri/nexuspanel.git
-cd nexuspanel
+git clone https://github.com/KhaJehAmiri/shahkar.git
+cd shahkar
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
@@ -208,7 +208,7 @@ alembic upgrade head
 python3 main.py
 ```
 
-生产数据目录：`/var/lib/nexuspanel` · Compose：`docker-compose.postgres.yml`
+生产数据目录：`/var/lib/shahkar` · Compose：`docker-compose.postgres.yml`
 
 ---
 
@@ -224,4 +224,4 @@ python3 main.py
 
 ## 许可证
 
-**[AGPL-3.0](LICENSE)** · [仓库](https://github.com/KhaJehAmiri/nexuspanel) · [CONTRIBUTING.md](CONTRIBUTING.md)
+**[AGPL-3.0](LICENSE)** · [仓库](https://github.com/KhaJehAmiri/shahkar) · [CONTRIBUTING.md](CONTRIBUTING.md)

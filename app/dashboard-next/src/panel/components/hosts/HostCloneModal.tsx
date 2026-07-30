@@ -57,19 +57,19 @@ export const HostCloneModal: FC<Props> = ({ inboundTags, onClose, onDone }) => {
         </>
       }
     >
-      <div className="nx-stack" style={{ gap: 14 }}>
+      <div className="sk-stack" style={{ gap: 14 }}>
         <Field label={t("infra.hostCloneSource", { defaultValue: "Source inbound" })}>
           <Select value={sourceTag} onChange={(e: ChangeEvent<HTMLSelectElement>) => setSourceTag(e.target.value)}>
             {inboundTags.map((tg) => <option key={tg} value={tg}>{hostTagLabel(tg)}</option>)}
           </Select>
         </Field>
         <Field label={t("infra.hostCloneTargets", { defaultValue: "Target inbounds" })}>
-          <div className="nx-row" style={{ gap: 6, flexWrap: "wrap" }}>
+          <div className="sk-row" style={{ gap: 6, flexWrap: "wrap" }}>
             {inboundTags.filter((tg) => tg !== sourceTag).map((tg) => (
               <button
                 key={tg}
                 type="button"
-                className={`nx-btn sm ${targets.includes(tg) ? "primary" : ""}`}
+                className={`sk-btn sm ${targets.includes(tg) ? "primary" : ""}`}
                 onClick={() => toggleTarget(tg)}
               >
                 {targets.includes(tg) ? "✓ " : ""}{hostTagLabel(tg)}

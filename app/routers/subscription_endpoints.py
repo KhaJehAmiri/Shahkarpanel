@@ -243,6 +243,6 @@ def _refresh_routes(*, ensure_ssl_host: str | None = None) -> None:
     except Exception:
         import logging
 
-        logging.getLogger("nexus-sub-endpoints").exception(
+        logging.getLogger("shahkar-sub-endpoints").exception(
             "subscription route/nginx refresh failed"
         )

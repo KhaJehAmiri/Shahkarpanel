@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-logger = logging.getLogger("nexus-wg")
+logger = logging.getLogger("shahkar-wg")
 
 
 def mirror_autoscale_addresses_to_proxies(db) -> int:

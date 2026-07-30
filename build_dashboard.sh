@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the NexusPanel UI (dashboard-next only).
+# Build the Shahkar UI (dashboard-next only).
 set -e
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 
@@ -8,7 +8,7 @@ if [ ! -f "$ROOT/app/dashboard-next/package.json" ]; then
   exit 1
 fi
 
-echo "==> Building NexusPanel dashboard-next (Next.js static export)…"
+echo "==> Building Shahkar dashboard-next (Next.js static export)…"
 (
   cd "$ROOT/app/dashboard-next"
   npm install

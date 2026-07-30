@@ -28,7 +28,7 @@ def build_self_signed_command(
         f"-keyout \"$KEY\" -out \"$CERT\" -days {int(days)} "
         "-subj \"/CN=$SNI\"; "
         "chmod 644 \"$CERT\"; chmod 600 \"$KEY\"; "
-        "docker restart nexusnode >/dev/null 2>&1 || true; "
+        "docker restart shahkarnode >/dev/null 2>&1 || true; "
         "echo SELF_SIGNED"
     )
 

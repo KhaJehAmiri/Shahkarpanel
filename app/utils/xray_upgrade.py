@@ -62,7 +62,7 @@ def _atomic_replace_file(src: str, dest: str, *, mode: int = 0o755) -> None:
     """Replace ``dest`` safely so a live process never blocks the write.
 
     Prefers same-directory atomic rename. When the panel runs as a non-root
-    user (Docker ``runuser -u nexuspanel``), ``/usr/local/bin`` is not
+    user (Docker ``runuser -u shahkar``), ``/usr/local/bin`` is not
     writable — stage in a temp dir and overwrite ``dest`` in place instead
     (requires the binary/assets to be owned by the panel user; see
     ``fix_runtime_permissions`` in docker-entrypoint.sh).
@@ -107,15 +107,15 @@ def _linux_arch() -> str:
 def _ensure_writable_install_paths(
     executable_path: str, assets_path: str
 ) -> tuple[str, str]:
-    """Fall back to ``/var/lib/nexuspanel/...`` when system paths are root-only.
+    """Fall back to ``/var/lib/shahkar/...`` when system paths are root-only.
 
     Directory write is required (not just file write): replacing a running
     binary needs unlink/rename in the destination directory. The panel process
-    runs as ``nexuspanel``, so ``/usr/local/bin`` is typically not usable.
+    runs as ``shahkar``, so ``/usr/local/bin`` is typically not usable.
     """
     exe_dir = os.path.dirname(os.path.abspath(executable_path)) or "/usr/local/bin"
     if not os.access(exe_dir, os.W_OK):
-        fallback_exe = "/var/lib/nexuspanel/bin/xray"
+        fallback_exe = "/var/lib/shahkar/bin/xray"
         os.makedirs(os.path.dirname(fallback_exe), exist_ok=True)
         if os.path.isfile(executable_path) and not os.path.isfile(fallback_exe):
             try:
@@ -129,7 +129,7 @@ def _ensure_writable_install_paths(
         os.path.dirname(os.path.abspath(assets_path)) or "/"
     )
     if not os.access(assets_dir, os.W_OK):
-        fallback_assets = "/var/lib/nexuspanel/share/xray"
+        fallback_assets = "/var/lib/shahkar/share/xray"
         os.makedirs(fallback_assets, exist_ok=True)
         if os.path.isdir(assets_path):
             for name in os.listdir(assets_path):

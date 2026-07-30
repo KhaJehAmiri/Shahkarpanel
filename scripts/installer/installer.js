@@ -1,4 +1,4 @@
-/* NexusPanel web installer — wizard logic + i18n */
+/* Shahkar web installer — wizard logic + i18n */
 (function () {
   "use strict";
 
@@ -17,7 +17,7 @@
     en: {
       tagline: "Professional VPN Control Plane",
       serverInfo: "Server", ip: "IP", ram: "RAM", docker: "Docker",
-      welcomeTitle: "Welcome to NexusPanel",
+      welcomeTitle: "Welcome to Shahkar",
       welcomeLead: "This wizard will guide you through a production-ready install — HTTPS, PostgreSQL, Redis, secret dashboard path, and admin credentials.",
       feat1t: "One-click stack", feat1d: "Docker + PostgreSQL + Redis",
       feat2t: "Auto TLS", feat2d: "Let's Encrypt domain or IP cert",
@@ -55,7 +55,7 @@
     fa: {
       tagline: "کنترل‌پنل حرفه‌ای VPN",
       serverInfo: "سرور", ip: "آی‌پی", ram: "رم", docker: "داکر",
-      welcomeTitle: "به NexusPanel خوش آمدید",
+      welcomeTitle: "به Shahkar خوش آمدید",
       welcomeLead: "این ویزارد نصب آمادهٔ production را انجام می‌دهد — HTTPS، PostgreSQL، Redis، مسیر مخفی داشبورد و اطلاعات ادمین.",
       feat1t: "نصب یک‌کلیکی", feat1d: "Docker + PostgreSQL + Redis",
       feat2t: "TLS خودکار", feat2d: "گواهی دامنه یا IP با Let's Encrypt",
@@ -93,7 +93,7 @@
     ru: {
       tagline: "Профессиональная VPN-панель",
       serverInfo: "Сервер", ip: "IP", ram: "RAM", docker: "Docker",
-      welcomeTitle: "Добро пожаловать в NexusPanel",
+      welcomeTitle: "Добро пожаловать в Shahkar",
       welcomeLead: "Мастер установит production-стек: HTTPS, PostgreSQL, Redis, секретный путь и учётные данные.",
       feat1t: "Стек в один клик", feat1d: "Docker + PostgreSQL + Redis",
       feat2t: "Авто TLS", feat2d: "Let's Encrypt для домена или IP",
@@ -131,7 +131,7 @@
     zh: {
       tagline: "专业 VPN 控制面板",
       serverInfo: "服务器", ip: "IP", ram: "内存", docker: "Docker",
-      welcomeTitle: "欢迎使用 NexusPanel",
+      welcomeTitle: "欢迎使用 Shahkar",
       welcomeLead: "向导将完成生产级安装：HTTPS、PostgreSQL、Redis、密钥路径和管理员凭据。",
       feat1t: "一键栈", feat1d: "Docker + PostgreSQL + Redis",
       feat2t: "自动 TLS", feat2d: "Let's Encrypt 域名或 IP 证书",
@@ -236,7 +236,7 @@
     box.innerHTML = "";
     LANGS.forEach((l) => {
       const div = document.createElement("div");
-      div.className = "nx-lang-card" + (l.code === panelLang ? " selected" : "");
+      div.className = "sk-lang-card" + (l.code === panelLang ? " selected" : "");
       div.innerHTML = `<span class="flag">${l.flag}</span><b>${l.label}</b>`;
       div.onclick = () => {
         panelLang = l.code;
@@ -248,8 +248,8 @@
 
   function showStep(n) {
     step = n;
-    $$(".nx-step-view").forEach((el) => {
-      el.classList.toggle("nx-hidden", parseInt(el.getAttribute("data-step"), 10) !== n);
+    $$(".sk-step-view").forEach((el) => {
+      el.classList.toggle("sk-hidden", parseInt(el.getAttribute("data-step"), 10) !== n);
     });
     renderSteps();
     updateNav();
@@ -262,10 +262,10 @@
     const footer = $("#nav-footer");
     back.disabled = step <= 0 || step >= 7;
     if (step >= 7) {
-      footer.classList.add("nx-hidden");
+      footer.classList.add("sk-hidden");
       return;
     }
-    footer.classList.remove("nx-hidden");
+    footer.classList.remove("sk-hidden");
     next.textContent = step === 6 ? t("install") : t("next");
   }
 
@@ -281,7 +281,7 @@
       admin_password: auto ? "" : $("#admin-pass").value,
       auto_credentials: auto,
       dashboard_path: $("#dash-path").value.trim(),
-      panel_title: $("#panel-title").value.trim() || "NexusPanel",
+      panel_title: $("#panel-title").value.trim() || "Shahkar",
       primary_color: $("#primary-color").value,
       support_url: $("#support-url").value.trim(),
       panel_port: parseInt($("#panel-port").value, 10) || 8000,
@@ -313,7 +313,7 @@
       $("#pf-ram").textContent = (preflight.ram_mb || "?") + " MB";
       const dEl = $("#pf-docker");
       dEl.textContent = preflight.docker_installed ? "OK" : "—";
-      dEl.className = "nx-badge " + (preflight.docker_installed ? "ok" : "no");
+      dEl.className = "sk-badge " + (preflight.docker_installed ? "ok" : "no");
       if (preflight.recommended_skip_node_build) {
         $("#skip-node-build").checked = true;
       }

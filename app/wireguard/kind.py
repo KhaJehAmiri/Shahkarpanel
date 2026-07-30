@@ -3,11 +3,11 @@ from __future__ import annotations
 
 from typing import Dict, List
 
-NXPANEL_WG_KIND = "nexusPanelKind"
+SHAHKAR_WG_KIND = "shahkarPanelKind"
 
 
 def wg_settings_kind(settings: Dict) -> str | None:
-    kind = settings.get(NXPANEL_WG_KIND)
+    kind = settings.get(SHAHKAR_WG_KIND)
     if kind in ("wireguard", "amneziawg", "both"):
         return kind
     return None

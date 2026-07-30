@@ -1,6 +1,6 @@
 """Concrete protocol backends.
 
-Xray is fully wired (it is NexusPanel's engine today). The others are declared as
+Xray is fully wired (it is Shahkar's engine today). The others are declared as
 capability descriptors so the panel/UI can advertise the roadmap and so future
 work can flip ``available`` once an engine is implemented behind the same
 :class:`ProtocolBackend` contract.

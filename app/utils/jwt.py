@@ -180,9 +180,11 @@ def get_portal_payload(token: str) -> Union[dict, None]:
             return
         try:
             created_at = datetime.utcfromtimestamp(payload['iat'])
+            iat = float(payload['iat'])
         except KeyError:
             created_at = None
-        return {"username": username, "created_at": created_at}
+            iat = None
+        return {"username": username, "created_at": created_at, "iat": iat}
     except jwt.exceptions.PyJWTError:
         return
 

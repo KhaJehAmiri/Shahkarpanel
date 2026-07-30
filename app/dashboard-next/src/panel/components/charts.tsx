@@ -1,6 +1,6 @@
 import { FC, useId } from "react";
 
-const ACCENT = "var(--nx-accent)";
+const ACCENT = "var(--sk-accent)";
 
 /* Lightweight inline SVG charts — no external dependency. */
 
@@ -26,15 +26,15 @@ export const Sparkline: FC<{ data: number[]; height?: number; color?: string; fi
   const area = `0,${height} ${line} ${w},${height}`;
   const gradId = `nxSparkFill-${uid}`;
   return (
-    <svg className="nx-spark" width="100%" height={height} viewBox={`0 0 ${w} ${height}`} preserveAspectRatio="none">
+    <svg className="sk-spark" width="100%" height={height} viewBox={`0 0 ${w} ${height}`} preserveAspectRatio="none">
       <defs>
         <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor={color} stopOpacity="0.35" />
           <stop offset="100%" stopColor={color} stopOpacity="0" />
         </linearGradient>
       </defs>
-      {filled && <polygon className="nx-spark-fill" points={area} fill={`url(#${gradId})`} />}
-      <polyline className="nx-spark-line" points={line} fill="none" stroke={color} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" />
+      {filled && <polygon className="sk-spark-fill" points={area} fill={`url(#${gradId})`} />}
+      <polyline className="sk-spark-line" points={line} fill="none" stroke={color} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 };
@@ -46,18 +46,18 @@ export const BarChart: FC<{ data: { label: string; value: number }[]; height?: n
     <div style={{ display: "flex", alignItems: "flex-end", gap: 10, height, paddingTop: 10 }}>
       {data.map((d, i) => (
         <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, minWidth: 0 }}>
-          <div style={{ fontSize: 11, color: "var(--nx-text-faint)" }}>{format ? format(d.value) : d.value}</div>
+          <div style={{ fontSize: 11, color: "var(--sk-text-faint)" }}>{format ? format(d.value) : d.value}</div>
           <div
             title={`${d.label}: ${d.value}`}
             style={{
               width: "100%", maxWidth: 46,
               height: `${(d.value / max) * (height - 50)}px`,
               minHeight: 3,
-              background: `linear-gradient(180deg, ${ACCENT}, var(--nx-accent-2))`,
+              background: `linear-gradient(180deg, ${ACCENT}, var(--sk-accent-2))`,
               borderRadius: "6px 6px 0 0",
             }}
           />
-          <div style={{ fontSize: 11, color: "var(--nx-text-dim)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" }}>{d.label}</div>
+          <div style={{ fontSize: 11, color: "var(--sk-text-dim)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" }}>{d.label}</div>
         </div>
       ))}
     </div>
@@ -75,29 +75,29 @@ export const RankBars: FC<{
   const max = Math.max(...sorted.map((d) => d.value), 1);
   const total = sorted.reduce((sum, d) => sum + d.value, 0) || 1;
   return (
-    <div className={`nx-rankbars${compact ? " is-compact" : ""}`}>
+    <div className={`sk-rankbars${compact ? " is-compact" : ""}`}>
       {sorted.map((d, i) => {
         const share = Math.round((d.value / total) * 100);
         const width = Math.max((d.value / max) * 100, 2);
         return (
-          <div key={`${d.label}-${i}`} className={`nx-rankrow${i === 0 ? " is-top" : ""}`}>
-            <span className={`nx-rank-idx${i < 3 ? ` r${i + 1}` : ""}`} aria-hidden>
+          <div key={`${d.label}-${i}`} className={`sk-rankrow${i === 0 ? " is-top" : ""}`}>
+            <span className={`sk-rank-idx${i < 3 ? ` r${i + 1}` : ""}`} aria-hidden>
               {String(i + 1).padStart(2, "0")}
             </span>
-            <div className="nx-rank-body">
-              <div className="nx-rank-meta">
-                <div className="nx-rank-identity">
-                  <span className="nx-rank-label" title={d.label}>{d.label}</span>
-                  {d.sub ? <span className="nx-rank-sub">{d.sub}</span> : null}
+            <div className="sk-rank-body">
+              <div className="sk-rank-meta">
+                <div className="sk-rank-identity">
+                  <span className="sk-rank-label" title={d.label}>{d.label}</span>
+                  {d.sub ? <span className="sk-rank-sub">{d.sub}</span> : null}
                 </div>
-                <div className="nx-rank-metrics">
-                  <span className="nx-rank-value">{format ? format(d.value) : d.value}</span>
-                  <span className="nx-rank-share">{share}%</span>
+                <div className="sk-rank-metrics">
+                  <span className="sk-rank-value">{format ? format(d.value) : d.value}</span>
+                  <span className="sk-rank-share">{share}%</span>
                 </div>
               </div>
-              <div className="nx-rank-track" aria-hidden>
+              <div className="sk-rank-track" aria-hidden>
                 <div
-                  className="nx-rank-fill"
+                  className="sk-rank-fill"
                   style={{ width: `${width}%`, animationDelay: `${i * 60}ms` }}
                 />
               </div>
@@ -118,7 +118,7 @@ export const Donut: FC<{ segments: { label: string; value: number; color: string
     <div style={{ display: "flex", gap: 20, alignItems: "center", flexWrap: "wrap" }}>
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
         <g transform={`rotate(-90 ${size / 2} ${size / 2})`}>
-          <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--nx-surface-3)" strokeWidth={14} />
+          <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--sk-surface-3)" strokeWidth={14} />
           {segments.map((s, i) => {
             const len = (s.value / total) * c;
             const el = (
@@ -134,13 +134,13 @@ export const Donut: FC<{ segments: { label: string; value: number; color: string
             return el;
           })}
         </g>
-        <text x="50%" y="50%" textAnchor="middle" dy="0.35em" fontSize="22" fontWeight="700" fill="var(--nx-text)">{total}</text>
+        <text x="50%" y="50%" textAnchor="middle" dy="0.35em" fontSize="22" fontWeight="700" fill="var(--sk-text)">{total}</text>
       </svg>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         {segments.map((s, i) => (
           <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5 }}>
             <span style={{ width: 10, height: 10, borderRadius: 3, background: s.color }} />
-            <span className="nx-muted">{s.label}</span>
+            <span className="sk-muted">{s.label}</span>
             <span style={{ fontWeight: 600 }}>{s.value}</span>
           </div>
         ))}

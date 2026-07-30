@@ -70,16 +70,16 @@ const ServiceOption: FC<{
   locked?: boolean;
   className?: string;
 }> = ({ checked, onChange, label, hint, locked, className }) => (
-  <label className={["nx-add-node-option", locked && "is-locked", className].filter(Boolean).join(" ")}>
+  <label className={["sk-add-node-option", locked && "is-locked", className].filter(Boolean).join(" ")}>
     <input
       type="checkbox"
       checked={checked}
       disabled={locked}
       onChange={onChange ? (e) => onChange(e.target.checked) : undefined}
     />
-    <span className="nx-add-node-option-text">
-      <span className="nx-add-node-option-label">{label}</span>
-      {hint && <span className="nx-add-node-option-hint">{hint}</span>}
+    <span className="sk-add-node-option-text">
+      <span className="sk-add-node-option-label">{label}</span>
+      {hint && <span className="sk-add-node-option-hint">{hint}</span>}
     </span>
   </label>
 );
@@ -105,12 +105,12 @@ export const NodeServicesForm: FC<{
   const isWg = s.core_kind === "wireguard";
 
   return (
-    <section className="nx-add-node-section" aria-labelledby="add-node-services">
-      <h3 className="nx-add-node-section-title" id="add-node-services">{t("infra.servicesTitle")}</h3>
-      <div className="nx-add-node-services-panel">
-        <p className="nx-add-node-services-lead">{t("infra.servicesHint")}</p>
+    <section className="sk-add-node-section" aria-labelledby="add-node-services">
+      <h3 className="sk-add-node-section-title" id="add-node-services">{t("infra.servicesTitle")}</h3>
+      <div className="sk-add-node-services-panel">
+        <p className="sk-add-node-services-lead">{t("infra.servicesHint")}</p>
 
-        <div className="nx-add-node-services-grid">
+        <div className="sk-add-node-services-grid">
           {isWg ? (
             <>
               <ServiceOption
@@ -162,7 +162,7 @@ export const NodeServicesForm: FC<{
           />
 
           {showTunnel && (
-            <div className="nx-add-node-tunnel-block">
+            <div className="sk-add-node-tunnel-block">
               <ServiceOption
                 checked={s.makeTunnel}
                 onChange={(v) => setState({ makeTunnel: v })}
@@ -188,37 +188,37 @@ export const NodeServicesForm: FC<{
         </div>
 
         {wantsQuic && (
-          <div className="nx-add-node-ssl-panel">
-            <div className="nx-add-node-section-title" style={{ textTransform: "none", letterSpacing: 0, fontSize: 13, color: "var(--nx-text)" }}>
+          <div className="sk-add-node-ssl-panel">
+            <div className="sk-add-node-section-title" style={{ textTransform: "none", letterSpacing: 0, fontSize: 13, color: "var(--sk-text)" }}>
               {t("infra.sslTitle")}
             </div>
-            <p className="nx-add-node-services-lead">{t("infra.sslHint")}</p>
-            <div className="nx-add-node-ssl-radios">
-              <label className="nx-add-node-option" style={{ flex: "1 1 200px" }}>
+            <p className="sk-add-node-services-lead">{t("infra.sslHint")}</p>
+            <div className="sk-add-node-ssl-radios">
+              <label className="sk-add-node-option" style={{ flex: "1 1 200px" }}>
                 <input
                   type="radio"
                   name="tls_mode"
                   checked={s.tls_mode === "self_signed"}
                   onChange={() => setState({ tls_mode: "self_signed" })}
                 />
-                <span className="nx-add-node-option-text">
-                  <span className="nx-add-node-option-label">{t("infra.sslSelfSigned")}</span>
+                <span className="sk-add-node-option-text">
+                  <span className="sk-add-node-option-label">{t("infra.sslSelfSigned")}</span>
                 </span>
               </label>
-              <label className="nx-add-node-option" style={{ flex: "1 1 200px" }}>
+              <label className="sk-add-node-option" style={{ flex: "1 1 200px" }}>
                 <input
                   type="radio"
                   name="tls_mode"
                   checked={s.tls_mode === "letsencrypt"}
                   onChange={() => setState({ tls_mode: "letsencrypt" })}
                 />
-                <span className="nx-add-node-option-text">
-                  <span className="nx-add-node-option-label">{t("infra.sslLetsEncrypt")}</span>
+                <span className="sk-add-node-option-text">
+                  <span className="sk-add-node-option-label">{t("infra.sslLetsEncrypt")}</span>
                 </span>
               </label>
             </div>
             {s.tls_mode === "letsencrypt" && (
-              <div className="nx-form-grid" style={{ marginTop: 2 }}>
+              <div className="sk-form-grid" style={{ marginTop: 2 }}>
                 <Field label={t("infra.leTarget")}>
                   <Input
                     value={s.le_target}

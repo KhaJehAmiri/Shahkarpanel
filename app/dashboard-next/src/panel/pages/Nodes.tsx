@@ -17,9 +17,9 @@ export const Nodes: FC = () => {
   }
 
   return (
-    <div className="nx-stack nx-hub-panel">
+    <div className="sk-stack sk-hub-panel">
       {!admin?.is_sudo && (
-        <p className="nx-hub-lede">
+        <p className="sk-hub-lede">
           <strong>{t("resellers.myNodesTitle")}. </strong>
           {t("resellers.myNodesHint")}
         </p>

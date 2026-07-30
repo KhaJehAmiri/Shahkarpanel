@@ -69,14 +69,14 @@ export const UserTemplatesPanel: FC = () => {
 
   return (
     <>
-      <Card className="nx-mb-20 nx-templates-card">
-        <div className="nx-templates-bar">
-          <div className="nx-templates-bar-text">
-            <span className="nx-templates-bar-title">{t("users.templates")}</span>
-            <span className="nx-templates-bar-desc">{t("users.templatesDesc")}</span>
+      <Card className="sk-mb-20 sk-templates-card">
+        <div className="sk-templates-bar">
+          <div className="sk-templates-bar-text">
+            <span className="sk-templates-bar-title">{t("users.templates")}</span>
+            <span className="sk-templates-bar-desc">{t("users.templatesDesc")}</span>
           </div>
           <Button variant="primary" size="sm" onClick={() => setShow(true)}>
-            <IcPlus className="nx-ico" /> {t("users.addTemplate")}
+            <IcPlus className="sk-ico" /> {t("users.addTemplate")}
           </Button>
         </div>
         {loading && !data ? (
@@ -84,35 +84,35 @@ export const UserTemplatesPanel: FC = () => {
         ) : error && !data ? (
           <EmptyState title={t("common.error")} desc={error} />
         ) : data && data.length > 0 ? (
-          <div className="nx-table-wrap nx-templates-table">
-            <table className="nx-table">
+          <div className="sk-table-wrap sk-templates-table">
+            <table className="sk-table">
               <thead>
                 <tr>
                   <th>{t("common.name")}</th>
                   <th>{t("users.dataLimit")}</th>
                   <th>{t("users.expire")}</th>
-                  <th className="nx-actions" />
+                  <th className="sk-actions" />
                 </tr>
               </thead>
               <tbody>
                 {data.map((row) => (
                   <tr key={row.id}>
-                    <td><span className="nx-proto-name-main">{row.name || `#${row.id}`}</span></td>
-                    <td className="nx-proto-meta">{row.data_limit ? formatBytes(row.data_limit) : t("users.unlimited")}</td>
-                    <td className="nx-proto-meta">{row.expire_duration ? `${Math.round(row.expire_duration / 86400)}d` : "—"}</td>
-                    <td className="nx-actions">
+                    <td><span className="sk-proto-name-main">{row.name || `#${row.id}`}</span></td>
+                    <td className="sk-proto-meta">{row.data_limit ? formatBytes(row.data_limit) : t("users.unlimited")}</td>
+                    <td className="sk-proto-meta">{row.expire_duration ? `${Math.round(row.expire_duration / 86400)}d` : "—"}</td>
+                    <td className="sk-actions">
                       <TableRowMenu
                         items={[
                           {
                             id: "edit",
                             label: t("common.edit"),
-                            icon: <IcEdit className="nx-ico" />,
+                            icon: <IcEdit className="sk-ico" />,
                             onClick: () => setEdit(row),
                           },
                           {
                             id: "del",
                             label: t("common.delete"),
-                            icon: <IcTrash className="nx-ico" />,
+                            icon: <IcTrash className="sk-ico" />,
                             danger: true,
                             onClick: () => remove(row),
                           },
@@ -257,7 +257,7 @@ const TemplateFormModal: FC<{ row?: UserTemplateRow; onClose: () => void; onDone
     <Modal
       open
       formWide
-      className="nx-uc-template-shell"
+      className="sk-uc-template-shell"
       title={row ? t("users.editTemplate") : t("users.addTemplate")}
       subtitle={t("users.templatesDesc")}
       onClose={onClose}
@@ -270,11 +270,11 @@ const TemplateFormModal: FC<{ row?: UserTemplateRow; onClose: () => void; onDone
         </>
       }
     >
-      <div className="nx-stack nx-template-form">
+      <div className="sk-stack sk-template-form">
         <Field label={t("common.name")}><Input value={name} onChange={(e: any) => setName(e.target.value)} autoFocus /></Field>
-        <div className="nx-template-metrics">
+        <div className="sk-template-metrics">
           <Field label={t("users.dataLimit")} hint="0 = unlimited">
-            <div className="nx-row" style={{ gap: 8 }}>
+            <div className="sk-row" style={{ gap: 8 }}>
               <Input type="number" min="0" step={dataLimitUnit === "MB" ? "1" : "0.001"} value={dataLimitValue} onChange={(e: any) => setDataLimitValue(e.target.value)} style={{ flex: 1 }} />
               <Select value={dataLimitUnit} onChange={(e: any) => setDataLimitUnit(e.target.value as DataLimitUnit)} style={{ width: 88 }}>
                 <option value="MB">MB</option>
@@ -284,7 +284,7 @@ const TemplateFormModal: FC<{ row?: UserTemplateRow; onClose: () => void; onDone
           </Field>
           <Field label={`${t("users.expire")} (days)`} hint="0 = none"><Input type="number" min="0" value={expireDays} onChange={(e: any) => setExpireDays(e.target.value)} /></Field>
         </div>
-        <div className="nx-template-metrics">
+        <div className="sk-template-metrics">
           <Field label={t("users.resetStrategy")}>
             <Select value={resetStrategy} onChange={(e: any) => setResetStrategy(e.target.value)}>
               {["no_reset", "day", "week", "month", "year"].map((r) => (
@@ -303,23 +303,23 @@ const TemplateFormModal: FC<{ row?: UserTemplateRow; onClose: () => void; onDone
           <Input value={note} onChange={(e: any) => setNote(e.target.value)} />
         </Field>
         <Card style={{ padding: 14 }}>
-          <label className="nx-row" style={{ gap: 8, marginBottom: 10 }}>
+          <label className="sk-row" style={{ gap: 8, marginBottom: 10 }}>
             <input type="checkbox" checked={nextPlanEnabled} onChange={(e) => setNextPlanEnabled(e.target.checked)} />
             {t("users.nextPlan", { defaultValue: "Next plan (renewal)" })}
           </label>
           {nextPlanEnabled && (
-            <div className="nx-template-metrics">
+            <div className="sk-template-metrics">
               <Field label={t("users.dataLimit")}>
                 <Input type="number" min="0" value={nextDataLimit} onChange={(e: any) => setNextDataLimit(e.target.value)} />
               </Field>
               <Field label={`${t("users.expire")} (days)`}>
                 <Input type="number" min="0" value={nextExpireDays} onChange={(e: any) => setNextExpireDays(e.target.value)} />
               </Field>
-              <label className="nx-row" style={{ gap: 8, fontSize: 12 }}>
+              <label className="sk-row" style={{ gap: 8, fontSize: 12 }}>
                 <input type="checkbox" checked={nextAddRemaining} onChange={(e) => setNextAddRemaining(e.target.checked)} />
                 {t("users.nextAddRemaining", { defaultValue: "Add remaining traffic" })}
               </label>
-              <label className="nx-row" style={{ gap: 8, fontSize: 12 }}>
+              <label className="sk-row" style={{ gap: 8, fontSize: 12 }}>
                 <input type="checkbox" checked={nextFireEither} onChange={(e) => setNextFireEither(e.target.checked)} />
                 {t("users.nextFireEither", { defaultValue: "Fire on either limit" })}
               </label>
@@ -328,26 +328,26 @@ const TemplateFormModal: FC<{ row?: UserTemplateRow; onClose: () => void; onDone
         </Card>
         <Field label={t("users.templateInbounds")} hint={t("users.templateInboundsHint")}>
           {inbounds.loading ? <SkeletonRows rows={2} cols={2} /> : (
-            <div className="nx-inbound-matrix">
+            <div className="sk-inbound-matrix">
               {xrayProtos.map(([proto, list]) => {
-                const vis = PROTO_VISUAL[proto] || { icon: "•", hue: "var(--nx-accent)", label: proto.toUpperCase() };
+                const vis = PROTO_VISUAL[proto] || { icon: "•", hue: "var(--sk-accent)", label: proto.toUpperCase() };
                 return (
-                    <div key={proto} className="nx-inbound-matrix-cell" style={{ "--proto-hue": vis.hue } as CSSProperties}>
-                    <div className="nx-inbound-matrix-head">
-                      <span className="nx-inbound-matrix-icon" aria-hidden>{vis.icon}</span>
+                    <div key={proto} className="sk-inbound-matrix-cell" style={{ "--proto-hue": vis.hue } as CSSProperties}>
+                    <div className="sk-inbound-matrix-head">
+                      <span className="sk-inbound-matrix-icon" aria-hidden>{vis.icon}</span>
                       <span>{vis.label}</span>
                     </div>
-                    <div className="nx-inbound-matrix-tags">
+                    <div className="sk-inbound-matrix-tags">
                       {list.map((i) => {
                         const active = (inbSel[proto] || []).includes(i.tag);
                         return (
                           <button
                             key={i.tag}
                             type="button"
-                            className={`nx-inbound-tag ${active ? "active" : ""}`}
+                            className={`sk-inbound-tag ${active ? "active" : ""}`}
                             onClick={() => toggleTag(proto, i.tag)}
                           >
-                            <span className="nx-inbound-tag-check" aria-hidden>{active ? "✓" : ""}</span>
+                            <span className="sk-inbound-tag-check" aria-hidden>{active ? "✓" : ""}</span>
                             {i.tag}
                           </button>
                         );
@@ -357,21 +357,21 @@ const TemplateFormModal: FC<{ row?: UserTemplateRow; onClose: () => void; onDone
                 );
               })}
               {nativeProtos.map((proto) => {
-                const vis = PROTO_VISUAL[proto] || { icon: "•", hue: "var(--nx-accent)", label: proto.toUpperCase() };
+                const vis = PROTO_VISUAL[proto] || { icon: "•", hue: "var(--sk-accent)", label: proto.toUpperCase() };
                 const active = !!nativeOn[proto];
                 return (
-                  <div key={proto} className="nx-inbound-matrix-cell" style={{ "--proto-hue": vis.hue } as CSSProperties}>
-                    <div className="nx-inbound-matrix-head">
-                      <span className="nx-inbound-matrix-icon" aria-hidden>{vis.icon}</span>
+                  <div key={proto} className="sk-inbound-matrix-cell" style={{ "--proto-hue": vis.hue } as CSSProperties}>
+                    <div className="sk-inbound-matrix-head">
+                      <span className="sk-inbound-matrix-icon" aria-hidden>{vis.icon}</span>
                       <span>{vis.label}</span>
                     </div>
-                    <div className="nx-inbound-matrix-tags">
+                    <div className="sk-inbound-matrix-tags">
                       <button
                         type="button"
-                        className={`nx-inbound-tag ${active ? "active" : ""}`}
+                        className={`sk-inbound-tag ${active ? "active" : ""}`}
                         onClick={() => toggleNative(proto)}
                       >
-                        <span className="nx-inbound-tag-check" aria-hidden>{active ? "✓" : ""}</span>
+                        <span className="sk-inbound-tag-check" aria-hidden>{active ? "✓" : ""}</span>
                         {t("users.wgNativePeer")}
                       </button>
                     </div>

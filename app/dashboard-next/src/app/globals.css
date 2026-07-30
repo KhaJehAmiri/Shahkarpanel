@@ -2,55 +2,15 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Vazirmatn + Inter (self-hosted). Path matches FastAPI static mount. */
-@font-face {
-  font-family: "Vazirmatn";
-  font-weight: 400;
-  font-display: swap;
-  src: url("/sub-assets/fonts/Vazirmatn-400.woff2") format("woff2");
-}
-@font-face {
-  font-family: "Vazirmatn";
-  font-weight: 500;
-  font-display: swap;
-  src: url("/sub-assets/fonts/Vazirmatn-500.woff2") format("woff2");
-}
-@font-face {
-  font-family: "Vazirmatn";
-  font-weight: 700;
-  font-display: swap;
-  src: url("/sub-assets/fonts/Vazirmatn-700.woff2") format("woff2");
-}
-@font-face {
-  font-family: "Inter";
-  font-weight: 400;
-  font-display: swap;
-  src: url("/fonts/Inter-400.woff2") format("woff2");
-}
-@font-face {
-  font-family: "Inter";
-  font-weight: 600;
-  font-display: swap;
-  src: url("/fonts/Inter-600.woff2") format("woff2");
-}
-@font-face {
-  font-family: "Inter";
-  font-weight: 700;
-  font-display: swap;
-  src: url("/fonts/Inter-700.woff2") format("woff2");
-}
-
+/* Shared base. Panel/portal/subscribe own their @font-face (avoids portal
+   downloading unused Inter ~300KB on every /portal load). */
 html, body { padding: 0; margin: 0; }
 body {
-  font-family: "Vazirmatn", "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   font-feature-settings: "ss01";
   -webkit-font-smoothing: antialiased;
   min-height: 100vh;
   transition: background 0.25s ease, color 0.25s ease;
-}
-
-html[lang="en"] body, html[lang="ru"] body, html[lang="zh"] body {
-  font-family: "Inter", "Vazirmatn", system-ui, sans-serif;
 }
 
 /* Smooth focus ring */

@@ -26,8 +26,8 @@ COPY ./requirements.txt /code/
 RUN python3 -m pip install --upgrade pip setuptools \
     && pip install --no-cache-dir --upgrade -r /code/requirements.txt \
     && SITE="$(python3 -c 'import site; print(site.getsitepackages()[0])')" \
-    && mkdir -p /nexuspanel-export/site-packages \
-    && cp -a "${SITE}/." /nexuspanel-export/site-packages/
+    && mkdir -p /shahkar-export/site-packages \
+    && cp -a "${SITE}/." /shahkar-export/site-packages/
 
 FROM python:$PYTHON_VERSION-slim
 
@@ -37,10 +37,10 @@ RUN SITE="$(python3 -c 'import site; print(site.getsitepackages()[0])')" \
     && rm -rf "${SITE:?}"/* \
     && mkdir -p "${SITE}"
 
-COPY --from=build /nexuspanel-export/site-packages/ /tmp/nexuspanel-site-packages/
+COPY --from=build /shahkar-export/site-packages/ /tmp/shahkar-site-packages/
 RUN SITE="$(python3 -c 'import site; print(site.getsitepackages()[0])')" \
-    && cp -a /tmp/nexuspanel-site-packages/. "${SITE}/" \
-    && rm -rf /tmp/nexuspanel-site-packages
+    && cp -a /tmp/shahkar-site-packages/. "${SITE}/" \
+    && rm -rf /tmp/shahkar-site-packages
 COPY --from=build /usr/local/bin /usr/local/bin
 COPY --from=build /usr/local/share/xray /usr/local/share/xray
 
@@ -63,19 +63,19 @@ COPY --from=build /usr/local/share/xray /usr/local/share/xray
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git docker-cli docker-compose docker-buildx util-linux procps iproute2 iptables wireguard-tools postgresql-client openssh-client sshpass \
     && rm -rf /var/lib/apt/lists/* \
-    && groupadd --gid 1000 nexuspanel 2>/dev/null || true \
-    && useradd --uid 1000 --gid 1000 --create-home --home-dir /home/nexuspanel nexuspanel 2>/dev/null || true
+    && groupadd --gid 1000 shahkar 2>/dev/null || true \
+    && useradd --uid 1000 --gid 1000 --create-home --home-dir /home/shahkar shahkar 2>/dev/null || true
 
 COPY . /code
 
 RUN test -f /code/app/dashboard-next/out/dashboard/index.html \
     || (echo "ERROR: dashboard-next not built. Run: ./build_dashboard.sh" && exit 1)
 
-RUN ln -sf /code/nexuspanel-cli.py /usr/bin/nexuspanel-cli \
-    && chmod +x /usr/bin/nexuspanel-cli \
+RUN ln -sf /code/shahkar-cli.py /usr/bin/shahkar-cli \
+    && chmod +x /usr/bin/shahkar-cli \
     && cp /code/docker-entrypoint.sh /docker-entrypoint.sh \
     && chmod +x /docker-entrypoint.sh \
-    && chown -R nexuspanel:nexuspanel /code
+    && chown -R shahkar:shahkar /code
 
 USER root
 # Prefer the bind-mounted script at /code so entrypoint fixes ship without image rebuild.

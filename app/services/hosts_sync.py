@@ -5,7 +5,7 @@ import logging
 
 from app.models.proxy import ProxyHost
 
-logger = logging.getLogger("nexus-services-hosts")
+logger = logging.getLogger("shahkar-services-hosts")
 
 
 def sync_hosts_for_node(db, dbnode, *, xray_enabled: bool = True) -> int:

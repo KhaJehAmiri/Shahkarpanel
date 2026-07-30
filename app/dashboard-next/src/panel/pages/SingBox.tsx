@@ -10,8 +10,8 @@ import { PageHeader } from "../components/Shell";
 import { Button, Callout, Card, Field, Input, Pill, useToast, SkeletonRows } from "../components/ui";
 import { IcPlus, IcUsers } from "../components/icons";
 
-const DEFAULT_CERT = "/var/lib/nexuspanel-node/tls/cert.pem";
-const DEFAULT_KEY = "/var/lib/nexuspanel-node/tls/key.pem";
+const DEFAULT_CERT = "/var/lib/shahkar-node/tls/cert.pem";
+const DEFAULT_KEY = "/var/lib/shahkar-node/tls/key.pem";
 
 function tlsDefaults(node: NodeItem): { cert: string; key: string; sni: string } {
   const sb = node.singbox;
@@ -198,14 +198,14 @@ const SingBoxNodeCard: FC<{ node: NodeItem; onSaved: () => void }> = ({ node, on
 
   return (
     <Card style={{ marginBottom: 12, padding: 16 }}>
-      <div className="nx-row" style={{ alignItems: "center", marginBottom: 12, gap: 8 }}>
+      <div className="sk-row" style={{ alignItems: "center", marginBottom: 12, gap: 8 }}>
         <div style={{ fontWeight: 700 }}>{node.name}</div>
         <Pill tone={connected ? "ok" : "warn"}>{node.status}</Pill>
-        <span className="nx-faint" style={{ fontSize: 12 }}>{node.address}</span>
+        <span className="sk-faint" style={{ fontSize: 12 }}>{node.address}</span>
       </div>
 
-      <div className="nx-stack" style={{ gap: 10 }}>
-        <div className="nx-faint" style={{ fontSize: 12, fontWeight: 600 }}>{t("singbox.tlsTitle")}</div>
+      <div className="sk-stack" style={{ gap: 10 }}>
+        <div className="sk-faint" style={{ fontSize: 12, fontWeight: 600 }}>{t("singbox.tlsTitle")}</div>
         <Field label={t("singbox.certPath")}>
           <Input value={certPath} onChange={(e) => setCertPath(e.target.value)} />
         </Field>
@@ -217,13 +217,13 @@ const SingBoxNodeCard: FC<{ node: NodeItem; onSaved: () => void }> = ({ node, on
         </Field>
 
         <Callout tone="info" title={t("singbox.leTitle")}>
-          <div className="nx-stack" style={{ gap: 8 }}>
-            <div className="nx-faint" style={{ fontSize: 12 }}>{t("singbox.leHint")}</div>
+          <div className="sk-stack" style={{ gap: 8 }}>
+            <div className="sk-faint" style={{ fontSize: 12 }}>{t("singbox.leHint")}</div>
             <Field label={t("singbox.leDomain")}>
               <Input value={leDomain} onChange={(e) => setLeDomain(e.target.value)} placeholder={t("singbox.sniPlaceholder")} />
             </Field>
             <Field label={t("singbox.leKind")}>
-              <select className="nx-input" value={leKind} onChange={(e) => setLeKind(e.target.value)}>
+              <select className="sk-input" value={leKind} onChange={(e) => setLeKind(e.target.value)}>
                 <option value="auto">{t("singbox.leKindAuto")}</option>
                 <option value="domain">{t("singbox.leKindDomain")}</option>
                 <option value="ip">{t("singbox.leKindIp")}</option>
@@ -235,7 +235,7 @@ const SingBoxNodeCard: FC<{ node: NodeItem; onSaved: () => void }> = ({ node, on
             <Field label={t("singbox.sshPassword")}>
               <Input value={sshPassword} onChange={(e) => setSshPassword(e.target.value)} type="password" />
             </Field>
-            <div className="nx-row" style={{ gap: 8, flexWrap: "wrap" }}>
+            <div className="sk-row" style={{ gap: 8, flexWrap: "wrap" }}>
               <Button size="sm" variant="primary" disabled={leBusy} onClick={issueLe}>
                 {t("singbox.leIssue")}
               </Button>
@@ -247,7 +247,7 @@ const SingBoxNodeCard: FC<{ node: NodeItem; onSaved: () => void }> = ({ node, on
               </Button>
             </div>
             {(tlsStatus || node.singbox?.tls_trusted) && (
-              <div className="nx-faint" style={{ fontSize: 12 }}>
+              <div className="sk-faint" style={{ fontSize: 12 }}>
                 {tlsStatus?.trusted || node.singbox?.tls_trusted
                   ? t("singbox.leTrusted")
                   : t("singbox.leUntrusted")}
@@ -259,23 +259,23 @@ const SingBoxNodeCard: FC<{ node: NodeItem; onSaved: () => void }> = ({ node, on
           </div>
         </Callout>
 
-        <div className="nx-row" style={{ gap: 16, marginTop: 8, flexWrap: "wrap" }}>
-          <label className="nx-row" style={{ gap: 6, cursor: "pointer" }}>
+        <div className="sk-row" style={{ gap: 16, marginTop: 8, flexWrap: "wrap" }}>
+          <label className="sk-row" style={{ gap: 6, cursor: "pointer" }}>
             <input type="checkbox" checked={hy2On} onChange={(e) => setHy2On(e.target.checked)} />
             <span>{t("singbox.hy2Enable")}</span>
           </label>
-          <label className="nx-row" style={{ gap: 6, cursor: "pointer" }}>
+          <label className="sk-row" style={{ gap: 6, cursor: "pointer" }}>
             <input type="checkbox" checked={tuicOn} onChange={(e) => setTuicOn(e.target.checked)} />
             <span>{t("singbox.tuicEnable")}</span>
           </label>
-          <label className="nx-row" style={{ gap: 6, cursor: "pointer" }}>
+          <label className="sk-row" style={{ gap: 6, cursor: "pointer" }}>
             <input type="checkbox" checked={anytlsOn} onChange={(e) => setAnytlsOn(e.target.checked)} />
             <span>{t("singbox.anytlsEnable")}</span>
           </label>
         </div>
 
         {hy2On && (
-          <div className="nx-row" style={{ gap: 10, flexWrap: "wrap" }}>
+          <div className="sk-row" style={{ gap: 10, flexWrap: "wrap" }}>
             <div style={{ flex: 1, minWidth: 120 }}>
               <Field label={t("singbox.hy2Port")}>
                 <Input value={hy2Port} onChange={(e) => setHy2Port(e.target.value)} type="number" />
@@ -300,7 +300,7 @@ const SingBoxNodeCard: FC<{ node: NodeItem; onSaved: () => void }> = ({ node, on
         )}
 
         {tuicOn && (
-          <div className="nx-row" style={{ gap: 10, flexWrap: "wrap" }}>
+          <div className="sk-row" style={{ gap: 10, flexWrap: "wrap" }}>
             <div style={{ flex: 1, minWidth: 120 }}>
               <Field label={t("singbox.tuicPort")}>
                 <Input value={tuicPort} onChange={(e) => setTuicPort(e.target.value)} type="number" />
@@ -315,7 +315,7 @@ const SingBoxNodeCard: FC<{ node: NodeItem; onSaved: () => void }> = ({ node, on
         )}
 
         {anytlsOn && (
-          <div className="nx-row" style={{ gap: 10, flexWrap: "wrap" }}>
+          <div className="sk-row" style={{ gap: 10, flexWrap: "wrap" }}>
             <div style={{ flex: 1, minWidth: 120 }}>
               <Field label={t("singbox.anytlsPort")}>
                 <Input value={anytlsPort} onChange={(e) => setAnytlsPort(e.target.value)} type="number" />
@@ -325,7 +325,7 @@ const SingBoxNodeCard: FC<{ node: NodeItem; onSaved: () => void }> = ({ node, on
         )}
       </div>
 
-      <div className="nx-row" style={{ marginTop: 14, gap: 8 }}>
+      <div className="sk-row" style={{ marginTop: 14, gap: 8 }}>
         <div style={{ flex: 1 }} />
         <Button size="sm" variant="ghost" disabled={syncBusy || busy} onClick={forceSync}>
           {t("singbox.forceSync")}
@@ -382,13 +382,13 @@ export const SingBox: FC<{ embedded?: boolean }> = ({ embedded }) => {
         </Callout>
       )}
 
-      <div className="nx-row" style={{ gap: 12, margin: "16px 0" }}>
+      <div className="sk-row" style={{ gap: 12, margin: "16px 0" }}>
         <Card style={{ flex: 1, padding: 16 }}>
-          <div className="nx-faint" style={{ fontSize: 12 }}>{t("singbox.nodesCount")}</div>
+          <div className="sk-faint" style={{ fontSize: 12 }}>{t("singbox.nodesCount")}</div>
           {nodes.loading ? <SkeletonRows rows={1} cols={1} /> : <div style={{ fontSize: 28, fontWeight: 700, marginTop: 4 }}>{hy2Nodes}</div>}
         </Card>
         <Card style={{ flex: 1, padding: 16 }}>
-          <div className="nx-faint" style={{ fontSize: 12 }}>{t("overview.totalUsers")}</div>
+          <div className="sk-faint" style={{ fontSize: 12 }}>{t("overview.totalUsers")}</div>
           {users.loading ? <SkeletonRows rows={1} cols={1} /> : <div style={{ fontSize: 28, fontWeight: 700, marginTop: 4 }}>{users.data?.total ?? "—"}</div>}
         </Card>
       </div>
@@ -397,8 +397,8 @@ export const SingBox: FC<{ embedded?: boolean }> = ({ embedded }) => {
         <Callout tone="warn">{t("singbox.noNodes")}</Callout>
       ) : (
         <div>
-          <div className="nx-card-title" style={{ marginBottom: 8 }}>{t("singbox.configTitle")}</div>
-          <p className="nx-faint" style={{ fontSize: 12, margin: "0 0 12px" }}>{t("singbox.configHint")}</p>
+          <div className="sk-card-title" style={{ marginBottom: 8 }}>{t("singbox.configTitle")}</div>
+          <p className="sk-faint" style={{ fontSize: 12, margin: "0 0 12px" }}>{t("singbox.configHint")}</p>
           {configuredNodes.length === 0 && (
             <Callout tone="info" title={t("singbox.setupFirstTitle")}>{t("singbox.setupFirstBody")}</Callout>
           )}
@@ -408,12 +408,12 @@ export const SingBox: FC<{ embedded?: boolean }> = ({ embedded }) => {
         </div>
       )}
 
-      <div className="nx-row" style={{ marginTop: 16, gap: 10 }}>
+      <div className="sk-row" style={{ marginTop: 16, gap: 10 }}>
         <Button variant="primary" onClick={() => { requestIntent("add-node"); nav("/servers?tab=nodes"); }}>
-          <IcPlus className="nx-ico" /> {t("singbox.addNode")}
+          <IcPlus className="sk-ico" /> {t("singbox.addNode")}
         </Button>
         <Button onClick={() => { requestIntent("create-user"); nav("/users"); }}>
-          <IcUsers className="nx-ico" /> {t("singbox.addUser")}
+          <IcUsers className="sk-ico" /> {t("singbox.addUser")}
         </Button>
       </div>
     </div>

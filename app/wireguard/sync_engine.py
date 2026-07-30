@@ -23,7 +23,7 @@ from app.wireguard.peer_cache import peer_cache
 from app.wireguard.sync import WGUserPeer, amneziawg_enabled, plain_wg_enabled
 from app.wireguard.transport import WireGuardTransportError, client_for_node
 
-logger = logging.getLogger("nexus-wg")
+logger = logging.getLogger("shahkar-wg")
 
 # Batch size for resumable full reconcile / outbox drain. Small enough for
 # short RPyC timeouts; large enough to converge 500k peers in minutes.
@@ -337,6 +337,12 @@ def schedule_resumable_sync() -> None:
 
 def on_node_connected(node_id: int) -> None:
     """Resume or start reconcile after a node channel comes back."""
+    try:
+        from app.wireguard.finalmask_reload import clear_agent_hot_cache
+
+        clear_agent_hot_cache(int(node_id))
+    except Exception:
+        pass
     with GetDB() as db:
         cur = db.get(NodeSyncCursor, int(node_id))
         if cur is None:
@@ -573,13 +579,46 @@ def _sync_finalmask_node(node_id: int, *, generation: int, cursor: int) -> None:
             agent_missing_hot = False
 
         if agent_missing_hot:
+            try:
+                from app.wireguard.finalmask_reload import (
+                    _full_restart_allowed,
+                    _note_full_restart,
+                    _cooldown_left,
+                    _mark_agent_hot_unsupported,
+                )
+
+                _mark_agent_hot_unsupported(int(node_id))
+                if not _full_restart_allowed(int(node_id)):
+                    delay = max(30.0, _cooldown_left(int(node_id)))
+                    logger.warning(
+                        "Finalmask node=%s: agent lacks hot-replace; "
+                        "deferring full restart (cooldown %.0fs left)",
+                        node_id,
+                        delay,
+                    )
+                    _note_node_failure(node_id)  # back off this node briefly
+                    with GetDB() as db:
+                        cur = db.get(NodeSyncCursor, node_id)
+                        if cur is not None:
+                            cur.status = "paused"
+                            cur.error = (
+                                f"hot-replace unsupported; restart cooldown "
+                                f"{int(delay)}s"
+                            )[:500]
+                            db.commit()
+                    return
+            except Exception:
+                pass
             logger.warning(
-                "Finalmask node=%s: agent lacks hot-replace; full Xray restart",
+                "Finalmask node=%s: agent lacks hot-replace; full Xray restart "
+                "(cooldown gate)",
                 node_id,
             )
             try:
                 from app.xray.operations import restart_node
+                from app.wireguard.finalmask_reload import _note_full_restart
 
+                _note_full_restart(int(node_id))
                 restart_node(int(node_id))
             except Exception as exc:
                 delay = _note_node_failure(node_id)

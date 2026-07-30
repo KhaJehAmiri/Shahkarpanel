@@ -442,25 +442,68 @@ function SubscribeBody() {
   const [protoFilter, setProtoFilter] = useState("all");
   const [selectedId, setSelectedId] = useState("");
   const [copied, setCopied] = useState(false);
-  const [qrModal, setQrModal] = useState(false);
+  const [previewEntry, setPreviewEntry] = useState<ConfigEntry | null>(null);
   const [busyConnect, setBusyConnect] = useState(false);
   const [view, setView] = useState<"overview" | "servers" | "import">("overview");
   const [wgConfByNode, setWgConfByNode] = useState<Record<number, string>>({});
   const wgFetchStarted = useRef<Set<number>>(new Set());
   const [serverQuery, setServerQuery] = useState("");
   const [serverSort, setServerSort] = useState<"recommended" | "name">("recommended");
-  const [pickingServer, setPickingServer] = useState(true);
   const [dailyUsage, setDailyUsage] = useState<DailyUsageDay[]>([]);
   const [usageOpen, setUsageOpen] = useState(false);
   const [usageLoading, setUsageLoading] = useState(false);
+  const [portalBusy, setPortalBusy] = useState(false);
 
   const goView = useCallback((next: "overview" | "servers" | "import") => {
     setView(next);
   }, []);
 
+  const enterPortal = useCallback(async () => {
+    const tok = getToken() || token;
+    if (!tok || portalBusy) return;
+    setPortalBusy(true);
+    try {
+      const res = await fetch("/api/portal/bootstrap", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: tok }),
+      });
+      if (!res.ok) {
+        let detail = "";
+        try {
+          const j = await res.json();
+          if (j.detail) detail = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail);
+        } catch {
+          /* ignore */
+        }
+        const disabled =
+          res.status === 404 &&
+          (/portal is disabled/i.test(detail) || /user portal/i.test(detail));
+        setToast({
+          msg: disabled
+            ? subT(lang, "portalDisabled")
+            : detail || (res.status === 404 ? subT(lang, "portalEnterFailed") : `HTTP ${res.status}`),
+          kind: "error",
+        });
+        return;
+      }
+      const data = (await res.json()) as { username: string };
+      const u = new URL("/portal/", window.location.origin);
+      u.searchParams.set("username", data.username);
+      u.searchParams.set("lang", lang);
+      window.location.href = u.toString();
+    } catch (e: unknown) {
+      setToast({
+        msg: e instanceof Error ? e.message : subT(lang, "portalEnterFailed"),
+        kind: "error",
+      });
+    } finally {
+      setPortalBusy(false);
+    }
+  }, [token, portalBusy, lang]);
+
   const openProtocol = useCallback((id: string) => {
     setProtoFilter(id);
-    setPickingServer(true);
     setView("servers");
   }, []);
 
@@ -510,13 +553,13 @@ function SubscribeBody() {
     info?.subscription_profile_title?.trim()
     || info?.branding?.sub_profile_title?.trim()
     || info?.branding?.panel_title?.trim()
-    || "NexusPanel";
+    || "Shahkar";
 
   useEffect(() => {
     const b = info?.branding;
     if (!b) return;
     if (b.primary_color) {
-      document.documentElement.style.setProperty("--nx-accent", b.primary_color);
+      document.documentElement.style.setProperty("--sk-accent", b.primary_color);
       document.documentElement.style.setProperty("--s-accent", b.primary_color);
     }
     if (b.favicon_url) {
@@ -528,7 +571,7 @@ function SubscribeBody() {
       }
       link.href = b.favicon_url;
     }
-    const tabTitle = (b.panel_title || "").trim() || "NexusPanel";
+    const tabTitle = (b.panel_title || "").trim() || "Shahkar";
     document.title = tabTitle;
   }, [info?.branding]);
 
@@ -604,6 +647,8 @@ function SubscribeBody() {
     items.forEach((item, i) => {
       const protocol = normProto(item.protocol || protoFromLink(item.link));
       if (skipFromLinks.has(protocol)) return;
+      // Subscribe UI: plain WireGuard only — hide WireGuard Xray share links.
+      if (protocol === "wireguard-xray") return;
       out.push({
         id: `x-${i}`,
         protocol,
@@ -632,13 +677,11 @@ function SubscribeBody() {
         wgNodes.forEach((n) => {
           const title = n.region_name || n.name;
           const flag = n.region_flag || undefined;
-          const conf = (wgConfByNode[n.id] || "").trim();
           const plainUri = (n.wireguard_plain_uri || "").trim();
-          const xrayUri = (n.wireguard_xray_uri || "").trim();
+          const conf = (wgConfByNode[n.id] || "").trim();
           const hasPlain = !!(n.plain_available || plainUri || conf);
-          const hasXray = !!(n.xray_available || xrayUri);
           const latencyMs = n.latency_ms ?? null;
-          // WireGuard app: QR/copy .conf; download .conf (not imported into Xray subs).
+          // WireGuard app: QR + download .conf (not imported into Xray subs).
           if (hasPlain && (conf || plainUri)) {
             pushWg(
               `wg-${n.id}`,
@@ -650,28 +693,12 @@ function SubscribeBody() {
               latencyMs,
             );
           }
-          // Xray apps: wireguard:// + fm= only (no JSON download — sub import is enough).
-          if (hasXray && xrayUri) {
-            pushWg(
-              `wg-xray-${n.id}`,
-              "wireguard-xray",
-              title,
-              flag,
-              xrayUri,
-              "",
-              latencyMs,
-            );
-          }
         });
       } else {
         const conf = (wgConfByNode[-1] || "").trim();
         const plainUri = (info.wireguard_plain_uri || "").trim();
-        const xrayUri = (info.wireguard_xray_uri || "").trim();
         if (plainUri || conf) {
           pushWg("wg-0", "wireguard", "WireGuard", undefined, conf || plainUri, resolveWgUrl(subUrl, "plain"));
-        }
-        if (xrayUri) {
-          pushWg("wg-xray-0", "wireguard-xray", "WireGuard", undefined, xrayUri, "");
         }
       }
     }
@@ -733,8 +760,7 @@ function SubscribeBody() {
 
   useEffect(() => {
     setServerQuery("");
-    setPickingServer(filtered.length !== 1);
-  }, [protoFilter, filtered.length]);
+  }, [protoFilter]);
 
   const visibleServers = useMemo(() => {
     const q = serverQuery.trim().toLowerCase();
@@ -807,8 +833,9 @@ function SubscribeBody() {
 
   const pickServer = useCallback((id: string) => {
     setSelectedId(id);
-    if (filtered.length > 1) setPickingServer(false);
-  }, [filtered.length]);
+    const entry = filtered.find((c) => c.id === id) || null;
+    setPreviewEntry(entry);
+  }, [filtered]);
 
   const configAvailable = info?.config_available !== false;
   const blockReason = info?.block_reason;
@@ -1026,8 +1053,8 @@ function SubscribeBody() {
   const devicesText = deviceLimit
     ? subT(lang, "devicesOfLimit").replace("{n}", String(onlineDevices)).replace("{max}", String(deviceLimit))
     : subT(lang, "devicesUnlimited").replace("{n}", String(onlineDevices));
-  const brandName = info.branding?.panel_title?.trim() || "NexusPanel";
-  const brandLogo = info.branding?.logo_url?.trim() || "/sub-assets/brand/nexuspanel-logo.png";
+  const brandName = info.branding?.panel_title?.trim() || "Shahkar";
+  const brandLogo = info.branding?.logo_url?.trim() || "/sub-assets/brand/shahkar.png";
   const supportUrl = info.branding?.support_url?.trim() || "";
   // Headline = plan label, never brand (brand already lives in the topbar).
   const rawPlan = (info.branding?.sub_profile_title || "").trim();
@@ -1036,39 +1063,6 @@ function SubscribeBody() {
       ? rawPlan
       : subT(lang, "personalSub");
   const accountId = (info.username || "").trim();
-
-  const configActions = selected ? (
-    <div className="s-qr-bundle">
-      <button type="button" className="s-qr" onClick={() => setQrModal(true)} aria-label={subT(lang, "tapBigger")}>
-        <div className="s-qr-frame">
-          <QR value={selected.value} size={160} />
-        </div>
-        <span className="s-qr-hint">{subT(lang, "scanHere")}</span>
-      </button>
-      <div className="s-qr-side">
-        {/* Plain WireGuard uses Download .conf — copy is for share links (VLESS / WG Xray). */}
-        {selected.protocol !== "wireguard" && selected.value ? (
-          <>
-            <button type="button" className="s-btn s-btn-main s-btn-xl" onClick={() => copyValue(selected.value)}>
-              {copied ? subT(lang, "copied") : subT(lang, "copyConfig")}
-            </button>
-            <p className="s-copy-hint">{subT(lang, "copyConfigHint")}</p>
-          </>
-        ) : null}
-        {selected.downloadHref ? (
-          <button type="button" className="s-btn s-btn-soft s-btn-xl" onClick={() => void downloadConfFile(selected)}>
-            {subT(lang, "downloadFile")}
-          </button>
-        ) : null}
-        {selected.protocol === "tuic" ? (
-          <p className="s-warn s-warn-strong" role="status">
-            <span className="s-warn-ico" aria-hidden>!</span>
-            {subT(lang, "tuicWarn")}
-          </p>
-        ) : null}
-      </div>
-    </div>
-  ) : null;
 
   const overviewInfo = (
     <div className="s-overview">
@@ -1102,9 +1096,32 @@ function SubscribeBody() {
               </button>
             ) : null}
           </div>
-          <div className={`s-ov-presence ${isOnlineNow ? "live" : ""}`}>
-            <span className={`s-live-dot ${isOnlineNow ? "" : "off"}`} aria-hidden />
-            <span>{isOnlineNow ? subT(lang, "accountLive") : onlineText}</span>
+          <div className="s-ov-identity-side">
+            {accountId ? (
+              <div className="s-portal-enter-wrap">
+                <button
+                  type="button"
+                  className="s-btn s-portal-enter"
+                  disabled={portalBusy}
+                  title={subT(lang, "enterPortalHint")}
+                  aria-label={subT(lang, "enterPortal")}
+                  onClick={() => void enterPortal()}
+                >
+                  <span className="s-portal-enter-ico" aria-hidden>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                      <path d="M10 17l5-5-5-5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                      <path d="M15 12H4" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+                      <path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </span>
+                  {portalBusy ? subT(lang, "loading") : subT(lang, "enterPortal")}
+                </button>
+              </div>
+            ) : null}
+            <div className={`s-ov-presence ${isOnlineNow ? "live" : ""}`}>
+              <span className={`s-live-dot ${isOnlineNow ? "" : "off"}`} aria-hidden />
+              <span>{isOnlineNow ? subT(lang, "accountLive") : onlineText}</span>
+            </div>
           </div>
         </div>
 
@@ -1255,23 +1272,20 @@ function SubscribeBody() {
           {!protocolTabs.length ? (
             <p className="s-empty">{subT(lang, "noConfigs")}</p>
           ) : (
-            <div className="s-proto-grid" role="listbox" aria-label={subT(lang, "pickProtocol")}>
-              {protocolTabs.map((p) => {
-                const countLabel = protoServersLabel(lang, p.count);
-                return (
-                  <button
-                    key={p.id}
-                    type="button"
-                    role="option"
-                    className="s-proto-card"
-                    onClick={() => openProtocol(p.id)}
-                  >
-                    <span className="s-proto-card-ico"><ProtoIcon proto={p.id} size={22} /></span>
-                    <span className="s-proto-card-name">{protoLabel(lang, p.id)}</span>
-                    {countLabel ? <span className="s-proto-card-count">{countLabel}</span> : null}
-                  </button>
-                );
-              })}
+            <div className="s-proto-tabs" role="tablist" aria-label={subT(lang, "pickProtocol")}>
+              {protocolTabs.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  role="tab"
+                  className="s-proto-tab"
+                  onClick={() => openProtocol(p.id)}
+                >
+                  <span className="s-proto-tab-ico"><ProtoIcon proto={p.id} size={20} /></span>
+                  <span className="s-proto-tab-name">{protoLabel(lang, p.id)}</span>
+                  <span className="s-proto-tab-count">{p.count}</span>
+                </button>
+              ))}
             </div>
           )}
           {supportUrl ? (
@@ -1284,72 +1298,44 @@ function SubscribeBody() {
     </div>
   );
 
-  const crumbProto = protoFilter !== "all" ? protoLabel(lang, protoFilter) : null;
-  const crumbServer = selected?.title || null;
-  const showPicker = pickingServer || filtered.length > 1;
+  const locationLabel = (entry: ConfigEntry) => {
+    const same = filtered.filter((c) => (c.flag && c.flag === entry.flag) || c.title === entry.title);
+    if (same.length <= 1) return entry.title;
+    const idx = same.findIndex((c) => c.id === entry.id);
+    return `${entry.title} ${idx + 1}`;
+  };
+
+  const openLocation = (entry: ConfigEntry) => {
+    setSelectedId(entry.id);
+    setPreviewEntry(entry);
+  };
 
   const serversView = (
     <div className="s-servers-view">
-      <nav className="s-crumb-steps" aria-label={subT(lang, "pickProtocol")}>
-        <button
-          type="button"
-          className={`s-crumb-step ${!crumbProto ? "on" : "done"}`}
-          onClick={() => setProtoFilter(protocolTabs[0]?.id || "all")}
-        >
-          <span className="s-step-i">1</span>
-          <span>{subT(lang, "stepProtocol")}{crumbProto ? ` · ${crumbProto}` : ""}</span>
-        </button>
-        <span className="s-step-sep" aria-hidden>›</span>
-        <button
-          type="button"
-          className={`s-crumb-step ${showPicker ? "on" : selected ? "done" : ""}`}
-          disabled={protoFilter === "all"}
-          onClick={() => setPickingServer(true)}
-        >
-          <span className="s-step-i">2</span>
-          <span>
-            {subT(lang, "stepServer")}
-            {crumbServer && !showPicker ? ` · ${selected?.flag || ""} ${crumbServer}`.replace(/\s+/g, " ").trim() : ""}
-          </span>
-        </button>
-        {selected && !showPicker ? (
-          <button type="button" className="s-crumb-change" onClick={() => setPickingServer(true)}>
-            {subT(lang, "changeServer")}
-          </button>
-        ) : null}
-        <span className="s-step-sep" aria-hidden>›</span>
-        <span className={`s-crumb-step ${selected && !showPicker ? "on" : ""}`}>
-          <span className="s-step-i">3</span>
-          <span>{subT(lang, "stepConfig")}</span>
-        </span>
-      </nav>
-
       <section className="s-panel">
         <div className="s-panel-head">
-          <h2 className="s-panel-title">{subT(lang, "stepProtocol")}</h2>
+          <h2 className="s-panel-title">{subT(lang, "pickProtocol")}</h2>
         </div>
         <div className="s-panel-body">
+          <p className="s-hint">{subT(lang, "pickProtocolHint")}</p>
           {!protocolTabs.length ? (
             <p className="s-empty">{subT(lang, "noConfigs")}</p>
           ) : (
-            <div className="s-proto-grid" role="listbox" aria-label={subT(lang, "pickProtocol")}>
-              {protocolTabs.map((p) => {
-                const countLabel = protoServersLabel(lang, p.count);
-                return (
-                  <button
-                    key={p.id}
-                    type="button"
-                    role="option"
-                    aria-selected={protoFilter === p.id}
-                    className={`s-proto-card ${protoFilter === p.id ? "on" : ""}`}
-                    onClick={() => setProtoFilter(p.id)}
-                  >
-                    <span className="s-proto-card-ico"><ProtoIcon proto={p.id} size={22} /></span>
-                    <span className="s-proto-card-name">{protoLabel(lang, p.id)}</span>
-                    {countLabel ? <span className="s-proto-card-count">{countLabel}</span> : null}
-                  </button>
-                );
-              })}
+            <div className="s-proto-tabs" role="tablist" aria-label={subT(lang, "pickProtocol")}>
+              {protocolTabs.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={protoFilter === p.id}
+                  className={`s-proto-tab${protoFilter === p.id ? " is-on" : ""}`}
+                  onClick={() => setProtoFilter(p.id)}
+                >
+                  <span className="s-proto-tab-ico"><ProtoIcon proto={p.id} size={20} /></span>
+                  <span className="s-proto-tab-name">{protoLabel(lang, p.id)}</span>
+                  <span className="s-proto-tab-count">{p.count}</span>
+                </button>
+              ))}
             </div>
           )}
         </div>
@@ -1357,141 +1343,28 @@ function SubscribeBody() {
 
       {protoFilter !== "all" && filtered.length > 0 ? (
         <>
-          {showPicker ? (
-            <section className="s-panel s-server-picker">
-              <div className="s-panel-head">
-                <h2 className="s-panel-title">{subT(lang, "stepServer")}</h2>
-                <span className="s-count">
-                  {subT(lang, "serversFound").replace("{n}", String(visibleServers.length))}
-                </span>
-              </div>
-              <div className="s-panel-body">
-                <div className="s-server-toolbar">
-                  <input
-                    type="search"
-                    className="s-server-search"
-                    value={serverQuery}
-                    onChange={(e) => setServerQuery(e.target.value)}
-                    placeholder={subT(lang, "searchServers")}
-                    aria-label={subT(lang, "searchServers")}
-                  />
-                  <div className="s-server-sort" role="group" aria-label="sort">
-                    <button
-                      type="button"
-                      className={serverSort === "recommended" ? "on" : ""}
-                      onClick={() => setServerSort("recommended")}
-                    >
-                      {subT(lang, "sortRecommended")}
-                    </button>
-                    <button
-                      type="button"
-                      className={serverSort === "name" ? "on" : ""}
-                      onClick={() => setServerSort("name")}
-                    >
-                      {subT(lang, "sortName")}
-                    </button>
-                  </div>
-                </div>
-
-                {bestServer ? (
+          <section className="s-panel">
+            <div className="s-panel-head">
+              <h2 className="s-panel-title">{subT(lang, "stepServer")}</h2>
+              <span className="s-count">{filtered.length}</span>
+            </div>
+            <div className="s-panel-body">
+              <div className="s-location-grid" role="list">
+                {filtered.map((c) => (
                   <button
+                    key={c.id}
                     type="button"
-                    className={`s-server-auto ${selected?.id === bestServer.id ? "on" : ""}`}
-                    onClick={() => pickServer(bestServer.id)}
+                    role="listitem"
+                    className={`s-location-card${selected?.id === c.id ? " on" : ""}`}
+                    onClick={() => openLocation(c)}
                   >
-                    <span className="s-server-auto-title">{subT(lang, "autoBestServer")}</span>
-                    <span className="s-server-auto-meta">
-                      {bestServer.flag} {bestServer.title}
-                    </span>
-                    <span className="s-server-auto-hint">{subT(lang, "autoBestHint")}</span>
+                    {c.flag ? <span className="s-location-flag">{c.flag}</span> : null}
+                    <strong className="s-location-name">{locationLabel(c)}</strong>
                   </button>
-                ) : null}
-
-                {!visibleServers.length ? (
-                  <p className="s-empty">{subT(lang, "noServerMatch")}</p>
-                ) : (
-                  <div className="s-server-groups">
-                    {serversByRegion.map((group) => (
-                      <div key={group.bucket} className="s-server-group">
-                        <h3 className="s-server-group-title">{regionBucketLabel(lang, group.bucket)}</h3>
-                        <div className="s-server-list" role="listbox" aria-label={regionBucketLabel(lang, group.bucket)}>
-                          {group.items.map((c) => (
-                              <button
-                                key={c.id}
-                                type="button"
-                                role="option"
-                                aria-selected={c.id === selected?.id}
-                                className={`s-server-row ${c.id === selected?.id ? "on" : ""}`}
-                                onClick={() => pickServer(c.id)}
-                              >
-                                <span className="s-server-row-main">
-                                  {c.flag ? <span className="s-flag">{c.flag}</span> : null}
-                                  <span className="s-td-name">{c.title}</span>
-                                </span>
-                              </button>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                ))}
               </div>
-            </section>
-          ) : null}
-
-          {selected && !showPicker ? (
-            <section className="s-panel s-inspector s-inspector-merged">
-              <div className="s-panel-head">
-                <h2 className="s-panel-title">
-                  {selected.flag ? <span className="s-flag">{selected.flag}</span> : null}
-                  {" "}{selected.title}
-                </h2>
-                <div className="s-inspector-tools">
-                  <span className="s-proto-label">
-                    <ProtoIcon proto={selected.protocol} size={12} />
-                    {protoLabel(lang, selected.protocol)}
-                  </span>
-                  {filtered.length > 1 ? (
-                    <button type="button" className="s-btn s-btn-soft" onClick={() => setPickingServer(true)}>
-                      {subT(lang, "changeServer")}
-                    </button>
-                  ) : null}
-                </div>
-              </div>
-              <div className="s-panel-body">{configActions}</div>
-            </section>
-          ) : null}
-
-          {selected && showPicker && filtered.length === 1 ? (
-            <section className="s-panel s-inspector s-inspector-merged">
-              <div className="s-panel-head">
-                <h2 className="s-panel-title">
-                  {selected.flag ? <span className="s-flag">{selected.flag}</span> : null}
-                  {" "}{selected.title}
-                </h2>
-                <span className="s-proto-label">
-                  <ProtoIcon proto={selected.protocol} size={12} />
-                  {protoLabel(lang, selected.protocol)}
-                </span>
-              </div>
-              <div className="s-panel-body">{configActions}</div>
-            </section>
-          ) : null}
-
-          {selected && showPicker && filtered.length > 1 ? (
-            <section className="s-panel s-inspector">
-              <div className="s-panel-head">
-                <h2 className="s-panel-title">{subT(lang, "stepConfig")}</h2>
-              </div>
-              <div className="s-panel-body">
-                <div className="s-insp-name">
-                  {selected.flag ? <span className="s-flag">{selected.flag}</span> : null}
-                  <span>{selected.title}</span>
-                </div>
-                {configActions}
-              </div>
-            </section>
-          ) : null}
+            </div>
+          </section>
 
           <section className="s-panel">
             <div className="s-panel-head">
@@ -1694,19 +1567,58 @@ function SubscribeBody() {
 
       {toast && <div role="status" className={`s-toast ${toast.kind}`}>{toast.msg}</div>}
 
-      {qrModal && selected && (
-        <div className="s-modal" onClick={() => setQrModal(false)} role="dialog" aria-modal="true" aria-label={subT(lang, "scanHere")}>
-          <div className="s-modal-box" onClick={(e) => e.stopPropagation()}>
-            <p className="s-modal-name">{selected.flag} {selected.title}</p>
+      {previewEntry ? (
+        <div
+          className="s-modal"
+          onClick={() => setPreviewEntry(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-label={previewEntry.title}
+        >
+          <div className="s-modal-box s-modal-config" onClick={(e) => e.stopPropagation()}>
+            <p className="s-modal-name">
+              {previewEntry.flag ? `${previewEntry.flag} ` : ""}
+              {previewEntry.title}
+            </p>
+            <p className="s-modal-proto">
+              <ProtoIcon proto={previewEntry.protocol} size={14} />
+              {protoLabel(lang, previewEntry.protocol)}
+            </p>
             <div className="s-qr-frame s-qr-lg">
-              <QR value={selected.value} size={300} />
+              <QR value={previewEntry.value} size={220} />
             </div>
-            <button type="button" className="s-btn s-btn-main" style={{ width: "100%", marginTop: 12 }} onClick={() => setQrModal(false)}>
-              {subT(lang, "close")}
-            </button>
+            <p className="s-hint" style={{ marginTop: 10 }}>{subT(lang, "scanHere")}</p>
+            <div className="s-modal-actions">
+              {previewEntry.protocol === "wireguard" ? (
+                <button
+                  type="button"
+                  className="s-btn s-btn-main"
+                  onClick={() => void downloadConfFile(previewEntry)}
+                >
+                  {subT(lang, "downloadFile")}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="s-btn s-btn-main"
+                  onClick={() => void copyValue(previewEntry.value)}
+                >
+                  {copied ? subT(lang, "copied") : subT(lang, "copyConfig")}
+                </button>
+              )}
+              <button type="button" className="s-btn s-btn-soft" onClick={() => setPreviewEntry(null)}>
+                {subT(lang, "close")}
+              </button>
+            </div>
+            {previewEntry.protocol === "tuic" ? (
+              <p className="s-warn s-warn-strong" role="status" style={{ marginTop: 12 }}>
+                <span className="s-warn-ico" aria-hidden>!</span>
+                {subT(lang, "tuicWarn")}
+              </p>
+            ) : null}
           </div>
         </div>
-      )}
+      ) : null}
     </DashShell>
   );
 }
@@ -1720,7 +1632,7 @@ function NavIcon({ name }: { name: DashView }) {
   return <svg {...props}><path d="M12 3v12"/><path d="m8 11 4 4 4-4"/><path d="M5 19h14"/></svg>;
 }
 
-function DashShell({ children, rtl, lang, onPick, brandName = "NexusPanel", brandLogo, view, onView, serverCount, chip, configAvailable }: {
+function DashShell({ children, rtl, lang, onPick, brandName = "Shahkar", brandLogo, view, onView, serverCount, chip, configAvailable }: {
   children: React.ReactNode;
   rtl: boolean;
   lang: SubLang;
@@ -1752,7 +1664,7 @@ function DashShell({ children, rtl, lang, onPick, brandName = "NexusPanel", bran
       <header className="s-topbar">
         <div className="s-brand">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img className="s-mark" src={brandLogo || "/sub-assets/brand/nexuspanel-logo.png"} alt="" width={38} height={38} />
+          <img className="s-mark" src={brandLogo || "/sub-assets/brand/shahkar.png"} alt="" width={38} height={38} />
           <div className="s-brand-meta">
             <span className="s-brand-name">{brandName}</span>
             <span className="s-brand-sub">
@@ -1838,8 +1750,8 @@ function SimpleShell({ children, rtl, lang, onPick }: {
       <header className="s-topbar">
         <div className="s-brand">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img className="s-mark" src="/sub-assets/brand/nexuspanel-logo.png" alt="" width={38} height={38} />
-          <span className="s-brand-name">NexusPanel</span>
+          <img className="s-mark" src="/sub-assets/brand/shahkar.png" alt="" width={38} height={38} />
+          <span className="s-brand-name">Shahkar</span>
         </div>
         <div className="s-tools">
           <div className="s-langs" role="group" aria-label={subT(lang, "lang")}>

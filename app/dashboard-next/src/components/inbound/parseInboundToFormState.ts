@@ -17,7 +17,7 @@ import {
 } from "./types";
 import { TLS_CIPHER_PRESETS } from "./types";
 
-const NXPANEL_INBOUND_KIND = "nexusPanelKind";
+const SHAHKAR_INBOUND_KIND = "shahkarPanelKind";
 
 function parseEchField(raw: unknown): string[] {
   if (typeof raw === "string" && raw.trim()) return [raw.trim()];
@@ -535,7 +535,7 @@ function parseProtocolSettings(state: InboundFormState, settings: Record<string,
         delete extra.dns;
         delete extra.noKernelTun;
         delete extra.domainStrategy;
-        delete extra[NXPANEL_INBOUND_KIND];
+        delete extra[SHAHKAR_INBOUND_KIND];
         state.amneziaExtraJson = JSON.stringify(extra, null, 2);
       }
       break;
@@ -645,7 +645,7 @@ export function parseInboundToFormState(
   let proto = str(inbound.protocol, "vless");
   if (
     proto === "wireguard" &&
-    (settings[NXPANEL_INBOUND_KIND] === "amneziawg" || /amnezia|awg/i.test(str(inbound.tag)))
+    (settings[SHAHKAR_INBOUND_KIND] === "amneziawg" || /amnezia|awg/i.test(str(inbound.tag)))
   ) {
     proto = "amneziawg";
   }

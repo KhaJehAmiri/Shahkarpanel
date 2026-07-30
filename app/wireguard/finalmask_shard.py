@@ -24,7 +24,7 @@ from __future__ import annotations
 import logging
 from typing import Dict, List, Optional, Tuple
 
-logger = logging.getLogger("nexus-wg")
+logger = logging.getLogger("shahkar-wg")
 
 def _env_int(name: str, default: int) -> int:
     import os

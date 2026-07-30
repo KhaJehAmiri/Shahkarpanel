@@ -23,17 +23,41 @@ import hashlib
 import json
 import logging
 import threading
+import time
 from typing import Dict, List, Optional, Set, Tuple
 
 _agent_hot_ok: Dict[int, bool] = {}
+_agent_hot_checked_at: Dict[int, float] = {}
+_last_full_restart_at: Dict[int, float] = {}
+
+# Old agents without hot-replace used to full-restart Xray on every peer churn
+# (dozens/hour), killing RPyC + tunnel relay until a manual reconnect. Cap that.
+FULL_RESTART_COOLDOWN_SEC = 600.0
+# Re-probe "unsupported" cache periodically so a manual agent upgrade is picked up.
+HOT_UNSUPPORTED_REPROBE_SEC = 1800.0
+
+
+def clear_agent_hot_cache(node_id: Optional[int] = None) -> None:
+    """Forget hot-replace capability (call after agent upgrade / reconnect)."""
+    if node_id is None:
+        _agent_hot_ok.clear()
+        _agent_hot_checked_at.clear()
+        return
+    nid = int(node_id)
+    _agent_hot_ok.pop(nid, None)
+    _agent_hot_checked_at.pop(nid, None)
 
 
 def _node_supports_hot_replace(node_id: int) -> bool:
     """Cache whether the connected agent exposes Finalmask hot-replace RPC."""
     nid = int(node_id)
+    now = time.time()
     cached = _agent_hot_ok.get(nid)
-    if cached is not None:
-        return cached
+    checked = _agent_hot_checked_at.get(nid, 0.0)
+    if cached is True:
+        return True
+    if cached is False and (now - checked) < HOT_UNSUPPORTED_REPROBE_SEC:
+        return False
     try:
         from app import xray as xray_pkg
 
@@ -45,17 +69,34 @@ def _node_supports_hot_replace(node_id: int) -> bool:
         # ``dir(root)`` lists exposed RPyC methods; bare hasattr lies on netrefs.
         ok = bool(root is not None and "xray_hot_replace_inbounds_json" in dir(root))
         _agent_hot_ok[nid] = ok
+        _agent_hot_checked_at[nid] = now
         return ok
     except Exception:
         return True
 
 
 def _mark_agent_hot_unsupported(node_id: int) -> None:
-    _agent_hot_ok[int(node_id)] = False
+    nid = int(node_id)
+    _agent_hot_ok[nid] = False
+    _agent_hot_checked_at[nid] = time.time()
+
+
+def _full_restart_allowed(node_id: int) -> bool:
+    last = _last_full_restart_at.get(int(node_id), 0.0)
+    return (time.time() - last) >= FULL_RESTART_COOLDOWN_SEC
+
+
+def _note_full_restart(node_id: int) -> None:
+    _last_full_restart_at[int(node_id)] = time.time()
+
+
+def _cooldown_left(node_id: int) -> float:
+    last = _last_full_restart_at.get(int(node_id), 0.0)
+    return max(0.0, FULL_RESTART_COOLDOWN_SEC - (time.time() - last))
 
 
 # Use uvicorn's error logger so Finalmask reload lines show in panel docker logs
-# (the dedicated nexus-wg logger is often unconfigured and silent).
+# (the dedicated shahkar-wg logger is often unconfigured and silent).
 logger = logging.getLogger("uvicorn.error")
 
 DEFAULT_DEBOUNCE_SEC = 0.25
@@ -87,7 +128,7 @@ _last_shard_fps: Dict[int, Dict[int, str]] = {}
 
 # Survive panel process restarts so the first schedule after boot diffs against
 # the last successful apply instead of hot-replacing every shard blindly.
-_FP_CACHE_PATH = "/var/lib/nexuspanel/cache/finalmask_fingerprints.json"
+_FP_CACHE_PATH = "/var/lib/shahkar/cache/finalmask_fingerprints.json"
 
 
 def _load_fp_cache() -> None:
@@ -656,9 +697,21 @@ def _run_finalmask_xray_reload(*, urgent: bool = False) -> None:
 
                 if mode == "hot":
                     if not _node_supports_hot_replace(int(node_id)):
+                        if not _full_restart_allowed(int(node_id)):
+                            logger.warning(
+                                "Finalmask node %s: agent has no hot-replace; "
+                                "skipping full restart (cooldown %.0fs left) — "
+                                "peer diffs kept dirty until next allowed restart",
+                                node_id,
+                                _cooldown_left(int(node_id)),
+                            )
+                            # Do NOT commit fingerprints — apply on next allowed restart.
+                            return
                         logger.info(
-                            "Finalmask node %s: agent has no hot-replace — full restart",
+                            "Finalmask node %s: agent has no hot-replace — full restart "
+                            "(cooldown gate %ss)",
                             node_id,
+                            int(FULL_RESTART_COOLDOWN_SEC),
                         )
                         if not urgent:
                             try:
@@ -669,6 +722,7 @@ def _run_finalmask_xray_reload(*, urgent: bool = False) -> None:
                                 flush_finalmask_node_stats(int(node_id))
                             except Exception:
                                 pass
+                        _note_full_restart(int(node_id))
                         restart_node(node_id)
                         with GetDB() as db:
                             from app.db import crud
@@ -712,9 +766,17 @@ def _run_finalmask_xray_reload(*, urgent: bool = False) -> None:
                             agent_missing_hot = False
                         if agent_missing_hot:
                             _mark_agent_hot_unsupported(int(node_id))
+                            if not _full_restart_allowed(int(node_id)):
+                                logger.warning(
+                                    "Finalmask hot replace unsupported on node %s; "
+                                    "deferring full restart (cooldown %.0fs left)",
+                                    node_id,
+                                    _cooldown_left(int(node_id)),
+                                )
+                                return
                             logger.warning(
                                 "Finalmask hot replace unsupported on node %s; "
-                                "falling back to full Xray restart",
+                                "falling back to full Xray restart (cooldown gate)",
                                 node_id,
                             )
                             if not urgent:
@@ -726,6 +788,7 @@ def _run_finalmask_xray_reload(*, urgent: bool = False) -> None:
                                     flush_finalmask_node_stats(int(node_id))
                                 except Exception:
                                     pass
+                            _note_full_restart(int(node_id))
                             restart_node(node_id)
                             with GetDB() as db:
                                 from app.db import crud

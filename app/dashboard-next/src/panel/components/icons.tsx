@@ -73,7 +73,7 @@ export const IcMore: FC<P> = (p) => (
 );
 export const IcMonitor: FC<P> = (p) => (<S {...p}><rect x="2" y="3" width="20" height="14" rx="2" /><path d="M8 21h8M12 17v4" /></S>);
 
-export const navIcon = (key: string, cls = "nx-ico"): any => {
+export const navIcon = (key: string, cls = "sk-ico"): any => {
   const m: Record<string, FC<P>> = {
     home: IcDashboard,
     overview: IcDashboard,

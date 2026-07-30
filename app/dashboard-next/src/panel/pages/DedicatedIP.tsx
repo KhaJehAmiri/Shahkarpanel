@@ -79,18 +79,18 @@ export const DedicatedIP: FC<{ embedded?: boolean }> = ({ embedded }) => {
 
       {!flagOff && (
         <>
-          <div className="nx-row" style={{ gap: 12, margin: "16px 0" }}>
+          <div className="sk-row" style={{ gap: 12, margin: "16px 0" }}>
             {([["dedip.total", pool.data?.total], ["dedip.assignedCount", pool.data?.assigned], ["dedip.free", pool.data?.free]] as const).map(([key, val]) => (
               <Card key={key} style={{ flex: 1, padding: 16 }}>
-                <div className="nx-faint" style={{ fontSize: 12 }}>{t(key)}</div>
+                <div className="sk-faint" style={{ fontSize: 12 }}>{t(key)}</div>
                 {pool.loading ? <SkeletonRows rows={1} cols={1} /> : <div style={{ fontSize: 28, fontWeight: 700, marginTop: 4 }}>{val ?? "—"}</div>}
               </Card>
             ))}
           </div>
 
           <Card style={{ padding: 16, marginBottom: 16 }}>
-            <div className="nx-card-title" style={{ marginBottom: 12 }}>{t("dedip.addTitle")}</div>
-            <div className="nx-row" style={{ gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
+            <div className="sk-card-title" style={{ marginBottom: 12 }}>{t("dedip.addTitle")}</div>
+            <div className="sk-row" style={{ gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
               <Field label={t("dedip.address")}>
                 <Input value={address} placeholder="203.0.113.10" onChange={(e: any) => setAddress(e.target.value)} />
               </Field>
@@ -99,7 +99,7 @@ export const DedicatedIP: FC<{ embedded?: boolean }> = ({ embedded }) => {
               </Field>
               <Button variant="primary" disabled={busy} onClick={addIP}>{t("dedip.addBtn")}</Button>
             </div>
-            <div className="nx-row" style={{ gap: 10, alignItems: "flex-end", flexWrap: "wrap", marginTop: 14 }}>
+            <div className="sk-row" style={{ gap: 10, alignItems: "flex-end", flexWrap: "wrap", marginTop: 14 }}>
               <Field label={t("dedip.assignUser")} hint={t("dedip.assignHint")}>
                 <Input value={assignUser} placeholder={t("common.username")} onChange={(e: any) => setAssignUser(e.target.value)} />
               </Field>
@@ -108,41 +108,41 @@ export const DedicatedIP: FC<{ embedded?: boolean }> = ({ embedded }) => {
           </Card>
 
           <Card pad0>
-            <div className="nx-pad" style={{ paddingBottom: 0 }}>
-              <div className="nx-card-title">{t("dedip.poolTitle")}</div>
+            <div className="sk-pad" style={{ paddingBottom: 0 }}>
+              <div className="sk-card-title">{t("dedip.poolTitle")}</div>
             </div>
             {pool.loading ? (
               <div style={{ padding: 16 }}><SkeletonRows rows={4} cols={5} /></div>
             ) : (pool.data?.items.length ?? 0) === 0 ? (
               <EmptyState title={t("common.noData")} desc={t("dedip.empty")} />
             ) : (
-              <div className="nx-table-wrap">
-                <table className="nx-table">
+              <div className="sk-table-wrap">
+                <table className="sk-table">
                   <thead>
                     <tr>
                       <th>{t("dedip.address")}</th>
                       <th>{t("dedip.nodeId")}</th>
                       <th>{t("dedip.assignedTo")}</th>
                       <th>{t("dedip.assignedAt")}</th>
-                      <th className="nx-actions" />
+                      <th className="sk-actions" />
                     </tr>
                   </thead>
                   <tbody>
                     {ipPager.slice.map((ip) => (
                       <tr key={ip.id}>
-                        <td><span className="nx-proto-name-main nx-mono" dir="ltr">{ip.address}</span></td>
-                        <td className="nx-proto-meta">{ip.node_id ?? "—"}</td>
+                        <td><span className="sk-proto-name-main sk-mono" dir="ltr">{ip.address}</span></td>
+                        <td className="sk-proto-meta">{ip.node_id ?? "—"}</td>
                         <td>
                           {ip.username ? (
-                            <span className="nx-proto-chip">{ip.username}</span>
+                            <span className="sk-proto-chip">{ip.username}</span>
                           ) : (
-                            <span className="nx-proto-meta">{t("dedip.unassigned")}</span>
+                            <span className="sk-proto-meta">{t("dedip.unassigned")}</span>
                           )}
                         </td>
-                        <td className="nx-proto-meta">
+                        <td className="sk-proto-meta">
                           {ip.assigned_at ? formatDate(ip.assigned_at, i18n.language) : "—"}
                         </td>
-                        <td className="nx-actions">
+                        <td className="sk-actions">
                           {ip.username ? (
                             <TableRowMenu
                               items={[

@@ -20,7 +20,7 @@ from app.wireguard.operations import _node_object
 from app.wireguard.peer_cache import peer_cache
 from app.wireguard.transport import client_for_node
 
-logger = logging.getLogger("nexus-wg")
+logger = logging.getLogger("shahkar-wg")
 
 
 class WireGuardUsageTracker:

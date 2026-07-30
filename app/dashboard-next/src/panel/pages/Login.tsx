@@ -68,6 +68,13 @@ export const Login: FC = () => {
     setBusy(true);
     try {
       await login(username.trim(), password, otp.trim() || undefined);
+      // Native permission dialog while still in the login gesture (Chrome requires it).
+      try {
+        const { requestPushPermissionAndSubscribe } = await import("../lib/webPush");
+        await requestPushPermissionAndSubscribe();
+      } catch {
+        /* push is optional */
+      }
       await onAuthenticated();
     } catch (err: any) {
       const msg = String(err?.message || "");
@@ -85,26 +92,26 @@ export const Login: FC = () => {
   };
 
   return (
-    <div className="nx-login">
-      <div className="nx-app-bg" aria-hidden />
-      <div className="nx-login-card">
-        <div className="nx-brand" style={{ padding: "0 0 22px", justifyContent: "center" }}>
+    <div className="sk-login">
+      <div className="sk-app-bg" aria-hidden />
+      <div className="sk-login-card">
+        <div className="sk-brand" style={{ padding: "0 0 22px", justifyContent: "center" }}>
           <img
             src={brandLogoUrl(branding)}
             alt=""
-            className="nx-brand-logo nx-brand-logo-img"
+            className="sk-brand-logo sk-brand-logo-img"
             style={{ width: 40, height: 40 }}
           />
           <div>
-            <div className="nx-brand-name" style={{ fontSize: 18 }}>{brandingTitle(branding, t("common.appName"))}</div>
-            <div className="nx-brand-sub">{t("common.tagline")}</div>
+            <div className="sk-brand-name" style={{ fontSize: 18 }}>{brandingTitle(branding, t("common.appName"))}</div>
+            <div className="sk-brand-sub">{t("common.tagline")}</div>
           </div>
         </div>
 
         <h1 style={{ fontSize: 20, margin: "0 0 4px" }}>{t("login.title")}</h1>
-        <p className="nx-muted" style={{ margin: "0 0 22px", fontSize: 13 }}>{t("login.subtitle")}</p>
+        <p className="sk-muted" style={{ margin: "0 0 22px", fontSize: 13 }}>{t("login.subtitle")}</p>
 
-        <form onSubmit={submit} className="nx-stack">
+        <form onSubmit={submit} className="sk-stack">
           <Field label={t("common.username")}>
             <Input value={username} onChange={(e: any) => setUsername(e.target.value)} autoFocus required />
           </Field>
@@ -124,8 +131,8 @@ export const Login: FC = () => {
               />
             </Field>
           )}
-          {error && <div className="nx-callout danger" style={{ padding: "10px 12px" }}>{error}</div>}
-          <Button type="submit" variant="primary" disabled={busy || ssoBusy} className="nx-center">
+          {error && <div className="sk-callout danger" style={{ padding: "10px 12px" }}>{error}</div>}
+          <Button type="submit" variant="primary" disabled={busy || ssoBusy} className="sk-center">
             {busy || ssoBusy ? t("login.signingIn") : t("login.signIn")}
           </Button>
           {ssoUrl && (
@@ -133,7 +140,7 @@ export const Login: FC = () => {
               type="button"
               variant="ghost"
               disabled={busy || ssoBusy}
-              className="nx-center"
+              className="sk-center"
               onClick={() => { window.location.href = ssoUrl; }}
             >
               {t("login.ssoSignIn", { defaultValue: "Sign in with SSO" })}
@@ -141,12 +148,12 @@ export const Login: FC = () => {
           )}
         </form>
 
-        <div className="nx-row" style={{ justifyContent: "center", gap: 4, marginTop: 22 }}>
+        <div className="sk-row" style={{ justifyContent: "center", gap: 4, marginTop: 22 }}>
           {LANGUAGES.map((l) => (
             <button
               key={l.code}
-              className={`nx-btn ghost sm ${i18n.language === l.code ? "active" : ""}`}
-              style={i18n.language === l.code ? { color: "var(--nx-accent)" } : undefined}
+              className={`sk-btn ghost sm ${i18n.language === l.code ? "active" : ""}`}
+              style={i18n.language === l.code ? { color: "var(--sk-accent)" } : undefined}
               onClick={() => setLanguage(l.code)}
               type="button"
             >

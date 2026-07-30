@@ -81,26 +81,26 @@ const RulesTab: FC = () => {
 
   return (
     <>
-      <div className="nx-row" style={{ justifyContent: "flex-end", marginBottom: 14 }}>
-        <Button variant="primary" onClick={() => setShow(true)}><IcPlus className="nx-ico" /> {t("automation.addRule")}</Button>
+      <div className="sk-row" style={{ justifyContent: "flex-end", marginBottom: 14 }}>
+        <Button variant="primary" onClick={() => setShow(true)}><IcPlus className="sk-ico" /> {t("automation.addRule")}</Button>
       </div>
       <Card pad0>
         {loading ? <div style={{ padding: 20 }}><SkeletonRows rows={3} cols={4} /></div>
           : error ? <EmptyState title={t("common.error")} desc={error} action={<Button onClick={reload}>{t("common.retry")}</Button>} />
           : !data?.length ? <EmptyState title={t("common.noData")} />
           : (
-            <div className="nx-table-wrap"><table className="nx-table">
-              <thead><tr><th>{t("common.name")}</th><th>{t("automation.trigger")}</th><th>{t("automation.action")}</th><th>{t("common.status")}</th><th className="nx-actions">{t("common.actions")}</th></tr></thead>
+            <div className="sk-table-wrap"><table className="sk-table">
+              <thead><tr><th>{t("common.name")}</th><th>{t("automation.trigger")}</th><th>{t("automation.action")}</th><th>{t("common.status")}</th><th className="sk-actions">{t("common.actions")}</th></tr></thead>
               <tbody>
                 {data.map((r) => (
                   <tr key={r.id}>
                     <td style={{ fontWeight: 600 }}>{r.name}</td>
                     <td><Pill>{r.trigger_event}</Pill></td>
-                    <td><span className="nx-code">{r.action}</span></td>
+                    <td><span className="sk-code">{r.action}</span></td>
                     <td><Toggle on={r.enabled} onChange={() => toggle(r)} label={t("automation.toggleRule")} /></td>
-                    <td><div className="nx-row" style={{ justifyContent: "flex-end", gap: 6 }}>
-                      <Button variant="ghost" size="sm" title={t("common.edit")} onClick={() => setEdit(r)}><IcEdit className="nx-ico" /></Button>
-                      <Button variant="danger" size="sm" title={t("common.delete")} onClick={() => remove(r.id)}><IcTrash className="nx-ico" /></Button>
+                    <td><div className="sk-row" style={{ justifyContent: "flex-end", gap: 6 }}>
+                      <Button variant="ghost" size="sm" title={t("common.edit")} onClick={() => setEdit(r)}><IcEdit className="sk-ico" /></Button>
+                      <Button variant="danger" size="sm" title={t("common.delete")} onClick={() => remove(r.id)}><IcTrash className="sk-ico" /></Button>
                     </div></td>
                   </tr>
                 ))}
@@ -151,16 +151,16 @@ const RuleFormModal: FC<{ rule?: Rule; onClose: () => void; onDone: () => void }
     <Modal open title={rule ? t("automation.editRule") : t("automation.addRule")} onClose={onClose}
       footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
         <Button variant="primary" disabled={busy || !f.name} onClick={submit}>{rule ? t("common.save") : t("common.create")}</Button></>}>
-      <div className="nx-stack">
+      <div className="sk-stack">
         <Field label={t("common.name")}><Input value={f.name} onChange={upd("name")} autoFocus /></Field>
-        <div className="nx-row" style={{ gap: 12 }}>
+        <div className="sk-row" style={{ gap: 12 }}>
           <Field label={t("automation.trigger")}><Select value={f.trigger_event} onChange={upd("trigger_event")}>{EVENTS.map((e) => <option key={e}>{e}</option>)}</Select></Field>
           <Field label={t("automation.action")}><Select value={f.action} onChange={upd("action")}>{ACTIONS.map((a) => <option key={a}>{a}</option>)}</Select></Field>
         </div>
         <Field label={t("automation.condition")}><Textarea value={f.condition} onChange={upd("condition")} placeholder='{"key": "value"}' /></Field>
         <Field label={t("automation.params")}><Textarea value={f.params} onChange={upd("params")} placeholder='{"message": "hi"}' /></Field>
         {rule && (
-          <label className="nx-row" style={{ gap: 8 }}>
+          <label className="sk-row" style={{ gap: 8 }}>
             <input type="checkbox" checked={f.enabled} onChange={upd("enabled")} /> {t("common.enabled")}
           </label>
         )}
@@ -188,16 +188,16 @@ const WorkflowsTab: FC = () => {
 
   return (
     <>
-      <div className="nx-row" style={{ justifyContent: "flex-end", marginBottom: 14 }}>
-        <Button variant="primary" onClick={() => setShow(true)}><IcPlus className="nx-ico" /> {t("automation.addWorkflow")}</Button>
+      <div className="sk-row" style={{ justifyContent: "flex-end", marginBottom: 14 }}>
+        <Button variant="primary" onClick={() => setShow(true)}><IcPlus className="sk-ico" /> {t("automation.addWorkflow")}</Button>
       </div>
       <Card pad0>
         {loading ? <div style={{ padding: 20 }}><SkeletonRows rows={3} cols={4} /></div>
           : error ? <EmptyState title={t("common.error")} desc={error} action={<Button onClick={reload}>{t("common.retry")}</Button>} />
           : !data?.length ? <EmptyState title={t("common.noData")} />
           : (
-            <div className="nx-table-wrap"><table className="nx-table">
-              <thead><tr><th>{t("common.name")}</th><th>{t("automation.trigger")}</th><th>{t("automation.steps")}</th><th>{t("common.status")}</th><th className="nx-actions">{t("common.actions")}</th></tr></thead>
+            <div className="sk-table-wrap"><table className="sk-table">
+              <thead><tr><th>{t("common.name")}</th><th>{t("automation.trigger")}</th><th>{t("automation.steps")}</th><th>{t("common.status")}</th><th className="sk-actions">{t("common.actions")}</th></tr></thead>
               <tbody>
                 {data.map((w) => (
                   <tr key={w.id}>
@@ -205,9 +205,9 @@ const WorkflowsTab: FC = () => {
                     <td><Pill>{w.trigger_event}</Pill></td>
                     <td>{t("automation.stepCount", { n: w.steps?.length || 0 })}</td>
                     <td><Pill tone={w.enabled ? "ok" : "danger"} dot>{w.enabled ? t("common.enabled") : t("common.disabled")}</Pill></td>
-                    <td><div className="nx-row" style={{ justifyContent: "flex-end", gap: 6 }}>
-                      <Button variant="ghost" size="sm" title={t("common.edit")} onClick={() => setEdit(w)}><IcEdit className="nx-ico" /></Button>
-                      <Button variant="danger" size="sm" title={t("common.delete")} onClick={() => remove(w.id)}><IcTrash className="nx-ico" /></Button>
+                    <td><div className="sk-row" style={{ justifyContent: "flex-end", gap: 6 }}>
+                      <Button variant="ghost" size="sm" title={t("common.edit")} onClick={() => setEdit(w)}><IcEdit className="sk-ico" /></Button>
+                      <Button variant="danger" size="sm" title={t("common.delete")} onClick={() => remove(w.id)}><IcTrash className="sk-ico" /></Button>
                     </div></td>
                   </tr>
                 ))}
@@ -256,12 +256,12 @@ const WorkflowFormModal: FC<{ workflow?: Workflow; onClose: () => void; onDone: 
     <Modal open title={workflow ? t("automation.editWorkflow") : t("automation.addWorkflow")} onClose={onClose}
       footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
         <Button variant="primary" disabled={busy || !f.name} onClick={submit}>{workflow ? t("common.save") : t("common.create")}</Button></>}>
-      <div className="nx-stack">
+      <div className="sk-stack">
         <Field label={t("common.name")}><Input value={f.name} onChange={upd("name")} autoFocus /></Field>
         <Field label={t("automation.trigger")}><Select value={f.trigger_event} onChange={upd("trigger_event")}>{EVENTS.map((e) => <option key={e}>{e}</option>)}</Select></Field>
         <Field label={`${t("automation.steps")} (JSON)`}><Textarea rows={6} value={f.steps} onChange={upd("steps")} /></Field>
         {workflow && (
-          <label className="nx-row" style={{ gap: 8 }}>
+          <label className="sk-row" style={{ gap: 8 }}>
             <input type="checkbox" checked={f.enabled} onChange={upd("enabled")} /> {t("common.enabled")}
           </label>
         )}
@@ -302,22 +302,22 @@ const MarketplaceTab: FC = () => {
 
   return (
     <Card>
-      {!data?.length ? <div className="nx-muted">{t("automation.noPlugins")}</div>
+      {!data?.length ? <div className="sk-muted">{t("automation.noPlugins")}</div>
         : (
-          <div className="nx-stack" style={{ gap: 10 }}>
+          <div className="sk-stack" style={{ gap: 10 }}>
             {data.map((p) => (
-              <div key={p.name} className="nx-card" style={{ background: "var(--nx-surface-2)", padding: 14 }}>
-                <div className="nx-row" style={{ justifyContent: "space-between" }}>
+              <div key={p.name} className="sk-card" style={{ background: "var(--sk-surface-2)", padding: 14 }}>
+                <div className="sk-row" style={{ justifyContent: "space-between" }}>
                   <div>
                     <div style={{ fontWeight: 600 }}>{p.name}</div>
-                    <div className="nx-muted" style={{ fontSize: 13 }}>
+                    <div className="sk-muted" style={{ fontSize: 13 }}>
                       {t(`marketplace.${p.name}.desc`, { defaultValue: p.description || "—" })}
                     </div>
-                    <div className="nx-faint" style={{ fontSize: 11, marginTop: 4 }}>
+                    <div className="sk-faint" style={{ fontSize: 11, marginTop: 4 }}>
                       ★ {p.rating.toFixed(1)} ({p.rating_count}) · v{p.version || "?"}
                     </div>
                   </div>
-                  <div className="nx-row" style={{ gap: 6 }}>
+                  <div className="sk-row" style={{ gap: 6 }}>
                     <Pill tone={p.installed ? "ok" : "default"}>{p.installed ? t("automation.installed") : t("automation.notInstalled")}</Pill>
                     {p.installed
                       ? <Button size="sm" variant="danger" onClick={() => uninstall(p.name)}>{t("automation.uninstall")}</Button>
@@ -341,19 +341,19 @@ const PluginsTab: FC = () => {
 
   return (
     <Card>
-      <div className="nx-row" style={{ marginBottom: 16 }}>
-        <IcShield className="nx-ico" style={{ color: "var(--nx-accent)" }} />
+      <div className="sk-row" style={{ marginBottom: 16 }}>
+        <IcShield className="sk-ico" style={{ color: "var(--sk-accent)" }} />
         <b>{t("automation.pluginSystem")}</b>
         <Pill tone={data?.enabled ? "ok" : "default"} dot>{data?.enabled ? t("common.enabled") : t("common.disabled")}</Pill>
       </div>
       {!data?.plugins.length ? (
-        <div className="nx-muted">{t("automation.noPlugins")}</div>
+        <div className="sk-muted">{t("automation.noPlugins")}</div>
       ) : (
-        <div className="nx-stack">
+        <div className="sk-stack">
           {data.plugins.map((p) => (
-            <div key={p.name} className="nx-card" style={{ background: "var(--nx-surface-2)", padding: 14 }}>
+            <div key={p.name} className="sk-card" style={{ background: "var(--sk-surface-2)", padding: 14 }}>
               <div style={{ fontWeight: 600 }}>{p.name}</div>
-              <div className="nx-muted" style={{ fontSize: 13 }}>
+              <div className="sk-muted" style={{ fontSize: 13 }}>
                 {t(`marketplace.${p.name}.desc`, { defaultValue: p.description })}
               </div>
             </div>

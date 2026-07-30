@@ -26,10 +26,28 @@ SETTING_SPECS: Dict[str, tuple] = {
     "payment.demo_enabled": ("PAYMENT_DEMO_ENABLED", "bool"),
     "payment.min_amount": ("PAYMENT_MIN_AMOUNT", "int"),
     "payment.max_amount": ("PAYMENT_MAX_AMOUNT", "int"),
+    # Portal checkout methods (end-user buy/renew).
+    "payment.gateway_enabled": ("", "bool"),
+    "payment.card_enabled": ("", "bool"),
+    "payment.card_number": ("", "str"),
+    "payment.card_holder": ("", "str"),
+    "payment.card_bank": ("", "str"),
     "payment.stripe_enabled": ("", "bool"),
     "payment.stripe_publishable_key": ("", "str"),
     "payment.stripe_secret_key": ("", "secret"),
     "payment.stripe_webhook_secret": ("", "secret"),
+    "payment.centralpay_enabled": ("", "bool"),
+    "payment.centralpay_api_key": ("", "secret"),
+    "payment.centralpay_merchant_id": ("", "str"),
+    "payment.centralpay_http_proxy": ("", "secret"),
+    # Dedicated CentralPay bridge host (getLink/verify + browser return), not a SOCKS proxy.
+    "payment.centralpay_relay_base": ("", "str"),
+    "payment.centralpay_relay_secret": ("", "secret"),
+    # Browser Web Push (admin/reseller PWA notifications)
+    "push.vapid_public_key": ("", "str"),
+    "push.vapid_private_key": ("", "secret"),
+    "push.vapid_subject": ("", "str"),
+    "portal.max_child_accounts": ("PORTAL_MAX_CHILD_ACCOUNTS", "int"),
     "reseller.sub_reseller_max": ("SUB_RESELLER_MAX_PER_PARENT", "int"),
     "reseller.default_commission_percent": ("", "int"),
 }
@@ -37,6 +55,10 @@ SETTING_SPECS: Dict[str, tuple] = {
 SECRET_KEYS = frozenset({
     "payment.stripe_secret_key",
     "payment.stripe_webhook_secret",
+    "payment.centralpay_api_key",
+    "payment.centralpay_http_proxy",
+    "payment.centralpay_relay_secret",
+    "push.vapid_private_key",
 })
 
 
@@ -45,6 +67,32 @@ def _env_default(key: str) -> Any:
     if not spec or not spec[0]:
         if key == "payment.stripe_enabled":
             return False
+        if key == "payment.centralpay_enabled":
+            return False
+        if key in ("payment.gateway_enabled", "payment.card_enabled"):
+            return False
+        if key in (
+            "payment.card_number",
+            "payment.card_holder",
+            "payment.card_bank",
+            "payment.centralpay_merchant_id",
+            "push.vapid_public_key",
+            "push.vapid_private_key",
+        ):
+            return ""
+        if key == "push.vapid_subject":
+            # Apple rejects mailto:…@*.local — https origin is preferred.
+            try:
+                from config import PANEL_PUBLIC_ADDRESS
+
+                base = (PANEL_PUBLIC_ADDRESS or "").strip().rstrip("/")
+                if base.startswith("https://"):
+                    return base
+                if base.startswith("http://"):
+                    return "https://" + base[len("http://") :]
+            except Exception:
+                pass
+            return "mailto:noreply@example.com"
         if key == "reseller.default_commission_percent":
             return 0
         if key in ("billing.default_package_price", "billing.default_package_bytes"):
@@ -176,6 +224,15 @@ def update_settings_bulk(updates: Dict[str, Any]) -> None:
             if not value or str(value).startswith("••") or "…" in str(value):
                 continue
         set_setting(key, value)
+    # Entering a CentralPay API key activates the gateway; clearing disables it.
+    if "payment.centralpay_api_key" in updates:
+        raw = updates.get("payment.centralpay_api_key")
+        if raw and not str(raw).startswith("••") and "…" not in str(raw):
+            set_setting("payment.centralpay_enabled", True)
+        elif raw == "" or raw is None:
+            # Explicit clear only — masked placeholder keeps current key/flag.
+            if not get_str("payment.centralpay_api_key"):
+                set_setting("payment.centralpay_enabled", False)
     refresh_payment_providers()
 
 

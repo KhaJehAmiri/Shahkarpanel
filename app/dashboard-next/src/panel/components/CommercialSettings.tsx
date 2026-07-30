@@ -29,6 +29,11 @@ const SECTIONS: { id: string; keys: string[] }[] = [
   {
     id: "payment",
     keys: [
+      "payment.gateway_enabled",
+      "payment.card_enabled",
+      "payment.card_number",
+      "payment.card_holder",
+      "payment.card_bank",
       "payment.demo_enabled",
       "payment.min_amount",
       "payment.max_amount",
@@ -36,6 +41,10 @@ const SECTIONS: { id: string; keys: string[] }[] = [
       "payment.stripe_publishable_key",
       "payment.stripe_secret_key",
       "payment.stripe_webhook_secret",
+      "payment.centralpay_enabled",
+      "payment.centralpay_api_key",
+      "payment.centralpay_merchant_id",
+      "payment.centralpay_http_proxy",
     ],
   },
   {
@@ -43,6 +52,12 @@ const SECTIONS: { id: string; keys: string[] }[] = [
     keys: [
       "reseller.sub_reseller_max",
       "reseller.default_commission_percent",
+    ],
+  },
+  {
+    id: "portal",
+    keys: [
+      "portal.max_child_accounts",
     ],
   },
 ];
@@ -107,12 +122,12 @@ export const CommercialSettings: FC = () => {
   const hasChanges = Object.keys(draft).length > 0;
 
   return (
-    <div className="nx-stack" style={{ gap: 20 }}>
+    <div className="sk-stack" style={{ gap: 20 }}>
       <Callout tone="info">{t("commercial.hint")}</Callout>
       {SECTIONS.map((section) => (
         <Card key={section.id}>
           <CardHead title={t(`commercial.section.${section.id}`)} />
-          <div className="nx-stack" style={{ gap: 14 }}>
+          <div className="sk-stack" style={{ gap: 14 }}>
             {section.keys.map((key) => {
               const s = byKey[key];
               if (!s) return null;
@@ -122,10 +137,10 @@ export const CommercialSettings: FC = () => {
               if (s.type === "bool") {
                 const on = displayValue(s) === "true";
                 return (
-                  <div key={key} className="nx-row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
+                  <div key={key} className="sk-row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
                     <div>
                       <div style={{ fontWeight: 600, fontSize: 13 }}>{label}</div>
-                      {hint && <div className="nx-faint" style={{ fontSize: 12, marginTop: 4 }}>{hint}</div>}
+                      {hint && <div className="sk-faint" style={{ fontSize: 12, marginTop: 4 }}>{hint}</div>}
                     </div>
                     <Toggle
                       on={on}
@@ -154,7 +169,7 @@ export const CommercialSettings: FC = () => {
           </div>
         </Card>
       ))}
-      <div className="nx-row" style={{ justifyContent: "flex-end" }}>
+      <div className="sk-row" style={{ justifyContent: "flex-end" }}>
         <Button variant="primary" disabled={busy || !hasChanges} onClick={save}>{t("common.save")}</Button>
       </div>
     </div>

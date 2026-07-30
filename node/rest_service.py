@@ -605,7 +605,7 @@ class Service(object):
     def singbox_tls_status(
         self,
         session_id: UUID = Body(embed=True),
-        certificate_path: str = Body(embed=True, default="/var/lib/nexuspanel-node/tls/cert.pem"),
+        certificate_path: str = Body(embed=True, default="/var/lib/shahkar-node/tls/cert.pem"),
     ):
         self.match_session_id(session_id)
         from tls_inspect import inspect_cert_file
@@ -683,7 +683,7 @@ async def node_control_secret_middleware(request: Request, call_next):
     from config import NODE_CONTROL_SECRET
 
     if NODE_CONTROL_SECRET and request.method in ("POST", "PUT", "PATCH", "DELETE"):
-        provided = request.headers.get("X-Nexus-Control-Secret", "")
+        provided = request.headers.get("X-Shahkar-Control-Secret", "")
         if not hmac.compare_digest(provided, NODE_CONTROL_SECRET):
             return JSONResponse(status_code=403, content={"detail": "Invalid node control secret"})
     return await call_next(request)

@@ -42,13 +42,13 @@ export const RailHubLayout: FC<{
   const showRail = allIds.length > 1;
 
   return (
-    <div className="nx-page nx-biz">
+    <div className="sk-page sk-biz">
       <PageHeader title={title} subtitle={subtitle} description={description} actions={actions} />
-      <div className={`nx-biz-layout${showRail ? "" : " nx-biz-layout--solo"}`}>
+      <div className={`sk-biz-layout${showRail ? "" : " sk-biz-layout--solo"}`}>
         {showRail && (
           <SectionRail groups={visibleGroups} active={active} onChange={onTab} label={title} />
         )}
-        <div className="nx-section-panel">{children(active)}</div>
+        <div className="sk-section-panel">{children(active)}</div>
       </div>
     </div>
   );

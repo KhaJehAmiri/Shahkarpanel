@@ -236,7 +236,7 @@ def modify_admin(
     if (dbadmin.username != current_admin.username) and dbadmin.is_sudo:
         raise HTTPException(
             status_code=403,
-            detail="You're not allowed to edit another sudoer's account. Use nexuspanel-cli instead.",
+            detail="You're not allowed to edit another sudoer's account. Use shahkar-cli instead.",
         )
 
     updated_admin = crud.update_admin(db, dbadmin, modified_admin)
@@ -257,7 +257,7 @@ def remove_admin(
     if dbadmin.is_sudo:
         raise HTTPException(
             status_code=403,
-            detail="You're not allowed to delete sudo accounts. Use nexuspanel-cli instead.",
+            detail="You're not allowed to delete sudo accounts. Use shahkar-cli instead.",
         )
 
     crud.remove_admin(db, dbadmin)

@@ -1,4 +1,4 @@
-"""One-off SQLite -> PostgreSQL data migration for NexusPanel.
+"""One-off SQLite -> PostgreSQL data migration for Shahkar.
 
 Assumptions:
   * The destination PostgreSQL schema already exists (run ``alembic upgrade
@@ -6,7 +6,7 @@ Assumptions:
   * ``SQLALCHEMY_DATABASE_URL`` in the environment points at the *destination*
     PostgreSQL database (this is what the app will use after cutover).
   * The source SQLite file path is passed via ``--sqlite`` (default
-    ``/var/lib/nexuspanel/db.sqlite3``).
+    ``/var/lib/shahkar/db.sqlite3``).
 
 Copies every ORM-mapped table in FK-safe order using the typed metadata so
 JSON / Enum / Boolean / DateTime columns round-trip correctly, then fixes the
@@ -26,7 +26,7 @@ import app.db.models  # noqa: F401
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--sqlite", default="/var/lib/nexuspanel/db.sqlite3")
+    parser.add_argument("--sqlite", default="/var/lib/shahkar/db.sqlite3")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 

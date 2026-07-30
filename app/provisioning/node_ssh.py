@@ -1,6 +1,6 @@
 """Resolve SSH credentials for panel → node maintenance (rebuild, TLS, diagnostics).
 
-Secrets live under ``/var/lib/nexuspanel/secrets/`` (outside the git checkout)
+Secrets live under ``/var/lib/shahkar/secrets/`` (outside the git checkout)
 so they are not exposed via the ``.:/code`` bind mount inside the panel
 container. Override with ``NODE_SSH_KEY_FILE`` / ``WG_NODE_SSH_PASSWORD_FILE``.
 """
@@ -11,9 +11,9 @@ from pathlib import Path
 from typing import Optional
 
 DEFAULT_SECRETS_DIR = Path(
-    os.environ.get("NEXUSPANEL_SECRETS_DIR", "/var/lib/nexuspanel/secrets")
+    os.environ.get("SHAHKAR_SECRETS_DIR", "/var/lib/shahkar/secrets")
 )
-DEFAULT_KEY_FILE = DEFAULT_SECRETS_DIR / "nexuspanel_node"
+DEFAULT_KEY_FILE = DEFAULT_SECRETS_DIR / "shahkar_node"
 DEFAULT_PASSWORD_FILE = DEFAULT_SECRETS_DIR / "wg_node_ssh"
 
 

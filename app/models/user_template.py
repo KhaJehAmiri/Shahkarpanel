@@ -12,6 +12,7 @@ NATIVE_TEMPLATE_MARKERS: Dict[str, ProxyTypes] = {
     "__native:amneziawg": ProxyTypes.WireGuard,
     "__native:hysteria2": ProxyTypes.Hysteria2,
     "__native:tuic": ProxyTypes.TUIC,
+    "__native:anytls": ProxyTypes.AnyTLS,
 }
 NATIVE_TEMPLATE_PROTOCOLS = frozenset(p.value for p in NATIVE_TEMPLATE_MARKERS.values())
 

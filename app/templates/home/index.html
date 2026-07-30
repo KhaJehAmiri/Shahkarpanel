@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>NexusPanel</title>
-  <meta name="description" content="NexusPanel — Professional VPN Control Plane" />
+  <title>Shahkar</title>
+  <meta name="description" content="Shahkar — Professional VPN Control Plane" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" />
@@ -32,7 +32,7 @@
       -webkit-font-smoothing: antialiased;
     }
 
-    .nx-stage {
+    .sk-stage {
       position: relative;
       min-height: 100vh;
       min-height: 100dvh;
@@ -42,7 +42,7 @@
     }
 
     /* Full-bleed atmospheric plane */
-    .nx-plane {
+    .sk-plane {
       position: absolute;
       inset: 0;
       z-index: 0;
@@ -53,7 +53,7 @@
         linear-gradient(165deg, #06110e 0%, #0a1814 45%, #07120f 100%);
     }
 
-    .nx-plane::after {
+    .sk-plane::after {
       content: "";
       position: absolute;
       inset: 0;
@@ -62,16 +62,16 @@
         linear-gradient(90deg, rgba(46, 224, 196, 0.035) 1px, transparent 1px);
       background-size: 64px 64px;
       mask-image: radial-gradient(ellipse 75% 65% at 60% 35%, black, transparent);
-      animation: nx-drift 28s linear infinite;
+      animation: sk-drift 28s linear infinite;
       opacity: 0.7;
     }
 
-    @keyframes nx-drift {
+    @keyframes sk-drift {
       from { transform: translate3d(0, 0, 0); }
       to { transform: translate3d(-64px, -64px, 0); }
     }
 
-    .nx-orbits {
+    .sk-orbits {
       position: absolute;
       width: min(92vw, 720px);
       aspect-ratio: 1;
@@ -81,32 +81,32 @@
       pointer-events: none;
     }
 
-    html[dir="rtl"] .nx-orbits {
+    html[dir="rtl"] .sk-orbits {
       right: auto;
       left: -8%;
     }
 
-    .nx-orbits svg {
+    .sk-orbits svg {
       width: 100%;
       height: 100%;
-      animation: nx-spin 48s linear infinite;
+      animation: sk-spin 48s linear infinite;
     }
 
-    .nx-orbits .nx-ring-slow {
-      animation: nx-spin-rev 72s linear infinite;
+    .sk-orbits .sk-ring-slow {
+      animation: sk-spin-rev 72s linear infinite;
       transform-origin: 50% 50%;
     }
 
-    @keyframes nx-spin {
+    @keyframes sk-spin {
       from { transform: rotate(0deg); }
       to { transform: rotate(360deg); }
     }
-    @keyframes nx-spin-rev {
+    @keyframes sk-spin-rev {
       from { transform: rotate(0deg); }
       to { transform: rotate(-360deg); }
     }
 
-    .nx-top {
+    .sk-top {
       position: relative;
       z-index: 2;
       display: flex;
@@ -114,7 +114,7 @@
       padding: 22px 28px 0;
     }
 
-    .nx-lang {
+    .sk-lang {
       display: inline-flex;
       gap: 2px;
       padding: 3px;
@@ -124,7 +124,7 @@
       backdrop-filter: blur(10px);
     }
 
-    .nx-lang button {
+    .sk-lang button {
       appearance: none;
       border: 0;
       background: transparent;
@@ -137,14 +137,14 @@
       transition: color 0.2s, background 0.2s;
     }
 
-    .nx-lang button:hover { color: var(--fog); }
-    .nx-lang button.active {
+    .sk-lang button:hover { color: var(--fog); }
+    .sk-lang button.active {
       color: var(--ink);
       background: var(--accent);
       font-weight: 600;
     }
 
-    .nx-hero {
+    .sk-hero {
       position: relative;
       z-index: 2;
       display: flex;
@@ -152,30 +152,30 @@
       justify-content: center;
       padding: 48px clamp(24px, 6vw, 80px) 56px;
       max-width: 780px;
-      animation: nx-rise 0.9s cubic-bezier(0.22, 1, 0.36, 1) both;
+      animation: sk-rise 0.9s cubic-bezier(0.22, 1, 0.36, 1) both;
     }
 
-    html[dir="rtl"] .nx-hero { margin-inline-start: auto; }
+    html[dir="rtl"] .sk-hero { margin-inline-start: auto; }
 
-    @keyframes nx-rise {
+    @keyframes sk-rise {
       from { opacity: 0; transform: translateY(18px); }
       to { opacity: 1; transform: translateY(0); }
     }
 
-    .nx-mark {
+    .sk-mark {
       width: 42px;
       height: 42px;
       margin-bottom: 28px;
       color: var(--accent);
-      animation: nx-pulse 3.6s ease-in-out infinite;
+      animation: sk-pulse 3.6s ease-in-out infinite;
     }
 
-    @keyframes nx-pulse {
+    @keyframes sk-pulse {
       0%, 100% { opacity: 0.75; transform: scale(1); }
       50% { opacity: 1; transform: scale(1.04); }
     }
 
-    .nx-brand {
+    .sk-brand {
       font-family: var(--font-display);
       font-weight: 800;
       font-size: clamp(3rem, 9vw, 5.5rem);
@@ -185,11 +185,11 @@
       margin-bottom: 22px;
     }
 
-    .nx-brand span {
+    .sk-brand span {
       color: var(--accent);
     }
 
-    .nx-headline {
+    .sk-headline {
       font-family: var(--font-display);
       font-weight: 600;
       font-size: clamp(1.15rem, 2.4vw, 1.45rem);
@@ -200,7 +200,7 @@
       margin-bottom: 14px;
     }
 
-    .nx-support {
+    .sk-support {
       font-size: 1rem;
       font-weight: 400;
       line-height: 1.6;
@@ -209,14 +209,14 @@
       margin-bottom: 36px;
     }
 
-    .nx-cta {
+    .sk-cta {
       display: flex;
       flex-wrap: wrap;
       align-items: center;
       gap: 14px 22px;
     }
 
-    .nx-cta-primary {
+    .sk-cta-primary {
       display: inline-flex;
       align-items: center;
       gap: 10px;
@@ -232,23 +232,23 @@
       box-shadow: 0 0 0 0 rgba(46, 224, 196, 0);
     }
 
-    .nx-cta-primary:hover {
+    .sk-cta-primary:hover {
       transform: translateY(-1px);
       box-shadow: 0 12px 40px rgba(46, 224, 196, 0.28);
       background: #5aebd0;
     }
 
-    .nx-cta-primary svg {
+    .sk-cta-primary svg {
       width: 16px;
       height: 16px;
       transition: transform 0.2s ease;
     }
 
-    html[dir="rtl"] .nx-cta-primary svg { transform: scaleX(-1); }
-    .nx-cta-primary:hover svg { transform: translateX(3px); }
-    html[dir="rtl"] .nx-cta-primary:hover svg { transform: scaleX(-1) translateX(3px); }
+    html[dir="rtl"] .sk-cta-primary svg { transform: scaleX(-1); }
+    .sk-cta-primary:hover svg { transform: translateX(3px); }
+    html[dir="rtl"] .sk-cta-primary:hover svg { transform: scaleX(-1) translateX(3px); }
 
-    .nx-cta-ghost {
+    .sk-cta-ghost {
       color: var(--fog);
       text-decoration: none;
       font-weight: 500;
@@ -258,52 +258,52 @@
       transition: color 0.2s, border-color 0.2s;
     }
 
-    .nx-cta-ghost:hover {
+    .sk-cta-ghost:hover {
       color: var(--accent);
       border-color: rgba(46, 224, 196, 0.45);
     }
 
-    .nx-foot {
+    .sk-foot {
       position: relative;
       z-index: 2;
       padding: 0 28px 28px;
       font-size: 0.75rem;
       color: var(--mute);
       opacity: 0.75;
-      animation: nx-rise 1.1s 0.15s cubic-bezier(0.22, 1, 0.36, 1) both;
+      animation: sk-rise 1.1s 0.15s cubic-bezier(0.22, 1, 0.36, 1) both;
     }
 
     @media (max-width: 720px) {
-      .nx-orbits {
+      .sk-orbits {
         opacity: 0.35;
         right: -35%;
         width: 120vw;
         top: 18%;
         transform: none;
       }
-      html[dir="rtl"] .nx-orbits { left: -35%; right: auto; }
-      .nx-top { padding: 18px 18px 0; }
-      .nx-hero { padding: 36px 22px 48px; }
-      .nx-foot { padding: 0 22px 22px; }
+      html[dir="rtl"] .sk-orbits { left: -35%; right: auto; }
+      .sk-top { padding: 18px 18px 0; }
+      .sk-hero { padding: 36px 22px 48px; }
+      .sk-foot { padding: 0 22px 22px; }
     }
 
     @media (prefers-reduced-motion: reduce) {
-      .nx-plane::after,
-      .nx-orbits svg,
-      .nx-orbits .nx-ring-slow,
-      .nx-mark,
-      .nx-hero,
-      .nx-foot { animation: none !important; }
+      .sk-plane::after,
+      .sk-orbits svg,
+      .sk-orbits .sk-ring-slow,
+      .sk-mark,
+      .sk-hero,
+      .sk-foot { animation: none !important; }
     }
   </style>
 </head>
 <body>
-  <div class="nx-stage">
-    <div class="nx-plane" aria-hidden="true">
-      <div class="nx-orbits">
+  <div class="sk-stage">
+    <div class="sk-plane" aria-hidden="true">
+      <div class="sk-orbits">
         <svg viewBox="0 0 640 640" fill="none">
           <circle cx="320" cy="320" r="210" stroke="rgba(46,224,196,0.18)" stroke-width="1.2" />
-          <circle class="nx-ring-slow" cx="320" cy="320" r="278" stroke="rgba(46,224,196,0.1)" stroke-width="1" stroke-dasharray="6 14" />
+          <circle class="sk-ring-slow" cx="320" cy="320" r="278" stroke="rgba(46,224,196,0.1)" stroke-width="1" stroke-dasharray="6 14" />
           <circle cx="320" cy="320" r="146" stroke="rgba(46,224,196,0.22)" stroke-width="1.4" />
           <circle cx="320" cy="110" r="5" fill="#2ee0c4" opacity="0.9" />
           <circle cx="510" cy="360" r="4" fill="#2ee0c4" opacity="0.65" />
@@ -314,8 +314,8 @@
       </div>
     </div>
 
-    <header class="nx-top">
-      <div class="nx-lang" role="group" aria-label="Language">
+    <header class="sk-top">
+      <div class="sk-lang" role="group" aria-label="Language">
         <button type="button" data-lang="en" class="active">EN</button>
         <button type="button" data-lang="fa">FA</button>
         <button type="button" data-lang="ru">RU</button>
@@ -323,29 +323,29 @@
       </div>
     </header>
 
-    <main class="nx-hero">
-      <svg class="nx-mark" viewBox="0 0 42 42" fill="none" aria-hidden="true">
+    <main class="sk-hero">
+      <svg class="sk-mark" viewBox="0 0 42 42" fill="none" aria-hidden="true">
         <circle cx="21" cy="21" r="18" stroke="currentColor" stroke-width="1.5" opacity="0.35" />
         <circle cx="21" cy="21" r="9" stroke="currentColor" stroke-width="2" />
         <circle cx="21" cy="21" r="3" fill="currentColor" />
       </svg>
 
-      <h1 class="nx-brand">Nexus<span>Panel</span></h1>
-      <p class="nx-headline" id="headline">The control plane for modern VPN fleets.</p>
-      <p class="nx-support" id="tagline">Multi-tenant. White-label. Xray at the core.</p>
+      <h1 class="sk-brand">Shahkar</h1>
+      <p class="sk-headline" id="headline">The control plane for modern VPN fleets.</p>
+      <p class="sk-support" id="tagline">Multi-tenant. White-label. Xray at the core.</p>
 
-      <div class="nx-cta">
-        <a class="nx-cta-primary" href="/portal/">
+      <div class="sk-cta">
+        <a class="sk-cta-primary" href="/portal/">
           <span id="lbl-portal">Open portal</span>
           <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
         </a>
-        <a class="nx-cta-ghost" href="/subscribe/" id="lbl-sub">Subscription</a>
+        <a class="sk-cta-ghost" href="/subscribe/" id="lbl-sub">Subscription</a>
       </div>
     </main>
 
-    <p class="nx-foot" id="foot">Admin dashboard access is provided by your operator.</p>
+    <p class="sk-foot" id="foot">Admin dashboard access is provided by your operator.</p>
   </div>
 
   <script>
@@ -389,7 +389,7 @@
       document.getElementById("lbl-portal").textContent = d.portal;
       document.getElementById("lbl-sub").textContent = d.sub;
       document.getElementById("foot").textContent = d.foot;
-      document.querySelectorAll(".nx-lang button").forEach(function (b) {
+      document.querySelectorAll(".sk-lang button").forEach(function (b) {
         b.classList.toggle("active", b.getAttribute("data-lang") === code);
       });
     }
@@ -402,7 +402,7 @@
       : (["en", "fa", "ru", "zh"].indexOf(nav) >= 0 ? nav : "en");
     setLang(initial);
 
-    document.querySelectorAll(".nx-lang button").forEach(function (b) {
+    document.querySelectorAll(".sk-lang button").forEach(function (b) {
       b.addEventListener("click", function () {
         var code = b.getAttribute("data-lang");
         setLang(code);

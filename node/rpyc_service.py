@@ -398,7 +398,7 @@ class XrayService(rpyc.Service):
         self.singbox.stop()
 
     @rpyc.exposed
-    def singbox_tls_status(self, certificate_path: str = "/var/lib/nexuspanel-node/tls/cert.pem") -> str:
+    def singbox_tls_status(self, certificate_path: str = "/var/lib/shahkar-node/tls/cert.pem") -> str:
         import json
         from tls_inspect import inspect_cert_file
 

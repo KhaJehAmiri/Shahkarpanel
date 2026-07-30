@@ -147,7 +147,7 @@ def build_install_command(
     role: str = "direct",
     core_kind: str = "xray",
     region: Optional[str] = None,
-    image: str = "nexuspanel/node:latest",
+    image: str = "shahkar/node:latest",
     node_port: int = 62050,
     node_api_port: int = 62051,
     control_secret: Optional[str] = None,
@@ -229,7 +229,7 @@ def build_install_command(
         f"-e NODE_CONTROL_SECRET={q(control_secret)} " if control_secret else ""
     )
 
-    client_cert_path = "/var/lib/nexuspanel-node/panel_client_ca.pem"
+    client_cert_path = "/var/lib/shahkar-node/panel_client_ca.pem"
     cert_env = ""
     write_client_cert = ""
     if client_cert_pem:
@@ -268,7 +268,7 @@ def build_install_command(
             "for WP in 51820 51821 51901; do "
             "iptables -C INPUT -p udp --dport \"$WP\" -j ACCEPT 2>/dev/null "
             "|| iptables -I INPUT -p udp --dport \"$WP\" -j ACCEPT; "
-            "command -v ufw >/dev/null 2>&1 && ufw allow \"$WP/udp\" comment nexuspanel-wg >/dev/null 2>&1 || true; "
+            "command -v ufw >/dev/null 2>&1 && ufw allow \"$WP/udp\" comment shahkar-wg >/dev/null 2>&1 || true; "
             "done; "
         )
 
@@ -335,8 +335,8 @@ def build_install_command(
         "grep -q '^net.ipv4.ip_forward=1' /etc/sysctl.conf 2>/dev/null "
         "|| echo 'net.ipv4.ip_forward=1' >> /etc/sysctl.conf; "
         f"{host_network_tuning_shell()}; "
-        "docker rm -f nexusnode >/dev/null 2>&1 || true; "
-        "mkdir -p /var/lib/nexuspanel-node; "
+        "docker rm -f shahkarnode >/dev/null 2>&1 || true; "
+        "mkdir -p /var/lib/shahkar-node; "
         f"{write_client_cert}"
         f"{ensure_image}"
         # --cap-add=NET_ADMIN + host network let the agent manage the wg interface.
@@ -344,9 +344,9 @@ def build_install_command(
         # --init runs tini as PID 1 so daemons that double-fork and detach
         # (amneziawg-go) get reaped when they exit instead of piling up as
         # zombies under the Python agent, which never calls wait() on them.
-        "docker run -d --name nexusnode --restart=always --network=host --init "
+        "docker run -d --name shahkarnode --restart=always --network=host --init "
         "--cap-add=NET_ADMIN --device /dev/net/tun:/dev/net/tun "
-        "-v /var/lib/nexuspanel-node:/var/lib/nexuspanel-node "
+        "-v /var/lib/shahkar-node:/var/lib/shahkar-node "
         "-e SERVICE_PROTOCOL=rpyc "
         f"{secret_env}"
         f"{cert_env}"
@@ -375,7 +375,7 @@ def build_agent_refresh_command(
     if marker in full:
         body = full[full.index(marker) :]
     else:
-        body = full[full.index("docker rm -f nexusnode") :]
+        body = full[full.index("docker rm -f shahkarnode") :]
     return "set -e; " + body
 
 
@@ -390,9 +390,9 @@ def soft_restart_agent_command(
     """
     from config import NODE_AGENT_IMAGE
 
-    ref = (image or NODE_AGENT_IMAGE).strip() or "nexuspanel/node:latest"
-    rm_at = command.index("docker rm -f nexusnode")
-    run_at = command.index("docker run -d --name nexusnode")
+    ref = (image or NODE_AGENT_IMAGE).strip() or "shahkar/node:latest"
+    rm_at = command.index("docker rm -f shahkarnode")
+    run_at = command.index("docker run -d --name shahkarnode")
     mid = command[rm_at:run_at]
     if "NP_IMG=" in mid:
         mid = mid[: mid.index("NP_IMG=")]
@@ -554,14 +554,14 @@ def push_agent_image_via_ssh(
     )
     from config import NODE_AGENT_IMAGE
 
-    ref = (image or NODE_AGENT_IMAGE).strip() or "nexuspanel/node:latest"
+    ref = (image or NODE_AGENT_IMAGE).strip() or "shahkar/node:latest"
     try:
         local_id = image_id(ref)
         local = cached_image_path(ref)
     except AgentImageUnavailable as exc:
         raise ProvisioningError(str(exc)) from exc
 
-    remote = f"/tmp/nexuspanel-node-agent-{os.getpid()}.tar.gz"
+    remote = f"/tmp/shahkar-node-agent-{os.getpid()}.tar.gz"
     client = _connect_ssh(creds, timeout=timeout)
     try:
         if not force:
@@ -668,7 +668,7 @@ def install_control_pubkey(creds: SSHCredentials, timeout: int = 30) -> bool:
     if not pubkey:
         return False
 
-    marker = "# nexuspanel-control-tunnel"
+    marker = "# shahkar-control-tunnel"
     script = (
         "set -e; "
         "mkdir -p ~/.ssh; chmod 700 ~/.ssh; "

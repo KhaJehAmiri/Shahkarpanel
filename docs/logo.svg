@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 160" fill="none" role="img" aria-label="NexusPanel">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 160" fill="none" role="img" aria-label="Shahkar">
   <defs>
     <linearGradient id="nx" x1="44" y1="46" x2="116" y2="114" gradientUnits="userSpaceOnUse">
       <stop stop-color="#2ee0c4"/>
@@ -16,6 +16,5 @@
     <circle cx="98" cy="30" r="3.25" fill="#2ee0c4"/>
   </g>
 
-  <text x="168" y="97" fill="#f4f4f5" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="54" font-weight="700" letter-spacing="-1.8">Nexus</text>
-  <text x="346" y="97" fill="#71717a" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="54" font-weight="600" letter-spacing="-1.4">Panel</text>
+  <text x="168" y="97" fill="#f4f4f5" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="54" font-weight="700" letter-spacing="-1.8">Shahkar</text>
 </svg>

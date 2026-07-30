@@ -11,7 +11,7 @@ from typing import Any
 
 from config import XRAY_EXECUTABLE_PATH
 
-XRAY_TLS_DIR = Path("/var/lib/nexuspanel/xray-tls")
+XRAY_TLS_DIR = Path("/var/lib/shahkar/xray-tls")
 
 
 def _ensure_tls_dir() -> None:
@@ -23,7 +23,7 @@ def _ensure_tls_dir() -> None:
     if not os.access(XRAY_TLS_DIR, os.W_OK):
         raise RuntimeError(
             f"TLS directory is not writable: {XRAY_TLS_DIR}. "
-            "Run on the host: chown -R 1000:1000 /var/lib/nexuspanel/xray-tls"
+            "Run on the host: chown -R 1000:1000 /var/lib/shahkar/xray-tls"
         )
 
 
@@ -35,7 +35,7 @@ def _remove_if_writable(path: Path) -> None:
     except PermissionError as err:
         raise RuntimeError(
             f"Cannot overwrite {path}: permission denied. "
-            "Run on the host: chown -R 1000:1000 /var/lib/nexuspanel/xray-tls"
+            "Run on the host: chown -R 1000:1000 /var/lib/shahkar/xray-tls"
         ) from err
 
 
@@ -134,12 +134,12 @@ def discover_tls_certificates() -> list[dict[str, Any]]:
             server_name=domain,
         )
 
-    node_cert = "/var/lib/nexuspanel-node/tls/cert.pem"
-    node_key = "/var/lib/nexuspanel-node/tls/key.pem"
+    node_cert = "/var/lib/shahkar-node/tls/cert.pem"
+    node_key = "/var/lib/shahkar-node/tls/key.pem"
     add(node_cert, node_key, label="Node default TLS", cert_id="node-default")
 
-    bootstrap_cert = "/var/lib/nexuspanel/ssl/bootstrap.crt"
-    bootstrap_key = "/var/lib/nexuspanel/ssl/bootstrap.key"
+    bootstrap_cert = "/var/lib/shahkar/ssl/bootstrap.crt"
+    bootstrap_key = "/var/lib/shahkar/ssl/bootstrap.key"
     add(bootstrap_cert, bootstrap_key, label="Panel bootstrap (self-signed)", cert_id="panel-bootstrap")
 
     if XRAY_TLS_DIR.is_dir():
@@ -159,7 +159,7 @@ def discover_tls_certificates() -> list[dict[str, Any]]:
 
 
 def generate_self_signed(domain: str) -> dict[str, Any]:
-    """Create a self-signed cert under /var/lib/nexuspanel/xray-tls."""
+    """Create a self-signed cert under /var/lib/shahkar/xray-tls."""
     raw = (domain or "").strip()
     if not raw:
         raise ValueError("Domain or IP is required for self-signed certificate")

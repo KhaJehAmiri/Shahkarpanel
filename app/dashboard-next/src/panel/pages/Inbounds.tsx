@@ -44,7 +44,7 @@ export const Inbounds: FC<{ embedded?: boolean }> = ({ embedded }) => {
           description={t("inbounds.description")}
           actions={
             <Button variant="ghost" onClick={reload} disabled={saving || loading}>
-              <IcRefresh className="nx-ico" /> {t("common.refresh")}
+              <IcRefresh className="sk-ico" /> {t("common.refresh")}
             </Button>
           }
         />

@@ -18,7 +18,7 @@ from typing import Dict, List, Optional, Tuple
 
 from app.wireguard.sync import WGUserPeer, build_pubkey_user_map
 
-logger = logging.getLogger("nexus-wg")
+logger = logging.getLogger("shahkar-wg")
 
 # Soft TTL: even without an explicit invalidate, refresh occasionally so a
 # missed invalidate cannot drift forever. Hard rebuilds still go through

@@ -131,7 +131,7 @@ def _dispatch_app_push(message: Notification) -> None:
             return
         action = getattr(message, "action", None)
         key = action.value if action else None
-        title, body = _PUSH_COPY.get(key, ("NexusPanel", "Account update"))
+        title, body = _PUSH_COPY.get(key, ("Shahkar", "Account update"))
         with GetDB() as db:
             dbuser = crud.get_user(db, username)
             if dbuser and dbuser.portal_enabled:

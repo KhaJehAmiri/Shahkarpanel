@@ -1,4 +1,4 @@
-{# NexusPanel subscription page — graphical, branded, one-tap import. #}
+{# Shahkar subscription page — graphical, branded, one-tap import. #}
 {%- set used = user.used_traffic or 0 -%}
 {%- set total = user.data_limit or 0 -%}
 {%- set pct = (used / total * 100) if total else 0 -%}
@@ -17,7 +17,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#0b0f14" media="(prefers-color-scheme: dark)" />
   <meta name="theme-color" content="#f4f6fa" media="(prefers-color-scheme: light)" />
-  <title>{{ user.username }} — NexusPanel</title>
+  <title>{{ user.username }} — Shahkar</title>
   <link rel="icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><circle cx='12' cy='12' r='10' fill='%232ee0c4'/></svg>" />
 
   <style>
@@ -257,7 +257,7 @@
       <div class="avatar" aria-hidden>{{ user.username[:2]|upper }}</div>
       <div class="hero-meta">
         <div class="hero-name">{{ user.username }}</div>
-        <div class="hero-sub">NexusPanel · اشتراک شخصی</div>
+        <div class="hero-sub">Shahkar · اشتراک شخصی</div>
         <div class="status-pill status-{{ status }}">
           <span class="pulse"></span>
           {% if status == "active" %}فعال
@@ -339,7 +339,7 @@
     {% endif %}
 
     <footer>
-      <div>NexusPanel · صفحه‌ی اشتراک</div>
+      <div>Shahkar · صفحه‌ی اشتراک</div>
       <div style="margin-top: 6px;">برای نصب اپ‌های پیشنهادی روی پلتفرم خود، روی هر دکمه‌ی بالا کلیک کنید.</div>
     </footer>
   </div>
@@ -460,20 +460,20 @@
       // ===== Client app catalog =====
       // Schemes adapted from each app's documented deep links.
       var enc = encodeURIComponent(SUB_URL);
-      var subName = "NexusPanel";
+      var subName = "Shahkar";
       var APPS = [
         { id: "v2rayng",    label: "v2rayNG",       platform: "ANDROID", color: "#1976d2", url: "v2rayng://install-sub/?url=" + enc(SUB_URL + "#" + subName) },
         { id: "v2rayn",     label: "v2rayN",        platform: "DESKTOP", color: "#7c3aed", url: "https://github.com/2dust/v2rayN/releases/latest" },
         { id: "nekobox",    label: "NekoBox",       platform: "ANDROID", color: "#ec4899", url: "sn://subscription?url=" + enc + "&name=" + enc(subName) },
-        { id: "hiddify",    label: "Hiddify",       platform: "ANY",     color: "#06b6d4", url: "hiddify://import/" + enc + "#NexusPanel" },
+        { id: "hiddify",    label: "Hiddify",       platform: "ANY",     color: "#06b6d4", url: "hiddify://import/" + enc + "#Shahkar" },
         { id: "streisand",  label: "Streisand",     platform: "IOS",     color: "#f59e0b", url: "streisand://import/" + enc },
         { id: "shadowrocket",label:"Shadowrocket", platform: "IOS",     color: "#ef4444", url: "shadowrocket://add/sub://" + btoa(SUB_URL) },
         { id: "foxray",     label: "FoXray",        platform: "IOS",     color: "#dc2626", url: "foxray://yiamapp.com/import?url=" + enc },
-        { id: "clashmeta",  label: "Clash Meta",    platform: "ANY",     color: "#0ea5e9", url: "clashmeta://install-config?url=" + enc + "&name=NexusPanel" },
+        { id: "clashmeta",  label: "Clash Meta",    platform: "ANY",     color: "#0ea5e9", url: "clashmeta://install-config?url=" + enc + "&name=Shahkar" },
         { id: "clashx",     label: "Clash X",       platform: "MACOS",   color: "#3b82f6", url: "clash://install-config?url=" + enc },
         { id: "singbox",    label: "sing-box",      platform: "ANY",     color: "#22c55e", url: "sing-box://import-remote-profile?url=" + enc },
         { id: "loon",       label: "Loon",          platform: "IOS",     color: "#8b5cf6", url: "loon://import?sub=" + enc },
-        { id: "qx",         label: "Quantumult X",  platform: "IOS",     color: "#10b981", url: "quantumult-x:///add-resource?remote-resource=" + encodeURIComponent('{"server_remote":"' + SUB_URL + ', tag=NexusPanel, update-interval=86400, opt-parser=false, enabled=true"}') },
+        { id: "qx",         label: "Quantumult X",  platform: "IOS",     color: "#10b981", url: "quantumult-x:///add-resource?remote-resource=" + encodeURIComponent('{"server_remote":"' + SUB_URL + ', tag=Shahkar, update-interval=86400, opt-parser=false, enabled=true"}') },
       ];
 
       // Rank by platform

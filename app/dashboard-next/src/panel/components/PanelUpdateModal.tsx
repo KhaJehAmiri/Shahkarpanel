@@ -48,32 +48,32 @@ export const PanelUpdateModal: FC<{
         </>
       )}
     >
-      <div className="nx-update-modal">
+      <div className="sk-update-modal">
         {check ? (
-          <div className="nx-update-versions">
+          <div className="sk-update-versions">
             <div>
-              <span className="nx-muted">{t("system.updateCurrent")}</span>
-              <div className="nx-update-ver">v{check.current_version}</div>
+              <span className="sk-muted">{t("system.updateCurrent")}</span>
+              <div className="sk-update-ver">v{check.current_version}</div>
             </div>
             {hasUpdate && (
               <>
-                <div className="nx-update-arrow" aria-hidden>→</div>
+                <div className="sk-update-arrow" aria-hidden>→</div>
                 <div>
-                  <span className="nx-muted">{t("system.updateAvailable")}</span>
-                  <div className="nx-update-ver accent">v{check.remote_version}</div>
+                  <span className="sk-muted">{t("system.updateAvailable")}</span>
+                  <div className="sk-update-ver accent">v{check.remote_version}</div>
                 </div>
               </>
             )}
           </div>
         ) : checking ? (
-          <p className="nx-muted">{t("common.loading")}</p>
+          <p className="sk-muted">{t("common.loading")}</p>
         ) : null}
 
         {check?.breaking && <Callout tone="warn">{t("system.updatesBreaking")}</Callout>}
 
         {hasUpdate && notes.length > 0 && !running && (
-          <div className="nx-whatsnew-notes nx-whatsnew-notes-inline">
-            <div className="nx-muted" style={{ fontSize: 12, marginBottom: 8 }}>{t("system.updateReleaseNotes")}</div>
+          <div className="sk-whatsnew-notes sk-whatsnew-notes-inline">
+            <div className="sk-muted" style={{ fontSize: 12, marginBottom: 8 }}>{t("system.updateReleaseNotes")}</div>
             <ul>
               {notes.map((line) => <li key={line}>{line}</li>)}
             </ul>
@@ -85,22 +85,22 @@ export const PanelUpdateModal: FC<{
         )}
 
         {running && job && (
-          <div className="nx-update-progress">
-            <p className="nx-muted">{t("system.updateJobRunning")}</p>
-            <div className="nx-stack" style={{ gap: 8, marginTop: 12 }}>
+          <div className="sk-update-progress">
+            <p className="sk-muted">{t("system.updateJobRunning")}</p>
+            <div className="sk-stack" style={{ gap: 8, marginTop: 12 }}>
               {STEP_IDS.map((stepId) => {
                 const s = job.steps.find((x) => x.id === stepId);
                 const st = s?.status || "pending";
                 const tone = st === "done" ? "ok" : st === "failed" ? "danger" : st === "running" ? "accent" : "default";
                 return (
-                  <div key={stepId} className="nx-row" style={{ gap: 8, fontSize: 13 }}>
+                  <div key={stepId} className="sk-row" style={{ gap: 8, fontSize: 13 }}>
                     <Pill tone={tone} dot>{t(`system.updateStep.${stepId}`)}</Pill>
                   </div>
                 );
               })}
             </div>
             {job.status === "success" && (
-              <Callout tone="ok" className="nx-mt-12">{t("system.updateReloading")}</Callout>
+              <Callout tone="ok" className="sk-mt-12">{t("system.updateReloading")}</Callout>
             )}
             {job.error_message && job.status === "failed" && (
               <Callout tone="danger">{job.error_message}</Callout>

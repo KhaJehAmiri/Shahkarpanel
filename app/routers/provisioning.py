@@ -260,7 +260,7 @@ def agent_bundle(request: Request, token: str):
     return Response(
         content=payload,
         media_type="application/gzip",
-        headers={"Content-Disposition": 'attachment; filename="nexuspanel-node-agent.tar.gz"'},
+        headers={"Content-Disposition": 'attachment; filename="shahkar-node-agent.tar.gz"'},
     )
 
 
@@ -282,7 +282,7 @@ def agent_image(request: Request, token: str):
     return FileResponse(
         path,
         media_type="application/gzip",
-        filename="nexuspanel-node-agent-image.tar.gz",
+        filename="shahkar-node-agent-image.tar.gz",
     )
 
 

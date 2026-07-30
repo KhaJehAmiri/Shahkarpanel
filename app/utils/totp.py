@@ -48,7 +48,7 @@ def verify(secret: str, code: str, window: int = 1) -> bool:
     return False
 
 
-def provisioning_uri(secret: str, account_name: str, issuer: str = "NexusPanel") -> str:
+def provisioning_uri(secret: str, account_name: str, issuer: str = "Shahkar") -> str:
     """Build an otpauth:// URI for QR-code enrollment."""
     label = urllib.parse.quote(f"{issuer}:{account_name}")
     params = urllib.parse.urlencode(

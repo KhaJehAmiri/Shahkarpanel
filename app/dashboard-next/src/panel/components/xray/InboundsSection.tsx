@@ -198,12 +198,12 @@ export const InboundsSection: FC<{
   const hasAny = inbounds.length > 0 || sbRows.length > 0;
 
   return (
-    <div className="nx-stack nx-hub-panel">
+    <div className="sk-stack sk-hub-panel">
       <CoreHealthBanner />
-      <p className="nx-hub-lede">{t("inbounds.autoPersistHint")}</p>
+      <p className="sk-hub-lede">{t("inbounds.autoPersistHint")}</p>
 
-      <div className="nx-proto-toolbar">
-        <div className="nx-proto-toolbar-start">
+      <div className="sk-proto-toolbar">
+        <div className="sk-proto-toolbar-start">
           {singboxPresets.length > 0 && !readOnly && (
             <>
               <Button size="sm" variant="ghost" disabled={busy} onClick={() => setSingboxModal({ presetId: "tuic-inbound" })}>
@@ -215,7 +215,7 @@ export const InboundsSection: FC<{
             </>
           )}
         </div>
-        <div className="nx-proto-toolbar-end">
+        <div className="sk-proto-toolbar-end">
           {!readOnly && (
             <Button size="sm" variant="ghost" onClick={() => openImportPicker(null)} disabled={busy}>
               {t("inbounds.importInbound")}
@@ -223,7 +223,7 @@ export const InboundsSection: FC<{
           )}
           {!readOnly && (
             <Button size="sm" variant="primary" onClick={openAdd} disabled={busy}>
-              <IcPlus className="nx-ico" /> {t("infra.addInbound")}
+              <IcPlus className="sk-ico" /> {t("infra.addInbound")}
             </Button>
           )}
         </div>
@@ -243,9 +243,9 @@ export const InboundsSection: FC<{
             title={t("common.noData")}
             desc={t("inbounds.emptyDesc")}
             action={
-              <div className="nx-row" style={{ gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
+              <div className="sk-row" style={{ gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
                 <Button variant="primary" onClick={openAdd} disabled={busy}>
-                  <IcPlus className="nx-ico" /> {t("infra.addInbound")}
+                  <IcPlus className="sk-ico" /> {t("infra.addInbound")}
                 </Button>
                 <Button onClick={() => setSingboxModal({ presetId: "tuic-inbound" })} disabled={busy}>
                   + TUIC
@@ -254,50 +254,50 @@ export const InboundsSection: FC<{
             }
           />
         ) : (
-          <div className="nx-table-wrap">
-            <table className="nx-table">
+          <div className="sk-table-wrap">
+            <table className="sk-table">
               <thead>
                 <tr>
                   <th>{t("infra.remark")}</th>
                   <th>{t("inbounds.protocol")}</th>
-                  <th className="nx-num">{t("infra.port")}</th>
+                  <th className="sk-num">{t("infra.port")}</th>
                   <th>{t("infra.transport")}</th>
                   <th>{t("xray.security")}</th>
                   <th>{t("common.status")}</th>
-                  <th className="nx-actions" />
+                  <th className="sk-actions" />
                 </tr>
               </thead>
               <tbody>
                 {sbRows.map((row) => (
                   <tr key={row.id}>
                     <td>
-                      <div className="nx-proto-name">
-                        <span className="nx-proto-name-main">{row.tag}</span>
-                        <span className="nx-proto-name-sub">{row.node_name}</span>
+                      <div className="sk-proto-name">
+                        <span className="sk-proto-name-main">{row.tag}</span>
+                        <span className="sk-proto-name-sub">{row.node_name}</span>
                       </div>
                     </td>
                     <td>
-                      <span className="nx-proto-chip">{row.protocol.toUpperCase()}</span>
-                      <span className="nx-proto-chip is-muted">sing-box</span>
+                      <span className="sk-proto-chip">{row.protocol.toUpperCase()}</span>
+                      <span className="sk-proto-chip is-muted">sing-box</span>
                     </td>
-                    <td className="nx-num nx-mono">{row.port}</td>
-                    <td className="nx-proto-meta">{row.transport}</td>
-                    <td className="nx-proto-meta">{row.tls_trusted ? "TLS" : "TLS?"}</td>
+                    <td className="sk-num sk-mono">{row.port}</td>
+                    <td className="sk-proto-meta">{row.transport}</td>
+                    <td className="sk-proto-meta">{row.tls_trusted ? "TLS" : "TLS?"}</td>
                     <td><Pill tone={row.node_status === "connected" ? "ok" : "default"} dot>{row.node_status}</Pill></td>
-                    <td className="nx-actions">
+                    <td className="sk-actions">
                       <TableRowMenu
                         items={[
                           {
                             id: "edit",
                             label: t("common.edit"),
-                            icon: <IcEdit className="nx-ico" />,
+                            icon: <IcEdit className="sk-ico" />,
                             disabled: busy,
                             onClick: () => setSingboxModal({ presetId: row.preset_id as "tuic-inbound" | "anytls-inbound", edit: row }),
                           },
                           {
                             id: "del",
                             label: t("common.delete"),
-                            icon: <IcTrash className="nx-ico" />,
+                            icon: <IcTrash className="sk-ico" />,
                             danger: true,
                             disabled: busy,
                             onClick: () => disableSingbox(row),
@@ -315,13 +315,13 @@ export const InboundsSection: FC<{
                   return (
                     <tr key={String(i.tag)} className={enabled ? undefined : "is-muted"}>
                       <td>
-                        <span className="nx-proto-name-main">{String(i.tag)}</span>
+                        <span className="sk-proto-name-main">{String(i.tag)}</span>
                       </td>
-                      <td><span className="nx-proto-chip">{displayProto}</span></td>
-                      <td className="nx-num nx-mono">{String(i.port)}</td>
-                      <td className="nx-proto-meta">{inboundTransportLabel(i)}</td>
+                      <td><span className="sk-proto-chip">{displayProto}</span></td>
+                      <td className="sk-num sk-mono">{String(i.port)}</td>
+                      <td className="sk-proto-meta">{inboundTransportLabel(i)}</td>
                       <td>
-                        <span className={`nx-proto-meta${sec === "reality" ? " is-warn" : ""}`}>{sec}</span>
+                        <span className={`sk-proto-meta${sec === "reality" ? " is-warn" : ""}`}>{sec}</span>
                       </td>
                       <td>
                         <Toggle
@@ -331,13 +331,13 @@ export const InboundsSection: FC<{
                           onChange={() => toggleEnable(i)}
                         />
                       </td>
-                      <td className="nx-actions">
+                      <td className="sk-actions">
                         <TableRowMenu
                           items={([
                             {
                               id: "export",
                               label: t("inbounds.exportInbound"),
-                              icon: <IcDownload className="nx-ico" />,
+                              icon: <IcDownload className="sk-ico" />,
                               disabled: saving || persisting,
                               onClick: () => exportInbound(String(i.tag)),
                             },
@@ -359,21 +359,21 @@ export const InboundsSection: FC<{
                                   {
                                     id: "sub",
                                     label: t("inboundSub.openModal"),
-                                    icon: <IcGlobe className="nx-ico" />,
+                                    icon: <IcGlobe className="sk-ico" />,
                                     disabled: busy,
                                     onClick: () => setSubInboundTag(String(i.tag)),
                                   },
                                   {
                                     id: "edit",
                                     label: t("common.edit"),
-                                    icon: <IcEdit className="nx-ico" />,
+                                    icon: <IcEdit className="sk-ico" />,
                                     disabled: busy,
                                     onClick: () => openEdit(i),
                                   },
                                   {
                                     id: "del",
                                     label: t("common.delete"),
-                                    icon: <IcTrash className="nx-ico" />,
+                                    icon: <IcTrash className="sk-ico" />,
                                     danger: true,
                                     disabled: busy,
                                     onClick: () => remove(String(i.tag)),

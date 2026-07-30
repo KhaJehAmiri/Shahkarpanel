@@ -97,19 +97,19 @@ export const NodeXrayOverrideModal: FC<{
         </>
       }
     >
-      <div className="nx-stack">
+      <div className="sk-stack">
         <Callout tone="info">{t("infra.xrayOverrideHint")}</Callout>
         <Field label={t("infra.xrayOverrideFragment")}>
           {loading ? t("common.loading") : (
             <JsonCodeEditor value={text} onChange={setText} minLines={18} />
           )}
         </Field>
-        <div className="nx-row" style={{ gap: 8 }}>
+        <div className="sk-row" style={{ gap: 8 }}>
           <Button size="sm" variant="ghost" onClick={() => void loadPreview()}>{t("infra.xrayOverridePreview")}</Button>
         </div>
         {showPreview && preview && (
           <Field label={t("infra.xrayOverrideEffective")}>
-            <pre className="nx-mono" style={{ maxHeight: 280, overflow: "auto", margin: 0, padding: 12, background: "var(--nx-surface-2)", borderRadius: 8 }}>
+            <pre className="sk-mono" style={{ maxHeight: 280, overflow: "auto", margin: 0, padding: 12, background: "var(--sk-surface-2)", borderRadius: 8 }}>
               {preview}
             </pre>
           </Field>

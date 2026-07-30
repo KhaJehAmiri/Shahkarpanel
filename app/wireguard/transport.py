@@ -16,7 +16,7 @@ import time
 from contextlib import contextmanager
 from typing import Any, Callable, Iterator, List, Optional, Sequence
 
-logger = logging.getLogger("nexus-wg")
+logger = logging.getLogger("shahkar-wg")
 
 
 class WireGuardTransportError(Exception):

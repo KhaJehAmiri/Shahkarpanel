@@ -9,10 +9,10 @@ from xray_api.types.account import ShadowsocksMethods, is_ss2022
 from app.models.proxy import _is_valid_ss2022_key
 
 
-NXPANEL_INBOUND_KIND = "nexusPanelKind"
+SHAHKAR_INBOUND_KIND = "shahkarPanelKind"
 
 # Panel-only inbound flag stored in XRAY_JSON; stripped before Xray run/test.
-NXPANEL_INBOUND_ENABLE_KEY = "enable"
+SHAHKAR_INBOUND_ENABLE_KEY = "enable"
 
 # Xray destOverride accepts only these protocols (bittorrent is routing-only).
 SNIFF_DEST_OVERRIDE_ALLOWED = frozenset({"http", "tls", "quic", "fakedns"})
@@ -25,7 +25,7 @@ def inbound_is_enabled(inbound: Any) -> bool:
     """Return False only when the panel explicitly disabled the inbound."""
     if not isinstance(inbound, dict):
         return True
-    val = inbound.get(NXPANEL_INBOUND_ENABLE_KEY, inbound.get("enabled", True))
+    val = inbound.get(SHAHKAR_INBOUND_ENABLE_KEY, inbound.get("enabled", True))
     if val is False or val == 0:
         return False
     if isinstance(val, str) and val.strip().lower() in ("false", "0", "off", "no"):
@@ -36,7 +36,7 @@ def inbound_is_enabled(inbound: Any) -> bool:
 def strip_panel_inbound_fields(inbound: Dict[str, Any]) -> Dict[str, Any]:
     """Copy an inbound without panel-only keys that Xray must not see."""
     out = dict(inbound)
-    out.pop(NXPANEL_INBOUND_ENABLE_KEY, None)
+    out.pop(SHAHKAR_INBOUND_ENABLE_KEY, None)
     out.pop("enabled", None)
     return out
 
@@ -62,8 +62,8 @@ def runtime_core_config(config: Dict[str, Any]) -> Dict[str, Any]:
 def ensure_inbound_enable_flags(data: Dict[str, Any]) -> Dict[str, Any]:
     """Default missing ``enable`` to True on every inbound (idempotent)."""
     for ib in data.get("inbounds") or []:
-        if isinstance(ib, dict) and NXPANEL_INBOUND_ENABLE_KEY not in ib:
-            ib[NXPANEL_INBOUND_ENABLE_KEY] = True
+        if isinstance(ib, dict) and SHAHKAR_INBOUND_ENABLE_KEY not in ib:
+            ib[SHAHKAR_INBOUND_ENABLE_KEY] = True
     return data
 
 
@@ -331,7 +331,7 @@ def normalize_core_config_payload(payload: dict) -> dict:
             continue
 
         settings = dict(inbound.get("settings") or {})
-        is_amnezia = proto == "amneziawg" or settings.get(NXPANEL_INBOUND_KIND) == "amneziawg"
+        is_amnezia = proto == "amneziawg" or settings.get(SHAHKAR_INBOUND_KIND) == "amneziawg"
 
         inbound["protocol"] = "wireguard"
         inbound.pop("streamSettings", None)
@@ -339,7 +339,7 @@ def normalize_core_config_payload(payload: dict) -> dict:
         settings.pop("clients", None)
 
         if is_amnezia:
-            settings[NXPANEL_INBOUND_KIND] = "amneziawg"
+            settings[SHAHKAR_INBOUND_KIND] = "amneziawg"
 
         secret = str(settings.get("secretKey") or "").strip()
         if not secret:

@@ -43,7 +43,7 @@ $ admin [OPTIONS] COMMAND [ARGS]...
 
 Creates an admin
 
-Password can also be set using `NEXUSPANEL_ADMIN_PASSWORD`.
+Password can also be set using `SHAHKAR_ADMIN_PASSWORD`.
 
 **Usage**:
 

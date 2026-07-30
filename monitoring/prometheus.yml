@@ -3,10 +3,10 @@ global:
   evaluation_interval: 30s
 
 scrape_configs:
-  - job_name: nexuspanel
+  - job_name: shahkar
     metrics_path: /api/metrics
     scheme: http
-    # Provide the METRICS_TOKEN you configured in NexusPanel's .env.
+    # Provide the METRICS_TOKEN you configured in Shahkar's .env.
     authorization:
       type: Bearer
       credentials: "REPLACE_WITH_METRICS_TOKEN"

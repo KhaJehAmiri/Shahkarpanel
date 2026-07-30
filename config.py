@@ -147,7 +147,7 @@ NODE_AGENT_IMAGE = config("NODE_AGENT_IMAGE", default="shahkar/node:latest")
 NODE_AGENT_PACKAGE_URL = config(
     "NODE_AGENT_PACKAGE_URL",
     default=(
-        "https://github.com/KhaJehAmiri/shahkar/releases/download/"
+        "https://github.com/KhaJehAmiri/Shahkarpanel/releases/download/"
         "node-agent/shahkar-node-agent-image.tar.gz"
     ),
 )

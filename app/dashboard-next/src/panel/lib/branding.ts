@@ -30,11 +30,14 @@ export function applyFavicon(href: string) {
   apple.href = href.includes("favicon") ? "/sub-assets/brand/apple-touch-icon.png" : href;
 }
 
-export function applyBranding(branding: Branding | null | undefined) {
+export function applyBranding(branding: Branding | null | undefined, fallbackTitle = "Shahkar") {
+  if (typeof document === "undefined") return;
   if (branding?.primary_color) {
     document.documentElement.style.setProperty("--sk-accent", branding.primary_color);
   }
   applyFavicon(brandFaviconUrl(branding));
+  // Browser tab title must follow reseller/admin panel_title (static HTML is "Shahkar").
+  document.title = brandingTitle(branding, fallbackTitle);
 }
 
 export function brandingTitle(branding: Branding | null | undefined, fallback: string) {

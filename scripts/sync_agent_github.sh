@@ -4,7 +4,7 @@
 #
 # Usage:
 #   bash scripts/sync_agent_github.sh
-#   NODE_AGENT_GITHUB_REPO=KhaJehAmiri/shahkar \
+#   NODE_AGENT_GITHUB_REPO=KhaJehAmiri/Shahkarpanel \
 #   NODE_AGENT_GITHUB_TAG=node-agent \
 #   bash scripts/sync_agent_github.sh
 #
@@ -29,7 +29,7 @@ if [ -z "$REPO" ]; then
   fi
 fi
 if [ -z "$REPO" ]; then
-  REPO="KhaJehAmiri/shahkar"
+  REPO="KhaJehAmiri/Shahkarpanel"
 fi
 
 if ! gh auth status >/dev/null 2>&1; then

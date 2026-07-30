@@ -6,6 +6,7 @@ import { ApiError, api } from "../api/client";
 import { Branding, ResellerPricing, SubResellerAccount, Tenant } from "../api/types";
 import { useApp } from "../context/AppContext";
 import { useFetch } from "../lib/useFetch";
+import { applyBranding } from "../lib/branding";
 import { formatBytes } from "../lib/format";
 import { PageHeader } from "../components/Shell";
 import {
@@ -1179,6 +1180,7 @@ const BrandingTab: FC = () => {
     setBusy(true);
     try {
       await api.put("/branding/mine", model);
+      applyBranding(model);
       toast.push(t("common.saved"), "success"); setF(null); reload();
       // SSL runs in the background after save — refresh status so the UI
       // never shows a green "ready" while DNS/cert are still broken.

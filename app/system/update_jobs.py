@@ -23,7 +23,19 @@ UpdateMode = Literal["restart", "pip", "dashboard", "recreate", "rebuild"]
 
 _ROOT = Path(__file__).resolve().parents[2]
 _VERSION_FILE = _ROOT / "VERSION"
-_META_FILE = Path(os.environ.get("SHAHKAR_DATA_DIR", "/var/lib/shahkar")) / "install-meta.json"
+
+
+def _data_dir() -> Path:
+    """Panel data directory on the host mount (rebrand-safe)."""
+    env = (os.environ.get("SHAHKAR_DATA_DIR") or "").strip()
+    if env:
+        return Path(env)
+    for candidate in (Path("/var/lib/shahkar"), Path("/var/lib/nexuspanel"), Path("/var/lib/marzban")):
+        if candidate.is_dir():
+            return candidate
+    return Path("/var/lib/shahkar")
+
+
 _COMPOSE_PROJECT = os.environ.get("COMPOSE_PROJECT_NAME", "shahkar").strip() or "shahkar"
 _lock = threading.Lock()
 # Serialize every git mutation/fetch against the bind-mounted checkout.
@@ -137,20 +149,27 @@ def _read_version_file(path: Path) -> Optional[str]:
 
 def _write_install_meta(version: str, sha: Optional[str] = None) -> None:
     try:
-        _META_FILE.parent.mkdir(parents=True, exist_ok=True)
+        meta = _data_dir() / "install-meta.json"
+        meta.parent.mkdir(parents=True, exist_ok=True)
         payload = {"version": version, "sha": sha, "updated_at": int(time.time())}
-        _META_FILE.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        meta.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     except OSError:
         pass
 
 
 def _read_install_meta() -> dict:
-    if not _META_FILE.is_file():
-        return {}
-    try:
-        return json.loads(_META_FILE.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return {}
+    for path in (
+        _data_dir() / "install-meta.json",
+        Path("/var/lib/shahkar/install-meta.json"),
+        Path("/var/lib/nexuspanel/install-meta.json"),
+    ):
+        if not path.is_file():
+            continue
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+    return {}
 
 
 def _version_at_git_ref(ref: str) -> Optional[str]:
@@ -612,7 +631,7 @@ def _open_update_log():
     OLD in-memory version ("update says done but source didn't change"). Fall
     back to ``/tmp`` and finally to no log so the restart always proceeds.
     """
-    for candidate in (_META_FILE.parent / "update-rebuild.log", Path("/tmp") / "shahkar-update-rebuild.log"):
+    for candidate in (_data_dir() / "update-rebuild.log", Path("/tmp") / "shahkar-update-rebuild.log"):
         try:
             return open(candidate, "a", encoding="utf-8")
         except OSError:
@@ -929,11 +948,11 @@ def _worker(job_id: str) -> None:
         sha = _git_head_sha()
         _write_install_meta(new_ver, sha)
 
-        # Refresh host CLI (shahkar) — in-panel git pull does not update bins.
-        _refresh_host_manager()
-
-        # Before downtime: make sure host nginx serves the waiting page.
-        _ensure_nginx_restarting_page()
+        # Host CLI + nginx waiting page are best-effort and must not block the
+        # in-dashboard job (Docker sidecars can hang past their timeouts on some
+        # hosts, leaving the UI spinner forever).
+        threading.Thread(target=_refresh_host_manager, daemon=True).start()
+        threading.Thread(target=_ensure_nginx_restarting_page, daemon=True).start()
 
         job.step_running("restart")
         if use_docker:
@@ -944,7 +963,7 @@ def _worker(job_id: str) -> None:
 
         job.status = "success"
         if use_docker:
-            time.sleep(3)
+            time.sleep(1)
             # Preserve rebuild/recreate: a plain restart can't apply an image
             # rebuild or docker-compose shape changes (mounts/caps/namespaces).
             action: UpdateMode = mode if mode in ("rebuild", "recreate") else "restart"

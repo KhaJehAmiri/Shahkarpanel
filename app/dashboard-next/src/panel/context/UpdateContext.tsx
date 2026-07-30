@@ -209,7 +209,32 @@ export const UpdateProvider: FC<{ sudo: boolean; lang: string; children: ReactNo
             clearWait();
           }
         }
-      } catch {
+      } catch (err: unknown) {
+        const status = (err as { status?: number } | null)?.status;
+        // Job state is in-memory: a panel restart mid-update drops it (404).
+        // If the API is already back on the target version, finish cleanly
+        // instead of spinning the waiting overlay forever.
+        if (status === 404) {
+          clearInterval(id);
+          const target = check?.remote_version || waitTarget;
+          try {
+            const ver = await fetchInstalledVersion();
+            if (target && ver === target) {
+              await finishWaitAndReload(target);
+              return;
+            }
+            if (ver && check?.current_version && ver !== check.current_version) {
+              await finishWaitAndReload(ver);
+              return;
+            }
+          } catch { /* still down */ }
+          clearWait();
+          setApplying(false);
+          setWaitingRestart(false);
+          setJob(null);
+          void refreshCheck(true);
+          return;
+        }
         // API down mid-restart: keep blocking this same panel page.
         if (check?.remote_version) {
           stashWait(check.remote_version, check.current_version);
@@ -220,18 +245,18 @@ export const UpdateProvider: FC<{ sudo: boolean; lang: string; children: ReactNo
       }
     }, 2000);
     return () => clearInterval(id);
-  }, [job?.id, job?.finished, check, lang]);
+  }, [job?.id, job?.finished, check, lang, waitTarget, finishWaitAndReload, refreshCheck]);
 
   // Poll until the panel API is back with the target version.
   useEffect(() => {
-    if (!waitingRestart || !waitTarget) return;
+    if (!waitingRestart) return;
     let cancelled = false;
     const tick = async () => {
       for (let n = 0; n < 90 && !cancelled; n += 1) {
         try {
           const ver = await fetchInstalledVersion();
-          if (ver === waitTarget) {
-            await finishWaitAndReload(waitTarget);
+          if (ver && (!waitTarget || ver === waitTarget)) {
+            await finishWaitAndReload(waitTarget || ver);
             return;
           }
           // Panel is up but still on old version briefly — keep waiting.

@@ -543,10 +543,62 @@ def _host_code_dir() -> str:
     root = str(_ROOT)
     if root not in ("", "/code") and Path(root).is_dir():
         return root
-    for candidate in ("/opt/shahkar", "/opt/marzban"):
+    for candidate in ("/opt/shahkar", "/opt/nexuspanel", "/opt/marzban"):
         # Prefer a conventional host path even when not visible in-container.
         return candidate
     return root if root else "/opt/shahkar"
+
+
+def _refresh_host_manager() -> None:
+    """Reinstall ``/usr/local/bin/shahkar`` on the Docker host after a git pull.
+
+    In-panel updates only refresh the bind-mounted checkout; they never touched
+    the host CLI. Older installs keep a broken ``nexus`` wrapper pointing at
+    deleted ``scripts/nexus.sh``. Best-effort via privileged sidecar (same
+    pattern as the nginx waiting-page patch) — never fail the panel update.
+    """
+    install = _ROOT / "scripts" / "install-shahkar.sh"
+    if not install.is_file():
+        return
+    host_code = _host_code_dir()
+    project = (os.environ.get("COMPOSE_PROJECT_NAME") or "shahkar").strip() or "shahkar"
+    env = {
+        **os.environ,
+        "SHAHKAR_APP_DIR": host_code if host_code not in ("", "/code") else str(_ROOT),
+        "COMPOSE_PROJECT_NAME": project,
+    }
+    # Bare-metal / visible host path: run install directly.
+    if Path(host_code).is_dir() and (Path(host_code) / "scripts" / "install-shahkar.sh").is_file():
+        try:
+            subprocess.run(
+                ["bash", str(Path(host_code) / "scripts" / "install-shahkar.sh")],
+                env=env,
+                timeout=30,
+                check=False,
+                capture_output=True,
+            )
+        except Exception:
+            pass
+        return
+    image = _own_image()
+    if not image or not Path("/var/run/docker.sock").exists():
+        return
+    # Panel container: write host /usr/local/bin via a short-lived sidecar.
+    host_scripts = str(Path(host_code) / "scripts")
+    cmd = [
+        "docker", "run", "--rm", "--privileged",
+        "-v", f"{host_code}:{host_code}:ro",
+        "-v", "/usr/local/bin:/usr/local/bin",
+        "-e", f"SHAHKAR_APP_DIR={host_code}",
+        "-e", f"COMPOSE_PROJECT_NAME={project}",
+        "--entrypoint", "bash",
+        image,
+        f"{host_scripts}/install-shahkar.sh",
+    ]
+    try:
+        subprocess.run(cmd, timeout=60, check=False, capture_output=True)
+    except Exception:
+        pass
 
 
 def _open_update_log():
@@ -876,6 +928,9 @@ def _worker(job_id: str) -> None:
         new_ver = _local_version()
         sha = _git_head_sha()
         _write_install_meta(new_ver, sha)
+
+        # Refresh host CLI (shahkar) — in-panel git pull does not update bins.
+        _refresh_host_manager()
 
         # Before downtime: make sure host nginx serves the waiting page.
         _ensure_nginx_restarting_page()

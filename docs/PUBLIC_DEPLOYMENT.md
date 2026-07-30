@@ -15,7 +15,7 @@ smart layer (profiles, negotiation, dedicated IPs) is purely additive.
 ## Install & secure (one line)
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/shahkar/master/scripts/shahkar.sh) install
+bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/Shahkarpanel/master/scripts/shahkar.sh) install
 ```
 
 The installer ships **secure by default**:

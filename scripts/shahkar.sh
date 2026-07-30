@@ -22,7 +22,7 @@ set -euo pipefail
 APP_NAME="shahkar"
 APP_DIR="${APP_DIR:-/opt/shahkar}"
 DATA_DIR="${DATA_DIR:-/var/lib/shahkar}"
-REPO_URL="${REPO_URL:-https://github.com/KhaJehAmiri/shahkar.git}"
+REPO_URL="${REPO_URL:-https://github.com/KhaJehAmiri/Shahkarpanel.git}"
 REPO_BRANCH="${REPO_BRANCH:-master}"
 PANEL_PORT="${PANEL_PORT:-8000}"
 # Optional: set DOMAIN (and EMAIL) to get a domain TLS cert; otherwise an
@@ -30,7 +30,7 @@ PANEL_PORT="${PANEL_PORT:-8000}"
 DOMAIN="${DOMAIN:-}"
 EMAIL="${EMAIL:-}"
 SKIP_HTTPS="${SKIP_HTTPS:-0}"
-SCRIPT_URL="${SCRIPT_URL:-https://raw.githubusercontent.com/KhaJehAmiri/shahkar/${REPO_BRANCH}/scripts/shahkar.sh}"
+SCRIPT_URL="${SCRIPT_URL:-https://raw.githubusercontent.com/KhaJehAmiri/Shahkarpanel/${REPO_BRANCH}/scripts/shahkar.sh}"
 BIN_PATH="/usr/local/bin/${APP_NAME}"
 
 # Brand palette (matches dashboard accent + host `shahkar` console)

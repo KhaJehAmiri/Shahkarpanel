@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/KhaJehAmiri/shahkar/master/docs/logo.svg" width="88" alt="Shahkar" />
+<img src="https://raw.githubusercontent.com/KhaJehAmiri/Shahkarpanel/master/docs/logo.svg" width="88" alt="Shahkar" />
 
 # Shahkar
 
@@ -15,7 +15,7 @@
 
 [English](./README.md) · [فارسی](./README-fa.md) · **简体中文** · [Русский](./README-ru.md)
 
-[一键安装](#-一键安装-vps) · [架构](#-架构) · [功能](#-功能矩阵) · [协议](#-协议与订阅) · [安全](#-安全公开仓库中的-tests) · [仓库](https://github.com/KhaJehAmiri/shahkar)
+[一键安装](#-一键安装-vps) · [架构](#-架构) · [功能](#-功能矩阵) · [协议](#-协议与订阅) · [安全](#-安全公开仓库中的-tests) · [仓库](https://github.com/KhaJehAmiri/Shahkarpanel)
 
 </div>
 
@@ -41,7 +41,7 @@
 在全新 **Ubuntu / Debian** 上以 **root** 执行：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/shahkar/master/scripts/shahkar.sh) install
+bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/Shahkarpanel/master/scripts/shahkar.sh) install
 ```
 
 | 项目 | 值 |
@@ -199,7 +199,7 @@ flowchart TB
 ## 开发
 
 ```bash
-git clone https://github.com/KhaJehAmiri/shahkar.git
+git clone https://github.com/KhaJehAmiri/Shahkarpanel.git
 cd shahkar
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
@@ -224,4 +224,4 @@ python3 main.py
 
 ## 许可证
 
-**[AGPL-3.0](LICENSE)** · [仓库](https://github.com/KhaJehAmiri/shahkar) · [CONTRIBUTING.md](CONTRIBUTING.md)
+**[AGPL-3.0](LICENSE)** · [仓库](https://github.com/KhaJehAmiri/Shahkarpanel) · [CONTRIBUTING.md](CONTRIBUTING.md)

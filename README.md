@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/KhaJehAmiri/shahkar/master/docs/logo.svg" width="88" alt="Shahkar" />
+<img src="https://raw.githubusercontent.com/KhaJehAmiri/Shahkarpanel/master/docs/logo.svg" width="88" alt="Shahkar" />
 
 # Shahkar
 
@@ -15,7 +15,7 @@
 
 **English** · [فارسی](./README-fa.md) · [简体中文](./README-zh-cn.md) · [Русский](./README-ru.md)
 
-[Quick install](#-one-line-install-vps) · [Architecture](#-architecture) · [Features](#-feature-matrix) · [Protocols](#-protocols--subscriptions) · [Security](#-security-is-the-tests-folder-on-github) · [Repository](https://github.com/KhaJehAmiri/shahkar)
+[Quick install](#-one-line-install-vps) · [Architecture](#-architecture) · [Features](#-feature-matrix) · [Protocols](#-protocols--subscriptions) · [Security](#-security-is-the-tests-folder-on-github) · [Repository](https://github.com/KhaJehAmiri/Shahkarpanel)
 
 </div>
 
@@ -62,7 +62,7 @@ A full-stack **proxy control plane** for Xray, WireGuard, and sing-box: users, n
 On a fresh **Ubuntu / Debian** server as **root**:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/shahkar/master/scripts/shahkar.sh) install
+bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/Shahkarpanel/master/scripts/shahkar.sh) install
 ```
 
 <details>
@@ -71,7 +71,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/shahkar/master/s
 | Step | Action |
 |------|--------|
 | 1 | Install Docker & git (auto-swap on low-RAM VPS) |
-| 2 | Clone `KhaJehAmiri/shahkar` → `/opt/shahkar` |
+| 2 | Clone `KhaJehAmiri/Shahkarpanel` → `/opt/shahkar` |
 | 3 | Generate `.env` (admin password, JWT, bootstrap token) |
 | 4 | Build & run panel via Docker Compose (PostgreSQL by default) |
 | 5 | Build `shahkar/node` image for SSH provisioning |
@@ -244,7 +244,7 @@ Enable flags: `billing`, `user_portal`, `white_label`, `node_provisioning` (and 
 ## Development
 
 ```bash
-git clone https://github.com/KhaJehAmiri/shahkar.git
+git clone https://github.com/KhaJehAmiri/Shahkarpanel.git
 cd shahkar
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
@@ -328,4 +328,4 @@ Licensed under **[AGPL-3.0](LICENSE)**. Network use (SaaS) must comply with AGPL
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) — [github.com/KhaJehAmiri/shahkar](https://github.com/KhaJehAmiri/shahkar)
+See [CONTRIBUTING.md](CONTRIBUTING.md) — [github.com/KhaJehAmiri/Shahkarpanel](https://github.com/KhaJehAmiri/Shahkarpanel)

@@ -58,9 +58,9 @@ def _github_repo() -> str:
     try:
         from config import PANEL_GITHUB_REPO
 
-        return PANEL_GITHUB_REPO.strip() or "KhaJehAmiri/shahkar"
+        return PANEL_GITHUB_REPO.strip() or "KhaJehAmiri/Shahkarpanel"
     except Exception:
-        return "KhaJehAmiri/shahkar"
+        return "KhaJehAmiri/Shahkarpanel"
 
 
 def _github_branch() -> str:

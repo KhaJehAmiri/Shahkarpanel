@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/KhaJehAmiri/shahkar/master/docs/logo.svg" width="88" alt="Shahkar" />
+<img src="https://raw.githubusercontent.com/KhaJehAmiri/Shahkarpanel/master/docs/logo.svg" width="88" alt="Shahkar" />
 
 # Shahkar
 
@@ -15,7 +15,7 @@
 
 [English](./README.md) · [فارسی](./README-fa.md) · [简体中文](./README-zh-cn.md) · **Русский**
 
-[Установка](#-установка-одной-командой-vps) · [Архитектура](#-архитектура) · [Возможности](#-матрица-возможностей) · [Протоколы](#-протоколы-и-подписки) · [Безопасность](#-безопасность-папка-tests-на-github) · [Репозиторий](https://github.com/KhaJehAmiri/shahkar)
+[Установка](#-установка-одной-командой-vps) · [Архитектура](#-архитектура) · [Возможности](#-матрица-возможностей) · [Протоколы](#-протоколы-и-подписки) · [Безопасность](#-безопасность-папка-tests-на-github) · [Репозиторий](https://github.com/KhaJehAmiri/Shahkarpanel)
 
 </div>
 
@@ -41,7 +41,7 @@
 На чистом **Ubuntu / Debian** от **root**:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/shahkar/master/scripts/shahkar.sh) install
+bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/Shahkarpanel/master/scripts/shahkar.sh) install
 ```
 
 | Элемент | Значение |
@@ -199,7 +199,7 @@ flowchart TB
 ## Разработка
 
 ```bash
-git clone https://github.com/KhaJehAmiri/shahkar.git
+git clone https://github.com/KhaJehAmiri/Shahkarpanel.git
 cd shahkar
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
@@ -224,4 +224,4 @@ python3 main.py
 
 ## Лицензия
 
-**[AGPL-3.0](LICENSE)** · [Репозиторий](https://github.com/KhaJehAmiri/shahkar) · [CONTRIBUTING.md](CONTRIBUTING.md)
+**[AGPL-3.0](LICENSE)** · [Репозиторий](https://github.com/KhaJehAmiri/Shahkarpanel) · [CONTRIBUTING.md](CONTRIBUTING.md)

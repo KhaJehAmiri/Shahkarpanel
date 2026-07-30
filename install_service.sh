@@ -12,7 +12,7 @@ PYTHON_BIN="$(command -v python3 || echo /usr/bin/python3)"
 cat > "$SERVICE_FILE" <<EOF
 [Unit]
 Description=Shahkar
-Documentation=https://github.com/KhaJehAmiri/shahkar
+Documentation=https://github.com/KhaJehAmiri/Shahkarpanel
 Wants=network-online.target
 After=network-online.target nss-lookup.target
 # Never give up restarting: a proxy panel must stay up.

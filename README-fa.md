@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/KhaJehAmiri/shahkar/master/docs/logo.svg" width="88" alt="Shahkar" />
+<img src="https://raw.githubusercontent.com/KhaJehAmiri/Shahkarpanel/master/docs/logo.svg" width="88" alt="Shahkar" />
 
 # Shahkar
 
@@ -15,7 +15,7 @@
 
 [English](./README.md) · **فارسی** · [简体中文](./README-zh-cn.md) · [Русский](./README-ru.md)
 
-[نصب سریع](#-نصب-یکخطی-vps) · [معماری](#-معماری) · [امکانات](#-امکانات-کلیدی) · [پروتکل‌ها](#-پروتکلها-و-سابسکرایب) · [امنیت](#-امنیت-و-پوشه-tests-روی-گیتهاب) · [مخزن](https://github.com/KhaJehAmiri/shahkar)
+[نصب سریع](#-نصب-یکخطی-vps) · [معماری](#-معماری) · [امکانات](#-امکانات-کلیدی) · [پروتکل‌ها](#-پروتکلها-و-سابسکرایب) · [امنیت](#-امنیت-و-پوشه-tests-روی-گیتهاب) · [مخزن](https://github.com/KhaJehAmiri/Shahkarpanel)
 
 </div>
 
@@ -61,7 +61,7 @@
 روی **اوبونتو / دبیان** تازه، با کاربر **root**:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/shahkar/master/scripts/shahkar.sh) install
+bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/Shahkarpanel/master/scripts/shahkar.sh) install
 ```
 
 <details>
@@ -70,7 +70,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/KhaJehAmiri/shahkar/master/s
 | مرحله | عملیات |
 |--------|--------|
 | 1 | نصب Docker و git؛ در صورت کم‌بود RAM، swap خودکار |
-| 2 | Clone از `KhaJehAmiri/shahkar` → `/opt/shahkar` |
+| 2 | Clone از `KhaJehAmiri/Shahkarpanel` → `/opt/shahkar` |
 | 3 | ساخت `.env` (رمز ادمین، JWT، توکن bootstrap) |
 | 4 | Build و اجرای پنل با Docker Compose (پیش‌فرض PostgreSQL) |
 | 5 | Build ایمیج `shahkar/node` برای provisioning با SSH |
@@ -244,7 +244,7 @@ Webhook استرایپ: `https://YOUR_PANEL/api/billing/webhook/stripe`
 ## توسعه محلی
 
 ```bash
-git clone https://github.com/KhaJehAmiri/shahkar.git
+git clone https://github.com/KhaJehAmiri/Shahkarpanel.git
 cd shahkar
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
@@ -311,4 +311,4 @@ docker compose -f docker-compose.monitoring.yml up -d
 
 ## مشارکت
 
-[CONTRIBUTING.md](CONTRIBUTING.md) — [github.com/KhaJehAmiri/shahkar](https://github.com/KhaJehAmiri/shahkar)
+[CONTRIBUTING.md](CONTRIBUTING.md) — [github.com/KhaJehAmiri/Shahkarpanel](https://github.com/KhaJehAmiri/Shahkarpanel)

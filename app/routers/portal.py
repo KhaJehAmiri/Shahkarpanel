@@ -929,6 +929,21 @@ def portal_configs(
 
         payload: dict = {}
         _attach_subscription_share_links(db, dbuser, payload)
+
+        from app.routers.subscription import _wireguard_user_settings
+        from app.subscription.region_display import node_config_remark
+        from app.subscription.wireguard import user_config as wg_user_config
+        from app.subscription.wireguard import user_xray_wg_conf
+        from app.wireguard.sync import plain_wg_enabled
+        from app.wireguard.xray_native import xray_native_wg_enabled
+
+        wg_settings = _wireguard_user_settings(dbuser)
+        nodes_by_id = {
+            int(n.id): n
+            for n in crud.get_wireguard_nodes(db)
+            if n.wireguard is not None
+        }
+
         for n in payload.get("wireguard_nodes") or []:
             # Prefer plain .conf / conf URI for app QR + download — never WireGuard Xray.
             uri = (
@@ -939,18 +954,38 @@ def portal_configs(
             # Skip Finalmask / Xray-only share links (wireguard://…fm=).
             if uri and ("fm=" in str(uri) or "fm%3D" in str(uri).lower()):
                 uri = n.get("wireguard_plain_uri") or n.get("wireguard_direct_uri")
-            if not uri:
+
+            node_id = int(n.get("id") or 0)
+            dbnode = nodes_by_id.get(node_id)
+            conf_text = None
+            if wg_settings and dbnode is not None and dbnode.wireguard is not None:
+                cfg = dbnode.wireguard
+                if plain_wg_enabled(cfg):
+                    conf_text = wg_user_config(wg_settings, dbnode, variant="plain", db=db)
+                elif xray_native_wg_enabled(cfg):
+                    conf_text = user_xray_wg_conf(
+                        wg_settings,
+                        dbnode,
+                        db=db,
+                        remark=node_config_remark(dbnode, "WireGuard"),
+                    )
+
+            # Official WireGuard Android/iOS only import wg-quick INI — not wireguard://.
+            # Prefer conf for link so QR + download work in the stock app.
+            export = (conf_text or "").strip() or None
+            if not export and not uri:
                 continue
             wg_nodes.append(
                 PortalNodeLink(
-                    id=int(n.get("id") or 0),
+                    id=node_id,
                     name=str(n.get("name") or ""),
                     address=str(n.get("address") or ""),
                     region=n.get("region"),
                     region_flag=n.get("region_flag"),
                     region_name=n.get("region_name"),
                     latency_ms=n.get("latency_ms"),
-                    link=uri,
+                    link=export or uri,
+                    conf=export,
                     protocol="wireguard",
                 )
             )

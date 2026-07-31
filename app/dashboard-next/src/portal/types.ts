@@ -97,6 +97,8 @@ export interface PortalNodeLink {
   region_flag?: string | null;
   region_name?: string | null;
   link?: string | null;
+  /** wg-quick INI for official WireGuard app (QR / .conf download). */
+  conf?: string | null;
   protocol?: string;
   latency_ms?: number | null;
 }
@@ -127,6 +129,8 @@ export type FriendlyServer = {
   quality: Quality;
   latencyMs: number | null;
   link: string;
+  /** wg-quick body when available (preferred for WireGuard app import). */
+  conf?: string;
   technicalTitle: string;
   protocolRaw: string;
 };

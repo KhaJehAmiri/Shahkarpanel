@@ -69,13 +69,26 @@ def _attachment_headers(filename: str) -> dict[str, str]:
     ``text/plain`` + bare ``filename=`` is often rendered inline on iOS/Android
     Chrome instead of saving. ``application/octet-stream`` + RFC 5987
     ``filename*`` is more reliable; the subscribe page also Blob-downloads.
+
+    For ``.conf`` downloads, ``filename=`` must satisfy WireGuard Android's
+    tunnel-name rules (1–15 of ``[a-zA-Z0-9_=+.-]``) or import fails with
+    ``invalid name`` even when the file body is valid.
     """
     from urllib.parse import quote
 
-    ascii_name = "".join(c if 32 <= ord(c) < 127 and c not in '\\"' else "_" for c in filename)
-    if not ascii_name.lower().endswith(".conf") and not ascii_name.lower().endswith(".json"):
-        ascii_name = f"{ascii_name or 'config'}.conf"
-    starred = quote(filename, safe="")
+    from app.subscription.wireguard import wg_android_conf_filename
+
+    lower = (filename or "").lower()
+    if lower.endswith(".conf"):
+        ascii_name = wg_android_conf_filename(filename[:-5])
+        starred = quote(ascii_name, safe="")
+    else:
+        ascii_name = "".join(c if 32 <= ord(c) < 127 and c not in '\\"' else "_" for c in (filename or ""))
+        if lower.endswith(".json") and not ascii_name.lower().endswith(".json"):
+            ascii_name = f"{ascii_name or 'config'}.json"
+        elif not ascii_name:
+            ascii_name = "config"
+        starred = quote(filename or ascii_name, safe="")
     return {
         "Content-Disposition": (
             f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{starred}'

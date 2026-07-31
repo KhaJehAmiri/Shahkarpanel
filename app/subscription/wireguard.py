@@ -12,7 +12,8 @@ from typing import Dict, List, Optional, Union
 
 # IPv6 is omitted until the node agent sets up v6 forwarding/NAT for WG clients.
 DEFAULT_ALLOWED_IPS = "0.0.0.0/0"
-DEFAULT_DNS = "1.1.1.1, 8.8.8.8"
+# No spaces after commas — some WireGuard Android builds are picky about DNS lists.
+DEFAULT_DNS = "1.1.1.1,8.8.8.8"
 DEFAULT_KEEPALIVE = 10
 
 # Hosts that clients on the public Internet can never dial.
@@ -26,6 +27,43 @@ AWG_KEYS = (
     "H1", "H2", "H3", "H4", "I1", "I2", "I3", "I4", "I5",
 )
 AwgValue = Union[int, str]
+
+
+def _normalize_client_address(address: str) -> str:
+    """Ensure client Address has a CIDR prefix (Android WireGuard requires it)."""
+    raw = (address or "").strip()
+    if not raw:
+        return raw
+    if "/" in raw:
+        return raw
+    import ipaddress
+
+    try:
+        ip = ipaddress.ip_address(raw.strip("[]"))
+        return f"{ip}/32" if ip.version == 4 else f"{ip}/128"
+    except ValueError:
+        return raw
+
+
+def wg_android_conf_filename(*parts: str) -> str:
+    """Basename safe for WireGuard Android tunnel import.
+
+    Android derives the interface name from the file name (without ``.conf``)
+    and requires 1–15 characters of ``[a-zA-Z0-9_=+.-]``. iOS is more
+    permissive — which is why the same download can work on iPhone and fail
+    on Android with ``Unable to import tunnel: invalid name``.
+    """
+    import re
+
+    raw = "-".join(str(p).strip() for p in parts if str(p or "").strip())
+    cleaned = re.sub(r"[^a-zA-Z0-9_=+.-]+", "-", raw)
+    cleaned = re.sub(r"[-.]{2,}", "-", cleaned).strip("-.")
+    if not cleaned:
+        cleaned = "wg"
+    cleaned = cleaned[:15].rstrip("-.")
+    if not cleaned:
+        cleaned = "wg"
+    return f"{cleaned}.conf"
 
 
 def amnezia_params_from_node(cfg) -> Dict[str, int]:
@@ -58,11 +96,14 @@ def render_wireguard_conf(
     """
     interface: List[str] = [
         "[Interface]",
-        f"PrivateKey = {private_key}",
-        f"Address = {address}",
+        f"PrivateKey = {private_key.strip()}",
+        f"Address = {_normalize_client_address(address)}",
     ]
     if dns:
-        interface.append(f"DNS = {dns}")
+        # Collapse "1.1.1.1, 8.8.8.8" → "1.1.1.1,8.8.8.8" for Android parsers.
+        dns_clean = ",".join(part.strip() for part in str(dns).split(",") if part.strip())
+        if dns_clean:
+            interface.append(f"DNS = {dns_clean}")
     if mtu:
         interface.append(f"MTU = {mtu}")
     if amnezia:
@@ -323,8 +364,11 @@ def user_xray_wg_conf(user_settings: dict, dbnode, *, db=None, remark: str = "")
         amnezia=None,
     )
     if remark:
-        # Mirror 3x-ui: remark comment between Interface and Peer blocks.
-        conf = conf.replace("\n[Peer]\n", f"\n# {remark}\n[Peer]\n", 1)
+        # Keep remarks ASCII-only and short; non-ASCII comments are fine for
+        # parsers, but skip noisy remarks — stock Android WG is strict overall.
+        safe = "".join(ch if 32 <= ord(ch) < 127 else "-" for ch in remark).strip("- ")
+        if safe:
+            conf = conf.replace("\n[Peer]\n", f"\n# {safe[:48]}\n[Peer]\n", 1)
     return conf
 
 

@@ -12,20 +12,23 @@ import {
   localizeServers,
   normalizeProtocol,
   protocolLabel,
+  wireguardImportPayload,
 } from "../servers";
 import { usePortal } from "../PortalContext";
 import type { FriendlyServer } from "../types";
 
 async function downloadConfBlob(content: string, title: string): Promise<boolean> {
-  const safeName =
-    (title || "wireguard")
-      .replace(/[^\w.\-()\u0600-\u06FF\s]+/g, "")
-      .trim()
-      .replace(/\s+/g, "-")
-      .slice(0, 48) || "wireguard";
-  const filename = safeName.endsWith(".conf") ? safeName : `${safeName}.conf`;
+  // WireGuard Android: interface name = file basename, max 15 of [A-Za-z0-9_=+.-].
+  const stem = (title || "wg")
+    .replace(/[^a-zA-Z0-9_=+.-]+/g, "-")
+    .replace(/[-.]{2,}/g, "-")
+    .replace(/^[-.]+|[-.]+$/g, "")
+    .slice(0, 15)
+    .replace(/[-.]+$/g, "") || "wg";
+  const filename = `${stem}.conf`;
   const body = content.trim();
   if (!body) return false;
+  if (!body.includes("[Interface]") || body.startsWith("wireguard://")) return false;
 
   const file = new File([body], filename, { type: "application/octet-stream" });
   const nav = navigator as Navigator & {
@@ -121,7 +124,12 @@ export function ConnectPanel() {
   async function handleDownloadConf(server: FriendlyServer) {
     setDlBusy(true);
     try {
-      const ok = await downloadConfBlob(server.link, server.technicalTitle || server.country);
+      const body = wireguardImportPayload(server);
+      if (!body) {
+        showToast(pt(lang, "confDownloadFailed"));
+        return;
+      }
+      const ok = await downloadConfBlob(body, server.technicalTitle || server.country);
       if (ok) showToast(pt(lang, "confDownloaded"));
       else showToast(pt(lang, "confDownloadFailed"));
     } catch {
@@ -363,8 +371,21 @@ export function ConnectPanel() {
             </p>
 
             <div className="p-preview-qr">
-              <QR value={previewServer.link} size={200} />
-              <p className="p-muted">{pt(lang, "qrHint")}</p>
+              {previewIsWg ? (
+                wireguardImportPayload(previewServer) ? (
+                  <>
+                    <QR value={wireguardImportPayload(previewServer)} size={200} />
+                    <p className="p-muted">{pt(lang, "qrHint")}</p>
+                  </>
+                ) : (
+                  <p className="p-muted">{pt(lang, "wgQrUnavailable")}</p>
+                )
+              ) : (
+                <>
+                  <QR value={previewServer.link} size={200} />
+                  <p className="p-muted">{pt(lang, "qrHint")}</p>
+                </>
+              )}
             </div>
 
             <div className="p-link-row" style={{ justifyContent: "center", marginTop: 4 }}>

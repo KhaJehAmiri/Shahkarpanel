@@ -681,14 +681,14 @@ function SubscribeBody() {
           const conf = (wgConfByNode[n.id] || "").trim();
           const hasPlain = !!(n.plain_available || plainUri || conf);
           const latencyMs = n.latency_ms ?? null;
-          // WireGuard app: QR + download .conf (not imported into Xray subs).
+          // WireGuard app: QR + download must be wg-quick INI — never wireguard://.
           if (hasPlain && (conf || plainUri)) {
             pushWg(
               `wg-${n.id}`,
               "wireguard",
               title,
               flag,
-              conf || plainUri,
+              conf, // empty until /wireguard fetch lands; download still uses href
               resolveWgUrl(subUrl, "plain", n.id),
               latencyMs,
             );
@@ -698,7 +698,7 @@ function SubscribeBody() {
         const conf = (wgConfByNode[-1] || "").trim();
         const plainUri = (info.wireguard_plain_uri || "").trim();
         if (plainUri || conf) {
-          pushWg("wg-0", "wireguard", "WireGuard", undefined, conf || plainUri, resolveWgUrl(subUrl, "plain"));
+          pushWg("wg-0", "wireguard", "WireGuard", undefined, conf, resolveWgUrl(subUrl, "plain"));
         }
       }
     }
@@ -872,12 +872,15 @@ function SubscribeBody() {
 
   /** Mobile Safari ignores ``<a download>`` for navigations; use Blob + Share. */
   async function downloadConfFile(entry: ConfigEntry) {
-    const safeName = (entry.title || "wireguard")
-      .replace(/[^\w.\-()\u0600-\u06FF\s]+/g, "")
-      .trim()
-      .replace(/\s+/g, "-")
-      .slice(0, 48) || "wireguard";
-    const filename = safeName.endsWith(".conf") ? safeName : `${safeName}.conf`;
+    // WireGuard Android tunnel name = file basename: 1–15 of [A-Za-z0-9_=+.-].
+    // iOS accepts longer/unicode names — that mismatch was the Android-only failure.
+    const stem = (entry.title || "wg")
+      .replace(/[^a-zA-Z0-9_=+.-]+/g, "-")
+      .replace(/[-.]{2,}/g, "-")
+      .replace(/^[-.]+|[-.]+$/g, "")
+      .slice(0, 15)
+      .replace(/[-.]+$/g, "") || "wg";
+    const filename = `${stem}.conf`;
 
     let body = "";
     if (entry.value.includes("[Interface]") && !entry.value.startsWith("wireguard://")) {
@@ -892,7 +895,8 @@ function SubscribeBody() {
         return;
       }
     }
-    if (!body.trim()) {
+    body = body.trim();
+    if (!body.includes("[Interface]") || body.startsWith("wireguard://") || body.startsWith("{")) {
       showToast(subT(lang, "downloadFailed"), "error");
       return;
     }
@@ -1585,7 +1589,14 @@ function SubscribeBody() {
               {protoLabel(lang, previewEntry.protocol)}
             </p>
             <div className="s-qr-frame s-qr-lg">
-              <QR value={previewEntry.value} size={220} />
+              {previewEntry.protocol === "wireguard" &&
+              !(previewEntry.value || "").includes("[Interface]") ? (
+                <p className="s-hint" style={{ padding: 16 }}>
+                  {subT(lang, "downloadFile")}
+                </p>
+              ) : (
+                <QR value={previewEntry.value} size={220} />
+              )}
             </div>
             <p className="s-hint" style={{ marginTop: 10 }}>{subT(lang, "scanHere")}</p>
             <div className="s-modal-actions">

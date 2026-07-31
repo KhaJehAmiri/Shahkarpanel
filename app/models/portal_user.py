@@ -196,6 +196,9 @@ class PortalNodeLink(BaseModel):
     region_name: Optional[str] = None
     latency_ms: Optional[float] = None
     link: Optional[str] = None
+    # Raw wg-quick INI for official WireGuard app QR / .conf download.
+    # ``link`` may still be a wireguard:// URI for Xray-family apps.
+    conf: Optional[str] = None
     protocol: str = ""
 
 

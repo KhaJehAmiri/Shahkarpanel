@@ -124,7 +124,9 @@ export function buildFriendlyServers(configs: PortalConfigs | null): FriendlySer
   });
 
   (configs.wireguard_nodes || []).forEach((n) => {
-    if (!n.link) return;
+    const conf = (n.conf || "").trim();
+    const link = conf || (n.link || "").trim();
+    if (!link) return;
     const scrubbed = scrubCountryRaw(n.region_name || n.name);
     const countryKey = detectCountryKey(scrubbed);
     const country = cleanCountryName(n.region_name || n.name, n.region_flag, "fa");
@@ -137,7 +139,8 @@ export function buildFriendlyServers(configs: PortalConfigs | null): FriendlySer
       hint: "",
       quality: qualityFromLatency(latency),
       latencyMs: latency,
-      link: n.link,
+      link,
+      conf: conf || undefined,
       technicalTitle: n.name,
       protocolRaw: n.protocol || "wireguard",
     });
@@ -235,9 +238,19 @@ export function protocolLabel(lang: PortalLang, protoId: string): string {
 
 /** Plain WireGuard (app .conf / QR) — not share-URI protocols. */
 export function isPlainWireguard(server: FriendlyServer): boolean {
-  if (server.link.includes("[Interface]") && !server.link.startsWith("wireguard://")) return true;
+  const body = (server.conf || server.link || "").trim();
+  if (body.includes("[Interface]") && !body.startsWith("wireguard://")) return true;
   if (server.key.startsWith("wg-")) return true;
   return normalizeProtocol(server.protocolRaw) === "wireguard";
+}
+
+/** Payload official WireGuard apps accept (INI only — not wireguard://). */
+export function wireguardImportPayload(server: FriendlyServer): string {
+  const conf = (server.conf || "").trim();
+  if (conf.includes("[Interface]")) return conf;
+  const link = (server.link || "").trim();
+  if (link.includes("[Interface]") && !link.startsWith("wireguard://")) return link;
+  return "";
 }
 
 const PROTO_ORDER = [

@@ -14,7 +14,7 @@ from config import (
 )
 from xray_api import exc as xray_exc
 
-_NODE_RESTART_COOLDOWN_SEC = 60
+_NODE_RESTART_COOLDOWN_SEC = 120
 _node_restart_after: dict[int, float] = {}
 _WG_RESYNC_COOLDOWN_SEC = 300
 _wg_resync_after: dict[int, float] = {}

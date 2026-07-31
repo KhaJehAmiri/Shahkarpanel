@@ -12,7 +12,6 @@ from app import web_push
 from app.db import Session, crud, get_db
 from app.models.admin import Admin
 from app.rbac import require_permission
-from config import DASHBOARD_PATH
 
 router = APIRouter(tags=["web-push"], prefix="/api")
 
@@ -80,17 +79,19 @@ def push_test(
     db: Session = Depends(get_db),
     admin: Admin = Depends(require_permission("billing:read")),
 ):
+    from app.web_push import count_attention_for_admin, panel_url
+
     aid = _db_admin_id(db, admin)
     n = web_push.send_to_admin_ids(
         db,
         [aid],
         title="Shahkar",
         body="اعلان آزمایشی — نوتیفیکیشن و بج آیکون فعال است",
-        url=f"{DASHBOARD_PATH.rstrip('/')}/#/billing?billingTab=orders",
+        url=panel_url("billing", "billingTab=orders"),
         tag="push-test",
-        count=max(1, web_push.count_awaiting_card_for_admin(db, aid)),
+        count=max(1, count_attention_for_admin(db, aid)),
     )
-    return {"ok": True, "sent": n, "count": web_push.count_awaiting_card_for_admin(db, aid)}
+    return {"ok": True, "sent": n, "count": count_attention_for_admin(db, aid)}
 
 
 @router.get("/push/badge")
@@ -98,9 +99,11 @@ def push_badge_count(
     db: Session = Depends(get_db),
     admin: Admin = Depends(require_permission("billing:read")),
 ):
-    """Unread card approvals waiting for this admin — home-screen badge."""
+    """Home-screen badge = awaiting card orders + unpaid invoices."""
+    from app.web_push import count_attention_for_admin
+
     aid = _db_admin_id(db, admin)
-    return {"count": web_push.count_awaiting_card_for_admin(db, aid)}
+    return {"count": count_attention_for_admin(db, aid)}
 
 
 @router.post("/push/badge/clear")
@@ -108,8 +111,8 @@ def push_badge_clear(
     db: Session = Depends(get_db),
     admin: Admin = Depends(require_permission("billing:read")),
 ):
-    """Client acknowledges opening the app; returns fresh awaiting count (not forced to 0)."""
+    """Client acknowledges opening the app; returns fresh attention count."""
+    from app.web_push import count_attention_for_admin
+
     aid = _db_admin_id(db, admin)
-    # Badge reflects real queue — clearing only makes sense when queue is empty.
-    # Still return current count so the client can setAppBadge accurately.
-    return {"count": web_push.count_awaiting_card_for_admin(db, aid)}
+    return {"count": count_attention_for_admin(db, aid)}

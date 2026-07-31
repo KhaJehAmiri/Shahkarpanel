@@ -379,7 +379,7 @@ def portal_payment_methods_endpoint(
 
 class PortalPaymentCreate(BaseModel):
     plan_id: int
-    provider: str = "demo"
+    provider: str  # card | centralpay | stripe (demo only when explicitly enabled)
     action: str = "renew"  # renew | purchase
     username: Optional[str] = None
     new_username: Optional[str] = None
@@ -472,6 +472,11 @@ def portal_complete_payment(
             status_code=400,
             detail="Card payments must be submitted for review, then approved by your provider",
         )
+    if intent.provider == "demo":
+        from app import platform_settings as ps
+
+        if not ps.get_bool("payment.demo_enabled", False):
+            raise HTTPException(status_code=403, detail="Demo gateway is disabled")
     intent = complete_payment(db, intent, body.model_dump(exclude_unset=True))
     extra = intent.extra or {}
     uname = extra.get("created_username") or extra.get("target_username") or dbuser.username

@@ -3,9 +3,9 @@ import "@/panel/index.css";
 import "@/panel/design-pro.css";
 
 export const metadata: Metadata = {
-  title: "Shahkar",
-  description: "Shahkar — professional proxy management",
-  applicationName: "Shahkar",
+  title: "Shahkar Panel",
+  description: "پنل نمایندگان و مدیریت شاهکار",
+  applicationName: "Shahkar Panel",
   // Do NOT set metadata.manifest — Next adds crossorigin=use-credentials which
   // breaks Chromium PWA install (opens as normal browser tab instead of app).
   appleWebApp: {
@@ -39,9 +39,30 @@ export const viewport: Viewport = {
 };
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+  const earlyInstall = `(function(){try{
+  var ua=navigator.userAgent||'';
+  var mobile=/Android|iPhone|iPad|iPod|Windows Phone|IEMobile/i.test(ua)
+    ||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+  if(window.matchMedia&&window.matchMedia('(display-mode: standalone)').matches)document.documentElement.classList.add('sk-standalone');
+  if(window.navigator&&window.navigator.standalone===true)document.documentElement.classList.add('sk-standalone');
+  if(!mobile)return;
+  if(window.matchMedia&&window.matchMedia('(display-mode: standalone)').matches)return;
+  if(window.navigator&&window.navigator.standalone===true)return;
+  window.addEventListener('beforeinstallprompt',function(e){
+    e.preventDefault();
+    window.__nxPanelBip=e;
+    try{window.dispatchEvent(new CustomEvent('sk-panel-install-ready'));}catch(_){}
+  });
+}catch(e){}})();`;
+
   return (
     <>
       <link rel="manifest" href="/manifest.webmanifest" />
+      <meta name="mobile-web-app-capable" content="yes" />
+      <meta name="apple-mobile-web-app-capable" content="yes" />
+      <meta name="apple-mobile-web-app-title" content="Shahkar" />
+      <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+      <script dangerouslySetInnerHTML={{ __html: earlyInstall }} />
       {children}
     </>
   );

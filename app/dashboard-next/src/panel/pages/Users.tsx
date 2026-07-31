@@ -10,8 +10,8 @@ import {
 } from "../lib/data-limit";
 import { PageHeader } from "../components/Shell";
 import {
-  Button, Callout, Card, Checkbox, CopyField, Drawer, EmptyState, Field, Input, Modal, Pill, Pager, Select,
-  SkeletonRows, Toggle, UsageBar, useToast,
+  Button, Callout, Card, Checkbox, CopyField, Drawer, EmptyState, Field, Input, MCard, Modal, Pill, Pager,
+  ResponsiveData, Select, SkeletonRows, Toggle, UsageBar, useToast,
 } from "../components/ui";
 import { QR } from "../components/QR";
 import { absoluteUrl } from "../lib/url";
@@ -197,6 +197,7 @@ export const Users: FC = () => {
   const [pageSize, setPageSize] = useState(PAGE_SIZES[0]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [adminFilter, setAdminFilter] = useState("");
   const [protocolFilter, setProtocolFilter] = useState("");
   const [sourceFilter, setSourceFilter] = useState("");
   const [inboundFilter, setInboundFilter] = useState("");
@@ -216,7 +217,18 @@ export const Users: FC = () => {
       next.delete("import");
       setSearchParams(next, { replace: true });
     }
-  }, [searchParams, setSearchParams]);
+    const adminQ = searchParams.get("admin") || "";
+    if (adminQ && admin?.is_sudo) {
+      setAdminFilter(adminQ);
+      setShowAdvancedFilters(true);
+    }
+  }, [searchParams, setSearchParams, admin?.is_sudo]);
+
+  type ResellerOption = { username: string; is_sudo?: boolean; online_users?: number | null; users_count?: number | null };
+  const resellerOptions = useFetch<ResellerOption[]>(
+    () => (admin?.is_sudo ? api.get("/admins") : Promise.resolve([])),
+    [admin?.is_sudo],
+  );
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [showBulkAssign, setShowBulkAssign] = useState(false);
   const [showBulkExtend, setShowBulkExtend] = useState(false);
@@ -272,6 +284,7 @@ export const Users: FC = () => {
     p.set("limit", String(pageSize));
     if (search.trim()) p.set("search", search.trim());
     if (statusFilter) p.set("status", statusFilter);
+    if (admin?.is_sudo && adminFilter) p.set("admin", adminFilter);
     if (protocolFilter) p.set("protocol", protocolFilter);
     if (sourceFilter) p.set("source_slug", sourceFilter);
     if (inboundFilter) p.set("inbound_tag", inboundFilter);
@@ -279,17 +292,18 @@ export const Users: FC = () => {
     if (nearLimit) p.set("near_limit_percent", "85");
     p.set("sort", "created_at");
     return p.toString();
-  }, [page, pageSize, search, statusFilter, protocolFilter, sourceFilter, inboundFilter, expiringSoon, nearLimit]);
+  }, [page, pageSize, search, statusFilter, adminFilter, admin?.is_sudo, protocolFilter, sourceFilter, inboundFilter, expiringSoon, nearLimit]);
 
   const activeFilterCount = useMemo(() => {
     let n = 0;
+    if (admin?.is_sudo && adminFilter) n += 1;
     if (protocolFilter) n += 1;
     if (sourceFilter) n += 1;
     if (inboundFilter) n += 1;
     if (expiringSoon) n += 1;
     if (nearLimit) n += 1;
     return n;
-  }, [protocolFilter, sourceFilter, inboundFilter, expiringSoon, nearLimit]);
+  }, [admin?.is_sudo, adminFilter, protocolFilter, sourceFilter, inboundFilter, expiringSoon, nearLimit]);
 
   const knownSourceSlugs = useMemo(
     () => (filterOptions.data?.source_servers || []).map((s) => s.slug),
@@ -297,12 +311,18 @@ export const Users: FC = () => {
   );
 
   const clearAdvancedFilters = () => {
+    setAdminFilter("");
     setProtocolFilter("");
     setSourceFilter("");
     setInboundFilter("");
     setExpiringSoon(false);
     setNearLimit(false);
     setPage(0);
+    if (searchParams.get("admin")) {
+      const next = new URLSearchParams(searchParams);
+      next.delete("admin");
+      setSearchParams(next, { replace: true });
+    }
   };
 
   const { data, loading, error, reload } = useFetch<UsersResponse>(() => api.get(`/users?${query}`), [query]);
@@ -465,6 +485,32 @@ export const Users: FC = () => {
             <option value="">{t("common.all")} — {t("common.status")}</option>
             {STATUSES.map((s) => <option key={s} value={s}>{t(`users.status.${s}`)}</option>)}
           </Select>
+          {admin?.is_sudo && (
+            <Select
+              value={adminFilter}
+              onChange={(e: any) => {
+                const v = e.target.value as string;
+                setAdminFilter(v);
+                setPage(0);
+                const next = new URLSearchParams(searchParams);
+                if (v) next.set("admin", v);
+                else next.delete("admin");
+                setSearchParams(next, { replace: true });
+              }}
+              style={{ maxWidth: 220 }}
+              title={t("users.filters.byReseller")}
+            >
+              <option value="">{t("users.filters.allResellers")}</option>
+              {(resellerOptions.data || [])
+                .filter((a) => !a.is_sudo)
+                .map((a) => (
+                  <option key={a.username} value={a.username}>
+                    {a.username}
+                    {typeof a.online_users === "number" ? ` · ${a.online_users} ${t("users.stats.online")}` : ""}
+                  </option>
+                ))}
+            </Select>
+          )}
           <Button
             size="sm"
             variant={showAdvancedFilters || activeFilterCount > 0 ? "primary" : "ghost"}
@@ -539,90 +585,168 @@ export const Users: FC = () => {
           : error && !data ? <EmptyState title={t("common.error")} desc={error} action={<Button onClick={() => reload({ background: false })}>{t("common.retry")}</Button>} />
           : !data?.users.length ? <EmptyState title={t("common.noData")} action={<Button variant="primary" onClick={() => setShowCreate(true)}><IcPlus className="sk-ico" /> {t("common.create")}</Button>} />
           : (
-            <div className="sk-table-wrap">
-              <table className="sk-table">
-                <thead><tr>
-                  {canWrite && (
-                    <th style={{ width: 40 }}>
-                      <Checkbox
-                        checked={!!data?.users.length && data.users.every((u) => selected.has(u.username))}
-                        onChange={() => {
-                          if (data?.users.every((u) => selected.has(u.username))) clearSelection();
-                          else selectAllOnPage();
-                        }}
-                      />
-                    </th>
-                  )}
-                  <th>{t("common.username")}</th><th>{t("common.status")}</th>
-                  <th className="sk-col-inbound">{t("users.filters.serverInbound")}</th>
-                  <th className="sk-col-proto" style={{ width: 156 }}>{t("common.protocols")}</th>
-                  <th>{t("users.used")}</th><th className="sk-col-expire">{t("users.expire")}</th><th className="sk-actions">{t("common.actions")}</th>
-                </tr></thead>
-                <tbody>
-                  {data.users.map((u) => {
-                    const pct = usagePct(u.used_traffic, u.data_limit);
-                    const protos = userDisplayProtocols(u.proxies as Record<string, unknown> | undefined);
-                    const inboundTagsList = flattenUserInbounds(u.inbounds);
-                    const sourceSlug = inferSourceSlug(u.username, knownSourceSlugs);
-                    return (
-                      <tr key={u.username} style={{ cursor: "pointer" }} onClick={() => setViewUser(u)}>
+            <>
+              {canWrite && (
+                <label className="sk-mlist-toolbar sk-row" style={{ gap: 8, fontSize: 13 }}>
+                  <Checkbox
+                    checked={!!data.users.length && data.users.every((u) => selected.has(u.username))}
+                    onChange={() => {
+                      if (data.users.every((u) => selected.has(u.username))) clearSelection();
+                      else selectAllOnPage();
+                    }}
+                  />
+                  {t("bulkInbound.selectedCount", { n: selected.size })}
+                </label>
+              )}
+              <ResponsiveData
+                table={(
+                  <div className="sk-table-wrap">
+                    <table className="sk-table">
+                      <thead><tr>
                         {canWrite && (
-                          <td onClick={(e) => e.stopPropagation()}>
+                          <th style={{ width: 40 }}>
                             <Checkbox
-                              checked={selected.has(u.username)}
-                              onChange={() => toggleSelected(u.username)}
+                              checked={!!data?.users.length && data.users.every((u) => selected.has(u.username))}
+                              onChange={() => {
+                                if (data?.users.every((u) => selected.has(u.username))) clearSelection();
+                                else selectAllOnPage();
+                              }}
                             />
-                          </td>
+                          </th>
                         )}
-                        <td style={{ fontWeight: 600 }}>{u.username}{u.note ? <div className="sk-faint" style={{ fontWeight: 400, fontSize: 11 }}>{u.note}</div> : null}</td>
-                        <td>
-                          {u.online ? (
-                            <span className="sk-online-badge" title={t(`users.status.${u.status}`, u.status)}>
-                              <span className="sk-online-dot" />
-                              {t("users.stats.online")}
-                            </span>
-                          ) : (
-                            <Pill tone={statusTone(u.status)} dot>{t(`users.status.${u.status}`, u.status)}</Pill>
-                          )}
-                        </td>
-                        <td className="sk-col-inbound" style={{ maxWidth: 200 }}>
-                          {sourceSlug ? (
-                            <Pill tone="default">{sourceSlug}</Pill>
-                          ) : (
-                            <span className="sk-faint">—</span>
-                          )}
-                          {inboundTagsList.length > 0 ? (
-                            <div className="sk-faint" style={{ fontSize: 11, marginTop: 4, lineHeight: 1.35 }} title={inboundTagsList.join(", ")}>
-                              {inboundTagsList.slice(0, 2).join(", ")}
-                              {inboundTagsList.length > 2 ? ` +${inboundTagsList.length - 2}` : ""}
-                            </div>
-                          ) : null}
-                        </td>
-                        <td className="sk-col-proto"><UserProtocolChips protos={protos} /></td>
-                        <td className="sk-col-used" style={{ minWidth: 170 }}>
-                          <div style={{ fontSize: 12 }}>{formatBytes(u.used_traffic)} / {u.data_limit ? formatBytes(u.data_limit) : t("users.unlimited")}</div>
-                          {(u.overage_traffic ?? 0) > 0 ? (
-                            <div className="sk-faint" style={{ fontSize: 11, marginTop: 2, color: "var(--sk-danger, #ef4444)" }}>
-                              +{formatBytes(u.overage_traffic!)} {t("users.overage")}
-                            </div>
-                          ) : null}
-                          {u.data_limit ? <div style={{ marginTop: 5 }}><UsageBar pct={pct} /></div> : null}
-                        </td>
-                        <td className="sk-col-expire">{u.expire ? formatDate(u.expire, i18n.language) : <span className="sk-faint">{t("users.never")}</span>}</td>
-                        <td onClick={(e) => e.stopPropagation()}>
-                          <div className="sk-row" style={{ justifyContent: "flex-end", gap: 6, flexWrap: "nowrap" }}>
-                            <Button className="sk-col-view-btn" size="sm" variant="ghost" title={t("common.view")} onClick={() => setViewUser(u)}><IcEye className="sk-ico" /></Button>
-                            {canWrite && <Button size="sm" variant="ghost" title={t("common.edit")} onClick={() => setEditUser(u)}><IcEdit className="sk-ico" /></Button>}
-                            {canWrite && <Toggle on={u.status !== "disabled"} onChange={() => toggleUser(u)} label={t("users.toggleStatus")} />}
-                            {canWrite && <Button variant="danger" size="sm" title={t("common.delete")} onClick={() => removeUser(u)}><IcTrash className="sk-ico" /></Button>}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                        <th>{t("common.username")}</th><th>{t("common.status")}</th>
+                        <th className="sk-col-inbound">{t("users.filters.serverInbound")}</th>
+                        <th className="sk-col-proto" style={{ width: 156 }}>{t("common.protocols")}</th>
+                        <th>{t("users.used")}</th><th className="sk-col-expire">{t("users.expire")}</th><th className="sk-actions">{t("common.actions")}</th>
+                      </tr></thead>
+                      <tbody>
+                        {data.users.map((u) => {
+                          const pct = usagePct(u.used_traffic, u.data_limit);
+                          const protos = userDisplayProtocols(u.proxies as Record<string, unknown> | undefined);
+                          const inboundTagsList = flattenUserInbounds(u.inbounds);
+                          const sourceSlug = inferSourceSlug(u.username, knownSourceSlugs);
+                          return (
+                            <tr key={u.username} style={{ cursor: "pointer" }} onClick={() => setViewUser(u)}>
+                              {canWrite && (
+                                <td onClick={(e) => e.stopPropagation()}>
+                                  <Checkbox
+                                    checked={selected.has(u.username)}
+                                    onChange={() => toggleSelected(u.username)}
+                                  />
+                                </td>
+                              )}
+                              <td style={{ fontWeight: 600 }}>{u.username}{u.note ? <div className="sk-faint" style={{ fontWeight: 400, fontSize: 11 }}>{u.note}</div> : null}</td>
+                              <td>
+                                {u.online ? (
+                                  <span className="sk-online-badge" title={t(`users.status.${u.status}`, u.status)}>
+                                    <span className="sk-online-dot" />
+                                    {t("users.stats.online")}
+                                  </span>
+                                ) : (
+                                  <Pill tone={statusTone(u.status)} dot>{t(`users.status.${u.status}`, u.status)}</Pill>
+                                )}
+                              </td>
+                              <td className="sk-col-inbound" style={{ maxWidth: 200 }}>
+                                {sourceSlug ? (
+                                  <Pill tone="default">{sourceSlug}</Pill>
+                                ) : (
+                                  <span className="sk-faint">—</span>
+                                )}
+                                {inboundTagsList.length > 0 ? (
+                                  <div className="sk-faint" style={{ fontSize: 11, marginTop: 4, lineHeight: 1.35 }} title={inboundTagsList.join(", ")}>
+                                    {inboundTagsList.slice(0, 2).join(", ")}
+                                    {inboundTagsList.length > 2 ? ` +${inboundTagsList.length - 2}` : ""}
+                                  </div>
+                                ) : null}
+                              </td>
+                              <td className="sk-col-proto"><UserProtocolChips protos={protos} /></td>
+                              <td className="sk-col-used" style={{ minWidth: 170 }}>
+                                <div style={{ fontSize: 12 }}>{formatBytes(u.used_traffic)} / {u.data_limit ? formatBytes(u.data_limit) : t("users.unlimited")}</div>
+                                {(u.overage_traffic ?? 0) > 0 ? (
+                                  <div className="sk-faint" style={{ fontSize: 11, marginTop: 2, color: "var(--sk-danger, #ef4444)" }}>
+                                    +{formatBytes(u.overage_traffic!)} {t("users.overage")}
+                                  </div>
+                                ) : null}
+                                {u.data_limit ? <div style={{ marginTop: 5 }}><UsageBar pct={pct} /></div> : null}
+                              </td>
+                              <td className="sk-col-expire">{u.expire ? formatDate(u.expire, i18n.language) : <span className="sk-faint">{t("users.never")}</span>}</td>
+                              <td onClick={(e) => e.stopPropagation()}>
+                                <div className="sk-row" style={{ justifyContent: "flex-end", gap: 6, flexWrap: "nowrap" }}>
+                                  <Button className="sk-col-view-btn" size="sm" variant="ghost" title={t("common.view")} onClick={() => setViewUser(u)}><IcEye className="sk-ico" /></Button>
+                                  {canWrite && <Button size="sm" variant="ghost" title={t("common.edit")} onClick={() => setEditUser(u)}><IcEdit className="sk-ico" /></Button>}
+                                  {canWrite && <Toggle on={u.status !== "disabled"} onChange={() => toggleUser(u)} label={t("users.toggleStatus")} />}
+                                  {canWrite && <Button variant="danger" size="sm" title={t("common.delete")} onClick={() => removeUser(u)}><IcTrash className="sk-ico" /></Button>}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                cards={data.users.map((u) => {
+                  const pct = usagePct(u.used_traffic, u.data_limit);
+                  const protos = userDisplayProtocols(u.proxies as Record<string, unknown> | undefined);
+                  const inboundTagsList = flattenUserInbounds(u.inbounds);
+                  const sourceSlug = inferSourceSlug(u.username, knownSourceSlugs);
+                  const statusBadge = u.online ? (
+                    <span className="sk-online-badge" title={t(`users.status.${u.status}`, u.status)}>
+                      <span className="sk-online-dot" />
+                      {t("users.stats.online")}
+                    </span>
+                  ) : (
+                    <Pill tone={statusTone(u.status)} dot>{t(`users.status.${u.status}`, u.status)}</Pill>
+                  );
+                  const inboundLabel = [
+                    sourceSlug || null,
+                    inboundTagsList.length ? inboundTagsList.slice(0, 2).join(", ") + (inboundTagsList.length > 2 ? ` +${inboundTagsList.length - 2}` : "") : null,
+                  ].filter(Boolean).join(" · ") || "—";
+                  return (
+                    <MCard
+                      key={u.username}
+                      onClick={() => setViewUser(u)}
+                      leading={canWrite ? (
+                        <Checkbox checked={selected.has(u.username)} onChange={() => toggleSelected(u.username)} />
+                      ) : undefined}
+                      title={u.username}
+                      subtitle={u.note || undefined}
+                      badge={statusBadge}
+                      fields={[
+                        {
+                          label: t("users.used"),
+                          value: (
+                            <>
+                              <div>{formatBytes(u.used_traffic)} / {u.data_limit ? formatBytes(u.data_limit) : t("users.unlimited")}</div>
+                              {(u.overage_traffic ?? 0) > 0 ? (
+                                <div className="sk-faint" style={{ fontSize: 11, marginTop: 2, color: "var(--sk-danger, #ef4444)" }}>
+                                  +{formatBytes(u.overage_traffic!)} {t("users.overage")}
+                                </div>
+                              ) : null}
+                              {u.data_limit ? <div style={{ marginTop: 5 }}><UsageBar pct={pct} /></div> : null}
+                            </>
+                          ),
+                        },
+                        {
+                          label: t("users.expire"),
+                          value: u.expire ? formatDate(u.expire, i18n.language) : t("users.never"),
+                        },
+                        { label: t("users.filters.serverInbound"), value: inboundLabel },
+                        { label: t("common.protocols"), value: <UserProtocolChips protos={protos} /> },
+                      ]}
+                      actions={(
+                        <div className="sk-row" style={{ justifyContent: "flex-end", gap: 6 }}>
+                          <Button size="sm" variant="ghost" title={t("common.view")} onClick={() => setViewUser(u)}><IcEye className="sk-ico" /></Button>
+                          {canWrite && <Button size="sm" variant="ghost" title={t("common.edit")} onClick={() => setEditUser(u)}><IcEdit className="sk-ico" /></Button>}
+                          {canWrite && <Toggle on={u.status !== "disabled"} onChange={() => toggleUser(u)} label={t("users.toggleStatus")} />}
+                          {canWrite && <Button variant="danger" size="sm" title={t("common.delete")} onClick={() => removeUser(u)}><IcTrash className="sk-ico" /></Button>}
+                        </div>
+                      )}
+                    />
+                  );
+                })}
+              />
+            </>
           )}
       </Card>
 

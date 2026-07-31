@@ -54,7 +54,19 @@
     "done": "انجام شد",
     "start": "شروع",
     "saveFailed": "ذخیره ناموفق بود",
-    "menu": "منو"
+    "menu": "منو",
+    "none": "هیچ‌کدام"
+  },
+  "pwa": {
+    "installTitle": "نصب اپلیکیشن",
+    "installLead": "برای کار راحت‌تر، {{name}} را روی گوشی نصب کن — مثل یک اپ واقعی",
+    "installNow": "نصب روی گوشی",
+    "installLater": "بعداً",
+    "installNativeHint": "با یک ضربه اپ را روی صفحهٔ اصلی گوشی نصب کن",
+    "installAndroid": "از منوی مرورگر گزینهٔ Install app یا Add to Home screen را بزن",
+    "installIosStep1": "روی دکمه Share بزن",
+    "installIosStep2": "گزینه Add to Home Screen را انتخاب کن",
+    "installIosStep3": "Add را بزن تا اپ روی صفحه اصلی نصب شود"
   },
   "pagination": {
     "first": "صفحه اول",
@@ -244,7 +256,10 @@
     "coreStopConfirm": "هستهٔ Xray متوقف شود؟ همهٔ اتصال‌های فعال قطع می‌شوند.",
     "coreActionDone": "انجام شد",
     "uptime": "آپ‌تایم",
-    "uptimeOs": "سیستم‌عامل"
+    "uptimeOs": "سیستم‌عامل",
+    "resellerOnlineTitle": "آنلاین‌های نمایندگان",
+    "resellerOnlineOpen": "باز کردن کاربران",
+    "viewResellerUsers": "مشاهده کاربران"
   },
   "hub": {
     "serversTitle": "سرورها",
@@ -679,12 +694,15 @@
       "allInbounds": "همه inboundها",
       "expiringSoon": "انقضا تا ۷ روز",
       "nearLimit": "نزدیک سقف (≥۸۵٪)",
-      "serverInbound": "سرور / inbound"
+      "serverInbound": "سرور / inbound",
+      "byReseller": "نماینده",
+      "allResellers": "همه نمایندگان"
     },
     "createEyebrow": "کاربر جدید",
     "createTitle": "ایجاد کاربر",
     "createWizardLede": "سه مرحله کوتاه — شناسه، پروتکل‌ها، سپس محدودیت‌ها.",
-    "createExpertLede": "پروتکل‌ها، پلن و گزینه‌های پیشرفته را تنظیم کنید."
+    "createExpertLede": "پروتکل‌ها، پلن و گزینه‌های پیشرفته را تنظیم کنید.",
+    "singboxNoAnytls": "هیچ نود AnyTLS فعالی روی این پنل نیست."
   },
   "bulkExtend": {
     "title": "افزودن زمان و حجم دسته‌جمعی",
@@ -930,7 +948,15 @@
     "hostPortPlaceholder": "پیش‌فرض inbound",
     "hostPortCdnHint": "برای CDN (مثل Cloudflare): آدرس دامنه + پورت عمومی (۴۴۳). لینک subscription همان را می‌دهد — Xray روی پورت inbound bind می‌شود و nginx origin (جدا از پنل) grpc/ws را bridge می‌کند.",
     "hostEchCdnWarning": "وقتی پورت host با inbound فرق دارد (حالت CDN)، ECH داخل لینک subscription نمی‌آید. برای کلاینت ECH یک host مستقیم با همان پورت inbound اضافه کنید.",
-    "nameRequired": "نام گروه الزامی است"
+    "nameRequired": "نام گروه الزامی است",
+    "hostExternalProxy": "زنجیره پروکسی خارجی",
+    "hostExternalProxyAdd": "افزودن هاپ خارجی",
+    "hostExternalProxyHint": "اندپوینت‌های CDN/میرور اضافه (externalProxy در 3x-ui). هر هاپ یک اندپوینت جدا در اشتراک تولید می‌کند.",
+    "hostExternalProxyHop": "هاپ {{n}}",
+    "hostExternalProxyRemark": "پسوند نام",
+    "hostsReadOnly": "نمای فقط‌خواندنی — برای ویرایش هاست‌ها با مالک پنل تماس بگیرید.",
+    "singboxStackHint": "پس از نصب به‌صورت خودکار پیکربندی می‌شود. مگر گواهی LE بدهید، از TLS خودامضا استفاده می‌شود.",
+    "singboxStackTitle": "sing-box (Hysteria2 / TUIC)"
   },
   "copilot": {
     "title": "همیار",
@@ -1298,7 +1324,19 @@
     "listen": "Listen IP",
     "sniffing": "فعال‌سازی Sniffing",
     "savedRestart": "ذخیره شد — هسته Xray ری‌استارت می‌شود",
-    "tagPortConflict": "تگ یا پورت تکراری است"
+    "tagPortConflict": "تگ یا پورت تکراری است",
+    "coreLogs": "لاگ هسته Xray",
+    "geoAssetsDesc": "مدیریت geoip.dat و geosite.dat برای روتینگ Xray. فایل سفارشی آپلود کنید یا از منبع پیش‌فرض به‌روز کنید.",
+    "geoAssetsTab": "دارایی‌های Geo",
+    "geoEmpty": "هیچ فایل geo در پوشه دارایی‌های Xray یافت نشد.",
+    "geoInvalidName": "نام فایل باید به .dat ختم شود",
+    "geoModified": "آخرین تغییر",
+    "geoSize": "حجم",
+    "geoUpdateDefault": "به‌روزرسانی از Loyalsoldier",
+    "geoUpdated": "دارایی‌های Geo به‌روز شد",
+    "geoUpload": "آپلود فایل .dat",
+    "geoUploaded": "دارایی Geo آپلود شد",
+    "tabLogs": "لاگ هسته"
   },
   "outbounds": {
     "tag": "تگ",
@@ -1571,7 +1609,8 @@
     "roleSupport": "پشتیبانی",
     "trafficUsed": "ترافیک مصرفی / سقف",
     "creditBalanceHint": "موجودی فعلی کیف پول: {{balance}}",
-    "creditNotePlaceholder": "یادداشت اختیاری (مثلاً شماره پیگیری واریز)"
+    "creditNotePlaceholder": "یادداشت اختیاری (مثلاً شماره پیگیری واریز)",
+    "onlineUsers": "آنلاین"
   },
   "automation": {
     "title": "اتوماسیون",
@@ -1661,14 +1700,15 @@
     "usageByoDiscount": "{{pct}}٪ تخفیف ترافیک روی نودهای خودتان.",
     "usagePeriod": "دوره صورتحساب‌نشده: {{since}} → {{until}}",
     "tabInvoices": "فاکتورها",
-    "tabOrders": "خریدهای پرتال",
+    "tabOrders": "سفارش‌ها و شارژ",
     "tabIncome": "درآمد درگاه",
     "tabCardSettings": "کارت‌به‌کارت من",
     "cardSettingsResellerHint": "شماره کارت خودتان را وارد کنید. مشتریان پرتال شما فقط به همین کارت واریز می‌کنند و درخواست تأیید فقط برای شما می‌آید — نه برای مستر.",
-    "cardSettingsSudoHint": "کارت پلتفرم برای مشتریان مستقیم مستر. کارت هر نماینده جداست و از بخش مالی همان نماینده تنظیم می‌شود.",
+    "cardSettingsSudoHint": "کارت پلتفرم برای مشتریان مستقیم مستر و همچنین شارژ کیف‌پول نمایندگان. کارت هر نماینده جداست و از بخش مالی همان نماینده تنظیم می‌شود.",
     "cardEnabled": "فعال‌سازی کارت‌به‌کارت",
-    "cardEnabledHint": "اگر روشن باشد، مشتریان پرتال می‌توانند با واریز به این کارت خرید کنند.",
+    "cardEnabledHint": "اگر روشن باشد، مشتریان پرتال و نمایندگان (برای شارژ کیف‌پول) می‌توانند با واریز به این کارت پرداخت کنند.",
     "cardNumber": "شماره کارت",
+    "copyCardNumber": "کپی",
     "cardHolder": "نام صاحب کارت",
     "cardBank": "بانک",
     "cardBadge": "کارت",
@@ -1687,13 +1727,17 @@
     "kind_topup": "شارژ کیف‌پول",
     "tabTransactions": "تراکنش‌ها",
     "ordersEmpty": "خرید کارت‌به‌کارتی در انتظار تأیید نیست.",
+    "ordersEmptySudo": "خرید پرتال یا شارژ کیف‌پول نمایندگان در انتظار تأیید نیست.",
     "orderApprove": "تأیید",
     "orderReject": "رد",
-    "orderUser": "کاربر",
+    "orderUser": "کاربر / نماینده",
+    "orderKind": "نوع",
     "orderPlan": "پلن",
-    "orderNote": "یادداشت کاربر",
+    "orderNote": "یادداشت",
     "orderReceipt": "فیش",
     "viewReceipt": "مشاهده فیش",
+    "downloadReceipt": "دانلود فیش",
+    "receiptPreviewUnsupported": "پیش‌نمایش این نوع فایل پشتیبانی نمی‌شود؛ از دانلود استفاده کنید.",
     "orderApproved": "خرید تأیید و اشتراک اعمال شد",
     "orderRejected": "خرید رد شد",
     "awaiting_review": "در انتظار تأیید",
@@ -1707,13 +1751,28 @@
     "addCredit": "افزایش اعتبار کیف پول",
     "topUp": "شارژ کیف پول",
     "topUpPay": "پرداخت",
+    "topUpShowCard": "نمایش کارت و ادامه",
     "topUpDone": "کیف پول با موفقیت شارژ شد",
+    "topUpSubmitted": "فیش ارسال شد — پس از تأیید مالک پلتفرم، موجودی شارژ می‌شود",
+    "topUpApproved": "شارژ کیف‌پول تأیید و موجودی افزایش یافت",
+    "topUpRejected": "درخواست شارژ رد شد",
     "topUpHint": "از درگاه انتخاب‌شده پرداخت کنید. موجودی بلافاصله پس از تأیید به‌روز می‌شود.",
-    "provider": "درگاه",
+    "topUpCardIntro": "مبلغ را به کارت پلتفرم واریز کنید و فیش را ارسال کنید. پس از تأیید مالک، موجودی شارژ می‌شود.",
+    "topUpCardTitle": "واریز کارت‌به‌کارت",
+    "topUpCardHint": "مبلغ را دقیقاً به کارت زیر واریز کنید، سپس تصویر یا PDF فیش را آپلود کنید (حداکثر ۱۵ مگابایت).",
+    "topUpSubmitReceipt": "ارسال فیش برای تأیید",
+    "topUpNotePlaceholder": "مثلاً نام واریزکننده یا ۴ رقم آخر کارت مبدأ",
+    "topUpMinAmount": "حداقل مبلغ شارژ {{amount}} تومان است",
+    "topUpMinAmountHint": "حداقل شارژ: {{amount}} تومان",
+    "provider": "روش پرداخت",
+    "providerCard": "کارت‌به‌کارت",
+    "providerCentralpay": "درگاه CentralPay",
+    "providerStripe": "Stripe",
+    "providerDemo": "درگاه آزمایشی",
+    "resellerWalletHint": "هیچ روش شارژی فعال نیست. از مالک پلتفرم بخواهید درگاه یا کارت‌به‌کارت را فعال کند.",
     "creditAmount": "مبلغ",
     "creditAmountHint": "واحد جزئی (مثلاً سنت). به کیف نماینده واریز می‌شود.",
     "creditDone": "موجودی با موفقیت شارژ شد",
-    "resellerWalletHint": "کیف پول توسط مالک پلتفرم شارژ می‌شود. در صورت کمبود موجودی با پشتیبانی تماس بگیرید.",
     "plansReadOnly": "با نقش فعلی فقط مشاهده پلن‌ها امکان‌پذیر است.",
     "price": "قیمت",
     "dataLimit": "حجم (گیگابایت)",
@@ -1738,7 +1797,12 @@
       "failed": "ناموفق",
       "cancelled": "لغوشده",
       "completed": "تکمیل‌شده"
-    }
+    },
+    "platformPlans": "پلن‌های پلتفرم",
+    "platformOwner": "پلتفرم",
+    "resellerPlans": "نماینده · {{name}}",
+    "planOwner": "کاتالوگ",
+    "allPlanCatalogs": "همه کاتالوگ‌ها"
   },
   "system": {
     "title": "سیستم",
@@ -2120,6 +2184,7 @@
   "commercial": {
     "hint": "همه تنظیمات تجاری در پایگاه داده ذخیره می‌شوند. تغییرات فوری اعمال می‌شوند؛ برای تغییر فاصله job صورتحساب مصرف، سرویس پنل را ری‌استارت کنید.",
     "stripeWebhookUrl": "آدرس webhook استرایپ: {{url}}",
+    "stripeWebhookRequired": "تا وقتی webhook secret ست نشود، استرایپ فعال نمی‌ماند؛ درخواست بدون امضا رد می‌شود.",
     "section": {
       "billing": "صورتحساب مصرف",
       "payment": "درگاه‌های پرداخت",
@@ -2165,7 +2230,7 @@
       "payment.centralpay_merchant_id": "فقط برای نمایش (مثلاً EMG-VPN). API فقط کلید می‌خواهد.",
       "payment.centralpay_http_proxy": "اختیاری. مثلاً http://user:pass@host:port یا socks5://host:port — اگر Cloudflare آی‌پی پنل را بلاک کند.",
       "payment.gateway_enabled": "کلید اصلی پرداخت آنلاین پرتال. CentralPay علاوه بر کلید API، باید برای هر نماینده جداگانه فعال شود.",
-      "payment.card_enabled": "خرید کارت‌به‌کارت در پرتال؛ بعد از واریز باید تأیید شود.",
+      "payment.card_enabled": "خرید کارت‌به‌کارت در پرتال و شارژ کیف‌پول نمایندگان؛ بعد از واریز باید تأیید شود.",
       "payment.card_number": "فقط شماره کارت برای نمایش و کپی در پرتال.",
       "payment.card_holder": "نامی که روی کارت نمایش داده می‌شود.",
       "payment.card_bank": "اختیاری — نام بانک روی کارت نمایشی.",

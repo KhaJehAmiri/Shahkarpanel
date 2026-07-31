@@ -497,6 +497,19 @@ export const Overview: FC = () => {
     () => (admin?.is_sudo && isEnabled("billing") ? api.get("/billing/mrr?days=30") : Promise.resolve(null as unknown as MrrSummary)),
     [admin?.is_sudo, isEnabled("billing")],
   );
+  type ResellerOnlineRow = {
+    username: string;
+    is_sudo?: boolean;
+    users_count?: number | null;
+    online_users?: number | null;
+  };
+  const resellerOnline = useFetch<ResellerOnlineRow[]>(
+    () => (admin?.is_sudo ? api.get("/admins") : Promise.resolve([])),
+    [admin?.is_sudo],
+  );
+  usePolling(() => {
+    if (admin?.is_sudo) resellerOnline.reload({ background: true });
+  }, 15000);
   const payProviders = useFetch<string[]>(
     () => (isEnabled("billing") ? api.get("/billing/payment-providers") : Promise.resolve([])),
     [isEnabled("billing")],
@@ -743,6 +756,58 @@ export const Overview: FC = () => {
           </div>
         )}
       </Section>
+
+      {admin?.is_sudo && (
+        <Section
+          title={t("overview.resellerOnlineTitle")}
+          action={(
+            <Link to="/users" className="sk-pay-pulse-link">{t("overview.resellerOnlineOpen")}</Link>
+          )}
+        >
+          {resellerOnline.loading && !resellerOnline.data ? (
+            <Card><SkeletonRows rows={3} cols={3} /></Card>
+          ) : (
+            (() => {
+              const rows = (resellerOnline.data || [])
+                .filter((a) => !a.is_sudo)
+                .sort((a, b) => (b.online_users ?? 0) - (a.online_users ?? 0));
+              if (!rows.length) {
+                return <div className="sk-muted sk-center" style={{ padding: 16 }}>{t("common.noData")}</div>;
+              }
+              return (
+                <div className="sk-table-wrap">
+                  <table className="sk-table">
+                    <thead>
+                      <tr>
+                        <th>{t("common.username")}</th>
+                        <th className="sk-num">{t("overview.totalUsers")}</th>
+                        <th className="sk-num">{t("overview.onlineUsers")}</th>
+                        <th className="sk-actions">{t("common.actions")}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((r) => (
+                        <tr key={r.username}>
+                          <td style={{ fontWeight: 600 }}>{r.username}</td>
+                          <td className="sk-num">{(r.users_count ?? 0).toLocaleString()}</td>
+                          <td className="sk-num" style={{ fontWeight: 700, color: (r.online_users ?? 0) > 0 ? "var(--sk-ok)" : undefined }}>
+                            {(r.online_users ?? 0).toLocaleString()}
+                          </td>
+                          <td className="sk-actions">
+                            <Link to={`/users?admin=${encodeURIComponent(r.username)}`} className="sk-btn sm ghost">
+                              {t("overview.viewResellerUsers")}
+                            </Link>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()
+          )}
+        </Section>
+      )}
 
       {admin?.is_sudo && s && (
         <Section title={t("overview.systemResources", "System")}>

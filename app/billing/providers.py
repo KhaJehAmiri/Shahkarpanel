@@ -18,7 +18,11 @@ class PaymentProvider:
 
 
 class CardProvider(PaymentProvider):
-    """Card-to-card transfer — user pays offline; owning admin/reseller confirms."""
+    """Card-to-card transfer — user pays offline; owning admin/reseller confirms.
+
+    Portal purchases use the owning admin's card. Reseller wallet top-ups use
+    the platform (master) card so money lands with the owner who credits wallets.
+    """
 
     name = "card"
 
@@ -27,13 +31,21 @@ class CardProvider(PaymentProvider):
 
         from app.db.models import Admin
 
-        db = object_session(intent)
-        dbadmin = None
-        if db is not None and getattr(intent, "admin_id", None):
-            dbadmin = db.query(Admin).filter(Admin.id == intent.admin_id).first()
-        card = resolve_card_for_admin(dbadmin)
-        if not card:
-            raise ValueError("Card payment is not configured for this account")
+        kind = getattr(intent, "kind", None) or ""
+        if kind == "topup":
+            card = resolve_platform_card()
+            if not card:
+                raise ValueError("Platform card payment is not configured")
+            instructions = "Transfer to the platform card and submit the receipt for review."
+        else:
+            db = object_session(intent)
+            dbadmin = None
+            if db is not None and getattr(intent, "admin_id", None):
+                dbadmin = db.query(Admin).filter(Admin.id == intent.admin_id).first()
+            card = resolve_card_for_admin(dbadmin)
+            if not card:
+                raise ValueError("Card payment is not configured for this account")
+            instructions = "Transfer to the card and submit the purchase for review."
         number = card["number"]
         holder = card.get("holder") or ""
         bank = card.get("bank") or ""
@@ -49,7 +61,7 @@ class CardProvider(PaymentProvider):
             "card_number": number,
             "card_holder": holder,
             "card_bank": bank,
-            "instructions": "Transfer to the card and submit the purchase for review.",
+            "instructions": instructions,
         }
 
     def verify(self, intent, payload: dict) -> bool:
@@ -216,11 +228,21 @@ class CentralPayProvider(PaymentProvider):
         }
         secret = self._relay_secret()
         if self._relay_base() and secret:
+            # Current + legacy relay header (bridge hosts may still expect Nexus).
             headers["X-Shahkar-Relay-Secret"] = secret
+            headers["X-Nexus-Relay-Secret"] = secret
         return headers
 
     def _parse_json(self, resp: requests.Response, action: str) -> dict:
         text = resp.text or ""
+        # Prefer structured relay/API errors over the Cloudflare HTML heuristic.
+        try:
+            data = resp.json()
+        except ValueError:
+            data = None
+        if isinstance(data, dict) and data.get("success") is False:
+            msg = (data.get("data") or {}).get("message") or text[:200]
+            raise ValueError(f"CentralPay {action} failed: {msg}")
         if (
             resp.status_code == 403
             or "cloudflare" in text.lower()
@@ -234,10 +256,9 @@ class CentralPayProvider(PaymentProvider):
             )
         if resp.status_code >= 400:
             raise ValueError(f"CentralPay {action} HTTP {resp.status_code}: {text[:200]}")
-        try:
-            return resp.json()
-        except ValueError as exc:
-            raise ValueError(f"CentralPay {action} bad response: {text[:200]}") from exc
+        if data is None:
+            raise ValueError(f"CentralPay {action} bad response: {text[:200]}")
+        return data
 
     def _panel_public_base(self) -> str:
         from config import PANEL_PUBLIC_ADDRESS, UVICORN_SSL_CERTFILE
@@ -366,9 +387,15 @@ def reload_providers() -> None:
     _PROVIDERS[CardProvider.name] = CardProvider()
     # Online gateways are only offered when the portal gateway method is enabled.
     if ps.get_bool("payment.gateway_enabled"):
-        if ps.get_bool("payment.demo_enabled", True):
+        # Default OFF — demo must be explicitly enabled for staging only.
+        if ps.get_bool("payment.demo_enabled", False):
             _PROVIDERS[DemoProvider.name] = DemoProvider()
-        if ps.get_bool("payment.stripe_enabled") and ps.get_str("payment.stripe_secret_key"):
+        # Stripe requires API key + webhook secret (signature fail-closed).
+        if (
+            ps.get_bool("payment.stripe_enabled")
+            and (ps.get_str("payment.stripe_secret_key") or "").strip()
+            and (ps.get_str("payment.stripe_webhook_secret") or "").strip()
+        ):
             _PROVIDERS[StripeProvider.name] = StripeProvider()
         # CentralPay activates by API key alone (no separate toggle required).
         if (ps.get_str("payment.centralpay_api_key") or "").strip():
@@ -398,6 +425,20 @@ def gateway_providers() -> List[str]:
     return available_providers(online_only=True)
 
 
+def resolve_platform_card() -> Optional[dict]:
+    """Master/platform card used for reseller wallet top-ups and sudo portal customers."""
+    if not ps.get_bool("payment.card_enabled"):
+        return None
+    number = (ps.get_str("payment.card_number") or "").strip()
+    if not number:
+        return None
+    return {
+        "number": number,
+        "holder": (ps.get_str("payment.card_holder") or "").strip(),
+        "bank": (ps.get_str("payment.card_bank") or "").strip(),
+    }
+
+
 def resolve_card_for_admin(dbadmin) -> Optional[dict]:
     """Card details for this admin's portal customers.
 
@@ -407,16 +448,7 @@ def resolve_card_for_admin(dbadmin) -> Optional[dict]:
     if dbadmin is None:
         return None
     if getattr(dbadmin, "is_sudo", False):
-        if not ps.get_bool("payment.card_enabled"):
-            return None
-        number = (ps.get_str("payment.card_number") or "").strip()
-        if not number:
-            return None
-        return {
-            "number": number,
-            "holder": (ps.get_str("payment.card_holder") or "").strip(),
-            "bank": (ps.get_str("payment.card_bank") or "").strip(),
-        }
+        return resolve_platform_card()
     if not bool(getattr(dbadmin, "card_enabled", False)):
         return None
     number = (getattr(dbadmin, "card_number", None) or "").strip()
@@ -435,7 +467,20 @@ def card_payment_enabled_for_admin(dbadmin=None) -> bool:
 
 def card_payment_enabled() -> bool:
     """Legacy: platform card toggle (sudo customers). Prefer card_payment_enabled_for_admin."""
-    return bool(ps.get_bool("payment.card_enabled") and (ps.get_str("payment.card_number") or "").strip())
+    return resolve_platform_card() is not None
+
+
+def topup_providers_for_admin(dbadmin) -> List[str]:
+    """Self-service wallet top-up methods for a reseller (gateway + platform card).
+
+    Platform gateways (CentralPay / Stripe) are offered for wallet top-up when
+    configured — the reseller is paying the platform owner. Demo is never listed
+    unless ``payment.demo_enabled`` is explicitly on.
+    """
+    providers = list(gateway_providers())
+    if resolve_platform_card() is not None:
+        providers = providers + [CardProvider.name]
+    return providers
 
 
 def admin_may_use_centralpay(dbadmin) -> bool:

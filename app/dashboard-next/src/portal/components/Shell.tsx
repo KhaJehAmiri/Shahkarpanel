@@ -150,9 +150,11 @@ export function Shell({ children }: { children: React.ReactNode }) {
               >
                 <span className="p-nav-icon-wrap">
                   <Icon aria-hidden />
-                  {unread > 0 ? <span className="p-nav-badge">{unread > 99 ? "99+" : unread}</span> : null}
                 </span>
-                {pt(lang, item.labelKey)}
+                <span className="p-nav-label">{pt(lang, item.labelKey)}</span>
+                {unread > 0 ? (
+                  <span className="p-nav-badge">{unread > 99 ? "99+" : unread}</span>
+                ) : null}
               </button>
             );
           })}
@@ -182,6 +184,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
             </div>
           </div>
           <div className="p-topbar-actions">
+            <div className="p-topbar-lang">
+              <LangPicker compact />
+            </div>
             <button
               type="button"
               className="p-btn ghost"
@@ -215,9 +220,11 @@ export function Shell({ children }: { children: React.ReactNode }) {
             >
               <span className="p-nav-icon-wrap">
                 <Icon aria-hidden />
-                {unread > 0 ? <span className="p-nav-badge">{unread > 99 ? "99+" : unread}</span> : null}
+                {unread > 0 ? (
+                  <span className="p-nav-badge">{unread > 99 ? "99+" : unread}</span>
+                ) : null}
               </span>
-              {pt(lang, item.labelKey)}
+              <span className="p-nav-label">{pt(lang, item.labelKey)}</span>
             </button>
           );
         })}
@@ -226,7 +233,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
   );
 }
 
-function LangPicker() {
+function LangPicker({ compact = false }: { compact?: boolean }) {
   const { lang, pickLang } = usePortal();
   return (
     <div className="p-lang" role="group" aria-label={pt(lang, "lang")}>
@@ -236,8 +243,10 @@ function LangPicker() {
           type="button"
           className={lang === l.code ? "is-on" : ""}
           onClick={() => pickLang(l.code)}
+          title={l.label}
+          aria-label={l.label}
         >
-          {l.label}
+          {compact ? l.code.toUpperCase() : l.label}
         </button>
       ))}
     </div>

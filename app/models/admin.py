@@ -41,6 +41,7 @@ class Admin(BaseModel):
     wallet_balance: Optional[int] = None
     prepaid_traffic_remaining: Optional[int] = None
     users_count: Optional[int] = None
+    online_users: Optional[int] = None
     centralpay_enabled: bool = False
     card_enabled: bool = False
     card_number: Optional[str] = None

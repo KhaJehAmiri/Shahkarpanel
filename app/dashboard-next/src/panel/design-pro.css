@@ -3364,17 +3364,118 @@ body > .sk-drawer {
   }
 }
 
-/* ===================== Mobile users/data table =====================
-   The users table has too many columns for a phone, so it either overflows
-   or gets scrolled sideways (username/status clipped off-screen). Drop the
-   low-priority columns and tighten spacing so the essentials (username,
-   status, usage, actions) fit cleanly without horizontal scrolling. */
+/* ===================== Mobile card lists (Users / Billing) =====================
+   Wide tables become stacked cards below 760px — no sideways scroll, full fields. */
+.sk-mlist {
+  display: none;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+}
+.sk-mlist-toolbar {
+  display: none;
+  align-items: center;
+  padding: 12px 12px 0;
+}
+.sk-mcard {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid var(--sk-border);
+  background: var(--sk-surface);
+  box-shadow: var(--sk-shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.04));
+}
+.sk-mcard.is-clickable {
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.sk-mcard.is-clickable:hover,
+.sk-mcard.is-clickable:focus-visible {
+  border-color: color-mix(in srgb, var(--sk-accent) 45%, var(--sk-border));
+  box-shadow: var(--sk-shadow-md, 0 4px 14px rgba(0, 0, 0, 0.08));
+  outline: none;
+}
+.sk-mcard-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+.sk-mcard-leading {
+  flex: 0 0 auto;
+  padding-top: 2px;
+}
+.sk-mcard-head {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.sk-mcard-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--sk-text);
+  letter-spacing: -0.01em;
+  word-break: break-word;
+}
+.sk-mcard-sub {
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--sk-text-dim);
+  line-height: 1.35;
+  word-break: break-word;
+}
+.sk-mcard-badge {
+  flex: 0 0 auto;
+  max-width: 42%;
+}
+.sk-mcard-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 12px;
+  margin: 0;
+}
+.sk-mcard-field {
+  min-width: 0;
+}
+.sk-mcard-field dt {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--sk-text-faint, var(--sk-text-dim));
+}
+.sk-mcard-field dd {
+  margin: 3px 0 0;
+  font-size: 13px;
+  color: var(--sk-text);
+  line-height: 1.35;
+  word-break: break-word;
+}
+.sk-mcard-field.span-2 {
+  grid-column: 1 / -1;
+}
+.sk-mcard-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 4px;
+  border-top: 1px solid var(--sk-border);
+}
+.sk-mcard-actions .sk-row {
+  flex-wrap: wrap !important;
+  width: 100%;
+  justify-content: flex-end;
+}
+
 @media (max-width: 760px) {
-  .sk-table th,
-  .sk-table td { padding: 11px 12px; }
-  .sk-table .sk-col-inbound,
-  .sk-table .sk-col-expire { display: none; }
-  .sk-table .sk-col-used { min-width: 118px !important; }
+  .sk-data-desktop { display: none !important; }
+  .sk-mlist { display: flex; }
+  .sk-mlist-toolbar { display: flex; }
+
   .sk-page-head {
     flex-direction: column !important;
     align-items: stretch !important;
@@ -3402,11 +3503,6 @@ body > .sk-drawer {
   .sk-card-table {
     overflow: hidden;
   }
-  .sk-table-wrap {
-    overflow-x: auto !important;
-    -webkit-overflow-scrolling: touch;
-    max-width: 100%;
-  }
   .sk-toolbar-inner {
     width: 100%;
   }
@@ -3418,12 +3514,9 @@ body > .sk-drawer {
   }
 }
 @media (max-width: 560px) {
-  .sk-table th,
-  .sk-table td { padding: 10px 9px; font-size: 13px; }
-  .sk-table .sk-col-proto,
-  .sk-table .sk-col-view-btn { display: none; }
-  .sk-table .sk-col-used { min-width: 96px !important; }
   .sk-content { padding: 14px 12px 28px !important; }
+  .sk-mcard-fields { grid-template-columns: 1fr; }
+  .sk-mlist { padding: 10px; gap: 8px; }
 }
 
 /* ── Business hubs: Billing / Resellers section rail ── */
@@ -3544,7 +3637,10 @@ body > .sk-drawer {
 }
 
 .sk-rail-item {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   width: 100%;
   text-align: start;
   padding: 9px 12px;
@@ -3556,6 +3652,30 @@ body > .sk-drawer {
   font-weight: 600;
   cursor: pointer;
   transition: background 160ms var(--sk-ease), color 160ms var(--sk-ease);
+}
+
+.sk-rail-item-label {
+  min-width: 0;
+  flex: 1;
+}
+
+.sk-rail-badge {
+  flex: 0 0 auto;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--sk-danger, #e5484d);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.sk-rail-item.active .sk-rail-badge {
+  background: var(--sk-accent);
 }
 
 .sk-rail-item:hover {

@@ -419,6 +419,7 @@ export interface Plan {
   enabled: boolean;
   tenant_id?: number | null;
   owner_admin_id?: number | null;
+  owner_username?: string | null;
 }
 
 export interface Invoice {

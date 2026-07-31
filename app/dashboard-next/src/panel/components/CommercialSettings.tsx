@@ -162,9 +162,17 @@ export const CommercialSettings: FC = () => {
               );
             })}
             {section.id === "payment" && (
-              <Callout tone="info">
-                {t("commercial.stripeWebhookUrl", { url: `${window.location.origin}/api/billing/webhook/stripe` })}
-              </Callout>
+              <>
+                <Callout tone="info">
+                  {t("commercial.stripeWebhookUrl", { url: `${window.location.origin}/api/billing/webhook/stripe` })}
+                </Callout>
+                <Callout tone="warn">
+                  {t("commercial.stripeWebhookRequired", {
+                    defaultValue:
+                      "Stripe stays disabled until webhook secret is set. Unsigned webhooks are rejected.",
+                  })}
+                </Callout>
+              </>
             )}
           </div>
         </Card>

@@ -22,6 +22,7 @@ type ResellerAccount = {
   role?: string;
   max_users?: number | null;
   users_count?: number | null;
+  online_users?: number | null;
   max_nodes?: number | null;
   max_total_traffic?: number | null;
   users_usage?: number | null;
@@ -462,6 +463,7 @@ const ResellerAccountsTab: FC = () => {
                   <tr>
                     <th>{t("common.username")}</th>
                     <th className="sk-num">{t("resellers.usersCount")}</th>
+                    <th className="sk-num">{t("resellers.onlineUsers")}</th>
                     <th className="sk-num">{t("billing.wallet")}</th>
                     <th className="sk-num">{t("billing.prepaidRemaining")}</th>
                     <th className="sk-num">{t("resellers.trafficUsed")}</th>
@@ -483,6 +485,9 @@ const ResellerAccountsTab: FC = () => {
                         <td className="sk-num">
                           {(a.users_count ?? 0).toLocaleString()}
                           <span className="sk-muted">/{usersMax}</span>
+                        </td>
+                        <td className="sk-num" style={{ fontWeight: 700, color: (a.online_users ?? 0) > 0 ? "var(--sk-ok)" : undefined }}>
+                          {(a.online_users ?? 0).toLocaleString()}
                         </td>
                         <td className="sk-num">
                           {billingOn ? (a.wallet_balance ?? 0).toLocaleString() : "—"}

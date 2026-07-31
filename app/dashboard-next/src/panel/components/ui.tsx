@@ -250,6 +250,57 @@ export const EmptyState: FC<{ title: string; desc?: string; steps?: string[]; ac
   </div>
 );
 
+/** Desktop table + mobile card list. CSS toggles visibility at ≤760px. */
+export const ResponsiveData: FC<{ table: ReactNode; cards: ReactNode }> = ({ table, cards }) => (
+  <>
+    <div className="sk-data-desktop">{table}</div>
+    <div className="sk-mlist" role="list">{cards}</div>
+  </>
+);
+
+export const MCard: FC<{
+  title: ReactNode;
+  subtitle?: ReactNode;
+  badge?: ReactNode;
+  leading?: ReactNode;
+  fields?: Array<{ label: ReactNode; value: ReactNode; hideEmpty?: boolean }>;
+  actions?: ReactNode;
+  onClick?: () => void;
+}> = ({ title, subtitle, badge, leading, fields, actions, onClick }) => {
+  const visible = (fields || []).filter((f) => !f.hideEmpty || (f.value != null && f.value !== "" && f.value !== "—"));
+  return (
+    <article
+      className={`sk-mcard${onClick ? " is-clickable" : ""}`}
+      role="listitem"
+      onClick={onClick}
+      onKeyDown={onClick ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); } } : undefined}
+      tabIndex={onClick ? 0 : undefined}
+    >
+      <div className="sk-mcard-top">
+        {leading ? <div className="sk-mcard-leading" onClick={(e) => e.stopPropagation()}>{leading}</div> : null}
+        <div className="sk-mcard-head">
+          <div className="sk-mcard-title">{title}</div>
+          {subtitle ? <div className="sk-mcard-sub">{subtitle}</div> : null}
+        </div>
+        {badge ? <div className="sk-mcard-badge">{badge}</div> : null}
+      </div>
+      {visible.length > 0 && (
+        <dl className="sk-mcard-fields">
+          {visible.map((f, i) => (
+            <div key={i} className="sk-mcard-field">
+              <dt>{f.label}</dt>
+              <dd>{f.value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {actions ? (
+        <div className="sk-mcard-actions" onClick={(e) => e.stopPropagation()}>{actions}</div>
+      ) : null}
+    </article>
+  );
+};
+
 /* Accessible icon-only close button shared by Modal and Drawer. */
 const CloseButton: FC<{ onClose: () => void }> = ({ onClose }) => {
   const { t } = useTranslation();

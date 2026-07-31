@@ -74,7 +74,7 @@ async function postToSw(message: object) {
 }
 
 /** Apply Telegram-style home-screen badge (installed PWA). */
-export async function setAppBadgeCount(count: number): Promise<void> {
+export async function setAppBadgeCount(count: number, opts?: { allowClear?: boolean }): Promise<void> {
   const n = Math.max(0, Math.floor(Number(count) || 0));
   try {
     const nav = navigator as Navigator & {
@@ -83,21 +83,25 @@ export async function setAppBadgeCount(count: number): Promise<void> {
     };
     if (n > 0 && typeof nav.setAppBadge === "function") {
       await nav.setAppBadge(Math.min(99, n));
-    } else if (n <= 0 && typeof nav.clearAppBadge === "function") {
+    } else if (n <= 0 && opts?.allowClear !== false && typeof nav.clearAppBadge === "function") {
       await nav.clearAppBadge();
     }
   } catch {
     /* ignore */
   }
-  await postToSw(n > 0 ? { type: "sk-set-badge", count: n } : { type: "sk-clear-badge" });
+  if (n > 0) {
+    await postToSw({ type: "sk-set-badge", count: n });
+  } else {
+    await postToSw({ type: "sk-clear-badge", allowClear: true });
+  }
 }
 
-/** Sync badge from server (awaiting card approvals). */
+/** Sync badge from server (orders awaiting review + unpaid invoices). */
 export async function syncAdminAppBadge(): Promise<number> {
   try {
     const { count } = await api.get<{ count: number }>("/push/badge");
     const n = Math.max(0, Number(count) || 0);
-    await setAppBadgeCount(n);
+    await setAppBadgeCount(n, { allowClear: true });
     return n;
   } catch {
     return 0;

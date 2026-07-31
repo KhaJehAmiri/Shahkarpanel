@@ -233,6 +233,14 @@ def update_settings_bulk(updates: Dict[str, Any]) -> None:
             # Explicit clear only — masked placeholder keeps current key/flag.
             if not get_str("payment.centralpay_api_key"):
                 set_setting("payment.centralpay_enabled", False)
+    # Stripe: webhook signing secret is mandatory while enabled.
+    if get_bool("payment.stripe_enabled") and not (get_str("payment.stripe_webhook_secret") or "").strip():
+        set_setting("payment.stripe_enabled", False)
+        refresh_payment_providers()
+        raise ValueError(
+            "Stripe requires payment.stripe_webhook_secret before it can be enabled "
+            "(unsigned webhooks are rejected)."
+        )
     refresh_payment_providers()
 
 

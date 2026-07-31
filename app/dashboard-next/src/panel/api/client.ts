@@ -209,6 +209,40 @@ export const api = {
     a.remove();
     URL.revokeObjectURL(url);
   },
+  getBlob: async (path: string): Promise<{ blob: Blob; contentType: string; filename?: string }> => {
+    const headers: Record<string, string> = {};
+    const token = getToken();
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    let res: Response;
+    try {
+      res = await fetch(joinUrl(path), { headers });
+    } catch {
+      throw new ApiError(i18n.t("errors.network"), 0);
+    }
+    if (res.status === 401) {
+      const refreshed = await refreshAccessToken();
+      if (refreshed) {
+        headers["Authorization"] = `Bearer ${refreshed}`;
+        res = await fetch(joinUrl(path), { headers });
+      }
+    }
+    if (res.status === 401) {
+      if (onUnauthorized) onUnauthorized();
+      throw new ApiError(i18n.t("errors.unauthorized"), 401);
+    }
+    if (!res.ok) {
+      const text = await res.text();
+      let data: any = null;
+      try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+      throw new ApiError(errorMessage(res.status, data), res.status);
+    }
+    const disposition = res.headers.get("Content-Disposition") || "";
+    const match = disposition.match(/filename\*?=(?:UTF-8''|")?([^\";]+)"?/i);
+    const filename = match?.[1] ? decodeURIComponent(match[1]) : undefined;
+    const blob = await res.blob();
+    const contentType = (res.headers.get("Content-Type") || blob.type || "").split(";")[0].trim();
+    return { blob, contentType, filename };
+  },
   upload: async <T = any>(path: string, form: FormData): Promise<T> => {
     const headers: Record<string, string> = {};
     const token = getToken();

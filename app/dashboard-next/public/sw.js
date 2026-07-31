@@ -1,6 +1,11 @@
-/* Shahkar admin service worker — PWA + Web Push + app icon badge */
-const CACHE = "sk-shell-v1";
-const PRECACHE = ["/brand/pwa-192.png", "/brand/pwa-512.png", "/brand/favicon-48.png"];
+/* Shahkar admin / reseller service worker — PWA + Web Push + app icon badge */
+const CACHE = "sk-shell-v3";
+const PRECACHE = [
+  "/brand/pwa-192.png",
+  "/brand/pwa-512.png",
+  "/brand/favicon-48.png",
+  "/manifest.webmanifest",
+];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -81,6 +86,8 @@ async function applyAppBadge(count) {
       await self.registration.setAppBadge(Math.min(99, Math.floor(n)));
     } else if (typeof self.registration.clearAppBadge === "function") {
       await self.registration.clearAppBadge();
+    } else if (typeof self.registration.setAppBadge === "function") {
+      await self.registration.setAppBadge(0);
     }
   } catch (_) {
     /* unsupported */
@@ -88,7 +95,13 @@ async function applyAppBadge(count) {
 }
 
 self.addEventListener("push", (event) => {
-  let data = { title: "Shahkar", body: "", url: "__DASHBOARD_PATH__#/billing", tag: "sk-push", count: 1 };
+  let data = {
+    title: "Shahkar",
+    body: "",
+    url: "__DASHBOARD_PATH__#/billing",
+    tag: "sk-push",
+    count: 1,
+  };
   try {
     if (event.data) {
       const parsed = event.data.json();
@@ -103,10 +116,13 @@ self.addEventListener("push", (event) => {
   }
   const dash = "__DASHBOARD_PATH__";
   const count = data.count != null ? data.count : data.badgeCount != null ? data.badgeCount : 1;
+  const targetUrl = data.url || `${dash}#/billing`;
+
+  // Same pattern as portal: badge + visible system notification together.
   event.waitUntil(
-    (async () => {
-      await applyAppBadge(count);
-      await self.registration.showNotification(data.title || "Shahkar", {
+    Promise.all([
+      applyAppBadge(count),
+      self.registration.showNotification(data.title || "Shahkar", {
         body: data.body || "",
         icon: "/brand/pwa-192.png",
         badge: "/brand/favicon-48.png",
@@ -115,11 +131,11 @@ self.addEventListener("push", (event) => {
         requireInteraction: true,
         vibrate: [120, 60, 120],
         data: {
-          url: data.url || `${dash}#/billing`,
+          url: targetUrl,
           count,
         },
-      });
-    })(),
+      }),
+    ]),
   );
 });
 
@@ -128,9 +144,11 @@ self.addEventListener("notificationclick", (event) => {
   const target =
     (event.notification.data && event.notification.data.url) ||
     "__DASHBOARD_PATH__#/billing";
+  const count = event.notification.data && event.notification.data.count;
   event.waitUntil(
     (async () => {
-      await applyAppBadge(0);
+      // Do NOT wipe badge on click — only sync from in-app attention count.
+      if (count != null && Number(count) > 0) await applyAppBadge(count);
       const list = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
       for (const client of list) {
         if ("focus" in client) {
@@ -153,8 +171,12 @@ self.addEventListener("notificationclick", (event) => {
 self.addEventListener("message", (event) => {
   const msg = event.data || {};
   if (msg.type === "sk-set-badge") {
-    event.waitUntil(applyAppBadge(msg.count));
-  } else if (msg.type === "sk-clear-badge") {
+    const n = Number(msg.count);
+    if (!Number.isFinite(n)) return;
+    // Ignore accidental clears from an uninitialized client.
+    if (n <= 0 && msg.allowClear !== true) return;
+    event.waitUntil(applyAppBadge(n));
+  } else if (msg.type === "sk-clear-badge" && msg.allowClear === true) {
     event.waitUntil(applyAppBadge(0));
   }
 });

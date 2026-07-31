@@ -567,8 +567,12 @@ export function PortalProvider({ children }: { children: ReactNode }) {
     setBusy(true);
     try {
       const useCard = checkoutMethod === "card" && payMethods.includes("card");
-      const payProvider = useCard ? "card" : provider || payProviders[0] || "demo";
+      const payProvider = useCard ? "card" : provider || payProviders[0] || "";
       const isFree = plans.find((p) => p.id === planId)?.price === 0;
+      if (!isFree && !payProvider) {
+        showToast(pt(lang, "noPayMethods"));
+        return;
+      }
 
       if (!isBuy && isFree) {
         await renewDirect(planId, targetRenew);
@@ -659,6 +663,10 @@ export function PortalProvider({ children }: { children: ReactNode }) {
     if (!cardCheckout) return;
     if (!cardReceipt) {
       showToast(pt(lang, "cardReceiptRequired"));
+      return;
+    }
+    if (cardReceipt.size > 15 * 1024 * 1024) {
+      showToast(pt(lang, "cardReceiptHint"));
       return;
     }
     setBusy(true);

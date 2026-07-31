@@ -922,7 +922,7 @@ def connect_node(node_id, config=None):
 
             if is_finalmask_rpc_busy(node_id):
                 logger.debug(
-                    "Skipping connect_node for \"%s\": Finalmask RPC in progress",
+                    "Skipping connect_node for \"%s\": node RPC busy (WG apply)",
                     dbnode.name,
                 )
                 return
@@ -936,12 +936,23 @@ def connect_node(node_id, config=None):
                 need_connect = False
             except Exception:
                 pass
-        # Only advertise "connecting" when we actually tear down / rebuild
-        # the session — otherwise UI + health look like a flap on every
-        # keep-alive refresh.
+        # Soft reconnect: if the UI already shows connected, do NOT flip to
+        # "connecting" for a session refresh. Concurrent health/WG jobs used to
+        # advertise connecting on every RPyC blip, which looked like a flap.
+        # Only surface connecting when coming from a non-connected state.
+        prev_status = getattr(dbnode, "status", None)
         if need_connect:
-            _change_node_status(node_id, NodeStatus.connecting)
-            logger.info(f"Connecting to \"{dbnode.name}\" node")
+            from app.models.node import NodeStatus as _NS
+
+            soft = prev_status == _NS.connected
+            if not soft:
+                _change_node_status(node_id, NodeStatus.connecting)
+                logger.info(f"Connecting to \"{dbnode.name}\" node")
+            else:
+                logger.debug(
+                    "Refreshing RPyC session for \"%s\" without UI connecting flap",
+                    dbnode.name,
+                )
             try:
                 node = _connect_node_session(dbnode, node)
             except Exception:

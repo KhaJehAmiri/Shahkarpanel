@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict
 
@@ -17,6 +17,7 @@ from app.billing.payments import (
     list_portal_payments_for_admin,
     public_base_from_request,
     reject_portal_payment,
+    submit_card_payment,
 )
 from app.billing.usage_billing import usage_summary_for_admin
 from app.db import Session, crud, get_db
@@ -110,12 +111,12 @@ def list_payment_providers(
     db: Session = Depends(get_db),
     admin: Admin = Depends(require_permission("billing:read")),
 ):
-    """Online PSPs available for self-service top-up (excludes manual)."""
+    """Providers available for reseller self-service wallet top-up (gateway + card)."""
     _require_billing_enabled()
-    from app.billing.providers import filter_providers_for_admin
+    from app.billing.providers import topup_providers_for_admin
 
     dbadmin = crud.get_admin(db, admin.username)
-    return filter_providers_for_admin(list_online_providers(), dbadmin)
+    return topup_providers_for_admin(dbadmin)
 
 
 @router.get("/wallet", response_model=WalletResponse)
@@ -242,7 +243,7 @@ def create_invoice(
     target = crud.get_admin(db, target_username)
     if target is None:
         raise HTTPException(status_code=404, detail="Admin not found")
-    return billing.create_invoice(
+    invoice = billing.create_invoice(
         db,
         target.id,
         body.amount,
@@ -250,6 +251,13 @@ def create_invoice(
         provider=body.provider,
         description=body.description,
     )
+    try:
+        from app.web_push import notify_invoice_created
+
+        notify_invoice_created(db, invoice)
+    except Exception:
+        pass
+    return invoice
 
 
 @router.get("/invoices", response_model=List[InvoiceResponse])
@@ -264,6 +272,59 @@ def list_invoices(
     if not admin.is_sudo:
         query = query.filter(Invoice.admin_id == _admin_id(db, admin))
     return query.order_by(Invoice.id.desc()).limit(100).all()
+
+
+class AttentionCounts(BaseModel):
+    orders: int = 0
+    invoices: int = 0
+
+
+@router.get("/attention-counts", response_model=AttentionCounts)
+def billing_attention_counts(
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(require_permission("billing:read")),
+):
+    """Sidebar badge counts: card orders awaiting review + unpaid invoices."""
+    _require_billing_enabled()
+    from sqlalchemy import and_, func, or_
+
+    from app.db.models import Invoice, PaymentIntent
+
+    dbadmin = crud.get_admin(db, admin.username)
+    scope = dbadmin if dbadmin is not None else admin
+    is_sudo = bool(getattr(scope, "is_sudo", False))
+    admin_pk = getattr(scope, "id", None)
+
+    orders_q = db.query(func.count(PaymentIntent.id)).filter(
+        PaymentIntent.provider == "card",
+        PaymentIntent.status == "awaiting_review",
+    )
+    if is_sudo:
+        orders_q = orders_q.filter(
+            or_(
+                PaymentIntent.kind.in_(("portal_renew", "portal_purchase")),
+                PaymentIntent.kind == "topup",
+            )
+        )
+    elif admin_pk is not None:
+        orders_q = orders_q.filter(
+            PaymentIntent.kind.in_(("portal_renew", "portal_purchase")),
+            PaymentIntent.admin_id == int(admin_pk),
+        )
+    else:
+        orders_q = orders_q.filter(PaymentIntent.id == -1)
+
+    invoices_q = db.query(func.count(Invoice.id)).filter(Invoice.status == "pending")
+    if not is_sudo:
+        if admin_pk is None:
+            invoices_q = invoices_q.filter(Invoice.id == -1)
+        else:
+            invoices_q = invoices_q.filter(Invoice.admin_id == int(admin_pk))
+
+    return AttentionCounts(
+        orders=int(orders_q.scalar() or 0),
+        invoices=int(invoices_q.scalar() or 0),
+    )
 
 
 @router.post("/invoices/{invoice_id}/pay", response_model=InvoiceResponse)
@@ -671,7 +732,7 @@ def purchase_traffic_package(
 
 class TopUpRequest(BaseModel):
     amount: int
-    provider: str = "demo"
+    provider: str  # card | centralpay | stripe (demo only when explicitly enabled)
 
 
 class PaymentCreateResponse(BaseModel):
@@ -683,6 +744,9 @@ class PaymentCreateResponse(BaseModel):
     instructions: Optional[str] = None
     confirm_token: Optional[str] = None
     checkout_url: Optional[str] = None
+    card_number: Optional[str] = None
+    card_holder: Optional[str] = None
+    card_bank: Optional[str] = None
 
 
 class PaymentCompleteBody(BaseModel):
@@ -705,8 +769,10 @@ def topup_wallet(
     db: Session = Depends(get_db),
     admin: Admin = Depends(require_permission("billing:read")),
 ):
-    """Reseller self-service wallet top-up via an online payment provider."""
+    """Reseller self-service wallet top-up via gateway or platform card-to-card."""
     _require_billing_enabled()
+    if admin.is_sudo:
+        raise HTTPException(status_code=400, detail="Platform owner wallet is managed manually")
     admin_id = _admin_id(db, admin)
     intent, payload = create_topup_payment(
         db,
@@ -724,6 +790,9 @@ def topup_wallet(
         instructions=payload.get("instructions"),
         confirm_token=payload.get("confirm_token"),
         checkout_url=payload.get("checkout_url"),
+        card_number=payload.get("card_number"),
+        card_holder=payload.get("card_holder"),
+        card_bank=payload.get("card_bank"),
     )
 
 
@@ -739,6 +808,16 @@ def complete_wallet_payment(
     intent = get_intent_for_admin(db, payment_id, _admin_id(db, admin))
     if intent.kind != "topup":
         raise HTTPException(status_code=400, detail="Not a top-up payment")
+    if intent.provider == "card":
+        raise HTTPException(
+            status_code=400,
+            detail="Card top-ups must be submitted for review, then approved by the platform owner",
+        )
+    if intent.provider == "demo":
+        from app import platform_settings as ps
+
+        if not ps.get_bool("payment.demo_enabled", False):
+            raise HTTPException(status_code=403, detail="Demo gateway is disabled")
     intent = complete_payment(db, intent, body.model_dump(exclude_unset=True))
     return PaymentResponse(
         payment_id=intent.id,
@@ -752,6 +831,7 @@ def complete_wallet_payment(
 
 class PortalPaymentRow(BaseModel):
     id: int
+    kind: str = "portal_renew"
     status: str
     provider: str
     amount: int
@@ -759,6 +839,8 @@ class PortalPaymentRow(BaseModel):
     plan_name: Optional[str] = None
     user_id: Optional[int] = None
     username: Optional[str] = None
+    admin_id: Optional[int] = None
+    admin_username: Optional[str] = None
     user_note: Optional[str] = None
     has_receipt: bool = False
     receipt_name: Optional[str] = None
@@ -773,9 +855,11 @@ class PortalPaymentRejectBody(BaseModel):
 def _portal_payment_row(db: Session, intent) -> PortalPaymentRow:
     plan = crud.get_plan_by_id(db, intent.plan_id) if intent.plan_id else None
     user = crud.get_user_by_id(db, intent.user_id) if intent.user_id else None
+    owner = crud.get_admin_by_id(db, intent.admin_id) if intent.admin_id else None
     extra = intent.extra or {}
     row = PortalPaymentRow(
         id=intent.id,
+        kind=intent.kind or "portal_renew",
         status=intent.status,
         provider=intent.provider,
         amount=intent.amount,
@@ -783,6 +867,8 @@ def _portal_payment_row(db: Session, intent) -> PortalPaymentRow:
         plan_name=plan.name if plan else None,
         user_id=intent.user_id,
         username=user.username if user else None,
+        admin_id=intent.admin_id,
+        admin_username=owner.username if owner else None,
         user_note=extra.get("user_note"),
         has_receipt=bool(extra.get("receipt_relpath")),
         receipt_name=extra.get("receipt_name"),
@@ -790,10 +876,44 @@ def _portal_payment_row(db: Session, intent) -> PortalPaymentRow:
         completed_at=intent.completed_at,
     )
     if not row.user_note:
-        action = extra.get("action") or intent.kind
-        uname = extra.get("new_username") or extra.get("created_username") or extra.get("target_username")
-        row.user_note = f"{action}" + (f" · {uname}" if uname else "")
+        if intent.kind == "topup":
+            row.user_note = "wallet top-up"
+            if not row.username and owner is not None:
+                row.username = owner.username
+        else:
+            action = extra.get("action") or intent.kind
+            uname = extra.get("new_username") or extra.get("created_username") or extra.get("target_username")
+            row.user_note = f"{action}" + (f" · {uname}" if uname else "")
+    elif intent.kind == "topup" and not row.username and owner is not None:
+        row.username = owner.username
     return row
+
+
+@router.post("/payments/{payment_id}/submit")
+def submit_wallet_card_topup(
+    payment_id: int,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(require_permission("billing:read")),
+    note: Optional[str] = Form(None),
+    receipt: UploadFile = File(...),
+):
+    """Reseller submits card-transfer receipt for wallet top-up review."""
+    _require_billing_enabled()
+    intent = get_intent_for_admin(db, payment_id, _admin_id(db, admin))
+    if intent.kind != "topup":
+        raise HTTPException(status_code=400, detail="Not a top-up payment")
+    if intent.provider != "card":
+        raise HTTPException(status_code=400, detail="Not a card top-up")
+    from app.billing.receipts import save_receipt
+
+    meta = save_receipt(intent.id, receipt)
+    intent = submit_card_payment(db, intent, note=note, receipt_meta=meta)
+    return {
+        "payment_id": intent.id,
+        "status": intent.status,
+        "detail": "Top-up submitted for review",
+        "has_receipt": True,
+    }
 
 
 @router.get("/portal-payments", response_model=List[PortalPaymentRow])
@@ -802,7 +922,7 @@ def list_portal_payments(
     db: Session = Depends(get_db),
     admin: Admin = Depends(require_permission("billing:read")),
 ):
-    """Portal purchases (card-to-card) — scoped to owning admin; sudo sees all."""
+    """Portal purchases + (for sudo) reseller card top-ups awaiting review."""
     _require_billing_enabled()
     dbadmin = crud.get_admin(db, admin.username)
     if dbadmin is None and not admin.is_sudo:
@@ -818,21 +938,32 @@ def portal_payment_receipt(
     db: Session = Depends(get_db),
     admin: Admin = Depends(require_permission("billing:read")),
 ):
-    """Download the uploaded card-transfer receipt for a portal payment."""
+    """Download the uploaded card-transfer receipt for a portal payment or top-up."""
     _require_billing_enabled()
     dbadmin = crud.get_admin(db, admin.username)
     scope = dbadmin if dbadmin is not None else admin
     intent = get_intent_for_admin_or_sudo(db, payment_id, scope)
+    if intent.kind == "topup" and not getattr(scope, "is_sudo", False):
+        # Reseller may download their own top-up receipt; others cannot.
+        if intent.admin_id != getattr(scope, "id", None):
+            raise HTTPException(status_code=404, detail="Payment not found")
     extra = intent.extra or {}
     rel = extra.get("receipt_relpath")
     if not rel:
         raise HTTPException(status_code=404, detail="No receipt uploaded")
-    from app.billing.receipts import receipt_media_type, resolve_receipt_path
+    from app.billing.receipts import receipt_media_type, receipt_response_headers, resolve_receipt_path
 
     path = resolve_receipt_path(str(rel))
     media = receipt_media_type(path, extra.get("receipt_content_type"))
     filename = extra.get("receipt_name") or path.name
-    return FileResponse(path, media_type=media, filename=filename)
+    return FileResponse(
+        path,
+        media_type=media,
+        filename=filename,
+        # Force download — never execute inline in the admin browser.
+        content_disposition_type="attachment",
+        headers=receipt_response_headers(),
+    )
 
 
 @router.post("/portal-payments/{payment_id}/approve", response_model=PortalPaymentRow)
@@ -841,16 +972,24 @@ def approve_portal_purchase(
     db: Session = Depends(get_db),
     admin: Admin = Depends(require_permission("billing:write")),
 ):
-    """Approve a card-to-card portal purchase and apply the plan."""
+    """Approve a card-to-card portal purchase or reseller wallet top-up."""
     _require_billing_enabled()
     dbadmin = crud.get_admin(db, admin.username)
     scope = dbadmin if dbadmin is not None else admin
     intent = get_intent_for_admin_or_sudo(db, payment_id, scope)
-    intent = approve_portal_payment(db, intent)
+    intent = approve_portal_payment(db, intent, reviewer=scope)
     try:
         from app.portal_push import notify_portal_payment
+        from app.web_push import notify_admin_badge_sync, notify_topup_result
 
-        notify_portal_payment(db, intent, approved=True)
+        if intent.kind in ("portal_renew", "portal_purchase"):
+            notify_portal_payment(db, intent, approved=True)
+        elif intent.kind == "topup":
+            notify_topup_result(db, intent, approved=True)
+        # Refresh reviewer badge (sudo or reseller who cleared the queue item).
+        rid = getattr(scope, "id", None)
+        if rid:
+            notify_admin_badge_sync(db, int(rid))
     except Exception:
         pass
     return _portal_payment_row(db, intent)
@@ -863,16 +1002,23 @@ def reject_portal_purchase(
     db: Session = Depends(get_db),
     admin: Admin = Depends(require_permission("billing:write")),
 ):
-    """Reject a pending card-to-card portal purchase."""
+    """Reject a pending card-to-card portal purchase or wallet top-up."""
     _require_billing_enabled()
     dbadmin = crud.get_admin(db, admin.username)
     scope = dbadmin if dbadmin is not None else admin
     intent = get_intent_for_admin_or_sudo(db, payment_id, scope)
-    intent = reject_portal_payment(db, intent, reason=body.reason)
+    intent = reject_portal_payment(db, intent, reason=body.reason, reviewer=scope)
     try:
         from app.portal_push import notify_portal_payment
+        from app.web_push import notify_admin_badge_sync, notify_topup_result
 
-        notify_portal_payment(db, intent, approved=False)
+        if intent.kind in ("portal_renew", "portal_purchase"):
+            notify_portal_payment(db, intent, approved=False)
+        elif intent.kind == "topup":
+            notify_topup_result(db, intent, approved=False, reason=body.reason)
+        rid = getattr(scope, "id", None)
+        if rid:
+            notify_admin_badge_sync(db, int(rid))
     except Exception:
         pass
     return _portal_payment_row(db, intent)
@@ -1104,7 +1250,7 @@ def put_my_card_settings(
 
 @router.post("/webhook/stripe")
 async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
-    """Stripe Checkout completion webhook (no auth — verified by signature when configured)."""
+    """Stripe Checkout completion webhook — signature required when Stripe is on."""
     import hashlib
     import hmac
     import json
@@ -1116,26 +1262,36 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     if not ps.get_bool("payment.stripe_enabled"):
         raise HTTPException(status_code=404, detail="Stripe disabled")
 
+    webhook_secret = (ps.get_str("payment.stripe_webhook_secret") or "").strip()
+    if not webhook_secret:
+        # Fail closed: never accept unsigned Stripe events in production.
+        raise HTTPException(
+            status_code=503,
+            detail="Stripe webhook secret is not configured",
+        )
+
     body = await request.body()
     sig = request.headers.get("stripe-signature", "")
-    webhook_secret = ps.get_str("payment.stripe_webhook_secret")
-    if webhook_secret and sig:
-        try:
-            parts = dict(p.split("=", 1) for p in sig.split(",") if "=" in p)
-            timestamp = parts.get("t", "")
-            v1 = parts.get("v1", "")
-            signed = f"{timestamp}.{body.decode()}"
-            expected = hmac.new(
-                webhook_secret.encode(),
-                signed.encode(),
-                hashlib.sha256,
-            ).hexdigest()
-            if not hmac.compare_digest(expected, v1):
-                raise HTTPException(status_code=400, detail="Invalid signature")
-        except HTTPException:
-            raise
-        except Exception:
-            raise HTTPException(status_code=400, detail="Signature verification failed")
+    if not sig:
+        raise HTTPException(status_code=400, detail="Missing Stripe-Signature header")
+    try:
+        parts = dict(p.split("=", 1) for p in sig.split(",") if "=" in p)
+        timestamp = parts.get("t", "")
+        v1 = parts.get("v1", "")
+        if not timestamp or not v1:
+            raise HTTPException(status_code=400, detail="Invalid Stripe-Signature header")
+        signed = f"{timestamp}.{body.decode()}"
+        expected = hmac.new(
+            webhook_secret.encode(),
+            signed.encode(),
+            hashlib.sha256,
+        ).hexdigest()
+        if not hmac.compare_digest(expected, v1):
+            raise HTTPException(status_code=400, detail="Invalid signature")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=400, detail="Signature verification failed")
 
     try:
         event = json.loads(body)

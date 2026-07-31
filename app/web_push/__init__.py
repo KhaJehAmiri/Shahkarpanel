@@ -186,18 +186,60 @@ def _send_one(sub, payload: dict, vapid_claims: dict, vapid_private: str) -> str
         return "error"
 
 
-def count_awaiting_card_for_admin(db: Session, admin_id: int) -> int:
-    """How many card payments wait for this admin (app icon badge)."""
-    from app.db.models import PaymentIntent
+def panel_url(route: str = "billing", query: str = "") -> str:
+    """Absolute panel path with hash route (works with custom DASHBOARD_PATH)."""
+    from app.middleware.dashboard_path import custom_dashboard_path
 
-    return (
-        db.query(PaymentIntent)
-        .filter(
-            PaymentIntent.admin_id == int(admin_id),
-            PaymentIntent.provider == "card",
-            PaymentIntent.status == "awaiting_review",
+    base = custom_dashboard_path().rstrip("/")
+    frag = f"#/{route.lstrip('/')}"
+    q = (query or "").strip()
+    if q:
+        frag += q if q.startswith("?") else f"?{q}"
+    return f"{base}/{frag}"
+
+
+def count_pending_invoices_for_admin(db: Session, admin_id: int) -> int:
+    from app.db.models import Admin, Invoice
+
+    admin = db.query(Admin).filter(Admin.id == int(admin_id)).first()
+    q = db.query(Invoice).filter(Invoice.status == "pending")
+    if admin is None or not bool(getattr(admin, "is_sudo", False)):
+        q = q.filter(Invoice.admin_id == int(admin_id))
+    return q.count()
+
+
+def count_awaiting_card_for_admin(db: Session, admin_id: int) -> int:
+    """How many card payments wait for this admin (orders queue only)."""
+    from sqlalchemy import or_
+
+    from app.db.models import Admin, PaymentIntent
+
+    admin = db.query(Admin).filter(Admin.id == int(admin_id)).first()
+    q = db.query(PaymentIntent).filter(
+        PaymentIntent.provider == "card",
+        PaymentIntent.status == "awaiting_review",
+    )
+    if admin is not None and bool(getattr(admin, "is_sudo", False)):
+        # Same as /billing/attention-counts: all portal card orders + all top-ups.
+        q = q.filter(
+            or_(
+                PaymentIntent.kind.in_(("portal_renew", "portal_purchase")),
+                PaymentIntent.kind == "topup",
+            )
         )
-        .count()
+    else:
+        # Reseller reviews only their portal card purchases (not their own top-ups).
+        q = q.filter(
+            PaymentIntent.admin_id == int(admin_id),
+            PaymentIntent.kind.in_(("portal_renew", "portal_purchase")),
+        )
+    return q.count()
+
+
+def count_attention_for_admin(db: Session, admin_id: int) -> int:
+    """Home-screen badge = awaiting card orders + unpaid invoices (matches sidebar)."""
+    return count_awaiting_card_for_admin(db, admin_id) + count_pending_invoices_for_admin(
+        db, admin_id
     )
 
 
@@ -207,14 +249,14 @@ def send_to_admin_ids(
     *,
     title: str,
     body: str,
-    url: str = "/dashboard/#/billing",
-    tag: str = "card-payment",
+    url: Optional[str] = None,
+    tag: str = "sk-push",
     count: Optional[int] = None,
 ) -> int:
     """Send a notification to all browser subscriptions for the given admins.
 
     ``count`` is the home-screen app badge number (Telegram-style). When omitted,
-    each admin gets their own awaiting-review count.
+    each admin gets their own attention count (orders + invoices).
     """
     from app.db.models import AdminPushSubscription
 
@@ -226,7 +268,6 @@ def send_to_admin_ids(
     except Exception as exc:
         log.warning("web push skipped (no VAPID): %s", exc)
         return 0
-    ps = _ps()
     subject = resolve_vapid_subject()
     claims = {"sub": subject}
     rows: List[Any] = (
@@ -234,19 +275,19 @@ def send_to_admin_ids(
         .filter(AdminPushSubscription.admin_id.in_(list(ids)))
         .all()
     )
-    # Group subscriptions by admin so each gets the correct badge count.
     by_admin: dict[int, list] = {}
     for sub in rows:
         by_admin.setdefault(int(sub.admin_id), []).append(sub)
 
+    target_url = url or panel_url("billing")
     sent = 0
     stale = []
     for aid, subs in by_admin.items():
-        badge = int(count) if count is not None else count_awaiting_card_for_admin(db, aid)
+        badge = int(count) if count is not None else count_attention_for_admin(db, aid)
         payload = {
             "title": title,
             "body": body,
-            "url": url,
+            "url": target_url,
             "tag": tag,
             "count": max(0, badge),
         }
@@ -267,63 +308,140 @@ def send_to_admin_ids(
 
 
 def notify_card_payment_submitted(db: Session, intent) -> None:
-    """Push to the owning reseller only (or sudos when the owner is sudo).
+    """Push notify who must review this card payment.
 
-    Reseller customers must not notify the master — only that reseller.
-    Includes Telegram-style home-screen badge count.
+    - Portal purchase/renew: owning reseller (or sudos when owner is sudo).
+    - Wallet top-up: all platform sudos (never the reseller who submitted).
     """
     from app.db.models import Admin
 
     try:
         targets: Set[int] = set()
-        owner = None
-        if getattr(intent, "admin_id", None):
-            owner = db.query(Admin).filter(Admin.id == int(intent.admin_id)).first()
-            if owner is not None:
-                targets.add(int(owner.id))
-        if owner is None or bool(getattr(owner, "is_sudo", False)):
+        kind = getattr(intent, "kind", None) or ""
+        if kind == "topup":
             for row in db.query(Admin.id).filter(Admin.is_sudo.is_(True)).all():
                 targets.add(int(row[0] if isinstance(row, tuple) else row.id))
+            owner = None
+            if getattr(intent, "admin_id", None):
+                owner = db.query(Admin).filter(Admin.id == int(intent.admin_id)).first()
+            amount = int(intent.amount or 0)
+            who = (owner.username if owner else None) or f"#{intent.id}"
+            title = "شارژ کیف‌پول نماینده"
+            body = f"مبلغ {amount:,} — {who} در انتظار تأیید"
+            url = panel_url("billing", "billingTab=orders")
+            tag = f"card-topup-{intent.id}"
+        else:
+            owner = None
+            if getattr(intent, "admin_id", None):
+                owner = db.query(Admin).filter(Admin.id == int(intent.admin_id)).first()
+                if owner is not None:
+                    targets.add(int(owner.id))
+            if owner is None or bool(getattr(owner, "is_sudo", False)):
+                for row in db.query(Admin.id).filter(Admin.is_sudo.is_(True)).all():
+                    targets.add(int(row[0] if isinstance(row, tuple) else row.id))
+            extra = intent.extra or {}
+            uname = (
+                extra.get("new_username")
+                or extra.get("target_username")
+                or extra.get("created_username")
+                or ""
+            )
+            amount = int(intent.amount or 0)
+            title = "سفارش جدید — پرداخت کارت‌به‌کارت"
+            body = f"مبلغ {amount:,} — {uname or f'#{intent.id}'} در انتظار تأیید"
+            url = panel_url("billing", "billingTab=orders")
+            tag = f"card-payment-{intent.id}"
         if not targets:
             return
-        extra = intent.extra or {}
-        uname = (
-            extra.get("new_username")
-            or extra.get("target_username")
-            or extra.get("created_username")
-            or ""
-        )
-        amount = int(intent.amount or 0)
-        title = "پرداخت کارت‌به‌کارت جدید"
-        body = f"مبلغ {amount:,} — {uname or f'#{intent.id}'} در انتظار تأیید"
         send_to_admin_ids(
             db,
             targets,
             title=title,
             body=body,
-            url="/dashboard/#/billing?billingTab=orders",
-            tag=f"card-payment-{intent.id}",
+            url=url,
+            tag=tag,
         )
     except Exception as exc:
         log.warning("card payment push notify failed: %s", exc)
 
 
-def notify_admin_badge_sync(db: Session, admin_id: int) -> None:
-    """Refresh home-screen badge after approve/reject (silent-ish status ping)."""
+def notify_topup_result(
+    db: Session,
+    intent,
+    *,
+    approved: bool,
+    reason: Optional[str] = None,
+) -> None:
+    """Notify the reseller who submitted a wallet top-up (approve / reject)."""
     try:
-        n = count_awaiting_card_for_admin(db, admin_id)
-        if n <= 0:
-            title = "صف تأیید خالی شد"
-            body = "پرداخت معلقی باقی نمانده"
+        if getattr(intent, "kind", None) != "topup":
+            return
+        aid = getattr(intent, "admin_id", None)
+        if not aid:
+            return
+        amount = int(intent.amount or 0)
+        if approved:
+            title = "شارژ کیف‌پول تأیید شد"
+            body = f"مبلغ {amount:,} به کیف‌پول شما اضافه شد"
         else:
-            title = "صف تأیید به‌روز شد"
-            body = f"{n} پرداخت در انتظار تأیید"
+            title = "شارژ کیف‌پول رد شد"
+            why = (reason or "").strip()
+            body = f"مبلغ {amount:,} تأیید نشد"
+            if why:
+                body = f"{body} — {why}"
+        send_to_admin_ids(
+            db,
+            [int(aid)],
+            title=title,
+            body=body,
+            url=panel_url("billing", "billingTab=transactions"),
+            tag=f"topup-result-{intent.id}-{'ok' if approved else 'no'}",
+        )
+    except Exception as exc:
+        log.warning("topup result push failed: %s", exc)
+
+
+def notify_invoice_created(db: Session, invoice) -> None:
+    """Notify the reseller when a new unpaid invoice is issued."""
+    try:
+        aid = getattr(invoice, "admin_id", None)
+        if not aid:
+            return
+        amount = int(invoice.amount or 0)
+        note = (getattr(invoice, "description", None) or "").strip()
+        title = "فاکتور جدید"
+        body = f"مبلغ {amount:,} — فاکتور #{invoice.id}"
+        if note:
+            body = f"{body} — {note}"
+        send_to_admin_ids(
+            db,
+            [int(aid)],
+            title=title,
+            body=body,
+            url=panel_url("billing", "billingTab=invoices"),
+            tag=f"invoice-{invoice.id}",
+        )
+    except Exception as exc:
+        log.warning("invoice push notify failed: %s", exc)
+
+
+def notify_admin_badge_sync(db: Session, admin_id: int) -> None:
+    """Refresh home-screen badge after approve/reject without a noisy toast."""
+    try:
+        n = count_attention_for_admin(db, admin_id)
+        # Silent badge-only update via a short notification that OS still delivers.
+        if n <= 0:
+            title = "شاهکار"
+            body = "صف مالی به‌روز شد — مورد معلقی نیست"
+        else:
+            title = "شاهکار"
+            body = f"{n} مورد نیازمند توجه در بخش مالی"
         send_to_admin_ids(
             db,
             [int(admin_id)],
             title=title,
             body=body,
-            url="/dashboard/#/billing?billingTab=orders",
+            url=panel_url("billing"),
             tag="sk-badge-sync",
             count=n,
         )

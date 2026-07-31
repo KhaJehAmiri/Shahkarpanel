@@ -42,6 +42,9 @@ def update_settings(
 ):
     if not feature_flags.is_enabled("billing"):
         raise HTTPException(status_code=404, detail="Billing is disabled")
-    ps.update_settings_bulk(body.settings)
+    try:
+        ps.update_settings_bulk(body.settings)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return ps.list_settings_for_ui()
 

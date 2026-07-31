@@ -1,4 +1,4 @@
-import { FC, useMemo, useState } from "react";
+import { FC, useEffect, useMemo, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useApp } from "../context/AppContext";
@@ -10,6 +10,15 @@ import { IcGlobe, IcLogout, IcMenu, IcMoon, IcSun, navIcon } from "./icons";
 import { AutoWebPush } from "./AutoWebPush";
 import { UpdateProvider } from "../context/UpdateContext";
 import { PanelVersionStrip } from "./PanelVersionStrip";
+import { api } from "../api/client";
+import { useFetch, useLiveReload } from "../lib/useFetch";
+
+export const BILLING_ATTENTION_EVENT = "sk-billing-attention";
+
+export function notifyBillingAttentionChanged() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new Event(BILLING_ATTENTION_EVENT));
+}
 
 /** Main nav: finance + resellers are first-class; Business = analytics/automation. */
 const NAV_SUDO = [
@@ -40,9 +49,10 @@ const PATHS: Record<string, string> = {
   infrastructure: "/servers",
 };
 
-const NavItem: FC<{ id: string; onNav: () => void }> = ({ id, onNav }) => {
+const NavItem: FC<{ id: string; onNav: () => void; badge?: number }> = ({ id, onNav, badge = 0 }) => {
   const { t } = useTranslation();
   const path = PATHS[id];
+  const showBadge = badge > 0;
   return (
     <NavLink
       to={path}
@@ -50,19 +60,40 @@ const NavItem: FC<{ id: string; onNav: () => void }> = ({ id, onNav }) => {
       className={({ isActive }) => `sk-nav-item ${isActive ? "active" : ""}`}
     >
       {navIcon(id)}
-      <span>{t(`nav.${id}`)}</span>
+      <span className="sk-nav-item-label">{t(`nav.${id}`)}</span>
+      {showBadge ? (
+        <span className="sk-nav-badge" aria-label={String(badge)}>
+          {badge > 99 ? "99+" : badge}
+        </span>
+      ) : null}
     </NavLink>
   );
 };
 
 export const Shell: FC = () => {
   const { t, i18n } = useTranslation();
-  const { admin, branding, theme, setTheme, logout } = useApp();
+  const { admin, branding, theme, setTheme, logout, isEnabled } = useApp();
   const appTitle = brandingTitle(branding, t("common.appName"));
   const { setOpen: setCopilotOpen } = useCopilot();
   const [open, setOpen] = useState(false);
   const [langOpen, setLangOpen] = useState(false);
   const loc = useLocation();
+  const billingEnabled = isEnabled("billing");
+  const attention = useFetch<{ orders: number; invoices: number }>(
+    () => (billingEnabled ? api.get("/billing/attention-counts") : Promise.resolve({ orders: 0, invoices: 0 })),
+    [billingEnabled],
+  );
+  useLiveReload(() => attention.reload({ background: true }), 30000, billingEnabled);
+  useEffect(() => {
+    if (!billingEnabled) return;
+    const onChanged = () => attention.reload({ background: true });
+    window.addEventListener(BILLING_ATTENTION_EVENT, onChanged);
+    return () => window.removeEventListener(BILLING_ATTENTION_EVENT, onChanged);
+  }, [billingEnabled, attention.reload]);
+
+  const billingBadge = billingEnabled
+    ? (attention.data?.orders ?? 0) + (attention.data?.invoices ?? 0)
+    : 0;
 
   const nav = useMemo(() => {
     if (admin?.is_sudo) return NAV_SUDO;
@@ -107,7 +138,12 @@ export const Shell: FC = () => {
           <div key={section.group}>
             <div className="sk-nav-group-label">{t(`nav.${section.group}`)}</div>
             {section.items.map((id) => (
-              <NavItem key={id} id={id} onNav={closeNav} />
+              <NavItem
+                key={id}
+                id={id}
+                onNav={closeNav}
+                badge={id === "billing" ? billingBadge : 0}
+              />
             ))}
           </div>
         ))}

@@ -176,15 +176,16 @@ async def web_manifest():
     from fastapi.responses import JSONResponse
 
     dash = custom_dashboard_path()
+    dash_slash = dash if dash.endswith("/") else f"{dash}/"
     body = {
-        "id": f"{dash.rstrip('/')}/",
-        "name": "Shahkar",
+        "id": dash_slash,
+        "name": "Shahkar Panel",
         "short_name": "Shahkar",
-        "description": "Shahkar control plane",
-        "start_url": f"{dash}?source=pwa",
-        "scope": dash,
+        "description": "پنل نمایندگان و مدیریت شاهکار",
+        "start_url": f"{dash_slash}?source=pwa",
+        "scope": dash_slash,
         "display": "standalone",
-        "display_override": ["standalone", "minimal-ui", "browser"],
+        "display_override": ["standalone", "minimal-ui"],
         "background_color": "#0b1220",
         "theme_color": "#0b1220",
         "orientation": "any",
@@ -216,12 +217,6 @@ async def web_manifest():
                 "sizes": "512x512",
                 "type": "image/png",
                 "purpose": "maskable",
-            },
-            {
-                "src": "/brand/apple-touch-icon.png",
-                "sizes": "180x180",
-                "type": "image/png",
-                "purpose": "any",
             },
         ],
     }

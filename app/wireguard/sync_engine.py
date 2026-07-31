@@ -64,7 +64,11 @@ def _finalmask_lock_for(node_id: int) -> threading.Lock:
 
 
 def mark_finalmask_rpc_busy(node_id: int, busy: bool) -> None:
-    """Health / connect paths skip preempting a node while this is set."""
+    """Health / connect paths skip preempting a node while this is set.
+
+    Used for Finalmask hot-replace *and* ordinary WG RPyC applies — any long
+    panel→node RPC that must not be killed by a concurrent ``connect_node``.
+    """
     nid = int(node_id)
     with _finalmask_node_locks_guard:
         if busy:
@@ -80,6 +84,11 @@ def mark_finalmask_rpc_busy(node_id: int, busy: bool) -> None:
 def is_finalmask_rpc_busy(node_id: int) -> bool:
     with _finalmask_node_locks_guard:
         return int(_finalmask_rpc_busy.get(int(node_id), 0)) > 0
+
+
+# Aliases — prefer these names for non-Finalmask callers.
+mark_node_rpc_busy = mark_finalmask_rpc_busy
+is_node_rpc_busy = is_finalmask_rpc_busy
 
 
 

@@ -23,9 +23,9 @@ from app import platform_settings as ps
 from config import PORTAL_DIRECT_PAYMENT
 
 
-def _validate_amount(amount: int) -> int:
+def _validate_amount(amount: int, *, min_amount: Optional[int] = None) -> int:
     value = int(amount)
-    min_amt = ps.get_int("payment.min_amount", 100)
+    min_amt = int(min_amount) if min_amount is not None else ps.get_int("payment.min_amount", 100)
     max_amt = ps.get_int("payment.max_amount", 100_000_000)
     if value < min_amt:
         raise HTTPException(
@@ -40,23 +40,41 @@ def _validate_amount(amount: int) -> int:
     return value
 
 
-def _require_provider(name: str, dbadmin=None) -> None:
+# Reseller self-service wallet top-up floor (toman / minor units as configured).
+RESELLER_TOPUP_MIN_AMOUNT = 1_000_000
+
+
+def _require_provider(name: str, dbadmin=None, *, kind: Optional[str] = None) -> None:
+    name = (name or "").strip().lower()
+    if name == "demo" and not ps.get_bool("payment.demo_enabled", False):
+        raise HTTPException(
+            status_code=403,
+            detail="Demo gateway is disabled — use card, CentralPay, or Stripe",
+        )
     if not provider_supports_intent(name):
         raise HTTPException(status_code=422, detail=f"Provider '{name}' is not available")
     if name == "centralpay":
         from app.billing.providers import admin_may_use_centralpay
 
-        # Platform sudo always OK; reseller must be opted in. If dbadmin is
-        # unknown (shouldn't happen), deny to avoid opening the gateway to all.
-        if dbadmin is not None and not admin_may_use_centralpay(dbadmin):
-            raise HTTPException(
-                status_code=403,
-                detail="CentralPay is not enabled for this reseller",
-            )
+        # Wallet top-up uses the platform merchant account — any reseller may pay.
+        # Portal checkout still requires per-reseller CentralPay opt-in.
+        if kind != "topup":
+            if dbadmin is not None and not admin_may_use_centralpay(dbadmin):
+                raise HTTPException(
+                    status_code=403,
+                    detail="CentralPay is not enabled for this reseller",
+                )
     if name == "card":
-        from app.billing.providers import resolve_card_for_admin
+        from app.billing.providers import resolve_card_for_admin, resolve_platform_card
 
-        if dbadmin is not None and resolve_card_for_admin(dbadmin) is None:
+        # Wallet top-ups pay the platform card; portal purchases use the owner card.
+        if kind == "topup":
+            if resolve_platform_card() is None:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Platform card payment is not configured",
+                )
+        elif dbadmin is not None and resolve_card_for_admin(dbadmin) is None:
             raise HTTPException(
                 status_code=403,
                 detail="Card payment is not configured for this reseller",
@@ -97,8 +115,8 @@ def create_topup_payment(
     from app.db import crud
 
     dbadmin = crud.get_admin_by_id(db, admin_id)
-    _require_provider(provider, dbadmin)
-    value = _validate_amount(amount)
+    _require_provider(provider, dbadmin, kind="topup")
+    value = _validate_amount(amount, min_amount=RESELLER_TOPUP_MIN_AMOUNT)
     extra: dict = {}
     if public_base:
         extra["public_base"] = public_base.rstrip("/")
@@ -157,7 +175,7 @@ def create_portal_payment(
 
     billing_admin_id = _billing_admin_id(db, dbuser)
     dbadmin = crud.get_admin_by_id(db, billing_admin_id)
-    _require_provider(provider, dbadmin)
+    _require_provider(provider, dbadmin, kind="portal")
 
     plan = db.query(Plan).filter(Plan.id == plan_id).first()
     if not plan or not plan.enabled:
@@ -276,21 +294,45 @@ def submit_card_payment(
     return intent
 
 
-def approve_portal_payment(db: Session, intent: PaymentIntent) -> PaymentIntent:
-    if intent.kind not in ("portal_renew", "portal_purchase"):
-        raise HTTPException(status_code=400, detail="Not a portal purchase")
+_CARD_REVIEW_KINDS = ("portal_renew", "portal_purchase", "topup")
+
+
+def _assert_can_review_card(admin: Admin, intent: PaymentIntent) -> None:
+    """Portal card → owning reseller/sudo; wallet top-up → sudo only."""
+    if intent.kind == "topup":
+        if not getattr(admin, "is_sudo", False):
+            raise HTTPException(status_code=403, detail="Only the platform owner can approve wallet top-ups")
+        return
+    # Portal payments: get_intent_for_admin_or_sudo already scopes ownership.
+
+
+def approve_portal_payment(db: Session, intent: PaymentIntent, *, reviewer: Optional[Admin] = None) -> PaymentIntent:
+    """Approve a card payment (portal purchase/renew or reseller wallet top-up)."""
+    if intent.kind not in _CARD_REVIEW_KINDS:
+        raise HTTPException(status_code=400, detail="Not a reviewable card payment")
     if intent.status not in ("pending", "awaiting_review"):
         raise HTTPException(status_code=409, detail="Payment is not awaiting review")
     if intent.provider != "card":
         raise HTTPException(status_code=400, detail="Only card payments can be manually approved")
+    if reviewer is not None:
+        _assert_can_review_card(reviewer, intent)
     return complete_payment(db, intent, {"admin_approved": True})
 
 
-def reject_portal_payment(db: Session, intent: PaymentIntent, *, reason: Optional[str] = None) -> PaymentIntent:
-    if intent.kind not in ("portal_renew", "portal_purchase"):
-        raise HTTPException(status_code=400, detail="Not a portal purchase")
+def reject_portal_payment(
+    db: Session,
+    intent: PaymentIntent,
+    *,
+    reason: Optional[str] = None,
+    reviewer: Optional[Admin] = None,
+) -> PaymentIntent:
+    """Reject a card payment (portal purchase/renew or reseller wallet top-up)."""
+    if intent.kind not in _CARD_REVIEW_KINDS:
+        raise HTTPException(status_code=400, detail="Not a reviewable card payment")
     if intent.status not in ("pending", "awaiting_review"):
         raise HTTPException(status_code=409, detail="Payment is not awaiting review")
+    if reviewer is not None:
+        _assert_can_review_card(reviewer, intent)
     extra = dict(intent.extra or {})
     if reason:
         extra["reject_reason"] = str(reason)[:500]
@@ -319,14 +361,31 @@ def list_portal_payments_for_admin(
     status: Optional[str] = None,
     limit: int = 50,
 ) -> List[PaymentIntent]:
-    q = db.query(PaymentIntent).filter(
-        PaymentIntent.kind.in_(("portal_renew", "portal_purchase"))
-    )
-    if not getattr(admin, "is_sudo", False):
+    """Card/portal queue for this admin.
+
+    Resellers see their portal purchases. Sudo also sees reseller wallet
+    top-ups that need platform-card approval.
+    """
+    from sqlalchemy import and_, or_
+
+    if getattr(admin, "is_sudo", False):
+        q = db.query(PaymentIntent).filter(
+            or_(
+                PaymentIntent.kind.in_(("portal_renew", "portal_purchase")),
+                and_(
+                    PaymentIntent.kind == "topup",
+                    PaymentIntent.provider == "card",
+                ),
+            )
+        )
+    else:
         admin_pk = getattr(admin, "id", None)
         if admin_pk is None:
             return []
-        q = q.filter(PaymentIntent.admin_id == admin_pk)
+        q = db.query(PaymentIntent).filter(
+            PaymentIntent.kind.in_(("portal_renew", "portal_purchase")),
+            PaymentIntent.admin_id == admin_pk,
+        )
     if status:
         q = q.filter(PaymentIntent.status == status)
     return q.order_by(PaymentIntent.id.desc()).limit(max(1, min(limit, 200))).all()
@@ -454,6 +513,14 @@ def complete_payment(
         pass
     db.commit()
     db.refresh(intent)
+    # Gateway (non-card) wallet top-up: notify the reseller like a native app.
+    if intent.kind == "topup" and intent.provider != "card":
+        try:
+            from app.web_push import notify_topup_result
+
+            notify_topup_result(db, intent, approved=True)
+        except Exception:
+            pass
     return intent
 
 

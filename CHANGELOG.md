@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.22.12 — 2026-07-31
+
+Ship-readiness release: payments, PWA, i18n, mobile, ops, and demo path.
+
+### Security & payments
+- Demo gateway off by default and fail-closed when disabled; Stripe requires a webhook secret when enabled.
+- Card receipt uploads: magic-byte sniff, image re-encode (Pillow), PDF sanitize (pypdf), 15 MB limit, attachment/`nosniff` when serving.
+
+### Ops & HTTPS
+- Panel binds localhost-only behind nginx; unauthenticated `GET /api/health` and `/api/health/ready` return only `{ok}` (200/503).
+- Docker healthcheck probes `/api/health`.
+
+### Panel / portal UX
+- Reseller panel PWA install gate + web push for invoices / top-ups / card orders.
+- Users & Billing tables: card layout on mobile (≤760px).
+- Master plans catalog grouped by platform vs reseller; `owner_username` on plan API.
+- Master overview: per-reseller online counts; Users filter by reseller (`?admin=`).
+
+### i18n & docs
+- FA locale parity; RU/ZH billing, PWA, and commercial strings completed (other admin sections may still fall back to EN).
+- Demo script: [`docs/DEMO_SCRIPT_FA.md`](docs/DEMO_SCRIPT_FA.md) + `scripts/prepare_demo_seed.py`.
+
 ## 0.22.5 — 2026-07-28
 
 - Densify Protocols & Servers tables; compact ⋯ row menus.

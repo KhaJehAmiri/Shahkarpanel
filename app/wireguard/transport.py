@@ -19,6 +19,25 @@ from typing import Any, Callable, Iterator, List, Optional, Sequence
 logger = logging.getLogger("shahkar-wg")
 
 
+@contextmanager
+def _node_rpc_busy_guard(node) -> Iterator[None]:
+    """Prevent core-health ``connect_node`` from killing this RPyC session mid-apply."""
+    nid = getattr(node, "id", None)
+    if nid is None:
+        yield
+        return
+    try:
+        from app.wireguard.sync_engine import mark_node_rpc_busy
+    except Exception:
+        yield
+        return
+    mark_node_rpc_busy(int(nid), True)
+    try:
+        yield
+    finally:
+        mark_node_rpc_busy(int(nid), False)
+
+
 class WireGuardTransportError(Exception):
     pass
 
@@ -460,29 +479,30 @@ class RPyCWireGuardClient(AutoScaleWireGuardMixin):
             timeout,
         )
         payload = json.dumps(plain_specs, separators=(",", ":"))
-        with _rpyc_sync_timeout(conn, timeout):
-            try:
-                if hasattr(remote, "wg_apply_specs_json"):
-                    remote.wg_apply_specs_json(payload)
-                elif len(plain_specs) == 1:
-                    if hasattr(remote, "wg_apply_json"):
-                        remote.wg_apply_json(json.dumps(plain_specs[0], separators=(",", ":")))
-                    else:
-                        remote.wg_apply(plain_specs[0])
-                else:
-                    for spec in plain_specs:
+        with _node_rpc_busy_guard(self._node):
+            with _rpyc_sync_timeout(conn, timeout):
+                try:
+                    if hasattr(remote, "wg_apply_specs_json"):
+                        remote.wg_apply_specs_json(payload)
+                    elif len(plain_specs) == 1:
                         if hasattr(remote, "wg_apply_json"):
-                            remote.wg_apply_json(json.dumps(spec, separators=(",", ":")))
+                            remote.wg_apply_json(json.dumps(plain_specs[0], separators=(",", ":")))
                         else:
-                            remote.wg_apply(spec)
-            except Exception as exc:
-                logger.warning(
-                    "RPyC WireGuard apply failed (peers=%s timeout=%ss): %s",
-                    peer_n,
-                    timeout,
-                    exc,
-                )
-                raise
+                            remote.wg_apply(plain_specs[0])
+                    else:
+                        for spec in plain_specs:
+                            if hasattr(remote, "wg_apply_json"):
+                                remote.wg_apply_json(json.dumps(spec, separators=(",", ":")))
+                            else:
+                                remote.wg_apply(spec)
+                except Exception as exc:
+                    logger.warning(
+                        "RPyC WireGuard apply failed (peers=%s timeout=%ss): %s",
+                        peer_n,
+                        timeout,
+                        exc,
+                    )
+                    raise
 
     def apply_specs(self, specs: list, timeout: int = 30) -> None:
         peer_n = sum(len((s or {}).get("peers") or []) for s in (specs or []))
@@ -491,12 +511,13 @@ class RPyCWireGuardClient(AutoScaleWireGuardMixin):
         # Large single-shot syncconf over RPyC fails on flaky links; stream
         # automatically so tunnel exits / reconnect heal without manual wg set.
         if peer_n > WG_APPLY_RPC_CHUNK:
-            _apply_specs_chunked(
-                apply_direct=self._apply_specs_direct,
-                apply_batch=self.apply_batch,
-                specs=plain_specs,
-                timeout=timeout,
-            )
+            with _node_rpc_busy_guard(self._node):
+                _apply_specs_chunked(
+                    apply_direct=self._apply_specs_direct,
+                    apply_batch=self.apply_batch,
+                    specs=plain_specs,
+                    timeout=timeout,
+                )
             return
         self._apply_specs_direct(plain_specs, timeout)
 
@@ -550,7 +571,8 @@ class RPyCWireGuardClient(AutoScaleWireGuardMixin):
         with _rpyc_sync_timeout(conn, timeout):
             if not hasattr(remote, "wg_apply_batch_json"):
                 raise WireGuardTransportError("node agent has no wg_apply_batch_json")
-            raw = remote.wg_apply_batch_json(payload)
+            with _node_rpc_busy_guard(self._node):
+                raw = remote.wg_apply_batch_json(payload)
         if isinstance(raw, str):
             try:
                 return json.loads(raw) if raw else {}

@@ -39,3 +39,12 @@ services:
       # The socket itself is still required for in-dashboard panel updates
       # (app/system/update_jobs.py) and Postgres backup/restore (app/backup.py).
       - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - |
+          python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:${UVICORN_PORT:-8000}/api/health', timeout=3).read()"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s

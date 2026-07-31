@@ -1,4 +1,4 @@
-import { FC, useEffect, useState } from "react";
+import { FC, useEffect, useMemo, useState } from "react";
 import {
   bytesToDataLimitValue, dataLimitToBytes, detectDataLimitUnit, type DataLimitUnit,
 } from "../lib/data-limit";
@@ -9,13 +9,14 @@ import { Invoice, Plan, Transaction, TrafficPackage, TrafficPurchase, UsageSumma
 import { useApp } from "../context/AppContext";
 import { useFetch, useLiveReload } from "../lib/useFetch";
 import { formatBytes } from "../lib/format";
-import { PageHeader } from "../components/Shell";
+import { PageHeader, notifyBillingAttentionChanged } from "../components/Shell";
 import {
-  Button, Callout, Card, EmptyState, Field, Input, Modal, Pager, Pill, Select, SkeletonRows, Stat, Toggle, usePagedList, useToast,
+  Button, Callout, Card, EmptyState, Field, Input, MCard, Modal, Pager, Pill, ResponsiveData, Select, SkeletonRows, Stat, Toggle, usePagedList, useToast,
 } from "../components/ui";
 import { SectionRail, type RailGroup } from "../components/SectionRail";
 import { CommercialSettings } from "../components/CommercialSettings";
-import { IcPlus, IcTrash, IcWallet, IcEdit } from "../components/icons";
+import { IcPlus, IcTrash, IcWallet, IcEdit, IcCopy } from "../components/icons";
+import { copyToClipboard } from "../lib/clipboard";
 
 const BILLING_TABS = ["plans", "packages", "usage", "orders", "income", "invoices", "transactions", "card", "settings"] as const;
 
@@ -32,9 +33,19 @@ export const Billing: FC<{ embedded?: boolean }> = ({ embedded }) => {
   const [topupOpen, setTopupOpen] = useState(false);
   const wallet = useFetch<Wallet>(() => api.get("/billing/wallet"), []);
   const providers = useFetch<string[]>(() => api.get("/billing/payment-providers"), []);
-  useLiveReload(() => { wallet.reload(); providers.reload(); }, 30000);
+  const attention = useFetch<{ orders: number; invoices: number }>(
+    () => api.get("/billing/attention-counts"),
+    [],
+  );
+  useLiveReload(() => {
+    wallet.reload();
+    providers.reload();
+    attention.reload();
+  }, 30000);
   const canTopUp = !admin?.is_sudo && (providers.data?.length ?? 0) > 0;
   const toast = useToast();
+  const ordersBadge = attention.data?.orders ?? 0;
+  const invoicesBadge = attention.data?.invoices ?? 0;
 
   useEffect(() => {
     const pay = search.get("pay");
@@ -78,11 +89,11 @@ export const Billing: FC<{ embedded?: boolean }> = ({ embedded }) => {
       label: t("billing.groupLedger"),
       items: [
         { id: "usage", label: t("billing.tabUsage") },
-        { id: "orders", label: t("billing.tabOrders") },
+        { id: "orders", label: t("billing.tabOrders"), badge: ordersBadge },
         ...(canSeeGatewayIncome
           ? [{ id: "income", label: t("billing.tabIncome") }]
           : []),
-        { id: "invoices", label: t("billing.tabInvoices") },
+        { id: "invoices", label: t("billing.tabInvoices"), badge: invoicesBadge },
         { id: "transactions", label: t("billing.tabTransactions") },
       ],
     },
@@ -158,11 +169,11 @@ export const Billing: FC<{ embedded?: boolean }> = ({ embedded }) => {
           {tab === "plans" && <PlansTab canWrite={!!admin?.is_sudo || admin?.role === "reseller"} />}
           {tab === "packages" && <TrafficPackagesTab onPurchased={() => wallet.reload()} />}
           {tab === "usage" && <UsageTab />}
-          {tab === "orders" && <PortalOrdersTab />}
+          {tab === "orders" && <PortalOrdersTab onChanged={() => { attention.reload(); notifyBillingAttentionChanged(); }} />}
           {tab === "income" && canSeeGatewayIncome && <GatewayIncomeTab />}
           {tab === "card" && <ResellerCardSettingsTab />}
           {tab === "settings" && admin?.is_sudo && <CommercialSettings />}
-          {tab === "invoices" && <InvoicesTab />}
+          {tab === "invoices" && <InvoicesTab onChanged={() => { attention.reload(); wallet.reload(); notifyBillingAttentionChanged(); }} />}
           {tab === "transactions" && <TransactionsTab />}
         </div>
       </div>
@@ -172,10 +183,13 @@ export const Billing: FC<{ embedded?: boolean }> = ({ embedded }) => {
 
 const PlansTab: FC<{ canWrite?: boolean }> = ({ canWrite = false }) => {
   const { t } = useTranslation();
+  const { admin } = useApp();
   const toast = useToast();
   const [show, setShow] = useState(false);
   const [edit, setEdit] = useState<Plan | null>(null);
+  const [ownerFilter, setOwnerFilter] = useState<string>("all");
   const { data, loading, error, reload } = useFetch<Plan[]>(() => api.get("/plans"), []);
+  const isSudo = !!admin?.is_sudo;
 
   const remove = async (id: number) => {
     if (!confirm(t("common.confirmDelete"))) return;
@@ -183,72 +197,233 @@ const PlansTab: FC<{ canWrite?: boolean }> = ({ canWrite = false }) => {
     catch (e: any) { toast.push(e.message, "error"); }
   };
 
+  type PlanGroup = { key: string; label: string; plans: Plan[] };
+
+  const groups = useMemo((): PlanGroup[] => {
+    if (!data?.length) return [];
+    if (!isSudo) {
+      return [{ key: "mine", label: t("billing.tabPlans"), plans: data }];
+    }
+    const platform = data.filter((p) => !p.owner_admin_id);
+    const byReseller = new Map<string, Plan[]>();
+    for (const p of data) {
+      if (!p.owner_admin_id) continue;
+      const key = p.owner_username || `id:${p.owner_admin_id}`;
+      const list = byReseller.get(key) || [];
+      list.push(p);
+      byReseller.set(key, list);
+    }
+    const out: PlanGroup[] = [];
+    if (platform.length) {
+      out.push({ key: "platform", label: t("billing.platformPlans"), plans: platform });
+    }
+    Array.from(byReseller.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .forEach(([username, plans]) => {
+        out.push({
+          key: `reseller:${username}`,
+          label: t("billing.resellerPlans", { name: username }),
+          plans,
+        });
+      });
+    return out;
+  }, [data, isSudo, t]);
+
+  const resellerOptions = useMemo(() => {
+    if (!data) return [] as string[];
+    const names = new Set<string>();
+    data.forEach((p) => {
+      if (p.owner_username) names.add(p.owner_username);
+    });
+    return Array.from(names).sort();
+  }, [data]);
+
+  const visibleGroups = useMemo(() => {
+    if (!isSudo || ownerFilter === "all") return groups;
+    if (ownerFilter === "platform") return groups.filter((g) => g.key === "platform");
+    return groups.filter((g) => g.key === `reseller:${ownerFilter}`);
+  }, [groups, isSudo, ownerFilter]);
+
+  const renderPlanTable = (plans: Plan[]) => (
+    <ResponsiveData
+      table={(
+        <div className="sk-table-wrap"><table className="sk-table">
+          <thead><tr>
+            <th>{t("common.name")}</th>
+            {isSudo ? <th>{t("billing.planOwner")}</th> : null}
+            <th className="sk-num">{t("billing.price")}</th>
+            <th className="sk-num">{t("users.dataLimit")}</th>
+            <th className="sk-num">{t("billing.duration")}</th>
+            <th>{t("common.status")}</th>
+            <th className="sk-actions">{t("common.actions")}</th>
+          </tr></thead>
+          <tbody>
+            {plans.map((p) => (
+              <tr key={p.id}>
+                <td style={{ fontWeight: 600 }}>{p.name}</td>
+                {isSudo ? (
+                  <td>
+                    {p.owner_username
+                      ? <Pill tone="info">{p.owner_username}</Pill>
+                      : <span className="sk-faint">{t("billing.platformOwner")}</span>}
+                  </td>
+                ) : null}
+                <td className="sk-num">{p.price.toLocaleString()}</td>
+                <td className="sk-num">{p.data_limit ? formatBytes(p.data_limit) : t("users.unlimited")}</td>
+                <td className="sk-num">{p.duration_days ? t("users.unitDays", { n: p.duration_days }) : t("users.unlimited")}</td>
+                <td><Pill tone={p.enabled ? "ok" : "default"} dot>{p.enabled ? t("common.enabled") : t("common.disabled")}</Pill></td>
+                <td className="sk-actions">{canWrite ? (
+                  <div className="sk-row" style={{ justifyContent: "flex-end", gap: 6 }}>
+                    <Button size="sm" variant="ghost" onClick={() => setEdit(p)}><IcEdit className="sk-ico" /></Button>
+                    <Button variant="danger" size="sm" onClick={() => remove(p.id)}><IcTrash className="sk-ico" /></Button>
+                  </div>
+                ) : null}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table></div>
+      )}
+      cards={plans.map((p) => (
+        <MCard
+          key={p.id}
+          title={p.name}
+          subtitle={isSudo
+            ? (p.owner_username
+              ? t("billing.resellerPlans", { name: p.owner_username })
+              : t("billing.platformPlans"))
+            : undefined}
+          badge={<Pill tone={p.enabled ? "ok" : "default"} dot>{p.enabled ? t("common.enabled") : t("common.disabled")}</Pill>}
+          fields={[
+            { label: t("billing.price"), value: p.price.toLocaleString() },
+            { label: t("users.dataLimit"), value: p.data_limit ? formatBytes(p.data_limit) : t("users.unlimited") },
+            { label: t("billing.duration"), value: p.duration_days ? t("users.unitDays", { n: p.duration_days }) : t("users.unlimited") },
+          ]}
+          actions={canWrite ? (
+            <div className="sk-row" style={{ justifyContent: "flex-end", gap: 6 }}>
+              <Button size="sm" variant="ghost" onClick={() => setEdit(p)}><IcEdit className="sk-ico" /></Button>
+              <Button variant="danger" size="sm" onClick={() => remove(p.id)}><IcTrash className="sk-ico" /></Button>
+            </div>
+          ) : undefined}
+        />
+      ))}
+    />
+  );
+
   return (
     <>
-      {canWrite && (
-        <div className="sk-row" style={{ justifyContent: "flex-end", marginBottom: 14 }}>
+      <div className="sk-row" style={{ justifyContent: "space-between", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
+        {isSudo ? (
+          <Select value={ownerFilter} onChange={(e: any) => setOwnerFilter(e.target.value)} style={{ maxWidth: 280 }}>
+            <option value="all">{t("billing.allPlanCatalogs")}</option>
+            <option value="platform">{t("billing.platformPlans")}</option>
+            {resellerOptions.map((name) => (
+              <option key={name} value={name}>{t("billing.resellerPlans", { name })}</option>
+            ))}
+          </Select>
+        ) : <span />}
+        {canWrite ? (
           <Button variant="primary" onClick={() => setShow(true)}><IcPlus className="sk-ico" /> {t("billing.addPlan")}</Button>
-        </div>
-      )}
+        ) : null}
+      </div>
       {!canWrite && (
         <div style={{ marginBottom: 14 }}>
           <Callout tone="info">{t("billing.plansReadOnly")}</Callout>
         </div>
       )}
-      <Card pad0>
-        {loading ? <div style={{ padding: 20 }}><SkeletonRows rows={3} cols={4} /></div>
-          : error ? <EmptyState title={t("common.error")} desc={error} />
-          : !data?.length ? <EmptyState title={t("common.noData")} desc={t("billing.plansReadOnly")} />
-          : (
-            <div className="sk-table-wrap"><table className="sk-table">
-              <thead><tr>
-                <th>{t("common.name")}</th>
-                <th className="sk-num">{t("billing.price")}</th>
-                <th className="sk-num">{t("users.dataLimit")}</th>
-                <th className="sk-num">{t("billing.duration")}</th>
-                <th>{t("common.status")}</th>
-                <th className="sk-actions">{t("common.actions")}</th>
-              </tr></thead>
-              <tbody>
-                {data.map((p) => (
-                  <tr key={p.id}>
-                    <td style={{ fontWeight: 600 }}>{p.name}</td>
-                    <td className="sk-num">{p.price.toLocaleString()}</td>
-                    <td className="sk-num">{p.data_limit ? formatBytes(p.data_limit) : t("users.unlimited")}</td>
-                    <td className="sk-num">{p.duration_days ? t("users.unitDays", { n: p.duration_days }) : t("users.unlimited")}</td>
-                    <td><Pill tone={p.enabled ? "ok" : "default"} dot>{p.enabled ? t("common.enabled") : t("common.disabled")}</Pill></td>
-                    <td className="sk-actions">{canWrite ? (
-                      <div className="sk-row" style={{ justifyContent: "flex-end", gap: 6 }}>
-                        <Button size="sm" variant="ghost" onClick={() => setEdit(p)}><IcEdit className="sk-ico" /></Button>
-                        <Button variant="danger" size="sm" onClick={() => remove(p.id)}><IcTrash className="sk-ico" /></Button>
-                      </div>
-                    ) : null}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table></div>
-          )}
-      </Card>
+      {loading ? <Card pad0><div style={{ padding: 20 }}><SkeletonRows rows={3} cols={4} /></div></Card>
+        : error ? <EmptyState title={t("common.error")} desc={error} />
+        : !data?.length ? <EmptyState title={t("common.noData")} desc={t("billing.plansReadOnly")} />
+        : !visibleGroups.length ? <EmptyState title={t("common.noData")} />
+        : visibleGroups.map((g) => (
+          <Card pad0 key={g.key} className="sk-mb-20">
+            {isSudo ? (
+              <div style={{ padding: "12px 16px", fontWeight: 600, borderBottom: "1px solid var(--sk-border)" }}>
+                {g.label}
+                <span className="sk-faint" style={{ fontWeight: 400, marginInlineStart: 8 }}>({g.plans.length})</span>
+              </div>
+            ) : null}
+            {renderPlanTable(g.plans)}
+          </Card>
+        ))}
       {show && <AddPlan onClose={() => setShow(false)} onDone={() => { setShow(false); reload(); }} />}
       {edit && <EditPlan plan={edit} onClose={() => setEdit(null)} onDone={() => { setEdit(null); reload(); }} />}
     </>
   );
 };
 
+const TOPUP_MIN_AMOUNT = 1_000_000;
+
+const formatAmountGrouped = (digits: string) => {
+  const clean = (digits || "").replace(/[^\d]/g, "");
+  if (!clean) return "";
+  return clean.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+};
+
+const parseAmountDigits = (value: string) => {
+  const clean = (value || "").replace(/[^\d]/g, "");
+  return clean ? parseInt(clean, 10) : 0;
+};
+
 const TopUpModal: FC<{ providers: string[]; onClose: () => void; onDone: () => void }> = ({ providers, onClose, onDone }) => {
   const { t } = useTranslation();
   const toast = useToast();
-  const [amount, setAmount] = useState("");
-  const [provider, setProvider] = useState(providers[0] || "demo");
+  const [amountDigits, setAmountDigits] = useState("");
+  const [provider, setProvider] = useState(providers[0] || "");
   const [busy, setBusy] = useState(false);
+  const [step, setStep] = useState<"form" | "card">("form");
+  const [paymentId, setPaymentId] = useState<number | null>(null);
+  const [card, setCard] = useState<{ number?: string; holder?: string; bank?: string }>({});
+  const [note, setNote] = useState("");
+  const [receipt, setReceipt] = useState<File | null>(null);
 
-  const submit = async () => {
+  const amountValue = parseAmountDigits(amountDigits);
+  const amountDisplay = formatAmountGrouped(amountDigits);
+
+  const providerLabel = (p: string) => {
+    if (p === "card") return t("billing.providerCard");
+    if (p === "centralpay") return t("billing.providerCentralpay");
+    if (p === "stripe") return t("billing.providerStripe");
+    if (p === "demo") return t("billing.providerDemo");
+    return p;
+  };
+
+  const onAmountChange = (raw: string) => {
+    const digits = raw.replace(/[^\d]/g, "").replace(/^0+(?=\d)/, "");
+    setAmountDigits(digits.slice(0, 12));
+  };
+
+  const startPay = async () => {
+    if (amountValue < TOPUP_MIN_AMOUNT) {
+      toast.push(
+        t("billing.topUpMinAmount", { amount: TOPUP_MIN_AMOUNT.toLocaleString("en-US") }),
+        "error",
+      );
+      return;
+    }
     setBusy(true);
     try {
-      const created = await api.post<{ payment_id: number; confirm_token?: string; checkout_url?: string }>("/billing/topup", {
-        amount: parseInt(amount, 10) || 0,
+      const created = await api.post<{
+        payment_id: number;
+        confirm_token?: string;
+        checkout_url?: string;
+        card_number?: string;
+        card_holder?: string;
+        card_bank?: string;
+        provider: string;
+      }>("/billing/topup", {
+        amount: amountValue,
         provider,
       });
+      if (created.provider === "card" || created.card_number) {
+        setPaymentId(created.payment_id);
+        setCard({
+          number: created.card_number,
+          holder: created.card_holder,
+          bank: created.card_bank,
+        });
+        setStep("card");
+        return;
+      }
       if (created.checkout_url) {
         window.location.href = created.checkout_url;
         return;
@@ -265,18 +440,110 @@ const TopUpModal: FC<{ providers: string[]; onClose: () => void; onDone: () => v
     }
   };
 
+  const submitReceipt = async () => {
+    if (!paymentId || !receipt) return;
+    if (receipt.size > 15 * 1024 * 1024) {
+      toast.push(t("billing.topUpCardHint"), "error");
+      return;
+    }
+    setBusy(true);
+    try {
+      const form = new FormData();
+      form.append("receipt", receipt);
+      if (note.trim()) form.append("note", note.trim());
+      await api.upload(`/billing/payments/${paymentId}/submit`, form);
+      toast.push(t("billing.topUpSubmitted"), "success");
+      onDone();
+    } catch (e: any) {
+      toast.push(e.message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const copyCardNumber = async () => {
+    const num = (card.number || "").replace(/\s+/g, "");
+    if (!num) return;
+    const ok = await copyToClipboard(num);
+    toast.push(ok ? t("common.copied") : t("common.error"), ok ? "success" : "error");
+  };
+
+  if (step === "card") {
+    return (
+      <Modal open title={t("billing.topUpCardTitle")} onClose={onClose}
+        footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
+          <Button variant="primary" disabled={busy || !receipt} onClick={submitReceipt}>{t("billing.topUpSubmitReceipt")}</Button></>}>
+        <div className="sk-stack sk-modal-stack">
+          <Callout tone="info">{t("billing.topUpCardHint")}</Callout>
+          <div className="sk-stack" style={{ gap: 8 }}>
+            <div className="sk-row" style={{ justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+              <span className="sk-faint">{t("billing.cardNumber")}</span>
+              <div className="sk-row" style={{ gap: 6, alignItems: "center" }}>
+                <span dir="ltr" style={{ fontWeight: 700, letterSpacing: 1 }}>{card.number || "—"}</span>
+                {card.number ? (
+                  <Button size="sm" variant="ghost" onClick={copyCardNumber} title={t("billing.copyCardNumber")}>
+                    <IcCopy className="sk-ico" /> {t("billing.copyCardNumber")}
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+            {card.holder ? (
+              <div className="sk-row" style={{ justifyContent: "space-between" }}>
+                <span className="sk-faint">{t("billing.cardHolder")}</span>
+                <span>{card.holder}</span>
+              </div>
+            ) : null}
+            {card.bank ? (
+              <div className="sk-row" style={{ justifyContent: "space-between" }}>
+                <span className="sk-faint">{t("billing.cardBank")}</span>
+                <span>{card.bank}</span>
+              </div>
+            ) : null}
+            <div className="sk-row" style={{ justifyContent: "space-between" }}>
+              <span className="sk-faint">{t("billing.creditAmount")}</span>
+              <span dir="ltr" style={{ fontWeight: 700 }}>{amountValue.toLocaleString("en-US")}</span>
+            </div>
+          </div>
+          <Field label={t("billing.orderNote")}>
+            <Input value={note} onChange={(e: any) => setNote(e.target.value)} placeholder={t("billing.topUpNotePlaceholder")} />
+          </Field>
+          <Field label={t("billing.orderReceipt")}>
+            <Input type="file" accept="image/*,.pdf" onChange={(e: any) => setReceipt(e.target.files?.[0] || null)} />
+          </Field>
+        </div>
+      </Modal>
+    );
+  }
+
   return (
     <Modal open title={t("billing.topUp")} onClose={onClose}
       footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
-        <Button variant="primary" disabled={busy || !amount} onClick={submit}>{t("billing.topUpPay")}</Button></>}>
+        <Button variant="primary" disabled={busy || amountValue < TOPUP_MIN_AMOUNT} onClick={startPay}>
+          {provider === "card" ? t("billing.topUpShowCard") : t("billing.topUpPay")}
+        </Button></>}>
       <div className="sk-stack sk-modal-stack">
-        <Field label={t("billing.creditAmount")}><Input type="number" value={amount} onChange={(e: any) => setAmount(e.target.value)} autoFocus /></Field>
+        <Field
+          label={t("billing.creditAmount")}
+          hint={t("billing.topUpMinAmountHint", { amount: TOPUP_MIN_AMOUNT.toLocaleString("en-US") })}
+        >
+          <Input
+            type="text"
+            inputMode="numeric"
+            dir="ltr"
+            value={amountDisplay}
+            onChange={(e: any) => onAmountChange(e.target.value)}
+            placeholder="1,000,000"
+            autoFocus
+          />
+        </Field>
         <Field label={t("billing.provider")}>
           <Select value={provider} onChange={(e: any) => setProvider(e.target.value)}>
-            {providers.map((p) => <option key={p} value={p}>{p}</option>)}
+            {providers.map((p) => <option key={p} value={p}>{providerLabel(p)}</option>)}
           </Select>
         </Field>
-        <p className="sk-modal-lede">{t("billing.topUpHint")}</p>
+        <p className="sk-modal-lede">
+          {provider === "card" ? t("billing.topUpCardIntro") : t("billing.topUpHint")}
+        </p>
       </div>
     </Modal>
   );
@@ -403,46 +670,71 @@ const GatewayIncomeTab: FC = () => {
       {admin?.is_sudo && (data?.resellers?.length ?? 0) > 0 && (
         <Card pad0>
           <div style={{ padding: "12px 16px", fontWeight: 600 }}>{t("billing.incomeByReseller")}</div>
-          <div className="sk-table-wrap">
-            <table className="sk-table">
-              <thead>
-                <tr>
-                  <th>{t("common.username")}</th>
-                  <th className="sk-num">{t("billing.incomeToday")}</th>
-                  <th className="sk-num">{t("billing.incomeYesterday")}</th>
-                  <th className="sk-num">{t("billing.incomeWeek")}</th>
-                  <th className="sk-num">{t("billing.incomeTotal")}</th>
-                  <th className="sk-num">{t("billing.paymentsCount")}</th>
-                  <th>{t("billing.provider")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data!.resellers.map((r) => (
-                  <tr key={r.admin_id}>
-                    <td>
-                      <div className="sk-ra-user">
-                        <span className="sk-ra-user-name">{r.username}</span>
-                        {r.centralpay_enabled && (
-                          <span className="sk-ra-user-role">CentralPay</span>
-                        )}
-                        {r.card_enabled && (
-                          <span className="sk-ra-user-role">{t("billing.cardBadge")}</span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="sk-num">{money(r.today)}</td>
-                    <td className="sk-num">{money(r.yesterday)}</td>
-                    <td className="sk-num">{money(r.week)}</td>
-                    <td className="sk-num" style={{ fontWeight: 600 }}>{money(r.total)}</td>
-                    <td className="sk-num">{r.payments_count}</td>
-                    <td className="sk-muted">
-                      {Object.entries(r.by_provider || {}).map(([p, a]) => `${p}: ${a.toLocaleString()}`).join(" · ") || "—"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <ResponsiveData
+            table={(
+              <div className="sk-table-wrap">
+                <table className="sk-table">
+                  <thead>
+                    <tr>
+                      <th>{t("common.username")}</th>
+                      <th className="sk-num">{t("billing.incomeToday")}</th>
+                      <th className="sk-num">{t("billing.incomeYesterday")}</th>
+                      <th className="sk-num">{t("billing.incomeWeek")}</th>
+                      <th className="sk-num">{t("billing.incomeTotal")}</th>
+                      <th className="sk-num">{t("billing.paymentsCount")}</th>
+                      <th>{t("billing.provider")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data!.resellers.map((r) => (
+                      <tr key={r.admin_id}>
+                        <td>
+                          <div className="sk-ra-user">
+                            <span className="sk-ra-user-name">{r.username}</span>
+                            {r.centralpay_enabled && (
+                              <span className="sk-ra-user-role">CentralPay</span>
+                            )}
+                            {r.card_enabled && (
+                              <span className="sk-ra-user-role">{t("billing.cardBadge")}</span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="sk-num">{money(r.today)}</td>
+                        <td className="sk-num">{money(r.yesterday)}</td>
+                        <td className="sk-num">{money(r.week)}</td>
+                        <td className="sk-num" style={{ fontWeight: 600 }}>{money(r.total)}</td>
+                        <td className="sk-num">{r.payments_count}</td>
+                        <td className="sk-muted">
+                          {Object.entries(r.by_provider || {}).map(([p, a]) => `${p}: ${a.toLocaleString()}`).join(" · ") || "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            cards={data!.resellers.map((r) => (
+              <MCard
+                key={r.admin_id}
+                title={r.username}
+                subtitle={[
+                  r.centralpay_enabled ? "CentralPay" : null,
+                  r.card_enabled ? t("billing.cardBadge") : null,
+                ].filter(Boolean).join(" · ") || undefined}
+                fields={[
+                  { label: t("billing.incomeToday"), value: money(r.today) },
+                  { label: t("billing.incomeYesterday"), value: money(r.yesterday) },
+                  { label: t("billing.incomeWeek"), value: money(r.week) },
+                  { label: t("billing.incomeTotal"), value: <strong>{money(r.total)}</strong> },
+                  { label: t("billing.paymentsCount"), value: r.payments_count },
+                  {
+                    label: t("billing.provider"),
+                    value: Object.entries(r.by_provider || {}).map(([p, a]) => `${p}: ${a.toLocaleString()}`).join(" · ") || "—",
+                  },
+                ]}
+              />
+            ))}
+          />
         </Card>
       )}
 
@@ -451,77 +743,141 @@ const GatewayIncomeTab: FC = () => {
         {!data?.recent_payments?.length ? (
           <EmptyState title={t("billing.incomeEmpty")} />
         ) : (
-          <div className="sk-table-wrap">
-            <table className="sk-table">
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>{t("billing.date")}</th>
-                  <th>{t("billing.type")}</th>
-                  <th>{t("billing.provider")}</th>
-                  <th>{t("billing.orderUser")}</th>
-                  <th>{t("billing.orderPlan")}</th>
-                  <th className="sk-num">{t("billing.amount")}</th>
-                  <th>{t("billing.reference")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.recent_payments.map((p) => (
-                  <tr key={p.id}>
-                    <td className="sk-faint">#{p.id}</td>
-                    <td className="sk-muted">
-                      {p.completed_at ? new Date(p.completed_at).toLocaleString() : "—"}
-                    </td>
-                    <td>{t(`billing.kind_${p.kind}`, { defaultValue: p.kind })}</td>
-                    <td>{p.provider}</td>
-                    <td>{p.username || "—"}</td>
-                    <td>{p.plan_name || "—"}</td>
-                    <td className="sk-num" style={{ fontWeight: 600 }}>{money(p.amount, cur)}</td>
-                    <td className="sk-muted" style={{ maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {p.reference != null ? String(p.reference) : (p.card || "—")}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <ResponsiveData
+            table={(
+              <div className="sk-table-wrap">
+                <table className="sk-table">
+                  <thead>
+                    <tr>
+                      <th>#</th>
+                      <th>{t("billing.date")}</th>
+                      <th>{t("billing.type")}</th>
+                      <th>{t("billing.provider")}</th>
+                      <th>{t("billing.orderUser")}</th>
+                      <th>{t("billing.orderPlan")}</th>
+                      <th className="sk-num">{t("billing.amount")}</th>
+                      <th>{t("billing.reference")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.recent_payments.map((p) => (
+                      <tr key={p.id}>
+                        <td className="sk-faint">#{p.id}</td>
+                        <td className="sk-muted">
+                          {p.completed_at ? new Date(p.completed_at).toLocaleString() : "—"}
+                        </td>
+                        <td>{t(`billing.kind_${p.kind}`, { defaultValue: p.kind })}</td>
+                        <td>{p.provider}</td>
+                        <td>{p.username || "—"}</td>
+                        <td>{p.plan_name || "—"}</td>
+                        <td className="sk-num" style={{ fontWeight: 600 }}>{money(p.amount, cur)}</td>
+                        <td className="sk-muted" style={{ maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {p.reference != null ? String(p.reference) : (p.card || "—")}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            cards={data.recent_payments.map((p) => (
+              <MCard
+                key={p.id}
+                title={money(p.amount, cur)}
+                subtitle={`#${p.id} · ${p.completed_at ? new Date(p.completed_at).toLocaleString() : "—"}`}
+                badge={<Pill tone="ok">{t(`billing.kind_${p.kind}`, { defaultValue: p.kind })}</Pill>}
+                fields={[
+                  { label: t("billing.provider"), value: p.provider },
+                  { label: t("billing.orderUser"), value: p.username || "—" },
+                  { label: t("billing.orderPlan"), value: p.plan_name || "—" },
+                  { label: t("billing.reference"), value: p.reference != null ? String(p.reference) : (p.card || "—") },
+                ]}
+              />
+            ))}
+          />
         )}
       </Card>
     </div>
   );
 };
 
-const PortalOrdersTab: FC = () => {
+const PortalOrdersTab: FC<{ onChanged?: () => void }> = ({ onChanged }) => {
   const { t } = useTranslation();
+  const { admin } = useApp();
   const toast = useToast();
   const { data, loading, error, reload } = useFetch<Array<{
     id: number;
+    kind?: string;
     status: string;
     provider: string;
     amount: number;
     plan_name?: string | null;
     username?: string | null;
+    admin_username?: string | null;
     user_note?: string | null;
     has_receipt?: boolean;
     receipt_name?: string | null;
     created_at?: string | null;
   }>>(() => api.get("/billing/portal-payments"), []);
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [receiptPreview, setReceiptPreview] = useState<{
+    url: string;
+    contentType: string;
+    name: string;
+  } | null>(null);
+  const [receiptLoading, setReceiptLoading] = useState(false);
+
+  const closeReceipt = () => {
+    setReceiptPreview((prev) => {
+      if (prev?.url) URL.revokeObjectURL(prev.url);
+      return null;
+    });
+  };
+
+  useEffect(() => () => {
+    if (receiptPreview?.url) URL.revokeObjectURL(receiptPreview.url);
+  }, [receiptPreview?.url]);
 
   const openReceipt = async (id: number, name?: string | null) => {
+    setReceiptLoading(true);
     try {
-      await api.download(`/billing/portal-payments/${id}/receipt`, name || `receipt-${id}`);
+      const { blob, contentType, filename } = await api.getBlob(`/billing/portal-payments/${id}/receipt`);
+      const url = URL.createObjectURL(blob);
+      setReceiptPreview((prev) => {
+        if (prev?.url) URL.revokeObjectURL(prev.url);
+        return {
+          url,
+          contentType: contentType || blob.type || "",
+          name: filename || name || `receipt-${id}`,
+        };
+      });
     } catch (e: any) {
       toast.push(e.message, "error");
+    } finally {
+      setReceiptLoading(false);
     }
   };
 
-  const approve = async (id: number) => {
+  const downloadReceipt = () => {
+    if (!receiptPreview) return;
+    const a = document.createElement("a");
+    a.href = receiptPreview.url;
+    a.download = receiptPreview.name || "receipt";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
+
+  const approve = async (id: number, kind?: string) => {
     setBusyId(id);
     try {
       await api.post(`/billing/portal-payments/${id}/approve`, {});
-      toast.push(t("billing.orderApproved"), "success");
+      toast.push(
+        kind === "topup" ? t("billing.topUpApproved") : t("billing.orderApproved"),
+        "success",
+      );
       reload();
+      onChanged?.();
       try {
         const { syncAdminAppBadge } = await import("../lib/webPush");
         await syncAdminAppBadge();
@@ -535,13 +891,17 @@ const PortalOrdersTab: FC = () => {
     }
   };
 
-  const reject = async (id: number) => {
+  const reject = async (id: number, kind?: string) => {
     if (!confirm(t("common.confirmDelete"))) return;
     setBusyId(id);
     try {
       await api.post(`/billing/portal-payments/${id}/reject`, {});
-      toast.push(t("billing.orderRejected"), "success");
+      toast.push(
+        kind === "topup" ? t("billing.topUpRejected") : t("billing.orderRejected"),
+        "success",
+      );
       reload();
+      onChanged?.();
       try {
         const { syncAdminAppBadge } = await import("../lib/webPush");
         await syncAdminAppBadge();
@@ -556,52 +916,155 @@ const PortalOrdersTab: FC = () => {
   };
 
   const statusLabel = (s: string) => t(`billing.${s}`, { defaultValue: s });
+  const kindLabel = (k?: string) => {
+    if (k === "topup") return t("billing.kind_topup");
+    if (k === "portal_purchase") return t("billing.kind_portal_purchase");
+    if (k === "portal_renew") return t("billing.kind_portal_renew");
+    return k || "—";
+  };
+
+  const isImage = !!receiptPreview && /^image\//i.test(receiptPreview.contentType);
+  const isPdf = !!receiptPreview && (
+    /pdf/i.test(receiptPreview.contentType)
+    || /\.pdf$/i.test(receiptPreview.name || "")
+  );
 
   return (
-    <Card pad0>
-      {loading ? <div style={{ padding: 20 }}><SkeletonRows rows={4} cols={5} /></div>
-        : error ? <EmptyState title={t("common.error")} desc={error} />
-        : !data?.length ? <EmptyState title={t("common.noData")} desc={t("billing.ordersEmpty")} />
-        : (
-          <div className="sk-table-wrap"><table className="sk-table">
-            <thead><tr>
-              <th>{t("billing.orderUser")}</th>
-              <th>{t("billing.orderPlan")}</th>
-              <th className="sk-num">{t("billing.price")}</th>
-              <th>{t("common.status")}</th>
-              <th>{t("billing.orderNote")}</th>
-              <th>{t("billing.orderReceipt")}</th>
-              <th />
-            </tr></thead>
-            <tbody>
-              {data.map((row) => (
-                <tr key={row.id}>
-                  <td dir="ltr">{row.username || "—"}</td>
-                  <td>{row.plan_name || `#${row.id}`}</td>
-                  <td className="sk-num">{row.amount.toLocaleString()}</td>
-                  <td><Pill tone={row.status === "awaiting_review" || row.status === "pending" ? "warn" : row.status === "completed" ? "ok" : "danger"}>{statusLabel(row.status)}</Pill></td>
-                  <td className="sk-faint" style={{ maxWidth: 180 }}>{row.user_note || "—"}</td>
-                  <td>
-                    {row.has_receipt ? (
-                      <Button size="sm" variant="ghost" onClick={() => openReceipt(row.id, row.receipt_name)}>
-                        {t("billing.viewReceipt")}
-                      </Button>
-                    ) : "—"}
-                  </td>
-                  <td>
-                    {(row.status === "awaiting_review" || row.status === "pending") && row.provider === "card" ? (
-                      <div className="sk-row" style={{ gap: 6, justifyContent: "flex-end" }}>
-                        <Button size="sm" variant="primary" disabled={busyId === row.id} onClick={() => approve(row.id)}>{t("billing.orderApprove")}</Button>
-                        <Button size="sm" variant="ghost" disabled={busyId === row.id} onClick={() => reject(row.id)}>{t("billing.orderReject")}</Button>
+    <>
+      <Card pad0>
+        {loading ? <div style={{ padding: 20 }}><SkeletonRows rows={4} cols={5} /></div>
+          : error ? <EmptyState title={t("common.error")} desc={error} />
+          : !data?.length ? <EmptyState title={t("common.noData")} desc={admin?.is_sudo ? t("billing.ordersEmptySudo") : t("billing.ordersEmpty")} />
+          : (
+            <ResponsiveData
+              table={(
+                <div className="sk-table-wrap"><table className="sk-table">
+                  <thead><tr>
+                    <th>{t("billing.orderUser")}</th>
+                    <th>{t("billing.orderKind")}</th>
+                    <th>{t("billing.orderPlan")}</th>
+                    <th className="sk-num">{t("billing.price")}</th>
+                    <th>{t("common.status")}</th>
+                    <th>{t("billing.orderNote")}</th>
+                    <th>{t("billing.orderReceipt")}</th>
+                    <th />
+                  </tr></thead>
+                  <tbody>
+                    {data.map((row) => (
+                      <tr key={row.id}>
+                        <td dir="ltr">{row.username || row.admin_username || "—"}</td>
+                        <td>{kindLabel(row.kind)}</td>
+                        <td>{row.kind === "topup" ? t("billing.wallet") : (row.plan_name || `#${row.id}`)}</td>
+                        <td className="sk-num">{row.amount.toLocaleString()}</td>
+                        <td><Pill tone={row.status === "awaiting_review" || row.status === "pending" ? "warn" : row.status === "completed" ? "ok" : "danger"}>{statusLabel(row.status)}</Pill></td>
+                        <td className="sk-faint" style={{ maxWidth: 180 }}>{row.user_note || "—"}</td>
+                        <td>
+                          {row.has_receipt ? (
+                            <Button size="sm" variant="ghost" disabled={receiptLoading} onClick={() => openReceipt(row.id, row.receipt_name)}>
+                              {t("billing.viewReceipt")}
+                            </Button>
+                          ) : "—"}
+                        </td>
+                        <td>
+                          {(row.status === "awaiting_review" || row.status === "pending") && row.provider === "card" ? (
+                            <div className="sk-row" style={{ gap: 6, justifyContent: "flex-end" }}>
+                              <Button size="sm" variant="primary" disabled={busyId === row.id} onClick={() => approve(row.id, row.kind)}>{t("billing.orderApprove")}</Button>
+                              <Button size="sm" variant="ghost" disabled={busyId === row.id} onClick={() => reject(row.id, row.kind)}>{t("billing.orderReject")}</Button>
+                            </div>
+                          ) : null}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table></div>
+              )}
+              cards={data.map((row) => {
+                const canReview = (row.status === "awaiting_review" || row.status === "pending") && row.provider === "card";
+                const hasActions = !!row.has_receipt || canReview;
+                return (
+                  <MCard
+                    key={row.id}
+                    title={row.username || row.admin_username || "—"}
+                    subtitle={kindLabel(row.kind)}
+                    badge={(
+                      <Pill tone={row.status === "awaiting_review" || row.status === "pending" ? "warn" : row.status === "completed" ? "ok" : "danger"}>
+                        {statusLabel(row.status)}
+                      </Pill>
+                    )}
+                    fields={[
+                      { label: t("billing.orderPlan"), value: row.kind === "topup" ? t("billing.wallet") : (row.plan_name || `#${row.id}`) },
+                      { label: t("billing.price"), value: row.amount.toLocaleString() },
+                      { label: t("billing.orderNote"), value: row.user_note || "—" },
+                    ]}
+                    actions={hasActions ? (
+                      <div className="sk-row" style={{ gap: 6, justifyContent: "flex-end", flexWrap: "wrap" }}>
+                        {row.has_receipt ? (
+                          <Button size="sm" variant="ghost" disabled={receiptLoading} onClick={() => openReceipt(row.id, row.receipt_name)}>
+                            {t("billing.viewReceipt")}
+                          </Button>
+                        ) : null}
+                        {canReview ? (
+                          <>
+                            <Button size="sm" variant="primary" disabled={busyId === row.id} onClick={() => approve(row.id, row.kind)}>{t("billing.orderApprove")}</Button>
+                            <Button size="sm" variant="ghost" disabled={busyId === row.id} onClick={() => reject(row.id, row.kind)}>{t("billing.orderReject")}</Button>
+                          </>
+                        ) : null}
                       </div>
-                    ) : null}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table></div>
-        )}
-    </Card>
+                    ) : undefined}
+                  />
+                );
+              })}
+            />
+          )}
+      </Card>
+
+      {receiptPreview && (
+        <Modal
+          open
+          wide
+          title={t("billing.viewReceipt")}
+          onClose={closeReceipt}
+          footer={
+            <>
+              <Button variant="ghost" onClick={downloadReceipt}>{t("billing.downloadReceipt")}</Button>
+              <Button variant="primary" onClick={closeReceipt}>{t("common.close")}</Button>
+            </>
+          }
+        >
+          <div className="sk-stack" style={{ gap: 10 }}>
+            <div className="sk-faint" style={{ fontSize: 13 }}>{receiptPreview.name}</div>
+            {isImage ? (
+              <img
+                src={receiptPreview.url}
+                alt={receiptPreview.name}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  maxHeight: "70vh",
+                  objectFit: "contain",
+                  borderRadius: 8,
+                  background: "rgba(0,0,0,0.25)",
+                }}
+              />
+            ) : isPdf ? (
+              <iframe
+                title={receiptPreview.name}
+                src={receiptPreview.url}
+                style={{
+                  width: "100%",
+                  height: "70vh",
+                  border: 0,
+                  borderRadius: 8,
+                  background: "#fff",
+                }}
+              />
+            ) : (
+              <Callout tone="info">{t("billing.receiptPreviewUnsupported")}</Callout>
+            )}
+          </div>
+        </Modal>
+      )}
+    </>
   );
 };
 
@@ -800,40 +1263,68 @@ const TrafficPackagesTab: FC<{ onPurchased?: () => void }> = ({ onPurchased }) =
           : packages.error ? <EmptyState title={t("common.error")} desc={packages.error} />
           : !packages.data?.length ? <EmptyState title={t("common.noData")} desc={t("billing.noTrafficPackages")} />
           : (
-            <div className="sk-table-wrap">
-              <table className="sk-table">
-                <thead><tr>
-                  <th>{t("common.name")}</th>
-                  <th className="sk-num">{t("billing.packageTraffic")}</th>
-                  <th className="sk-num">{t("billing.price")}</th>
-                  <th>{t("common.status")}</th>
-                  <th className="sk-actions">{t("common.actions")}</th>
-                </tr></thead>
-                <tbody>
-                  {packages.data.map((pkg) => (
-                    <tr key={pkg.id}>
-                      <td>{pkg.name}</td>
-                      <td className="sk-num">{formatBytes(pkg.bytes)}</td>
-                      <td className="sk-num">{pkg.price.toLocaleString()}</td>
-                      <td><Pill tone={pkg.enabled ? "ok" : "default"}>{pkg.enabled ? t("common.enabled") : t("common.disabled")}</Pill></td>
-                      <td className="sk-actions">
-                        <div className="sk-row" style={{ justifyContent: "flex-end", gap: 6 }}>
-                          {!isSudo && pkg.enabled && (
-                            <Button size="sm" variant="primary" onClick={() => buy(pkg)}>{t("billing.buyPackage")}</Button>
-                          )}
-                          {isSudo && (
-                            <>
-                              <Button size="sm" variant="ghost" onClick={() => setEdit(pkg)}><IcEdit className="sk-ico" /></Button>
-                              <Button size="sm" variant="danger" onClick={() => remove(pkg.id)}><IcTrash className="sk-ico" /></Button>
-                            </>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <ResponsiveData
+              table={(
+                <div className="sk-table-wrap">
+                  <table className="sk-table">
+                    <thead><tr>
+                      <th>{t("common.name")}</th>
+                      <th className="sk-num">{t("billing.packageTraffic")}</th>
+                      <th className="sk-num">{t("billing.price")}</th>
+                      <th>{t("common.status")}</th>
+                      <th className="sk-actions">{t("common.actions")}</th>
+                    </tr></thead>
+                    <tbody>
+                      {packages.data.map((pkg) => (
+                        <tr key={pkg.id}>
+                          <td>{pkg.name}</td>
+                          <td className="sk-num">{formatBytes(pkg.bytes)}</td>
+                          <td className="sk-num">{pkg.price.toLocaleString()}</td>
+                          <td><Pill tone={pkg.enabled ? "ok" : "default"}>{pkg.enabled ? t("common.enabled") : t("common.disabled")}</Pill></td>
+                          <td className="sk-actions">
+                            <div className="sk-row" style={{ justifyContent: "flex-end", gap: 6 }}>
+                              {!isSudo && pkg.enabled && (
+                                <Button size="sm" variant="primary" onClick={() => buy(pkg)}>{t("billing.buyPackage")}</Button>
+                              )}
+                              {isSudo && (
+                                <>
+                                  <Button size="sm" variant="ghost" onClick={() => setEdit(pkg)}><IcEdit className="sk-ico" /></Button>
+                                  <Button size="sm" variant="danger" onClick={() => remove(pkg.id)}><IcTrash className="sk-ico" /></Button>
+                                </>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              cards={packages.data.map((pkg) => (
+                <MCard
+                  key={pkg.id}
+                  title={pkg.name}
+                  badge={<Pill tone={pkg.enabled ? "ok" : "default"}>{pkg.enabled ? t("common.enabled") : t("common.disabled")}</Pill>}
+                  fields={[
+                    { label: t("billing.packageTraffic"), value: formatBytes(pkg.bytes) },
+                    { label: t("billing.price"), value: pkg.price.toLocaleString() },
+                  ]}
+                  actions={(
+                    <div className="sk-row" style={{ justifyContent: "flex-end", gap: 6 }}>
+                      {!isSudo && pkg.enabled && (
+                        <Button size="sm" variant="primary" onClick={() => buy(pkg)}>{t("billing.buyPackage")}</Button>
+                      )}
+                      {isSudo && (
+                        <>
+                          <Button size="sm" variant="ghost" onClick={() => setEdit(pkg)}><IcEdit className="sk-ico" /></Button>
+                          <Button size="sm" variant="danger" onClick={() => remove(pkg.id)}><IcTrash className="sk-ico" /></Button>
+                        </>
+                      )}
+                    </div>
+                  )}
+                />
+              ))}
+            />
           )}
       </Card>
       {(purchases.data?.length ?? 0) > 0 && (
@@ -841,26 +1332,41 @@ const TrafficPackagesTab: FC<{ onPurchased?: () => void }> = ({ onPurchased }) =
           <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--sk-border, #e5e7eb)" }}>
             <strong>{t("billing.purchaseHistory")}</strong>
           </div>
-          <div className="sk-table-wrap">
-            <table className="sk-table">
-              <thead><tr>
-                <th>{t("billing.date")}</th>
-                <th className="sk-num">{t("billing.packageTraffic")}</th>
-                <th className="sk-num">{t("billing.price")}</th>
-                <th>{t("billing.purchaseSource")}</th>
-              </tr></thead>
-              <tbody>
-                {purchases.data!.map((p) => (
-                  <tr key={p.id}>
-                    <td>{p.created_at ? new Date(p.created_at).toLocaleString() : "—"}</td>
-                    <td className="sk-num">{formatBytes(p.bytes)}</td>
-                    <td className="sk-num">{p.price_paid.toLocaleString()}</td>
-                    <td>{p.source === "manual" ? t("billing.sourceManual") : t("billing.sourcePurchase")}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <ResponsiveData
+            table={(
+              <div className="sk-table-wrap">
+                <table className="sk-table">
+                  <thead><tr>
+                    <th>{t("billing.date")}</th>
+                    <th className="sk-num">{t("billing.packageTraffic")}</th>
+                    <th className="sk-num">{t("billing.price")}</th>
+                    <th>{t("billing.purchaseSource")}</th>
+                  </tr></thead>
+                  <tbody>
+                    {purchases.data!.map((p) => (
+                      <tr key={p.id}>
+                        <td>{p.created_at ? new Date(p.created_at).toLocaleString() : "—"}</td>
+                        <td className="sk-num">{formatBytes(p.bytes)}</td>
+                        <td className="sk-num">{p.price_paid.toLocaleString()}</td>
+                        <td>{p.source === "manual" ? t("billing.sourceManual") : t("billing.sourcePurchase")}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            cards={purchases.data!.map((p) => (
+              <MCard
+                key={p.id}
+                title={formatBytes(p.bytes)}
+                subtitle={p.created_at ? new Date(p.created_at).toLocaleString() : "—"}
+                fields={[
+                  { label: t("billing.price"), value: p.price_paid.toLocaleString() },
+                  { label: t("billing.purchaseSource"), value: p.source === "manual" ? t("billing.sourceManual") : t("billing.sourcePurchase") },
+                ]}
+              />
+            ))}
+          />
         </Card>
       )}
       {show && (
@@ -1063,7 +1569,7 @@ const UsageTab: FC = () => {
   );
 };
 
-const InvoicesTab: FC = () => {
+const InvoicesTab: FC<{ onChanged?: () => void }> = ({ onChanged }) => {
   const { t } = useTranslation();
   const { admin } = useApp();
   const toast = useToast();
@@ -1077,6 +1583,7 @@ const InvoicesTab: FC = () => {
       await api.post(`/billing/invoices/${id}/pay`);
       toast.push(t("billing.paidDone"), "success");
       reload();
+      onChanged?.();
     } catch (e: any) { toast.push(e.message, "error"); }
   };
 
@@ -1092,40 +1599,60 @@ const InvoicesTab: FC = () => {
           <Callout tone="info">{t("billing.payInvoiceHint")}</Callout>
         </div>
       )}
-      {showCreate && <CreateInvoiceModal onClose={() => setShowCreate(false)} onDone={() => { setShowCreate(false); reload(); }} />}
+      {showCreate && <CreateInvoiceModal onClose={() => setShowCreate(false)} onDone={() => { setShowCreate(false); reload(); onChanged?.(); }} />}
     <Card pad0>
       {loading ? <div style={{ padding: 20 }}><SkeletonRows rows={3} cols={5} /></div>
         : error ? <EmptyState title={t("common.error")} desc={error} />
         : !data?.length ? <EmptyState title={t("common.noData")} />
         : (
-          <div className="sk-table-wrap"><table className="sk-table">
-            <thead><tr>
-              <th>#</th>
-              <th className="sk-num">{t("billing.amount")}</th>
-              <th>{t("billing.description")}</th>
-              <th>{t("billing.invoiceStatus")}</th>
-              <th>{t("billing.provider")}</th>
-              <th className="sk-actions">{t("common.actions")}</th>
-            </tr></thead>
-            <tbody>
-              {pager.slice.map((inv) => (
-                <tr key={inv.id}>
-                  <td className="sk-faint">#{inv.id}</td>
-                  <td className="sk-num" style={{ fontWeight: 600 }}>{inv.amount.toLocaleString()}</td>
-                  <td className="sk-muted" style={{ maxWidth: 280 }}>{inv.description || "—"}</td>
-                  <td><Pill tone={inv.status === "paid" ? "ok" : "warn"} dot>{t(`billing.status.${inv.status}`, inv.status)}</Pill></td>
-                  <td>{inv.provider || "—"}</td>
-                  <td className="sk-actions"><div className="sk-row" style={{ justifyContent: "flex-end" }}>
-                    {inv.status === "pending" && (
-                      <Button size="sm" variant="primary" onClick={() => pay(inv.id)}>
-                        {t("billing.payFromWallet")}
-                      </Button>
-                    )}
-                  </div></td>
-                </tr>
-              ))}
-            </tbody>
-          </table></div>
+          <ResponsiveData
+            table={(
+              <div className="sk-table-wrap"><table className="sk-table">
+                <thead><tr>
+                  <th>#</th>
+                  <th className="sk-num">{t("billing.amount")}</th>
+                  <th>{t("billing.description")}</th>
+                  <th>{t("billing.invoiceStatus")}</th>
+                  <th>{t("billing.provider")}</th>
+                  <th className="sk-actions">{t("common.actions")}</th>
+                </tr></thead>
+                <tbody>
+                  {pager.slice.map((inv) => (
+                    <tr key={inv.id}>
+                      <td className="sk-faint">#{inv.id}</td>
+                      <td className="sk-num" style={{ fontWeight: 600 }}>{inv.amount.toLocaleString()}</td>
+                      <td className="sk-muted" style={{ maxWidth: 280 }}>{inv.description || "—"}</td>
+                      <td><Pill tone={inv.status === "paid" ? "ok" : "warn"} dot>{t(`billing.status.${inv.status}`, inv.status)}</Pill></td>
+                      <td>{inv.provider || "—"}</td>
+                      <td className="sk-actions"><div className="sk-row" style={{ justifyContent: "flex-end" }}>
+                        {inv.status === "pending" && (
+                          <Button size="sm" variant="primary" onClick={() => pay(inv.id)}>
+                            {t("billing.payFromWallet")}
+                          </Button>
+                        )}
+                      </div></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table></div>
+            )}
+            cards={pager.slice.map((inv) => (
+              <MCard
+                key={inv.id}
+                title={inv.amount.toLocaleString()}
+                subtitle={`#${inv.id}${inv.description ? ` · ${inv.description}` : ""}`}
+                badge={<Pill tone={inv.status === "paid" ? "ok" : "warn"} dot>{t(`billing.status.${inv.status}`, inv.status)}</Pill>}
+                fields={[
+                  { label: t("billing.provider"), value: inv.provider || "—" },
+                ]}
+                actions={inv.status === "pending" ? (
+                  <Button size="sm" variant="primary" onClick={() => pay(inv.id)}>
+                    {t("billing.payFromWallet")}
+                  </Button>
+                ) : undefined}
+              />
+            ))}
+          />
         )}
     </Card>
     <Pager page={pager.page} pages={pager.pages} onPage={pager.setPage} />
@@ -1188,32 +1715,51 @@ const TransactionsTab: FC = () => {
         : error ? <EmptyState title={t("common.error")} desc={error} />
         : !data?.length ? <EmptyState title={t("common.noData")} desc={t("billing.transactionsEmpty")} />
         : (
-          <div className="sk-table-wrap"><table className="sk-table">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>{t("billing.date")}</th>
-                <th>{t("billing.type")}</th>
-                <th className="sk-num">{t("billing.amount")}</th>
-                <th>{t("billing.description")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pager.slice.map((tx) => (
-                <tr key={tx.id}>
-                  <td className="sk-faint">#{tx.id}</td>
-                  <td className="sk-muted">
-                    {tx.created_at ? new Date(tx.created_at).toLocaleString() : "—"}
-                  </td>
-                  <td><Pill tone={tx.amount >= 0 ? "ok" : "danger"}>{tx.type}</Pill></td>
-                  <td className="sk-num" style={{ fontWeight: 600, color: tx.amount >= 0 ? "var(--sk-ok)" : "var(--sk-danger)" }}>
+          <ResponsiveData
+            table={(
+              <div className="sk-table-wrap"><table className="sk-table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>{t("billing.date")}</th>
+                    <th>{t("billing.type")}</th>
+                    <th className="sk-num">{t("billing.amount")}</th>
+                    <th>{t("billing.description")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pager.slice.map((tx) => (
+                    <tr key={tx.id}>
+                      <td className="sk-faint">#{tx.id}</td>
+                      <td className="sk-muted">
+                        {tx.created_at ? new Date(tx.created_at).toLocaleString() : "—"}
+                      </td>
+                      <td><Pill tone={tx.amount >= 0 ? "ok" : "danger"}>{tx.type}</Pill></td>
+                      <td className="sk-num" style={{ fontWeight: 600, color: tx.amount >= 0 ? "var(--sk-ok)" : "var(--sk-danger)" }}>
+                        {tx.amount >= 0 ? "+" : ""}{tx.amount.toLocaleString()}
+                      </td>
+                      <td className="sk-muted">{tx.description || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table></div>
+            )}
+            cards={pager.slice.map((tx) => (
+              <MCard
+                key={tx.id}
+                title={(
+                  <span style={{ color: tx.amount >= 0 ? "var(--sk-ok)" : "var(--sk-danger)" }}>
                     {tx.amount >= 0 ? "+" : ""}{tx.amount.toLocaleString()}
-                  </td>
-                  <td className="sk-muted">{tx.description || "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table></div>
+                  </span>
+                )}
+                subtitle={`#${tx.id} · ${tx.created_at ? new Date(tx.created_at).toLocaleString() : "—"}`}
+                badge={<Pill tone={tx.amount >= 0 ? "ok" : "danger"}>{tx.type}</Pill>}
+                fields={[
+                  { label: t("billing.description"), value: tx.description || "—" },
+                ]}
+              />
+            ))}
+          />
         )}
     </Card>
     <Pager page={pager.page} pages={pager.pages} onPage={pager.setPage} />

@@ -49,7 +49,26 @@ class PlanResponse(BaseModel):
     enabled: bool
     tenant_id: Optional[int] = None
     owner_admin_id: Optional[int] = None
+    owner_username: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
+
+
+def _plans_to_response(db: Session, plans) -> List[PlanResponse]:
+    """Attach owner_username so master UI can group reseller catalogs."""
+    owner_ids = {p.owner_admin_id for p in plans if getattr(p, "owner_admin_id", None)}
+    usernames: dict[int, str] = {}
+    if owner_ids:
+        from app.db.models import Admin as DBAdmin
+
+        for row in db.query(DBAdmin.id, DBAdmin.username).filter(DBAdmin.id.in_(owner_ids)).all():
+            usernames[int(row.id)] = row.username
+    out: List[PlanResponse] = []
+    for plan in plans:
+        item = PlanResponse.model_validate(plan)
+        oid = getattr(plan, "owner_admin_id", None)
+        item.owner_username = usernames.get(int(oid)) if oid else None
+        out.append(item)
+    return out
 
 
 @router.get("", response_model=List[PlanResponse])
@@ -58,7 +77,7 @@ def list_plans(
     db: Session = Depends(get_db),
     admin: Admin = Depends(require_permission("billing:read")),
 ):
-    return get_scoped_plans(db, admin, enabled_only=enabled_only)
+    return _plans_to_response(db, get_scoped_plans(db, admin, enabled_only=enabled_only))
 
 
 @router.post("", response_model=PlanResponse)
@@ -70,12 +89,13 @@ def create_plan(
     tenant_id, owner_admin_id = reseller_plan_scope(db, admin)
     if plan_name_taken(db, body.name, tenant_id=tenant_id, owner_admin_id=owner_admin_id):
         raise HTTPException(status_code=409, detail="Plan name already exists in your catalog")
-    return crud.create_plan(
+    plan = crud.create_plan(
         db,
         tenant_id=tenant_id,
         owner_admin_id=owner_admin_id,
         **body.model_dump(),
     )
+    return _plans_to_response(db, [plan])[0]
 
 
 @router.put("/{plan_id}", response_model=PlanResponse)
@@ -95,8 +115,8 @@ def modify_plan(
         db, new_name, tenant_id=tenant_id, owner_admin_id=owner_admin_id, exclude_id=plan.id
     ):
         raise HTTPException(status_code=409, detail="Plan name already exists in your catalog")
-    return crud.update_plan(db, plan, **body.model_dump(exclude_unset=True))
-
+    plan = crud.update_plan(db, plan, **body.model_dump(exclude_unset=True))
+    return _plans_to_response(db, [plan])[0]
 
 @router.delete("/{plan_id}")
 def delete_plan(

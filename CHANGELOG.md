@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.22.13 — 2026-07-31
+
+Multi card-to-card: platform and resellers can configure several cards; portal customers and reseller top-up see a random card first and can swipe between cards.
+
 ## 0.22.12 — 2026-07-31
 
 Ship-readiness release: payments, PWA, i18n, mobile, ops, and demo path.

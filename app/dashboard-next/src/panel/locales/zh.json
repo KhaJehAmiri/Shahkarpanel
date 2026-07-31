@@ -1332,6 +1332,10 @@
     "cardHolder": "持卡人姓名",
     "cardBank": "银行",
     "cardBadge": "银行卡",
+    "cardAdd": "添加卡片",
+    "cardItemLabel": "卡片 {{n}}",
+    "cardMultiHint": "可添加多张卡。每位客户/代理商默认看到随机一张，并可滑动切换其他卡。",
+    "cardSwipeHint": "滑动或用箭头选择另一张卡。",
     "incomeHint": "通过在线网关（CentralPay / Stripe / demo）收到的款项。金额为实际支付总额 — 非钱包账本分录。",
     "incomeToday": "今天",
     "incomeYesterday": "昨天",
@@ -1796,6 +1800,7 @@
   "commercial": {
     "hint": "所有商业设置保存在数据库中。更改立即生效；若修改用量计费任务间隔，请重启面板服务。",
     "stripeWebhookUrl": "Stripe Webhook URL：{{url}}",
+    "cardMultiManageHint": "请在「计费 → 我的卡对卡」添加多张卡。客户与代理商默认看到随机卡，并可滑动切换。",
     "stripeWebhookRequired": "在设置 webhook 密钥之前，Stripe 将保持禁用。未签名的 webhook 会被拒绝。",
     "section": {
       "billing": "用量计费",

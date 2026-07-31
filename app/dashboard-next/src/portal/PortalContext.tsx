@@ -19,6 +19,7 @@ import {
   portalGet,
   portalLogin,
   portalPost,
+  portalPut,
   portalUpload,
   setPortalToken,
 } from "@/lib/portal-api";
@@ -26,6 +27,7 @@ import { detectPortalLang, PortalLang, pt, storePortalLang } from "@/lib/portal-
 import { pickDefaultUsername } from "./format";
 import type {
   CardCheckout,
+  PaymentCardInfo,
   PortalAccountSummary,
   PortalConfigs,
   PortalOrder,
@@ -62,13 +64,15 @@ type PortalCtx = {
   configs: PortalConfigs | null;
   payProviders: string[];
   payMethods: string[];
-  cardInfo: { number: string; holder: string; bank: string } | null;
+  cardInfo: PaymentCardInfo | null;
+  payCards: PaymentCardInfo[];
   checkoutMethod: "gateway" | "card";
   setCheckoutMethod: (m: "gateway" | "card") => void;
   provider: string;
   setProvider: (p: string) => void;
   cardCheckout: CardCheckout | null;
   setCardCheckout: (c: CardCheckout | null) => void;
+  selectCheckoutCard: (cardId: string) => Promise<void>;
   cardNote: string;
   setCardNote: (n: string) => void;
   cardReceipt: File | null;
@@ -146,7 +150,8 @@ export function PortalProvider({ children }: { children: ReactNode }) {
   const [configs, setConfigs] = useState<PortalConfigs | null>(null);
   const [payProviders, setPayProviders] = useState<string[]>([]);
   const [payMethods, setPayMethods] = useState<string[]>([]);
-  const [cardInfo, setCardInfo] = useState<{ number: string; holder: string; bank: string } | null>(null);
+  const [cardInfo, setCardInfo] = useState<PaymentCardInfo | null>(null);
+  const [payCards, setPayCards] = useState<PaymentCardInfo[]>([]);
   const [checkoutMethod, setCheckoutMethod] = useState<"gateway" | "card">("gateway");
   const [provider, setProvider] = useState("");
   const [cardCheckout, setCardCheckout] = useState<CardCheckout | null>(null);
@@ -307,7 +312,8 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       portalGet<{
         methods: string[];
         gateway_providers: string[];
-        card?: { number: string; holder: string; bank: string } | null;
+        card?: PaymentCardInfo | null;
+        cards?: PaymentCardInfo[];
       }>("/portal/payment-methods"),
     ]);
 
@@ -370,7 +376,13 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       setPayMethods(methods.methods || []);
       setPayProviders(methods.gateway_providers || []);
       setProvider((prev) => prev || methods.gateway_providers?.[0] || "");
-      setCardInfo(methods.card || null);
+      const cardsList = methods.cards?.length
+        ? methods.cards
+        : methods.card
+          ? [methods.card]
+          : [];
+      setPayCards(cardsList);
+      setCardInfo(methods.card || cardsList[0] || null);
       setCheckoutMethod((prev) => {
         if (methods.methods?.includes(prev)) return prev;
         return (methods.methods?.[0] as "gateway" | "card") || "gateway";
@@ -378,6 +390,7 @@ export function PortalProvider({ children }: { children: ReactNode }) {
     } else {
       setPayMethods([]);
       setPayProviders([]);
+      setPayCards([]);
       setCardInfo(null);
     }
   }, [lang]);
@@ -606,9 +619,11 @@ export function PortalProvider({ children }: { children: ReactNode }) {
         payment_id: number;
         confirm_token?: string;
         checkout_url?: string;
+        card_id?: string;
         card_number?: string;
         card_holder?: string;
         card_bank?: string;
+        cards?: PaymentCardInfo[];
         amount: number;
         provider: string;
         action?: string;
@@ -616,12 +631,29 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       }>("/portal/payments", body);
 
       if (useCard || created.provider === "card") {
+        const cardsList =
+          created.cards?.length
+            ? created.cards
+            : payCards.length
+              ? payCards
+              : created.card_number
+                ? [{
+                    id: created.card_id,
+                    number: created.card_number,
+                    holder: created.card_holder || "",
+                    bank: created.card_bank || "",
+                  }]
+                : cardInfo
+                  ? [cardInfo]
+                  : [];
         setCardCheckout({
           payment_id: created.payment_id,
           amount: created.amount,
+          card_id: created.card_id,
           card_number: created.card_number || cardInfo?.number,
           card_holder: created.card_holder || cardInfo?.holder,
           card_bank: created.card_bank || cardInfo?.bank,
+          cards: cardsList,
           plan_name: planName,
           action: created.action || (body.action as string),
           username: created.username || (isBuy ? newUsername.trim() : targetRenew),
@@ -652,6 +684,33 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       setShopStep("mode");
       await refreshAfterAccountChange(isBuy ? newUsername.trim() : targetRenew);
       if (isBuy) setNewUsername("");
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : pt(lang, "error"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const selectCheckoutCard = async (cardId: string) => {
+    if (!cardCheckout || !cardId) return;
+    if (cardCheckout.card_id === cardId) return;
+    setBusy(true);
+    try {
+      const updated = await portalPut<{
+        card_id?: string;
+        card_number?: string;
+        card_holder?: string;
+        card_bank?: string;
+        cards?: PaymentCardInfo[];
+      }>(`/portal/payments/${cardCheckout.payment_id}/card`, { card_id: cardId });
+      setCardCheckout({
+        ...cardCheckout,
+        card_id: updated.card_id || cardId,
+        card_number: updated.card_number || cardCheckout.card_number,
+        card_holder: updated.card_holder || cardCheckout.card_holder,
+        card_bank: updated.card_bank || cardCheckout.card_bank,
+        cards: updated.cards?.length ? updated.cards : cardCheckout.cards,
+      });
     } catch (err: unknown) {
       showToast(err instanceof Error ? err.message : pt(lang, "error"));
     } finally {
@@ -885,12 +944,14 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       payProviders,
       payMethods,
       cardInfo,
+      payCards,
       checkoutMethod,
       setCheckoutMethod,
       provider,
       setProvider,
       cardCheckout,
       setCardCheckout,
+      selectCheckoutCard,
       cardNote,
       setCardNote,
       cardReceipt,
@@ -963,9 +1024,11 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       payProviders,
       payMethods,
       cardInfo,
+      payCards,
       checkoutMethod,
       provider,
       cardCheckout,
+      selectCheckoutCard,
       cardNote,
       cardReceipt,
       cardSubmittedOk,

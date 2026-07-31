@@ -131,12 +131,21 @@ export type FriendlyServer = {
   protocolRaw: string;
 };
 
+export type PaymentCardInfo = {
+  id?: string;
+  number: string;
+  holder: string;
+  bank: string;
+};
+
 export type CardCheckout = {
   payment_id: number;
   amount: number;
+  card_id?: string;
   card_number?: string;
   card_holder?: string;
   card_bank?: string;
+  cards?: PaymentCardInfo[];
   plan_name?: string;
   action?: string;
   username?: string;

@@ -17,6 +17,7 @@ from app.billing.payments import (
     list_portal_payments_for_admin,
     public_base_from_request,
     reject_portal_payment,
+    set_payment_card,
     submit_card_payment,
 )
 from app.billing.usage_billing import usage_summary_for_admin
@@ -733,6 +734,14 @@ def purchase_traffic_package(
 class TopUpRequest(BaseModel):
     amount: int
     provider: str  # card | centralpay | stripe (demo only when explicitly enabled)
+    card_id: Optional[str] = None
+
+
+class PaymentCardOut(BaseModel):
+    id: str = ""
+    number: str = ""
+    holder: str = ""
+    bank: str = ""
 
 
 class PaymentCreateResponse(BaseModel):
@@ -744,9 +753,11 @@ class PaymentCreateResponse(BaseModel):
     instructions: Optional[str] = None
     confirm_token: Optional[str] = None
     checkout_url: Optional[str] = None
+    card_id: Optional[str] = None
     card_number: Optional[str] = None
     card_holder: Optional[str] = None
     card_bank: Optional[str] = None
+    cards: List[PaymentCardOut] = []
 
 
 class PaymentCompleteBody(BaseModel):
@@ -760,6 +771,10 @@ class PaymentResponse(BaseModel):
     provider: str
     status: str
     completed_at: Optional[datetime] = None
+
+
+class PaymentCardSelect(BaseModel):
+    card_id: str
 
 
 @router.post("/topup", response_model=PaymentCreateResponse)
@@ -780,7 +795,9 @@ def topup_wallet(
         body.amount,
         body.provider,
         public_base=public_base_from_request(request),
+        card_id=body.card_id,
     )
+    cards_raw = payload.get("cards") or []
     return PaymentCreateResponse(
         payment_id=intent.id,
         kind=intent.kind,
@@ -790,9 +807,11 @@ def topup_wallet(
         instructions=payload.get("instructions"),
         confirm_token=payload.get("confirm_token"),
         checkout_url=payload.get("checkout_url"),
+        card_id=payload.get("card_id") or (intent.extra or {}).get("card_id"),
         card_number=payload.get("card_number"),
         card_holder=payload.get("card_holder"),
         card_bank=payload.get("card_bank"),
+        cards=[PaymentCardOut(**c) for c in cards_raw if isinstance(c, dict)],
     )
 
 
@@ -887,6 +906,37 @@ def _portal_payment_row(db: Session, intent) -> PortalPaymentRow:
     elif intent.kind == "topup" and not row.username and owner is not None:
         row.username = owner.username
     return row
+
+
+@router.put("/payments/{payment_id}/card", response_model=PaymentCreateResponse)
+def select_wallet_topup_card(
+    payment_id: int,
+    body: PaymentCardSelect,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(require_permission("billing:read")),
+):
+    """Switch which platform card a pending top-up should use (before receipt submit)."""
+    _require_billing_enabled()
+    from app.billing.providers import list_platform_cards, public_card_payload
+
+    intent = get_intent_for_admin(db, payment_id, _admin_id(db, admin))
+    if intent.kind != "topup":
+        raise HTTPException(status_code=400, detail="Not a top-up payment")
+    intent = set_payment_card(db, intent, body.card_id)
+    extra = intent.extra or {}
+    cards = [PaymentCardOut(**public_card_payload(c)) for c in list_platform_cards()]
+    return PaymentCreateResponse(
+        payment_id=intent.id,
+        kind=intent.kind,
+        amount=intent.amount,
+        provider=intent.provider,
+        status=intent.status,
+        card_id=extra.get("card_id"),
+        card_number=extra.get("card_number"),
+        card_holder=extra.get("card_holder"),
+        card_bank=extra.get("card_bank"),
+        cards=cards,
+    )
 
 
 @router.post("/payments/{payment_id}/submit")
@@ -1150,6 +1200,14 @@ def gateway_income(
     )
 
 
+class MyCardItem(BaseModel):
+    id: str = ""
+    number: str = ""
+    holder: str = ""
+    bank: str = ""
+    enabled: bool = True
+
+
 class MyCardSettings(BaseModel):
     """Reseller (or sudo) card-to-card settings for their own portal customers."""
 
@@ -1157,15 +1215,44 @@ class MyCardSettings(BaseModel):
     card_number: str = ""
     card_holder: str = ""
     card_bank: str = ""
+    cards: List[MyCardItem] = []
     # Sudo uses platform settings — surface that for the UI.
     uses_platform_settings: bool = False
 
 
 class MyCardSettingsUpdate(BaseModel):
     card_enabled: bool = False
+    # Legacy single-card fields (used when ``cards`` is omitted).
     card_number: str = ""
     card_holder: str = ""
     card_bank: str = ""
+    cards: Optional[List[MyCardItem]] = None
+
+
+def _my_card_settings_response(*, enabled: bool, cards: list, uses_platform: bool) -> MyCardSettings:
+    from app.billing.providers import enabled_payment_cards, public_card_payload
+
+    items = [
+        MyCardItem(
+            id=c.get("id") or "",
+            number=c.get("number") or "",
+            holder=c.get("holder") or "",
+            bank=c.get("bank") or "",
+            enabled=bool(c.get("enabled", True)),
+        )
+        for c in cards
+    ]
+    first = enabled_payment_cards(cards)
+    mirror = first[0] if first else (cards[0] if cards else None)
+    pub = public_card_payload(mirror) if mirror else {"number": "", "holder": "", "bank": ""}
+    return MyCardSettings(
+        card_enabled=bool(enabled),
+        card_number=pub.get("number") or "",
+        card_holder=pub.get("holder") or "",
+        card_bank=pub.get("bank") or "",
+        cards=items,
+        uses_platform_settings=uses_platform,
+    )
 
 
 @router.get("/my-card-settings", response_model=MyCardSettings)
@@ -1176,24 +1263,23 @@ def get_my_card_settings(
     """Current admin's card-to-card config (reseller self-service; sudo = platform)."""
     _require_billing_enabled()
     from app import platform_settings as ps
+    from app.billing.providers import load_admin_cards_raw, load_platform_cards_raw
 
     if admin.is_sudo:
-        return MyCardSettings(
-            card_enabled=bool(ps.get_bool("payment.card_enabled")),
-            card_number=ps.get_str("payment.card_number") or "",
-            card_holder=ps.get_str("payment.card_holder") or "",
-            card_bank=ps.get_str("payment.card_bank") or "",
-            uses_platform_settings=True,
+        cards = load_platform_cards_raw()
+        return _my_card_settings_response(
+            enabled=bool(ps.get_bool("payment.card_enabled")),
+            cards=cards,
+            uses_platform=True,
         )
     dbadmin = crud.get_admin(db, admin.username)
     if dbadmin is None:
         raise HTTPException(status_code=404, detail="Admin not found")
-    return MyCardSettings(
-        card_enabled=bool(getattr(dbadmin, "card_enabled", False)),
-        card_number=(getattr(dbadmin, "card_number", None) or ""),
-        card_holder=(getattr(dbadmin, "card_holder", None) or ""),
-        card_bank=(getattr(dbadmin, "card_bank", None) or ""),
-        uses_platform_settings=False,
+    cards = load_admin_cards_raw(dbadmin)
+    return _my_card_settings_response(
+        enabled=bool(getattr(dbadmin, "card_enabled", False)),
+        cards=cards,
+        uses_platform=False,
     )
 
 
@@ -1203,48 +1289,48 @@ def put_my_card_settings(
     db: Session = Depends(get_db),
     admin: Admin = Depends(require_permission("billing:write")),
 ):
-    """Save card-to-card details for this admin's portal customers."""
+    """Save card-to-card details for this admin's portal customers (supports multiple cards)."""
     _require_billing_enabled()
-    from app import platform_settings as ps
-    from app.billing.providers import reload_providers
+    from app.billing.providers import (
+        enabled_payment_cards,
+        legacy_cards_from_scalars,
+        normalize_payment_cards,
+        reload_providers,
+        save_admin_cards,
+        save_platform_cards,
+    )
 
-    number = (body.card_number or "").strip()
-    holder = (body.card_holder or "").strip()
-    bank = (body.card_bank or "").strip()
-    if body.card_enabled and not number:
-        raise HTTPException(status_code=422, detail="Card number is required when card payment is enabled")
+    if body.cards is not None:
+        cards_in = [c.model_dump() if hasattr(c, "model_dump") else c.dict() for c in body.cards]
+        cards = normalize_payment_cards(cards_in)
+    else:
+        cards = legacy_cards_from_scalars(body.card_number, body.card_holder, body.card_bank)
+
+    if body.card_enabled and not enabled_payment_cards(cards):
+        raise HTTPException(
+            status_code=422,
+            detail="At least one card number is required when card payment is enabled",
+        )
 
     if admin.is_sudo:
-        ps.update_settings_bulk({
-            "payment.card_enabled": bool(body.card_enabled),
-            "payment.card_number": number,
-            "payment.card_holder": holder,
-            "payment.card_bank": bank,
-        })
+        saved = save_platform_cards(bool(body.card_enabled), cards)
         reload_providers()
-        return MyCardSettings(
-            card_enabled=bool(body.card_enabled),
-            card_number=number,
-            card_holder=holder,
-            card_bank=bank,
-            uses_platform_settings=True,
+        return _my_card_settings_response(
+            enabled=bool(body.card_enabled),
+            cards=saved,
+            uses_platform=True,
         )
 
     dbadmin = crud.get_admin(db, admin.username)
     if dbadmin is None:
         raise HTTPException(status_code=404, detail="Admin not found")
-    dbadmin.card_enabled = bool(body.card_enabled)
-    dbadmin.card_number = number or None
-    dbadmin.card_holder = holder or None
-    dbadmin.card_bank = bank or None
+    saved = save_admin_cards(dbadmin, bool(body.card_enabled), cards)
     db.commit()
     db.refresh(dbadmin)
-    return MyCardSettings(
-        card_enabled=bool(dbadmin.card_enabled),
-        card_number=dbadmin.card_number or "",
-        card_holder=dbadmin.card_holder or "",
-        card_bank=dbadmin.card_bank or "",
-        uses_platform_settings=False,
+    return _my_card_settings_response(
+        enabled=bool(dbadmin.card_enabled),
+        cards=saved,
+        uses_platform=False,
     )
 
 

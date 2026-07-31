@@ -32,6 +32,8 @@ SETTING_SPECS: Dict[str, tuple] = {
     "payment.card_number": ("", "str"),
     "payment.card_holder": ("", "str"),
     "payment.card_bank": ("", "str"),
+    # Multi-card list: [{id, number, holder, bank, enabled?}]. Scalars remain as legacy mirror.
+    "payment.cards": ("", "json"),
     "payment.stripe_enabled": ("", "bool"),
     "payment.stripe_publishable_key": ("", "str"),
     "payment.stripe_secret_key": ("", "secret"),
@@ -80,6 +82,8 @@ def _env_default(key: str) -> Any:
             "push.vapid_private_key",
         ):
             return ""
+        if key == "payment.cards":
+            return []
         if key == "push.vapid_subject":
             # Apple rejects mailto:…@*.local — https origin is preferred.
             try:
@@ -112,6 +116,17 @@ def _coerce(value: Any, type_name: str) -> Any:
         if isinstance(value, bool):
             return value
         return str(value).lower() in ("1", "true", "yes", "on")
+    if type_name == "json":
+        if isinstance(value, (list, dict)):
+            return value
+        if isinstance(value, str):
+            import json
+
+            text = value.strip()
+            if not text:
+                return []
+            return json.loads(text)
+        return value
     return str(value)
 
 
@@ -171,6 +186,22 @@ def get_str(key: str, default: str = "") -> str:
     return str(v) if v is not None else default
 
 
+def get_json(key: str, default: Any = None) -> Any:
+    """Return a JSON setting (list/dict) without stringifying it."""
+    spec = SETTING_SPECS.get(key)
+    if spec and spec[1] != "json":
+        raise ValueError(f"Setting {key} is not json")
+    v = get_setting(key, default if default is not None else [])
+    if isinstance(v, str):
+        import json
+
+        try:
+            return json.loads(v) if v.strip() else (default if default is not None else [])
+        except json.JSONDecodeError:
+            return default if default is not None else []
+    return v if v is not None else (default if default is not None else [])
+
+
 def set_setting(key: str, value: Any) -> None:
     if key not in SETTING_SPECS:
         raise ValueError(f"Unknown setting: {key}")
@@ -206,12 +237,16 @@ def list_settings_for_ui() -> List[Dict[str, Any]]:
         display = raw
         if key in SECRET_KEYS and raw:
             display = mask_secret(str(raw))
+        elif type_name == "json":
+            import json
+
+            display = json.dumps(raw if raw is not None else [], ensure_ascii=False)
         rows.append({
             "key": key,
             "value": display,
             "type": type_name,
             "has_secret": key in SECRET_KEYS,
-            "is_set": raw is not None and raw != "" and raw is not False,
+            "is_set": raw is not None and raw != "" and raw is not False and raw != [],
         })
     return rows
 

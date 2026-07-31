@@ -97,6 +97,24 @@ export async function portalPost<T>(path: string, body: object): Promise<T> {
   return res.json();
 }
 
+export async function portalPut<T>(path: string, body: object): Promise<T> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const token = getPortalToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(apiUrl(path), {
+    method: "PUT",
+    headers,
+    body: JSON.stringify(body),
+  });
+  if (res.status === 401) {
+    onUnauthorized();
+    throw new Error("401");
+  }
+  if (!res.ok) throw await errorFromResponse(res);
+  if (res.status === 204) return undefined as T;
+  return res.json();
+}
+
 /** Multipart upload (card receipt). Do not set Content-Type — browser sets boundary. */
 export async function portalUpload<T>(path: string, form: FormData): Promise<T> {
   const headers: Record<string, string> = {};

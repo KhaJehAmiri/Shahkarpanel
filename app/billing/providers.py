@@ -1,10 +1,202 @@
 """Payment provider abstraction with UI-driven configuration."""
+import random
 import secrets
 from typing import Dict, List, Optional
 
 import requests
 
 from app import platform_settings as ps
+
+
+MAX_PAYMENT_CARDS = 12
+
+
+def _new_card_id() -> str:
+    return secrets.token_hex(8)
+
+
+def normalize_payment_card(raw, *, assign_id: bool = True) -> Optional[dict]:
+    """Normalize one card dict; returns None if number is empty."""
+    if not isinstance(raw, dict):
+        return None
+    number = str(raw.get("number") or raw.get("card_number") or "").strip().replace(" ", "")
+    if not number:
+        return None
+    holder = str(raw.get("holder") or raw.get("card_holder") or "").strip()
+    bank = str(raw.get("bank") or raw.get("card_bank") or "").strip()
+    enabled = raw.get("enabled", True)
+    if isinstance(enabled, str):
+        enabled = enabled.lower() in ("1", "true", "yes", "on")
+    else:
+        enabled = bool(enabled)
+    cid = str(raw.get("id") or "").strip()
+    if not cid and assign_id:
+        import hashlib
+
+        cid = hashlib.sha1(f"card:{number}:{holder}:{bank}".encode()).hexdigest()[:16]
+    out = {
+        "id": cid or _new_card_id(),
+        "number": number,
+        "holder": holder,
+        "bank": bank,
+        "enabled": enabled,
+    }
+    return out
+
+
+def normalize_payment_cards(raw) -> List[dict]:
+    """Parse a cards list (or JSON string) into normalized card dicts (all, including disabled)."""
+    import json
+
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return []
+        try:
+            raw = json.loads(text)
+        except json.JSONDecodeError:
+            return []
+    if not isinstance(raw, list):
+        return []
+    out: List[dict] = []
+    for item in raw:
+        card = normalize_payment_card(item)
+        if card:
+            out.append(card)
+        if len(out) >= MAX_PAYMENT_CARDS:
+            break
+    return out
+
+
+def enabled_payment_cards(cards: List[dict]) -> List[dict]:
+    return [c for c in cards if c.get("enabled", True) and (c.get("number") or "").strip()]
+
+
+def public_card_payload(card: dict) -> dict:
+    return {
+        "id": card.get("id") or "",
+        "number": card.get("number") or "",
+        "holder": card.get("holder") or "",
+        "bank": card.get("bank") or "",
+    }
+
+
+def legacy_cards_from_scalars(number: str, holder: str = "", bank: str = "") -> List[dict]:
+    number = (number or "").strip().replace(" ", "")
+    if not number:
+        return []
+    # Stable id so swipe/select works across requests before multi-card save.
+    import hashlib
+
+    stable = hashlib.sha1(f"legacy:{number}".encode()).hexdigest()[:16]
+    return [{
+        "id": stable,
+        "number": number,
+        "holder": (holder or "").strip(),
+        "bank": (bank or "").strip(),
+        "enabled": True,
+    }]
+
+
+def pick_payment_card(cards: List[dict], card_id: Optional[str] = None) -> Optional[dict]:
+    """Pick by id when provided; otherwise random among enabled cards."""
+    enabled = enabled_payment_cards(cards)
+    if not enabled:
+        return None
+    if card_id:
+        for c in enabled:
+            if c.get("id") == card_id:
+                return c
+        # Invalid id — fall through to random so checkout still works.
+    return random.choice(enabled)
+
+
+def load_platform_cards_raw() -> List[dict]:
+    """All configured platform cards (ignores the enabled toggle)."""
+    cards = normalize_payment_cards(ps.get_json("payment.cards", []))
+    if not cards:
+        cards = legacy_cards_from_scalars(
+            ps.get_str("payment.card_number") or "",
+            ps.get_str("payment.card_holder") or "",
+            ps.get_str("payment.card_bank") or "",
+        )
+    return cards
+
+
+def load_admin_cards_raw(dbadmin) -> List[dict]:
+    """All configured cards for an admin row (ignores the enabled toggle)."""
+    if dbadmin is None:
+        return []
+    if getattr(dbadmin, "is_sudo", False):
+        return load_platform_cards_raw()
+    cards = normalize_payment_cards(getattr(dbadmin, "cards", None))
+    if not cards:
+        cards = legacy_cards_from_scalars(
+            getattr(dbadmin, "card_number", None) or "",
+            getattr(dbadmin, "card_holder", None) or "",
+            getattr(dbadmin, "card_bank", None) or "",
+        )
+    return cards
+
+
+def list_platform_cards(*, include_disabled: bool = False) -> List[dict]:
+    """Platform (master) cards for top-ups and sudo portal customers."""
+    if not ps.get_bool("payment.card_enabled"):
+        return []
+    cards = load_platform_cards_raw()
+    return cards if include_disabled else enabled_payment_cards(cards)
+
+
+def list_cards_for_admin(dbadmin, *, include_disabled: bool = False) -> List[dict]:
+    """Cards shown to this admin's portal customers (reseller own / sudo platform)."""
+    if dbadmin is None:
+        return []
+    if getattr(dbadmin, "is_sudo", False):
+        return list_platform_cards(include_disabled=include_disabled)
+    if not bool(getattr(dbadmin, "card_enabled", False)):
+        return []
+    cards = load_admin_cards_raw(dbadmin)
+    return cards if include_disabled else enabled_payment_cards(cards)
+
+
+def save_platform_cards(enabled: bool, cards: List[dict]) -> List[dict]:
+    """Persist platform cards + legacy scalar mirror of the first enabled (or first) card."""
+    normalized = normalize_payment_cards(cards)
+    first = enabled_payment_cards(normalized)
+    mirror = first[0] if first else (normalized[0] if normalized else None)
+    updates = {
+        "payment.card_enabled": bool(enabled),
+        "payment.cards": normalized,
+        "payment.card_number": (mirror or {}).get("number") or "",
+        "payment.card_holder": (mirror or {}).get("holder") or "",
+        "payment.card_bank": (mirror or {}).get("bank") or "",
+    }
+    ps.update_settings_bulk(updates)
+    return normalized
+
+
+def save_admin_cards(dbadmin, enabled: bool, cards: List[dict]) -> List[dict]:
+    """Persist reseller cards + legacy scalar mirror."""
+    normalized = normalize_payment_cards(cards)
+    first = enabled_payment_cards(normalized)
+    mirror = first[0] if first else (normalized[0] if normalized else None)
+    dbadmin.card_enabled = bool(enabled)
+    dbadmin.cards = normalized or None
+    dbadmin.card_number = (mirror or {}).get("number") or None
+    dbadmin.card_holder = (mirror or {}).get("holder") or None
+    dbadmin.card_bank = (mirror or {}).get("bank") or None
+    return normalized
+
+
+def apply_card_to_intent_extra(extra: Optional[dict], card: dict) -> dict:
+    out = dict(extra or {})
+    out["card_id"] = card.get("id") or ""
+    out["card_number"] = card.get("number") or ""
+    out["card_holder"] = card.get("holder") or ""
+    out["card_bank"] = card.get("bank") or ""
+    return out
 
 
 class PaymentProvider:
@@ -32,8 +224,11 @@ class CardProvider(PaymentProvider):
         from app.db.models import Admin
 
         kind = getattr(intent, "kind", None) or ""
+        extra = dict(intent.extra or {})
+        prefer_id = (extra.get("card_id") or "").strip() or None
         if kind == "topup":
-            card = resolve_platform_card()
+            cards = list_platform_cards()
+            card = pick_payment_card(cards, prefer_id)
             if not card:
                 raise ValueError("Platform card payment is not configured")
             instructions = "Transfer to the platform card and submit the receipt for review."
@@ -42,25 +237,21 @@ class CardProvider(PaymentProvider):
             dbadmin = None
             if db is not None and getattr(intent, "admin_id", None):
                 dbadmin = db.query(Admin).filter(Admin.id == intent.admin_id).first()
-            card = resolve_card_for_admin(dbadmin)
+            cards = list_cards_for_admin(dbadmin)
+            card = pick_payment_card(cards, prefer_id)
             if not card:
                 raise ValueError("Card payment is not configured for this account")
             instructions = "Transfer to the card and submit the purchase for review."
-        number = card["number"]
-        holder = card.get("holder") or ""
-        bank = card.get("bank") or ""
-        extra = dict(intent.extra or {})
-        extra["card_number"] = number
-        extra["card_holder"] = holder
-        extra["card_bank"] = bank
-        intent.extra = extra
+        intent.extra = apply_card_to_intent_extra(extra, card)
         return {
             "provider": self.name,
             "payment_id": intent.id,
             "amount": intent.amount,
-            "card_number": number,
-            "card_holder": holder,
-            "card_bank": bank,
+            "card_id": card.get("id") or "",
+            "card_number": card.get("number") or "",
+            "card_holder": card.get("holder") or "",
+            "card_bank": card.get("bank") or "",
+            "cards": [public_card_payload(c) for c in cards],
             "instructions": instructions,
         }
 
@@ -425,49 +616,27 @@ def gateway_providers() -> List[str]:
     return available_providers(online_only=True)
 
 
-def resolve_platform_card() -> Optional[dict]:
+def resolve_platform_card(card_id: Optional[str] = None) -> Optional[dict]:
     """Master/platform card used for reseller wallet top-ups and sudo portal customers."""
-    if not ps.get_bool("payment.card_enabled"):
-        return None
-    number = (ps.get_str("payment.card_number") or "").strip()
-    if not number:
-        return None
-    return {
-        "number": number,
-        "holder": (ps.get_str("payment.card_holder") or "").strip(),
-        "bank": (ps.get_str("payment.card_bank") or "").strip(),
-    }
+    return pick_payment_card(list_platform_cards(), card_id)
 
 
-def resolve_card_for_admin(dbadmin) -> Optional[dict]:
+def resolve_card_for_admin(dbadmin, card_id: Optional[str] = None) -> Optional[dict]:
     """Card details for this admin's portal customers.
 
-    - Sudo / platform owner: global ``payment.card_*`` settings.
-    - Reseller: only their own ``card_*`` columns — never the master's card.
+    - Sudo / platform owner: global ``payment.card_*`` / ``payment.cards`` settings.
+    - Reseller: only their own cards — never the master's card.
     """
-    if dbadmin is None:
-        return None
-    if getattr(dbadmin, "is_sudo", False):
-        return resolve_platform_card()
-    if not bool(getattr(dbadmin, "card_enabled", False)):
-        return None
-    number = (getattr(dbadmin, "card_number", None) or "").strip()
-    if not number:
-        return None
-    return {
-        "number": number,
-        "holder": (getattr(dbadmin, "card_holder", None) or "").strip(),
-        "bank": (getattr(dbadmin, "card_bank", None) or "").strip(),
-    }
+    return pick_payment_card(list_cards_for_admin(dbadmin), card_id)
 
 
 def card_payment_enabled_for_admin(dbadmin=None) -> bool:
-    return resolve_card_for_admin(dbadmin) is not None
+    return bool(list_cards_for_admin(dbadmin))
 
 
 def card_payment_enabled() -> bool:
     """Legacy: platform card toggle (sudo customers). Prefer card_payment_enabled_for_admin."""
-    return resolve_platform_card() is not None
+    return bool(list_platform_cards())
 
 
 def topup_providers_for_admin(dbadmin) -> List[str]:
@@ -478,7 +647,7 @@ def topup_providers_for_admin(dbadmin) -> List[str]:
     unless ``payment.demo_enabled`` is explicitly on.
     """
     providers = list(gateway_providers())
-    if resolve_platform_card() is not None:
+    if list_platform_cards():
         providers = providers + [CardProvider.name]
     return providers
 
@@ -506,24 +675,25 @@ def portal_payment_methods(dbadmin=None) -> dict:
 
     ``dbadmin`` is the reseller/owner of the portal user. CentralPay is only
     listed when that admin is opted in (or sudo) and an API key is configured.
-    Card uses the owning admin's own card (reseller) or platform card (sudo).
+    Card uses the owning admin's own cards (reseller) or platform cards (sudo).
+
+    ``card`` is a random enabled card (compat for older clients). ``cards`` is
+    the full list for the swipe UI.
     """
     gateway = gateway_providers() if ps.get_bool("payment.gateway_enabled") else []
     gateway = filter_providers_for_admin(gateway, dbadmin)
-    card = resolve_card_for_admin(dbadmin)
+    cards = list_cards_for_admin(dbadmin)
+    card = pick_payment_card(cards)
     methods = []
     if gateway:
         methods.append("gateway")
-    if card:
+    if cards:
         methods.append("card")
     return {
         "methods": methods,
         "gateway_providers": gateway,
-        "card": {
-            "number": card["number"],
-            "holder": card.get("holder") or "",
-            "bank": card.get("bank") or "",
-        } if card else None,
+        "card": public_card_payload(card) if card else None,
+        "cards": [public_card_payload(c) for c in cards],
     }
 
 

@@ -12,6 +12,7 @@ from app.billing.payments import (
     create_portal_payment,
     get_intent_for_user,
     list_online_providers,
+    set_payment_card,
     submit_card_payment,
 )
 from app.billing.providers import portal_payment_methods
@@ -377,12 +378,20 @@ def portal_payment_methods_endpoint(
     return portal_payment_methods(dbadmin)
 
 
+class PortalPaymentCardOut(BaseModel):
+    id: str = ""
+    number: str = ""
+    holder: str = ""
+    bank: str = ""
+
+
 class PortalPaymentCreate(BaseModel):
     plan_id: int
     provider: str  # card | centralpay | stripe (demo only when explicitly enabled)
     action: str = "renew"  # renew | purchase
     username: Optional[str] = None
     new_username: Optional[str] = None
+    card_id: Optional[str] = None
 
 
 class PortalPaymentCreateResponse(BaseModel):
@@ -393,9 +402,11 @@ class PortalPaymentCreateResponse(BaseModel):
     instructions: Optional[str] = None
     confirm_token: Optional[str] = None
     checkout_url: Optional[str] = None
+    card_id: Optional[str] = None
     card_number: Optional[str] = None
     card_holder: Optional[str] = None
     card_bank: Optional[str] = None
+    cards: List[PortalPaymentCardOut] = []
     action: str = "renew"
     username: Optional[str] = None
 
@@ -415,6 +426,10 @@ class PortalPaymentCompleteResponse(BaseModel):
 
 class PortalCardSubmitBody(BaseModel):
     note: Optional[str] = None
+
+
+class PortalCardSelect(BaseModel):
+    card_id: str
 
 
 @router.post("/payments", response_model=PortalPaymentCreateResponse)
@@ -437,8 +452,10 @@ def portal_create_payment(
         target_username=body.username,
         new_username=body.new_username,
         public_base=public_base_from_request(request),
+        card_id=body.card_id,
     )
     extra = intent.extra or {}
+    cards_raw = payload.get("cards") or []
     return PortalPaymentCreateResponse(
         payment_id=intent.id,
         amount=intent.amount,
@@ -447,9 +464,11 @@ def portal_create_payment(
         instructions=payload.get("instructions"),
         confirm_token=payload.get("confirm_token"),
         checkout_url=payload.get("checkout_url"),
+        card_id=payload.get("card_id") or extra.get("card_id"),
         card_number=payload.get("card_number"),
         card_holder=payload.get("card_holder"),
         card_bank=payload.get("card_bank"),
+        cards=[PortalPaymentCardOut(**c) for c in cards_raw if isinstance(c, dict)],
         action=str(extra.get("action") or body.action),
         username=extra.get("new_username") or extra.get("target_username"),
     )
@@ -489,6 +508,41 @@ def portal_complete_payment(
         new_expire=user.expire,
         new_data_limit=user.data_limit,
         username=user.username,
+    )
+
+
+@router.put("/payments/{payment_id}/card", response_model=PortalPaymentCreateResponse)
+def portal_select_payment_card(
+    payment_id: int,
+    body: PortalCardSelect,
+    db: Session = Depends(get_db),
+    dbuser: User = Depends(get_current_portal_user),
+):
+    """Switch which card a pending portal payment should use (swipe UI)."""
+    _require_billing()
+    from app.billing.payments import _billing_admin_id
+    from app.billing.providers import list_cards_for_admin, public_card_payload
+
+    intent = get_intent_for_user(db, payment_id, dbuser.id)
+    if intent.kind not in ("portal_renew", "portal_purchase"):
+        raise HTTPException(status_code=400, detail="Not a portal payment")
+    intent = set_payment_card(db, intent, body.card_id)
+    extra = intent.extra or {}
+    billing_admin_id = _billing_admin_id(db, dbuser)
+    dbadmin = crud.get_admin_by_id(db, billing_admin_id)
+    cards = [PortalPaymentCardOut(**public_card_payload(c)) for c in list_cards_for_admin(dbadmin)]
+    return PortalPaymentCreateResponse(
+        payment_id=intent.id,
+        amount=intent.amount,
+        provider=intent.provider,
+        status=intent.status,
+        card_id=extra.get("card_id"),
+        card_number=extra.get("card_number"),
+        card_holder=extra.get("card_holder"),
+        card_bank=extra.get("card_bank"),
+        cards=cards,
+        action=str(extra.get("action") or "renew"),
+        username=extra.get("new_username") or extra.get("target_username"),
     )
 
 

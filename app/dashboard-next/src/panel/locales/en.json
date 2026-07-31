@@ -1866,6 +1866,10 @@
     "cardHolder": "Card holder name",
     "cardBank": "Bank",
     "cardBadge": "Card",
+    "cardAdd": "Add card",
+    "cardItemLabel": "Card {{n}}",
+    "cardMultiHint": "You can add several cards. Each customer/reseller sees a random card first and can swipe to the others.",
+    "cardSwipeHint": "Swipe or use the arrows to choose another card.",
     "incomeHint": "Cash collected via online gateways (CentralPay / Stripe / demo). Amounts are exact payment totals — not wallet ledger entries.",
     "incomeToday": "Today",
     "incomeYesterday": "Yesterday",
@@ -2183,6 +2187,7 @@
   "commercial": {
     "hint": "All commercial settings are stored in the database. Changes apply immediately; restart the panel service if you change the usage billing job interval.",
     "stripeWebhookUrl": "Stripe webhook URL: {{url}}",
+    "cardMultiManageHint": "Add multiple card-to-card numbers under Billing → My card-to-card. Customers and resellers see a random card by default and can swipe between cards.",
     "stripeWebhookRequired": "Stripe stays disabled until the webhook secret is set. Unsigned webhooks are rejected.",
     "section": {
       "billing": "Usage billing",

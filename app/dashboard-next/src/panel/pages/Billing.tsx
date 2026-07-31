@@ -372,12 +372,14 @@ const TopUpModal: FC<{ providers: string[]; onClose: () => void; onDone: () => v
   const [busy, setBusy] = useState(false);
   const [step, setStep] = useState<"form" | "card">("form");
   const [paymentId, setPaymentId] = useState<number | null>(null);
-  const [card, setCard] = useState<{ number?: string; holder?: string; bank?: string }>({});
+  const [cards, setCards] = useState<Array<{ id?: string; number?: string; holder?: string; bank?: string }>>([]);
+  const [cardIndex, setCardIndex] = useState(0);
   const [note, setNote] = useState("");
   const [receipt, setReceipt] = useState<File | null>(null);
 
   const amountValue = parseAmountDigits(amountDigits);
   const amountDisplay = formatAmountGrouped(amountDigits);
+  const card = cards[cardIndex] || cards[0] || {};
 
   const providerLabel = (p: string) => {
     if (p === "card") return t("billing.providerCard");
@@ -406,9 +408,11 @@ const TopUpModal: FC<{ providers: string[]; onClose: () => void; onDone: () => v
         payment_id: number;
         confirm_token?: string;
         checkout_url?: string;
+        card_id?: string;
         card_number?: string;
         card_holder?: string;
         card_bank?: string;
+        cards?: Array<{ id?: string; number?: string; holder?: string; bank?: string }>;
         provider: string;
       }>("/billing/topup", {
         amount: amountValue,
@@ -416,11 +420,23 @@ const TopUpModal: FC<{ providers: string[]; onClose: () => void; onDone: () => v
       });
       if (created.provider === "card" || created.card_number) {
         setPaymentId(created.payment_id);
-        setCard({
-          number: created.card_number,
-          holder: created.card_holder,
-          bank: created.card_bank,
-        });
+        const list =
+          created.cards && created.cards.length
+            ? created.cards
+            : created.card_number
+              ? [{
+                  id: created.card_id,
+                  number: created.card_number,
+                  holder: created.card_holder,
+                  bank: created.card_bank,
+                }]
+              : [];
+        setCards(list);
+        const idx = Math.max(
+          0,
+          list.findIndex((c) => (created.card_id && c.id === created.card_id) || c.number === created.card_number),
+        );
+        setCardIndex(idx < 0 ? Math.floor(Math.random() * Math.max(list.length, 1)) : idx);
         setStep("card");
         return;
       }
@@ -437,6 +453,19 @@ const TopUpModal: FC<{ providers: string[]; onClose: () => void; onDone: () => v
       toast.push(e.message, "error");
     } finally {
       setBusy(false);
+    }
+  };
+
+  const selectCard = async (nextIndex: number) => {
+    if (!paymentId || !cards.length) return;
+    const next = ((nextIndex % cards.length) + cards.length) % cards.length;
+    const target = cards[next];
+    setCardIndex(next);
+    if (!target?.id) return;
+    try {
+      await api.put(`/billing/payments/${paymentId}/card`, { card_id: target.id });
+    } catch (e: any) {
+      toast.push(e.message, "error");
     }
   };
 
@@ -469,40 +498,108 @@ const TopUpModal: FC<{ providers: string[]; onClose: () => void; onDone: () => v
   };
 
   if (step === "card") {
+    const multi = cards.length > 1;
+    const formatCard = (num?: string) =>
+      (num || "").replace(/\D/g, "").replace(/(.{4})/g, "$1 ").trim() || "•••• •••• •••• ••••";
     return (
       <Modal open title={t("billing.topUpCardTitle")} onClose={onClose}
         footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
           <Button variant="primary" disabled={busy || !receipt} onClick={submitReceipt}>{t("billing.topUpSubmitReceipt")}</Button></>}>
         <div className="sk-stack sk-modal-stack">
           <Callout tone="info">{t("billing.topUpCardHint")}</Callout>
-          <div className="sk-stack" style={{ gap: 8 }}>
-            <div className="sk-row" style={{ justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-              <span className="sk-faint">{t("billing.cardNumber")}</span>
-              <div className="sk-row" style={{ gap: 6, alignItems: "center" }}>
-                <span dir="ltr" style={{ fontWeight: 700, letterSpacing: 1 }}>{card.number || "—"}</span>
-                {card.number ? (
-                  <Button size="sm" variant="ghost" onClick={copyCardNumber} title={t("billing.copyCardNumber")}>
-                    <IcCopy className="sk-ico" /> {t("billing.copyCardNumber")}
-                  </Button>
-                ) : null}
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <button
+              type="button"
+              onClick={copyCardNumber}
+              title={t("billing.copyCardNumber")}
+              style={{
+                position: "relative",
+                width: "100%",
+                aspectRatio: "1.86 / 1",
+                minHeight: 148,
+                maxHeight: 188,
+                border: "1px solid rgba(255,255,255,0.1)",
+                borderRadius: 16,
+                padding: "14px 18px 12px",
+                textAlign: "start",
+                cursor: "pointer",
+                color: "#f4f7fb",
+                font: "inherit",
+                overflow: "hidden",
+                display: "grid",
+                gridTemplateRows: "auto 1fr auto",
+                alignItems: "center",
+                background:
+                  "radial-gradient(120% 80% at 100% 0%, rgba(96,165,250,0.28), transparent 55%), linear-gradient(145deg, #152238 0%, #1a2f55 48%, #1e3a6e 100%)",
+                boxShadow: "0 1px 0 rgba(255,255,255,0.06) inset, 0 18px 40px rgba(0,0,0,0.28)",
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: 12, fontWeight: 500, opacity: 0.86 }}>{card.bank || t("billing.cardBadge")}</span>
+                <span
+                  aria-hidden
+                  style={{
+                    width: 30,
+                    height: 22,
+                    borderRadius: 5,
+                    background: "linear-gradient(145deg, #e8c56a 0%, #c9a227 55%, #a67c12 100%)",
+                  }}
+                />
               </div>
-            </div>
-            {card.holder ? (
-              <div className="sk-row" style={{ justifyContent: "space-between" }}>
-                <span className="sk-faint">{t("billing.cardHolder")}</span>
-                <span>{card.holder}</span>
+              <div
+                dir="ltr"
+                style={{
+                  margin: 0,
+                  fontFamily: "ui-monospace, SF Mono, Menlo, monospace",
+                  fontSize: 22,
+                  fontWeight: 600,
+                  letterSpacing: "0.1em",
+                  color: "#fff",
+                  lineHeight: 1.15,
+                  alignSelf: "center",
+                }}
+              >
+                {formatCard(card.number)}
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 12 }}>
+                <span style={{ fontSize: 13, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {card.holder || "—"}
+                </span>
+                <span style={{ fontSize: 11, opacity: 0.55, flexShrink: 0 }}>{t("billing.copyCardNumber")}</span>
+              </div>
+            </button>
+            {multi ? (
+              <div className="sk-row" style={{ justifyContent: "center", alignItems: "center", gap: 14 }}>
+                <Button size="sm" variant="ghost" disabled={busy || cardIndex === 0} onClick={() => selectCard(cardIndex - 1)}>‹</Button>
+                <div className="sk-row" style={{ gap: 6, alignItems: "center" }}>
+                  {cards.map((_, i) => (
+                    <button
+                      key={`dot-${i}`}
+                      type="button"
+                      aria-label={`card ${i + 1}`}
+                      onClick={() => selectCard(i)}
+                      disabled={busy}
+                      style={{
+                        width: i === cardIndex ? 18 : 6,
+                        height: 6,
+                        borderRadius: 999,
+                        border: 0,
+                        padding: 0,
+                        opacity: i === cardIndex ? 1 : 0.55,
+                        background: i === cardIndex ? "var(--sk-accent, #3b82f6)" : "var(--sk-border, #334155)",
+                        cursor: "pointer",
+                        transition: "width 220ms ease",
+                      }}
+                    />
+                  ))}
+                </div>
+                <Button size="sm" variant="ghost" disabled={busy || cardIndex === cards.length - 1} onClick={() => selectCard(cardIndex + 1)}>›</Button>
               </div>
             ) : null}
-            {card.bank ? (
-              <div className="sk-row" style={{ justifyContent: "space-between" }}>
-                <span className="sk-faint">{t("billing.cardBank")}</span>
-                <span>{card.bank}</span>
-              </div>
-            ) : null}
-            <div className="sk-row" style={{ justifyContent: "space-between" }}>
-              <span className="sk-faint">{t("billing.creditAmount")}</span>
-              <span dir="ltr" style={{ fontWeight: 700 }}>{amountValue.toLocaleString("en-US")}</span>
-            </div>
+          </div>
+          <div className="sk-row" style={{ justifyContent: "space-between" }}>
+            <span className="sk-faint">{t("billing.creditAmount")}</span>
+            <span dir="ltr" style={{ fontWeight: 700 }}>{amountValue.toLocaleString("en-US")}</span>
           </div>
           <Field label={t("billing.orderNote")}>
             <Input value={note} onChange={(e: any) => setNote(e.target.value)} placeholder={t("billing.topUpNotePlaceholder")} />
@@ -552,13 +649,24 @@ const TopUpModal: FC<{ providers: string[]; onClose: () => void; onDone: () => v
 const money = (n: number, label?: string) =>
   `${(n || 0).toLocaleString()}${label ? ` ${label}` : ""}`;
 
+type MyCardItem = {
+  id?: string;
+  number: string;
+  holder: string;
+  bank: string;
+  enabled?: boolean;
+};
+
 type MyCardSettings = {
   card_enabled: boolean;
   card_number: string;
   card_holder: string;
   card_bank: string;
+  cards?: MyCardItem[];
   uses_platform_settings?: boolean;
 };
+
+const emptyCard = (): MyCardItem => ({ id: "", number: "", holder: "", bank: "", enabled: true });
 
 const ResellerCardSettingsTab: FC = () => {
   const { t } = useTranslation();
@@ -569,29 +677,66 @@ const ResellerCardSettingsTab: FC = () => {
     [],
   );
   const [enabled, setEnabled] = useState(false);
-  const [number, setNumber] = useState("");
-  const [holder, setHolder] = useState("");
-  const [bank, setBank] = useState("");
+  const [cards, setCards] = useState<MyCardItem[]>([emptyCard()]);
   const [busy, setBusy] = useState(false);
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
     if (!data || hydrated) return;
     setEnabled(Boolean(data.card_enabled));
-    setNumber(data.card_number || "");
-    setHolder(data.card_holder || "");
-    setBank(data.card_bank || "");
+    if (data.cards && data.cards.length) {
+      setCards(data.cards.map((c) => ({
+        id: c.id || "",
+        number: c.number || "",
+        holder: c.holder || "",
+        bank: c.bank || "",
+        enabled: c.enabled !== false,
+      })));
+    } else if (data.card_number) {
+      setCards([{
+        id: "",
+        number: data.card_number || "",
+        holder: data.card_holder || "",
+        bank: data.card_bank || "",
+        enabled: true,
+      }]);
+    } else {
+      setCards([emptyCard()]);
+    }
     setHydrated(true);
   }, [data, hydrated]);
+
+  const updateCard = (index: number, patch: Partial<MyCardItem>) => {
+    setCards((prev) => prev.map((c, i) => (i === index ? { ...c, ...patch } : c)));
+  };
+
+  const addCard = () => {
+    if (cards.length >= 12) return;
+    setCards((prev) => [...prev, emptyCard()]);
+  };
+
+  const removeCard = (index: number) => {
+    setCards((prev) => (prev.length <= 1 ? [emptyCard()] : prev.filter((_, i) => i !== index)));
+  };
 
   const save = async () => {
     setBusy(true);
     try {
+      const payloadCards = cards
+        .map((c) => ({
+          id: (c.id || "").trim(),
+          number: c.number.trim(),
+          holder: c.holder.trim(),
+          bank: c.bank.trim(),
+          enabled: c.enabled !== false,
+        }))
+        .filter((c) => c.number);
       await api.put("/billing/my-card-settings", {
         card_enabled: enabled,
-        card_number: number.trim(),
-        card_holder: holder.trim(),
-        card_bank: bank.trim(),
+        cards: payloadCards,
+        card_number: payloadCards[0]?.number || "",
+        card_holder: payloadCards[0]?.holder || "",
+        card_bank: payloadCards[0]?.bank || "",
       });
       toast.push(t("common.saved"), "success");
       setHydrated(false);
@@ -611,8 +756,9 @@ const ResellerCardSettingsTab: FC = () => {
       <Callout tone="info">
         {admin?.is_sudo ? t("billing.cardSettingsSudoHint") : t("billing.cardSettingsResellerHint")}
       </Callout>
+      <Callout tone="info">{t("billing.cardMultiHint")}</Callout>
       <Card>
-        <div className="sk-stack" style={{ gap: 14, maxWidth: 480 }}>
+        <div className="sk-stack" style={{ gap: 14, maxWidth: 560 }}>
           <div className="sk-row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
             <div>
               <div style={{ fontWeight: 600, fontSize: 13 }}>{t("billing.cardEnabled")}</div>
@@ -620,22 +766,50 @@ const ResellerCardSettingsTab: FC = () => {
             </div>
             <Toggle on={enabled} onChange={() => setEnabled((v) => !v)} />
           </div>
-          <Field label={t("billing.cardNumber")}>
-            <Input
-              dir="ltr"
-              value={number}
-              onChange={(e: any) => setNumber(e.target.value)}
-              placeholder="6037…"
-              disabled={!enabled && !number}
-            />
-          </Field>
-          <Field label={t("billing.cardHolder")}>
-            <Input value={holder} onChange={(e: any) => setHolder(e.target.value)} />
-          </Field>
-          <Field label={t("billing.cardBank")}>
-            <Input value={bank} onChange={(e: any) => setBank(e.target.value)} />
-          </Field>
-          <div className="sk-row" style={{ justifyContent: "flex-end" }}>
+          {cards.map((card, index) => (
+            <div
+              key={card.id || `card-${index}`}
+              className="sk-stack"
+              style={{
+                gap: 10,
+                padding: 12,
+                border: "1px solid var(--sk-border)",
+                borderRadius: 10,
+              }}
+            >
+              <div className="sk-row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                <strong style={{ fontSize: 13 }}>{t("billing.cardItemLabel", { n: index + 1 })}</strong>
+                <div className="sk-row" style={{ gap: 8 }}>
+                  <Toggle
+                    on={card.enabled !== false}
+                    onChange={() => updateCard(index, { enabled: card.enabled === false })}
+                  />
+                  <Button size="sm" variant="ghost" onClick={() => removeCard(index)} title={t("common.delete")}>
+                    <IcTrash className="sk-ico" />
+                  </Button>
+                </div>
+              </div>
+              <Field label={t("billing.cardNumber")}>
+                <Input
+                  dir="ltr"
+                  value={card.number}
+                  onChange={(e: any) => updateCard(index, { number: e.target.value })}
+                  placeholder="6037…"
+                  disabled={!enabled && !card.number}
+                />
+              </Field>
+              <Field label={t("billing.cardHolder")}>
+                <Input value={card.holder} onChange={(e: any) => updateCard(index, { holder: e.target.value })} />
+              </Field>
+              <Field label={t("billing.cardBank")}>
+                <Input value={card.bank} onChange={(e: any) => updateCard(index, { bank: e.target.value })} />
+              </Field>
+            </div>
+          ))}
+          <div className="sk-row" style={{ justifyContent: "space-between" }}>
+            <Button variant="ghost" disabled={busy || cards.length >= 12} onClick={addCard}>
+              <IcPlus className="sk-ico" /> {t("billing.cardAdd")}
+            </Button>
             <Button variant="primary" disabled={busy} onClick={save}>{t("common.save")}</Button>
           </div>
         </div>

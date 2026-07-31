@@ -111,6 +111,7 @@ def create_topup_payment(
     provider: str,
     *,
     public_base: Optional[str] = None,
+    card_id: Optional[str] = None,
 ) -> tuple[PaymentIntent, dict]:
     from app.db import crud
 
@@ -120,6 +121,8 @@ def create_topup_payment(
     extra: dict = {}
     if public_base:
         extra["public_base"] = public_base.rstrip("/")
+    if card_id:
+        extra["card_id"] = str(card_id).strip()
     intent = PaymentIntent(
         kind="topup",
         admin_id=admin_id,
@@ -162,6 +165,7 @@ def create_portal_payment(
     target_username: Optional[str] = None,
     new_username: Optional[str] = None,
     public_base: Optional[str] = None,
+    card_id: Optional[str] = None,
 ) -> tuple[PaymentIntent, dict]:
     """Start portal checkout.
 
@@ -195,6 +199,8 @@ def create_portal_payment(
     }
     if public_base:
         extra["public_base"] = public_base.rstrip("/")
+    if card_id:
+        extra["card_id"] = str(card_id).strip()
 
     if action == "purchase":
         username = (new_username or "").strip().lower()
@@ -246,6 +252,42 @@ def create_portal_payment(
         intent.extra = extra_fail
         db.commit()
         raise HTTPException(status_code=502, detail=f"Payment provider error: {exc}") from exc
+
+
+def set_payment_card(
+    db: Session,
+    intent: PaymentIntent,
+    card_id: str,
+) -> PaymentIntent:
+    """Switch the frozen card on a pending card payment (before receipt submit)."""
+    from app.billing.providers import (
+        apply_card_to_intent_extra,
+        list_cards_for_admin,
+        list_platform_cards,
+        pick_payment_card,
+    )
+    from app.db import crud
+
+    if intent.provider != "card":
+        raise HTTPException(status_code=400, detail="Not a card payment")
+    if intent.status != "pending":
+        raise HTTPException(status_code=409, detail="Card can only be changed before receipt submit")
+    cid = (card_id or "").strip()
+    if not cid:
+        raise HTTPException(status_code=422, detail="card_id required")
+
+    if intent.kind == "topup":
+        cards = list_platform_cards()
+    else:
+        dbadmin = crud.get_admin_by_id(db, intent.admin_id) if intent.admin_id else None
+        cards = list_cards_for_admin(dbadmin)
+    card = pick_payment_card(cards, cid)
+    if not card or card.get("id") != cid:
+        raise HTTPException(status_code=404, detail="Card not found")
+    intent.extra = apply_card_to_intent_extra(intent.extra, card)
+    db.commit()
+    db.refresh(intent)
+    return intent
 
 
 def submit_card_payment(

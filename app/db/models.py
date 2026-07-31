@@ -80,6 +80,8 @@ class Admin(Base):
     card_number = Column(String(64), nullable=True)
     card_holder = Column(String(128), nullable=True)
     card_bank = Column(String(128), nullable=True)
+    # Multiple cards: [{id, number, holder, bank, enabled?}]. Scalars kept as legacy mirror of first card.
+    cards = Column(JSON, nullable=True)
 
 
 

@@ -31,9 +31,6 @@ const SECTIONS: { id: string; keys: string[] }[] = [
     keys: [
       "payment.gateway_enabled",
       "payment.card_enabled",
-      "payment.card_number",
-      "payment.card_holder",
-      "payment.card_bank",
       "payment.demo_enabled",
       "payment.min_amount",
       "payment.max_amount",
@@ -163,6 +160,12 @@ export const CommercialSettings: FC = () => {
             })}
             {section.id === "payment" && (
               <>
+                <Callout tone="info">
+                  {t("commercial.cardMultiManageHint", {
+                    defaultValue:
+                      "Add multiple card-to-card numbers under Billing → My card-to-card. Customers and resellers see a random card by default and can swipe between cards.",
+                  })}
+                </Callout>
                 <Callout tone="info">
                   {t("commercial.stripeWebhookUrl", { url: `${window.location.origin}/api/billing/webhook/stripe` })}
                 </Callout>

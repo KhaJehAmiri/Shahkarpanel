@@ -1093,7 +1093,9 @@ def _compute_check_updates() -> dict:
             # otherwise hang for minutes, blocking the whole check (and the
             # Install button). Failing fast falls through to the HTTPS path.
             # Share ``_git_lock`` with apply so fetch never races ``reset --hard``.
-            _run_git_locked(["fetch", "origin", branch, "--depth", "1"], timeout=12)
+            # 60s: private GitHub + cold TLS on some hosts exceeds the old 12s
+            # budget and falsely falls back to unauthenticated HTTPS (no update).
+            _run_git_locked(["fetch", "origin", branch, "--depth", "1"], timeout=60)
             remote_sha = _run_git_locked(["rev-parse", "--short", f"origin/{branch}"], timeout=15)
             remote_version = _version_at_git_ref(f"origin/{branch}") or _remote_version_https() or current_version
             if result["current_sha"] and remote_sha and result["current_sha"] != remote_sha:

@@ -18,6 +18,8 @@ lib64/
 # Shahkar dashboard (TypeScript utilities — not Python lib/)
 !app/dashboard-next/src/panel/lib/
 !app/dashboard-next/src/panel/lib/**
+!app/dashboard-next/src/portal/lib/
+!app/dashboard-next/src/portal/lib/**
 !app/dashboard-next/src/lib/
 !app/dashboard-next/src/lib/**
 parts/

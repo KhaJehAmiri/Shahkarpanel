@@ -41,6 +41,8 @@ const SECTIONS: { id: string; keys: string[] }[] = [
       "payment.centralpay_enabled",
       "payment.centralpay_api_key",
       "payment.centralpay_merchant_id",
+      "payment.centralpay_relay_base",
+      "payment.centralpay_relay_secret",
       "payment.centralpay_http_proxy",
     ],
   },

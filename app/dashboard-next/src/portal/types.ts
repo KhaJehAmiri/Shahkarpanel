@@ -71,6 +71,8 @@ export interface PortalTransaction {
   created_at?: string | null;
   completed_at?: string | null;
   unread?: boolean;
+  can_pay?: boolean;
+  expires_at?: string | null;
 }
 
 export interface PortalLinkItem {

@@ -232,7 +232,7 @@ def bootstrap_legacy_interfaces(db: Session, dbnode: Node) -> None:
         except ValueError:
             continue
         user = proxy.user
-        active = bool(user and user.status in SERVED_STATUSES)
+        active = wg_peer_want_active(user)
         peer = WgPeer(
             interface_id=iface.id,
             user_id=proxy.user_id,
@@ -486,7 +486,7 @@ def _persist_peer_row(
 
     settings = _ensure_proxy_keys(db, proxy)
     user = db.query(User).filter(User.id == user_id).first()
-    active = bool(user and user.status in SERVED_STATUSES)
+    active = wg_peer_want_active(user)
     kernel_plain = plain_wg_enabled(dbnode.wireguard)
 
     iface = _find_or_create_interface(
@@ -588,7 +588,7 @@ def create_peer(
             client = _node_client(dbnode)
             if client is not None and hasattr(client, "autoscale_hot_add_peer"):
                 user = db.query(User).filter(User.id == user_id).first()
-                active = bool(user and user.status in SERVED_STATUSES)
+                active = wg_peer_want_active(user)
                 allowed = _normalize_allowed(peer.address) if active else "127.0.0.1/32"
                 try:
                     client.autoscale_hot_add_peer(
@@ -651,7 +651,7 @@ def create_peer(
                     pass
         else:
             user = db.query(User).filter(User.id == user_id).first()
-            active = bool(user and user.status in SERVED_STATUSES)
+            active = wg_peer_want_active(user)
             allowed = _normalize_allowed(peer.address) if active else "127.0.0.1/32"
             try:
                 client.autoscale_hot_add_peer(
@@ -768,6 +768,20 @@ def toggle_peer(db: Session, user_id: int, *, active: bool) -> bool:
     return True
 
 
+def wg_peer_want_active(user) -> bool:
+    """Whether a WireGuard peer should be active for this user."""
+    if user is None or user.status not in SERVED_STATUSES:
+        return False
+    try:
+        from app.utils.device_exclusivity import PROTO_WG, is_protocol_held
+
+        if is_protocol_held(user, PROTO_WG):
+            return False
+    except Exception:
+        pass
+    return True
+
+
 def sync_user_statuses(db: Session, *, node_id: Optional[int] = None) -> int:
     """Reconcile peer active flags with user status (returns count toggled).
 
@@ -784,7 +798,7 @@ def sync_user_statuses(db: Session, *, node_id: Optional[int] = None) -> int:
         if node_id is not None and int(peer.interface.node_id) != int(node_id):
             continue
         user = proxy.user
-        want_active = bool(user and user.status in SERVED_STATUSES)
+        want_active = wg_peer_want_active(user)
         if peer.active != want_active:
             if toggle_peer(db, proxy.user_id, active=want_active):
                 toggled += 1

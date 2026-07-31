@@ -451,6 +451,10 @@ WALLET_LOW_BALANCE_THRESHOLD = config("WALLET_LOW_BALANCE_THRESHOLD", cast=int, 
 # Payment gateways (phase 4). Demo provider is staging-only; opt in explicitly.
 PAYMENT_DEMO_ENABLED = config("PAYMENT_DEMO_ENABLED", cast=bool, default=False)
 PORTAL_DIRECT_PAYMENT = config("PORTAL_DIRECT_PAYMENT", cast=bool, default=True)
+# Pending portal checkouts (no receipt / gateway not completed) auto-expire after this.
+PORTAL_PAYMENT_PENDING_TTL_MINUTES = config(
+    "PORTAL_PAYMENT_PENDING_TTL_MINUTES", cast=int, default=120
+)
 # Extra VPN accounts one portal login may own. 0 disables the cap.
 PORTAL_MAX_CHILD_ACCOUNTS = config("PORTAL_MAX_CHILD_ACCOUNTS", cast=int, default=20)
 PAYMENT_MIN_AMOUNT = config("PAYMENT_MIN_AMOUNT", cast=int, default=100)

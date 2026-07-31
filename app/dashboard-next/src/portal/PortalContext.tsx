@@ -102,6 +102,7 @@ type PortalCtx = {
   completeSetup: (newUsername: string, newPassword: string) => Promise<void>;
   payPlan: (planId: number, planName?: string) => Promise<void>;
   submitCardPurchase: () => Promise<void>;
+  resumePayment: (paymentId: number) => Promise<void>;
   copyCardNumber: () => Promise<void>;
   rotateSub: () => Promise<void>;
   saveCustomSub: () => Promise<void>;
@@ -765,6 +766,90 @@ export function PortalProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const resumePayment = async (paymentId: number) => {
+    setBusy(true);
+    try {
+      const created = await portalGet<{
+        payment_id: number;
+        confirm_token?: string;
+        checkout_url?: string;
+        card_id?: string;
+        card_number?: string;
+        card_holder?: string;
+        card_bank?: string;
+        cards?: PaymentCardInfo[];
+        amount: number;
+        provider: string;
+        status?: string;
+        action?: string;
+        username?: string;
+        plan_name?: string;
+      }>(`/portal/payments/${paymentId}/resume`);
+
+      if ((created.status || "").toLowerCase() !== "pending") {
+        showToast(pt(lang, "txExpiredHint"));
+        await loadTransactions();
+        return;
+      }
+
+      if (created.provider === "card") {
+        const cardsList =
+          created.cards?.length
+            ? created.cards
+            : created.card_number
+              ? [{
+                  id: created.card_id,
+                  number: created.card_number,
+                  holder: created.card_holder || "",
+                  bank: created.card_bank || "",
+                }]
+              : payCards.length
+                ? payCards
+                : [];
+        setCardCheckout({
+          payment_id: created.payment_id,
+          amount: created.amount,
+          card_id: created.card_id,
+          card_number: created.card_number,
+          card_holder: created.card_holder,
+          card_bank: created.card_bank,
+          cards: cardsList,
+          plan_name: created.plan_name,
+          action: created.action,
+          username: created.username,
+        });
+        setCardNote("");
+        setCardReceipt(null);
+        setCardSubmittedOk(false);
+        setCheckoutMethod("card");
+        setShopStep("pay");
+        setTab("shop");
+        showToast(pt(lang, "cardReady"));
+        return;
+      }
+
+      if (created.checkout_url) {
+        window.location.assign(created.checkout_url);
+        return;
+      }
+      if (created.confirm_token) {
+        await portalPost(`/portal/payments/${created.payment_id}/complete`, {
+          confirm_token: created.confirm_token,
+        });
+        showToast(pt(lang, "payOk"));
+        await loadAccounts();
+        await loadTransactions();
+        return;
+      }
+      showToast(pt(lang, "error"));
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : pt(lang, "error"));
+      await loadTransactions();
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const copyCardNumber = async () => {
     const num = (cardCheckout?.card_number || cardInfo?.number || "").replace(/\s+/g, "");
     if (!num) return;
@@ -996,6 +1081,7 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       completeSetup,
       payPlan,
       submitCardPurchase,
+      resumePayment,
       copyCardNumber,
       rotateSub,
       saveCustomSub,

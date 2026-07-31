@@ -620,6 +620,7 @@ class XRayConfig(dict):
                 db_models.User.username,
                 db_models.User.speed_limit_up,
                 db_models.User.speed_limit_down,
+                db_models.User.device_conn_hold,
                 db_models.Proxy.type,
                 db_models.Proxy.settings,
                 db_models.excluded_inbounds_association.c.inbound_tag,
@@ -641,10 +642,15 @@ class XRayConfig(dict):
             grouped_data = defaultdict(list)
             _seen = {}
             user_speed: dict[int, tuple] = {}
+            from app.utils.device_exclusivity import is_xray_proxy_held
+            from types import SimpleNamespace
 
             for row in result_iter:
                 proxy_type = row.type.value if hasattr(row.type, "value") else str(row.type)
                 proxy_type = proxy_type.lower()
+                hold_user = SimpleNamespace(device_conn_hold=getattr(row, "device_conn_hold", None))
+                if is_xray_proxy_held(hold_user, proxy_type):
+                    continue
                 key = (proxy_type, row.id)
                 entry = _seen.get(key)
                 if entry is None:

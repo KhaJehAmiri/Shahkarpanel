@@ -29,6 +29,7 @@ STATUS_LABELS_FA = {
     "rejected": "رد شده",
     "failed": "ناموفق",
     "cancelled": "لغو شده",
+    "expired": "منقضی‌شده",
 }
 
 
@@ -104,6 +105,8 @@ def build_tx_message(
             event = "rejected"
         elif status == "awaiting_review":
             event = "submitted"
+        elif status == "expired":
+            event = "expired"
         else:
             event = status or "pending"
 
@@ -117,6 +120,8 @@ def build_tx_message(
         title = "تراکنش موفق"
     elif event == "failed":
         title = "تراکنش ناموفق"
+    elif event == "expired":
+        title = "تراکنش منقضی شد"
     else:
         title = "تراکنش شما"
 

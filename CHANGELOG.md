@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.22.14 — 2026-07-31
+
+- Live 1-device exclusivity: with `device_limit=1`, WireGuard / VLESS / sing-box cannot stay online together (sticky winner + temporary protocol hold).
+- Portal renew: unlimited plans (`data_limit=null`) clear the previous volume cap instead of only extending expiry.
+- CentralPay relay return uses the panel public URL (multi-panel safe); Commercial Settings expose relay fields.
+- Env sudo (`SUDO_USERNAME`) auto-materializes an `admins` row for billing/wallet/API keys.
+- Portal payment pending TTL, resume/pay button, and receipt upload directory bootstrap.
+- Plan delete: null out nullable FKs; return 409 when `user_orders` still reference the plan.
+
 ## 0.22.13 — 2026-07-31
 
 Multi card-to-card: platform and resellers can configure several cards; portal customers and reseller top-up see a random card first and can swipe between cards.

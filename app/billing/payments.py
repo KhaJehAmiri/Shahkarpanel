@@ -20,8 +20,139 @@ from app.portal import (
 )
 from app.tenant.plan_ops import assert_plan_for_user
 from app import platform_settings as ps
-from config import PORTAL_DIRECT_PAYMENT
+from config import PORTAL_DIRECT_PAYMENT, PORTAL_PAYMENT_PENDING_TTL_MINUTES
 
+
+def portal_payment_ttl_minutes() -> int:
+    return max(5, int(PORTAL_PAYMENT_PENDING_TTL_MINUTES or 120))
+
+
+def portal_payment_expires_at(created_at: Optional[datetime] = None) -> datetime:
+    base = created_at or datetime.utcnow()
+    from datetime import timedelta
+
+    return base + timedelta(minutes=portal_payment_ttl_minutes())
+
+
+def is_portal_payment_expired(intent: PaymentIntent, *, now: Optional[datetime] = None) -> bool:
+    """True when a still-pending portal intent is past its TTL."""
+    if intent is None or intent.kind not in ("portal_renew", "portal_purchase"):
+        return False
+    if (intent.status or "").strip().lower() != "pending":
+        return False
+    now = now or datetime.utcnow()
+    extra = intent.extra or {}
+    raw = extra.get("expires_at")
+    if raw:
+        try:
+            exp = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+            if exp.tzinfo is not None:
+                from datetime import timezone
+
+                exp = exp.astimezone(timezone.utc).replace(tzinfo=None)
+            return now >= exp
+        except Exception:
+            pass
+    created = intent.created_at or now
+    return now >= portal_payment_expires_at(created)
+
+
+def expire_stale_portal_payments(db: Session, *, limit: int = 200) -> int:
+    """Mark overdue pending portal payments as expired. Returns count updated."""
+    from app import portal_tx
+
+    now = datetime.utcnow()
+    q = (
+        db.query(PaymentIntent)
+        .filter(
+            PaymentIntent.kind.in_(("portal_renew", "portal_purchase")),
+            PaymentIntent.status == "pending",
+        )
+        .order_by(PaymentIntent.id.asc())
+        .limit(max(1, min(int(limit), 1000)))
+    )
+    n = 0
+    for intent in q.all():
+        if not is_portal_payment_expired(intent, now=now):
+            continue
+        intent.status = "expired"
+        intent.completed_at = now
+        extra = dict(intent.extra or {})
+        extra["expired_at"] = now.isoformat() + "Z"
+        if not extra.get("expires_at"):
+            extra["expires_at"] = portal_payment_expires_at(intent.created_at).isoformat() + "Z"
+        intent.extra = extra
+        try:
+            plan_name = extra.get("plan_name")
+            portal_tx.attach_tx_message(intent, plan_name=plan_name, event="expired")
+        except Exception:
+            pass
+        db.add(intent)
+        n += 1
+    if n:
+        db.commit()
+    return n
+
+
+def resume_portal_payment_payload(db: Session, intent: PaymentIntent) -> dict:
+    """Rebuild checkout payload for a still-pending portal payment."""
+    if intent.kind not in ("portal_renew", "portal_purchase"):
+        raise HTTPException(status_code=400, detail="Not a portal payment")
+    if is_portal_payment_expired(intent):
+        expire_stale_portal_payments(db)
+        db.refresh(intent)
+    if (intent.status or "").strip().lower() != "pending":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Payment is {intent.status}; only pending payments can be resumed",
+        )
+
+    extra = dict(intent.extra or {})
+    provider = (intent.provider or "").strip().lower()
+    if provider == "card":
+        from app.billing.providers import list_cards_for_admin, public_card_payload
+        from app.db import crud
+
+        dbadmin = crud.get_admin_by_id(db, intent.admin_id) if intent.admin_id else None
+        cards = list_cards_for_admin(dbadmin)
+        return {
+            "provider": "card",
+            "payment_id": intent.id,
+            "amount": intent.amount,
+            "status": intent.status,
+            "card_id": extra.get("card_id") or "",
+            "card_number": extra.get("card_number") or "",
+            "card_holder": extra.get("card_holder") or "",
+            "card_bank": extra.get("card_bank") or "",
+            "cards": [public_card_payload(c) for c in cards],
+            "instructions": "Transfer to the card and submit the purchase for review.",
+            "action": str(extra.get("action") or "renew"),
+            "username": extra.get("new_username") or extra.get("target_username"),
+            "plan_name": extra.get("plan_name"),
+            "expires_at": extra.get("expires_at"),
+            "checkout_url": None,
+            "confirm_token": None,
+        }
+
+    # Gateway / demo — reuse stored checkout fields when present
+    return {
+        "provider": provider,
+        "payment_id": intent.id,
+        "amount": intent.amount,
+        "status": intent.status,
+        "checkout_url": extra.get("checkout_url"),
+        "confirm_token": extra.get("confirm_token"),
+        "instructions": extra.get("instructions") or "Complete payment via the gateway.",
+        "action": str(extra.get("action") or "renew"),
+        "username": extra.get("new_username") or extra.get("target_username"),
+        "plan_name": extra.get("plan_name"),
+        "expires_at": extra.get("expires_at"),
+        "card_id": None,
+        "card_number": None,
+        "card_holder": None,
+        "card_bank": None,
+        "cards": [],
+    }
 
 def _validate_amount(amount: int, *, min_amount: Optional[int] = None) -> int:
     value = int(amount)
@@ -201,6 +332,8 @@ def create_portal_payment(
         extra["public_base"] = public_base.rstrip("/")
     if card_id:
         extra["card_id"] = str(card_id).strip()
+    # Auto-expire unpaid checkouts so users don't leave dangling "awaiting payment" rows.
+    extra["expires_at"] = portal_payment_expires_at().isoformat() + "Z"
 
     if action == "purchase":
         username = (new_username or "").strip().lower()

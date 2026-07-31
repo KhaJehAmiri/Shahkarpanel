@@ -39,6 +39,19 @@ _TUNNEL_RESTART_KICK_COOLDOWN_SEC = 30.0
 _tunnel_restart_kicked_at: Dict[int, float] = {}
 _tunnel_restart_kick_lock = threading.Lock()
 
+
+def _wg_user_want_active(user) -> bool:
+    if not user or user.status not in SERVED_STATUSES:
+        return False
+    try:
+        from app.utils.device_exclusivity import PROTO_WG, is_protocol_held
+
+        if is_protocol_held(user, PROTO_WG):
+            return False
+    except Exception:
+        pass
+    return True
+
 # Coalesce user-change WG syncs. Without this, every user edit/status tick
 # spawns ``@threaded_function`` work that holds a DB session through slow
 # node RPC and exhausts SQLAlchemy QueuePool (idle-in-transaction → 500s).
@@ -330,7 +343,7 @@ def collect_wg_peers_uncached(db) -> List[WGUserPeer]:
                 public_key=public_key,
                 address=settings.get("address") or "",
                 preshared_key=settings.get("preshared_key") or None,
-                active=bool(user and user.status in SERVED_STATUSES),
+                active=_wg_user_want_active(user),
                 awg_address=settings.get("awg_address") or "",
                 speed_limit_up=getattr(user, "speed_limit_up", None) if user else None,
                 speed_limit_down=getattr(user, "speed_limit_down", None) if user else None,

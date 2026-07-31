@@ -53,10 +53,10 @@ function BankCardCarousel({
   const [index, setIndex] = useState(initialIndex);
   const [dragX, setDragX] = useState(0);
   const [dragging, setDragging] = useState(false);
+  const [stageWidth, setStageWidth] = useState(320);
   const startX = useRef(0);
   const startY = useRef(0);
   const locked = useRef<"x" | "y" | null>(null);
-  const widthRef = useRef(320);
   const stageRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -65,13 +65,21 @@ function BankCardCarousel({
   }, [initialIndex, checkout.payment_id]);
 
   useEffect(() => {
+    const el = stageRef.current;
+    if (!el) return;
     const measure = () => {
-      if (stageRef.current) widthRef.current = stageRef.current.clientWidth;
+      const w = el.clientWidth;
+      if (w > 0) setStageWidth(w);
     };
     measure();
     window.addEventListener("resize", measure);
-    return () => window.removeEventListener("resize", measure);
-  }, []);
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
+    ro?.observe(el);
+    return () => {
+      window.removeEventListener("resize", measure);
+      ro?.disconnect();
+    };
+  }, [cards.length]);
 
   const multi = cards.length > 1;
   const active = cards[index] || cards[0];
@@ -88,6 +96,10 @@ function BankCardCarousel({
 
   const onPointerDown = (clientX: number, clientY: number) => {
     if (!multi || busy) return;
+    if (stageRef.current) {
+      const w = stageRef.current.clientWidth;
+      if (w > 0) setStageWidth(w);
+    }
     startX.current = clientX;
     startY.current = clientY;
     locked.current = null;
@@ -103,7 +115,6 @@ function BankCardCarousel({
       locked.current = Math.abs(dx) >= Math.abs(dy) ? "x" : "y";
     }
     if (locked.current !== "x") return;
-    const w = widthRef.current || 320;
     const atStart = index === 0 && dx > 0;
     const atEnd = index === cards.length - 1 && dx < 0;
     const resistance = atStart || atEnd ? 0.28 : 1;
@@ -118,7 +129,7 @@ function BankCardCarousel({
       locked.current = null;
       return;
     }
-    const w = widthRef.current || 320;
+    const w = stageWidth || 320;
     const threshold = Math.min(72, w * 0.18);
     const dx = dragX;
     setDragX(0);
@@ -153,12 +164,13 @@ function BankCardCarousel({
         <div
           className="p-card-track"
           style={{
-            transform: `translate3d(calc(${-index * 100}% + ${dragX}px), 0, 0)`,
+            // Pixel offsets avoid RTL % transform bugs (2nd card never appears).
+            transform: `translate3d(${-index * stageWidth + dragX}px, 0, 0)`,
             transition: dragging ? "none" : "transform 420ms cubic-bezier(0.22, 1, 0.36, 1)",
           }}
         >
           {cards.map((c, i) => {
-            const dist = Math.abs(i - index) + (dragging ? Math.abs(dragX) / (widthRef.current || 320) : 0);
+            const dist = Math.abs(i - index) + (dragging ? Math.abs(dragX) / (stageWidth || 320) : 0);
             const dim = i === index ? 1 : Math.max(0.55, 1 - dist * 0.22);
             return (
               <div className="p-card-slide" key={c.id || `${c.number}-${i}`}>

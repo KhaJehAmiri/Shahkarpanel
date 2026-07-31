@@ -489,7 +489,10 @@ def delete_plan(
     if plan is None:
         raise HTTPException(status_code=404, detail="Plan not found")
     assert_plan_accessible(db, admin, plan)
-    crud.remove_plan(db, plan)
+    try:
+        crud.remove_plan(db, plan)
+    except crud.PlanInUseError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"detail": "Plan removed"}
 
 

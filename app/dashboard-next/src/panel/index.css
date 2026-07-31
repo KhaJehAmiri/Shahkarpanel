@@ -257,6 +257,8 @@ img.sk-brand-logo-img {
 .sk-content { padding: 28px 28px 40px; max-width: 1500px; width: 100%; margin: 0 auto; }
 
 .sk-page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 22px; flex-wrap: wrap; }
+.sk-page-head.is-compact { align-items: center; }
+.sk-page-head.is-compact .sk-page-subtitle { margin-top: 0; font-size: 14px; }
 .sk-page-head-copy { min-width: 0; flex: 1 1 220px; }
 .sk-page-head-actions {
   display: flex;

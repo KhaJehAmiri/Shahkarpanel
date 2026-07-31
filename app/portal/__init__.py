@@ -41,13 +41,17 @@ def apply_plan_to_user(db: Session, user: User, plan: Plan) -> User:
     ``update_user`` keeps the old ``used_traffic`` against the new cap (see
     ``quota.apply_overage_on_recharge``) and a user who already burned the last
     package pays for a renewal yet stays ``limited``.
+
+    ``plan.data_limit is None`` means *unlimited* — never fall back to the
+    user's previous volume cap (that left renewals updating only the expiry).
     """
     from app.db import crud
 
     new_expire = compute_renewal_expire(user, plan)
-    new_data_limit = plan.data_limit if plan.data_limit is not None else user.data_limit
+    # None = unlimited. Do not preserve the prior volume package.
+    new_data_limit = plan.data_limit
 
-    if plan.data_limit is not None and int(user.used_traffic or 0) > 0:
+    if int(user.used_traffic or 0) > 0:
         user = crud.reset_user_data_usage(db, user)
 
     modify = UserModify(

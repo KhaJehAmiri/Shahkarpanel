@@ -34,6 +34,8 @@ fix_runtime_permissions() {
   chown -R "$PANEL_USER:$PANEL_GROUP" /var/lib/shahkar/backups/migrations 2>/dev/null || true
   mkdir -p /var/lib/shahkar/migrations
   chown -R "$PANEL_USER:$PANEL_GROUP" /var/lib/shahkar/migrations 2>/dev/null || true
+  mkdir -p /var/lib/shahkar/payment_receipts
+  chown -R "$PANEL_USER:$PANEL_GROUP" /var/lib/shahkar/payment_receipts 2>/dev/null || true
   mkdir -p /var/lib/shahkar/xray-tls
   chown -R "$PANEL_USER:$PANEL_GROUP" /var/lib/shahkar/xray-tls 2>/dev/null || true
   chmod 750 /var/lib/shahkar/xray-tls 2>/dev/null || true

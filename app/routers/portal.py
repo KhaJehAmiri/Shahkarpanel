@@ -409,6 +409,8 @@ class PortalPaymentCreateResponse(BaseModel):
     cards: List[PortalPaymentCardOut] = []
     action: str = "renew"
     username: Optional[str] = None
+    plan_name: Optional[str] = None
+    expires_at: Optional[str] = None
 
 
 class PortalPaymentCompleteBody(BaseModel):
@@ -471,6 +473,41 @@ def portal_create_payment(
         cards=[PortalPaymentCardOut(**c) for c in cards_raw if isinstance(c, dict)],
         action=str(extra.get("action") or body.action),
         username=extra.get("new_username") or extra.get("target_username"),
+        plan_name=extra.get("plan_name"),
+        expires_at=extra.get("expires_at"),
+    )
+
+
+@router.get("/payments/{payment_id}/resume", response_model=PortalPaymentCreateResponse)
+def portal_resume_payment(
+    payment_id: int,
+    db: Session = Depends(get_db),
+    dbuser: User = Depends(get_current_portal_user),
+):
+    """Resume a pending (unpaid) portal checkout — used from Transactions → Pay."""
+    _require_billing()
+    from app.billing.payments import resume_portal_payment_payload
+
+    intent = get_intent_for_user(db, payment_id, dbuser.id)
+    payload = resume_portal_payment_payload(db, intent)
+    cards_raw = payload.get("cards") or []
+    return PortalPaymentCreateResponse(
+        payment_id=int(payload["payment_id"]),
+        amount=int(payload["amount"]),
+        provider=str(payload.get("provider") or intent.provider),
+        status=str(payload.get("status") or intent.status),
+        instructions=payload.get("instructions"),
+        confirm_token=payload.get("confirm_token"),
+        checkout_url=payload.get("checkout_url"),
+        card_id=payload.get("card_id") or None,
+        card_number=payload.get("card_number") or None,
+        card_holder=payload.get("card_holder") or None,
+        card_bank=payload.get("card_bank") or None,
+        cards=[PortalPaymentCardOut(**c) for c in cards_raw if isinstance(c, dict)],
+        action=str(payload.get("action") or "renew"),
+        username=payload.get("username"),
+        plan_name=payload.get("plan_name"),
+        expires_at=payload.get("expires_at"),
     )
 
 
@@ -556,9 +593,19 @@ def portal_submit_card_payment(
 ):
     """User confirms card transfer with receipt — waits for admin/reseller approval."""
     _require_billing()
+    from app.billing.payments import expire_stale_portal_payments, is_portal_payment_expired
+
     intent = get_intent_for_user(db, payment_id, dbuser.id)
     if intent.kind not in ("portal_renew", "portal_purchase"):
         raise HTTPException(status_code=400, detail="Not a portal payment")
+    if is_portal_payment_expired(intent) or (intent.status or "") != "pending":
+        expire_stale_portal_payments(db)
+        db.refresh(intent)
+        if (intent.status or "") != "pending":
+            raise HTTPException(
+                status_code=409,
+                detail="This payment has expired or is no longer awaiting payment",
+            )
     from app.billing.receipts import save_receipt
 
     meta = save_receipt(intent.id, receipt)
@@ -718,6 +765,13 @@ def portal_transactions(
     """Message-style payment transactions (card + gateway) for this portal login."""
     _require_billing()
     from app import portal_tx
+    from app.billing.payments import expire_stale_portal_payments, is_portal_payment_expired
+
+    # Best-effort: expire overdue pending checkouts before listing.
+    try:
+        expire_stale_portal_payments(db)
+    except Exception:
+        pass
 
     intents = portal_tx.list_transactions_for_portal_user(db, dbuser, limit=50)
     reads = portal_tx.get_tx_read_ids(dbuser)
@@ -736,6 +790,19 @@ def portal_transactions(
         when = intent.completed_at or intent.created_at
         date_s, time_s = portal_tx.format_datetime_fa(when)
         pid = int(intent.id)
+        status = (intent.status or "").strip().lower()
+        can_pay = status == "pending" and not is_portal_payment_expired(intent)
+        expires_at = None
+        raw_exp = extra.get("expires_at")
+        if raw_exp:
+            try:
+                expires_at = datetime.fromisoformat(str(raw_exp).replace("Z", "+00:00"))
+                if expires_at.tzinfo is not None:
+                    from datetime import timezone
+
+                    expires_at = expires_at.astimezone(timezone.utc).replace(tzinfo=None)
+            except Exception:
+                expires_at = None
         out.append(
             PortalTransaction(
                 id=pid,
@@ -758,6 +825,8 @@ def portal_transactions(
                 created_at=intent.created_at,
                 completed_at=intent.completed_at,
                 unread=pid not in reads,
+                can_pay=can_pay,
+                expires_at=expires_at,
             )
         )
     # Keep home-screen badge aligned with unread messages

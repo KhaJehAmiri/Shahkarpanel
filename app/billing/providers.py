@@ -462,15 +462,21 @@ class CentralPayProvider(PaymentProvider):
         return f"https://{addr}"
 
     def _return_url(self, order_id: int, intent) -> str:
-        """Browser return must hit the relay host when configured (egress IP for CP)."""
-        relay = self._relay_base()
-        if relay:
-            return f"{relay}/return?orderId={order_id}"
+        """Browser return lands on this panel; getLink/verify still use the relay.
+
+        Older setups bounced return via {relay}/return (nginx hard-proxied to one
+        panel IP). That breaks multi-panel fleets, so we always use the panel's
+        public URL when known. Cloudflare only blocks server-side API calls.
+        """
         extra = intent.extra or {}
         base = (extra.get("public_base") or "").strip().rstrip("/")
         if not base:
             base = self._panel_public_base()
         if not base:
+            # Last resort for single-panel relays that still proxy /return.
+            relay = self._relay_base()
+            if relay:
+                return f"{relay}/return?orderId={order_id}"
             raise ValueError(
                 "CentralPay needs a public panel URL (set PANEL_PUBLIC_ADDRESS or request Host)"
             )

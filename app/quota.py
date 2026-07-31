@@ -421,7 +421,7 @@ def reconcile_wg_peer_active_flags(db: Session) -> int:
     from sqlalchemy import and_, or_
 
     from app.db.models import WgPeer
-    from app.wireguard.wg_manager import SERVED_STATUSES, toggle_peer
+    from app.wireguard.wg_manager import SERVED_STATUSES, toggle_peer, wg_peer_want_active
 
     served = list(SERVED_STATUSES)
     mismatched = (
@@ -435,11 +435,26 @@ def reconcile_wg_peer_active_flags(db: Session) -> int:
         )
         .all()
     )
+    # Also catch active peers that exclusivity is holding off.
+    held_active = (
+        db.query(WgPeer.user_id)
+        .join(User, User.id == WgPeer.user_id)
+        .filter(
+            User.status.in_(served),
+            WgPeer.active.is_(True),
+            User.device_conn_hold.isnot(None),
+        )
+        .all()
+    )
+    uids = {int(uid) for (uid,) in mismatched} | {int(uid) for (uid,) in held_active}
     fixed = 0
-    for (uid,) in mismatched:
+    for uid in uids:
         user = db.query(User).filter(User.id == uid).first()
-        want = bool(user and user.status in SERVED_STATUSES)
+        want = wg_peer_want_active(user)
         try:
+            peer = db.query(WgPeer).filter(WgPeer.user_id == uid).first()
+            if peer is None or peer.active == want:
+                continue
             if toggle_peer(db, int(uid), active=want):
                 fixed += 1
         except Exception:

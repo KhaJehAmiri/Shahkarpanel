@@ -718,6 +718,8 @@ def collect_user_usage_params() -> tuple:
         for node_id, params in fm_params.items():
             _add_breakdown("wireguard", node_id, params, fm_coefficient.get(node_id, 1))
         merge_finalmask_usage(api_params, usage_coefficient, fm_params, fm_coefficient)
+    except (ConnectionError, TimeoutError, OSError) as exc:
+        logger.warning("Finalmask usage collection skipped: %s", exc)
     except Exception:
         logger.exception("Finalmask usage collection failed")
 
@@ -798,6 +800,14 @@ def record_user_usages():
     record_overage_usages(api_params, usage_coefficient)
     if billable_ids:
         record_protocol_breakdown(protocol_breakdown, billable_ids)
+
+    # Live 1-device exclusivity (WG vs VLESS/sing-box) — after traffic commit.
+    try:
+        from app.utils.device_exclusivity import enforce_device_exclusivity
+
+        enforce_device_exclusivity(protocol_breakdown, candidate_uids=uids or None)
+    except Exception:
+        logger.exception("device exclusivity enforcement failed")
 
     from app.billing_guard import check_billing_integrity
 

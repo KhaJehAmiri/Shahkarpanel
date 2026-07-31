@@ -44,6 +44,8 @@ from app.db.models import (
     UserOrder,
     UserTemplate,
     UserUsageResetLogs,
+    Invoice,
+    PaymentIntent,
     excluded_inbounds_association,
 )
 from app.models.admin import AdminCreate, AdminModify, AdminPartialModify
@@ -1617,6 +1619,43 @@ def get_admin(db: Session, username: str) -> Admin:
     return db.query(Admin).filter(Admin.username == username).first()
 
 
+def ensure_db_admin(
+    db: Session,
+    username: str,
+    *,
+    is_sudo: bool = False,
+) -> Optional[Admin]:
+    """Return the ``admins`` row for ``username``, materializing env-only sudo.
+
+    Env ``SUDO_USERNAME`` / ``SUDOERS`` can authenticate without an ``admins``
+    row. Billing, wallets, and API keys need ``admin_id``, so the first call
+    creates a sudo row (random unused password hash — login stays via env).
+    Non-sudo callers that have no row get ``None``.
+    """
+    import secrets
+
+    from app.models.admin import AdminCreate
+    from sqlalchemy.exc import IntegrityError
+
+    dbadmin = get_admin(db, username)
+    if dbadmin is not None:
+        return dbadmin
+    if not is_sudo:
+        return None
+    try:
+        return create_admin(
+            db,
+            AdminCreate(
+                username=username,
+                password=secrets.token_urlsafe(32),
+                is_sudo=True,
+            ),
+        )
+    except IntegrityError:
+        db.rollback()
+        return get_admin(db, username)
+
+
 def create_admin(db: Session, admin: AdminCreate) -> Admin:
     """
     Creates a new admin in the database.
@@ -2786,7 +2825,32 @@ def update_plan(db: Session, plan: Plan, **kwargs) -> Plan:
     return plan
 
 
+class PlanInUseError(Exception):
+    """Raised when a plan cannot be hard-deleted because order history references it."""
+
+
 def remove_plan(db: Session, plan: Plan) -> None:
+    """Delete a plan after detaching nullable billing references.
+
+    ``payment_intents`` / ``invoices`` keep their rows but lose the plan link.
+    ``user_orders.plan_id`` is NOT NULL, so plans with orders cannot be removed
+    — callers should catch ``PlanInUseError`` and return HTTP 409.
+    """
+    order_count = (
+        db.query(func.count(UserOrder.id)).filter(UserOrder.plan_id == plan.id).scalar() or 0
+    )
+    if order_count:
+        raise PlanInUseError(
+            f"Plan is referenced by {int(order_count)} user order(s); "
+            "disable it instead of deleting"
+        )
+
+    db.query(PaymentIntent).filter(PaymentIntent.plan_id == plan.id).update(
+        {PaymentIntent.plan_id: None}, synchronize_session=False
+    )
+    db.query(Invoice).filter(Invoice.plan_id == plan.id).update(
+        {Invoice.plan_id: None}, synchronize_session=False
+    )
     db.delete(plan)
     db.commit()
 

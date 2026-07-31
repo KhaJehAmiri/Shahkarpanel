@@ -38,14 +38,19 @@ def _require_billing_enabled():
         raise HTTPException(status_code=404, detail="Billing is disabled")
 
 
-def _admin_id(db: Session, admin: Admin) -> int:
-    dbadmin = crud.get_admin(db, admin.username)
+def _db_admin(db: Session, admin: Admin):
+    """Resolve (or materialize) the DB admin for billing/wallet operations."""
+    dbadmin = crud.ensure_db_admin(db, admin.username, is_sudo=admin.is_sudo)
     if dbadmin is None:
         raise HTTPException(
             status_code=400,
             detail="Billing requires a database-backed admin (env SUDOERS have no wallet)",
         )
-    return dbadmin.id
+    return dbadmin
+
+
+def _admin_id(db: Session, admin: Admin) -> int:
+    return _db_admin(db, admin).id
 
 
 class WalletResponse(BaseModel):
@@ -126,14 +131,7 @@ def my_wallet(
     admin: Admin = Depends(require_permission("billing:read")),
 ):
     _require_billing_enabled()
-    dbadmin = crud.get_admin(db, admin.username)
-    if dbadmin is None:
-        if admin.is_sudo:
-            return WalletResponse(admin_id=0, balance=0)
-        raise HTTPException(
-            status_code=400,
-            detail="Billing requires a database-backed admin (env SUDOERS have no wallet)",
-        )
+    dbadmin = _db_admin(db, admin)
     return billing.get_or_create_wallet(db, dbadmin.id)
 
 
@@ -1465,7 +1463,5 @@ def usage_summary(
 ):
     """Unbilled traffic split (own vs shared nodes) and estimated GB charge."""
     _require_billing_enabled()
-    dbadmin = crud.get_admin(db, admin.username)
-    if dbadmin is None:
-        raise HTTPException(status_code=400, detail="Admin not found in database")
+    dbadmin = _db_admin(db, admin)
     return usage_summary_for_admin(db, dbadmin)

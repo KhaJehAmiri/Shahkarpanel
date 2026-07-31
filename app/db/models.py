@@ -143,6 +143,9 @@ class User(Base):
     # on apply; NULL/0 = unlimited.
     device_limit = Column(Integer, nullable=True, default=None)
     device_ips = Column(Text, nullable=True, default=None)
+    # Live 1-device exclusivity: temporarily hold other protocol families while
+    # one winner (wireguard / xray / singbox) is online. See device_exclusivity.
+    device_conn_hold = Column(JSON, nullable=True, default=None)
     # Per-user speed limits stored in Mbps (UI unit). Xray policy converts to bytes/sec.
     speed_limit_up = Column(BigInteger, nullable=True, default=None)
     speed_limit_down = Column(BigInteger, nullable=True, default=None)

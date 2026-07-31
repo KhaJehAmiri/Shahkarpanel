@@ -167,6 +167,11 @@ def _build_desired_by_inbound() -> dict[str, dict[str, "Account"]]:
                 proxies = _proxy_settings_map(dbuser)
                 email = f"{dbuser.id}.{dbuser.username}"
                 for proxy_type, inbound_tags in dbuser.inbounds.items():
+                    from app.utils.device_exclusivity import is_xray_proxy_held
+
+                    pt = proxy_type.value if hasattr(proxy_type, "value") else str(proxy_type)
+                    if is_xray_proxy_held(dbuser, pt):
+                        continue
                     for inbound_tag in inbound_tags:
                         account = _account_for_inbound(
                             proxies, proxy_type, inbound_tag, email,
@@ -363,11 +368,24 @@ def sync_main_core_user(dbuser) -> None:
         return
     if not xray.core.started or xray.core.restarting:
         return
+    from app.utils.device_exclusivity import PROTO_XRAY, is_protocol_held, is_xray_proxy_held
+
+    # Entire Xray family held (VLESS winner is WG/singbox) — drop all non-WG.
+    if is_protocol_held(dbuser, PROTO_XRAY):
+        hot_disconnect_users([dbuser])
+        # Still push WireGuard/Finalmask accounts if those are not held.
     proxies = _proxy_settings_map(dbuser)
     email = f"{dbuser.id}.{dbuser.username}"
     with _hot_lock:
         _ensure_registry_current()
         for proxy_type, inbound_tags in dbuser.inbounds.items():
+            pt = proxy_type.value if hasattr(proxy_type, "value") else str(proxy_type)
+            if is_xray_proxy_held(dbuser, pt):
+                for inbound_tag in inbound_tags:
+                    if not _inbound_supports_hot_sync(inbound_tag):
+                        continue
+                    _api_remove_user(inbound_tag, email)
+                continue
             for inbound_tag in inbound_tags:
                 if not _inbound_supports_hot_sync(inbound_tag):
                     continue

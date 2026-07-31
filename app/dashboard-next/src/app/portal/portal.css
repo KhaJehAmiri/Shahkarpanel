@@ -1844,6 +1844,8 @@ html.p-portal-lock .portal-theme.p-app-shell {
   touch-action: pan-y;
   user-select: none;
   -webkit-user-select: none;
+  /* Keep slide order LTR so translateX(-index * width) works in RTL portals. */
+  direction: ltr;
 }
 
 .p-card-stage.is-dragging {
@@ -1852,8 +1854,10 @@ html.p-portal-lock .portal-theme.p-app-shell {
 
 .p-card-track {
   display: flex;
+  flex-direction: row;
   width: 100%;
   will-change: transform;
+  direction: ltr;
 }
 
 .p-card-slide {

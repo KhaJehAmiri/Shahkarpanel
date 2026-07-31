@@ -11,7 +11,9 @@ import type { PortalTransaction } from "../types";
 function toneForStatus(status: string): "ok" | "warn" | "danger" | "neutral" {
   if (status === "completed" || status === "paid" || status === "applied") return "ok";
   if (status === "awaiting_review" || status === "pending" || status === "submitted") return "warn";
-  if (status === "rejected" || status === "failed" || status === "cancelled") return "danger";
+  if (status === "rejected" || status === "failed" || status === "cancelled" || status === "expired") {
+    return "danger";
+  }
   return "neutral";
 }
 
@@ -21,11 +23,27 @@ function StatusIcon({ tone }: { tone: ReturnType<typeof toneForStatus> }) {
   return <Clock3 size={18} aria-hidden />;
 }
 
+function formatExpires(lang: PortalLang, expiresAt?: string | null): string | null {
+  if (!expiresAt) return null;
+  try {
+    const d = new Date(expiresAt);
+    if (Number.isNaN(d.getTime())) return null;
+    return new Intl.DateTimeFormat(lang === "fa" ? "fa-IR" : lang === "zh" ? "zh-CN" : lang === "ru" ? "ru-RU" : "en-GB", {
+      dateStyle: "short",
+      timeStyle: "short",
+    }).format(d);
+  } catch {
+    return null;
+  }
+}
+
 function TxRow({
   tx,
+  lang,
   onOpen,
 }: {
   tx: PortalTransaction;
+  lang: PortalLang;
   onOpen: (tx: PortalTransaction) => void;
 }) {
   const tone = toneForStatus(tx.status);
@@ -47,6 +65,7 @@ function TxRow({
         <span className="p-tx-row-meta">
           {tx.provider_label}
           {tx.kind_label ? ` · ${tx.kind_label}` : ""}
+          {tx.can_pay ? ` · ${pt(lang, "txPayNow")}` : ""}
         </span>
       </span>
       <span className="p-tx-side">
@@ -69,15 +88,14 @@ function TxDetailModal({
   onClose: () => void;
   lang: PortalLang;
 }) {
-  const { markTransactionRead, currencyLabel } = usePortal();
+  const { markTransactionRead, currencyLabel, resumePayment, busy } = usePortal();
   const tone = toneForStatus(tx.status);
-  // Follow the tenant's configured currency instead of assuming Toman.
   const currency = currencyLabel || (lang === "fa" ? "تومان" : "");
   const [mounted, setMounted] = useState(false);
+  const expiresLabel = formatExpires(lang, tx.expires_at);
 
   useEffect(() => {
     setMounted(true);
-    // Opening details = read
     void markTransactionRead(tx.id);
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -102,6 +120,9 @@ function TxDetailModal({
     { label: pt(lang, "txDate"), value: tx.date },
     { label: pt(lang, "txTime"), value: tx.time },
     { label: pt(lang, "txStatus"), value: tx.status_label },
+    ...(expiresLabel && (tx.can_pay || tx.status === "pending" || tx.status === "expired")
+      ? [{ label: pt(lang, "txExpiresAt"), value: expiresLabel }]
+      : []),
   ];
 
   if (!mounted) return null;
@@ -110,6 +131,11 @@ function TxDetailModal({
     (typeof document !== "undefined" &&
       (document.querySelector(".portal-theme") as HTMLElement | null)) ||
     document.body;
+
+  const onPay = async () => {
+    onClose();
+    await resumePayment(tx.id);
+  };
 
   return createPortal(
     <div
@@ -141,6 +167,16 @@ function TxDetailModal({
               {currency ? ` ${currency}` : ""}
             </p>
             <span className={`p-tx-pill is-${tone}`}>{tx.status_label}</span>
+            {tx.can_pay ? (
+              <p className="p-muted" style={{ marginTop: 10, fontSize: 13 }}>
+                {pt(lang, "txPayHint")}
+              </p>
+            ) : null}
+            {tx.status === "expired" ? (
+              <p className="p-muted" style={{ marginTop: 10, fontSize: 13 }}>
+                {pt(lang, "txExpiredHint")}
+              </p>
+            ) : null}
           </div>
         </div>
 
@@ -156,6 +192,16 @@ function TxDetailModal({
         </div>
 
         <div className="p-tx-sheet-foot">
+          {tx.can_pay ? (
+            <button
+              type="button"
+              className="p-btn p-tx-sheet-done"
+              disabled={busy}
+              onClick={() => void onPay()}
+            >
+              {busy ? pt(lang, "loading") : pt(lang, "txPayNow")}
+            </button>
+          ) : null}
           <button type="button" className="p-btn ghost p-tx-sheet-done" onClick={onClose}>
             {pt(lang, "close")}
           </button>
@@ -191,7 +237,7 @@ export function HistoryView() {
       ) : (
         <section className="p-tx-list" aria-label={pt(lang, "historyTitle")}>
           {transactions.map((tx) => (
-            <TxRow key={tx.id} tx={tx} onOpen={setSelected} />
+            <TxRow key={tx.id} tx={tx} lang={lang} onOpen={setSelected} />
           ))}
         </section>
       )}

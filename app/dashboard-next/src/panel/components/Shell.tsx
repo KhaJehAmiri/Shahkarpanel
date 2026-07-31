@@ -186,7 +186,7 @@ export const Shell: FC = () => {
             </button>
             <div>
               <div className="sk-topbar-title">{navTitle}</div>
-              <div className="sk-breadcrumb">{appTitle} / {navTitle}</div>
+              <div className="sk-breadcrumb">{appTitle}</div>
             </div>
           </div>
 
@@ -252,13 +252,15 @@ export const Shell: FC = () => {
   );
 };
 
-export const PageHeader: FC<{ title: string; subtitle?: string; description?: any; actions?: any }> = ({ title, subtitle, description, actions }) => (
-  <div className="sk-page-head">
-    <div className="sk-page-head-copy">
-      <div className="sk-page-title">{title}</div>
-      {subtitle && <div className="sk-page-subtitle">{subtitle}</div>}
-      {description && <div className="sk-page-desc">{description}</div>}
-    </div>
+export const PageHeader: FC<{ title?: string; subtitle?: string; description?: any; actions?: any }> = ({ title, subtitle, description, actions }) => (
+  <div className={`sk-page-head${title ? "" : " is-compact"}`}>
+    {(title || subtitle || description) && (
+      <div className="sk-page-head-copy">
+        {title ? <div className="sk-page-title">{title}</div> : null}
+        {subtitle && <div className="sk-page-subtitle">{subtitle}</div>}
+        {description && <div className="sk-page-desc">{description}</div>}
+      </div>
+    )}
     {actions && <div className="sk-page-head-actions">{actions}</div>}
   </div>
 );

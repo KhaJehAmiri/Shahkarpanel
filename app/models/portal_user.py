@@ -136,6 +136,8 @@ class PortalTransaction(BaseModel):
     created_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     unread: bool = True
+    can_pay: bool = False
+    expires_at: Optional[datetime] = None
 
 
 class PortalTxReadResponse(BaseModel):

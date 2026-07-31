@@ -52,12 +52,25 @@ def collect_singbox_users(db) -> List[SBUser]:
                 protocol=protocol,
                 password=settings.get("password"),
                 uuid=str(settings.get("uuid")) if settings.get("uuid") else None,
-                active=bool(user and user.status in SERVED_STATUSES),
+                active=_singbox_user_active(user),
                 speed_limit_up=getattr(user, "speed_limit_up", None) if user else None,
                 speed_limit_down=getattr(user, "speed_limit_down", None) if user else None,
             )
         )
     return users
+
+
+def _singbox_user_active(user) -> bool:
+    if not user or user.status not in SERVED_STATUSES:
+        return False
+    try:
+        from app.utils.device_exclusivity import PROTO_SINGBOX, is_protocol_held
+
+        if is_protocol_held(user, PROTO_SINGBOX):
+            return False
+    except Exception:
+        pass
+    return True
 
 
 def _node_object(node_id: int, *, connect: bool = True):

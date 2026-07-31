@@ -1,4 +1,3 @@
-import secrets
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -6,7 +5,7 @@ from pydantic import BaseModel, ConfigDict
 
 from app import api_keys
 from app.db import Session, crud, get_db
-from app.models.admin import Admin, AdminCreate
+from app.models.admin import Admin
 from app.utils import responses
 
 router = APIRouter(
@@ -41,22 +40,12 @@ def _admin_id(db: Session, admin: Admin) -> int:
     ``admins`` row. API keys need ``admin_id``, so we materialize a sudo row
     on first use. Password is a random unused hash — login stays via env.
     """
-    dbadmin = crud.get_admin(db, admin.username)
-    if dbadmin is not None:
-        return dbadmin.id
-    if not admin.is_sudo:
+    dbadmin = crud.ensure_db_admin(db, admin.username, is_sudo=admin.is_sudo)
+    if dbadmin is None:
         raise HTTPException(
             status_code=400,
             detail="Admin record not found in database — run migrations or recreate the admin user",
         )
-    dbadmin = crud.create_admin(
-        db,
-        AdminCreate(
-            username=admin.username,
-            password=secrets.token_urlsafe(32),
-            is_sudo=True,
-        ),
-    )
     return dbadmin.id
 
 

@@ -225,11 +225,33 @@ html.p-portal-lock .portal-theme.p-app-shell {
 .p-brand-logo {
   width: 44px;
   height: 44px;
-  border-radius: 12px;
-  object-fit: cover;
+  border-radius: 0;
+  object-fit: contain;
   flex-shrink: 0;
-  background: #000;
-  border: 1px solid var(--p-border);
+  background: transparent;
+  border: 0;
+}
+
+.p-splash {
+  flex: 1;
+  min-height: 100%;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  background: transparent;
+}
+.p-splash-logo {
+  width: min(42vw, 220px);
+  height: min(42vw, 220px);
+  object-fit: contain;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  animation: p-splash-pulse 1.4s ease-in-out infinite;
+}
+@keyframes p-splash-pulse {
+  0%, 100% { opacity: 0.72; transform: scale(0.96); }
+  50% { opacity: 1; transform: scale(1); }
 }
 
 .p-sidebar-brand strong {

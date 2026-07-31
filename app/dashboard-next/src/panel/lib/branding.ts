@@ -22,12 +22,25 @@ function ensureLink(rel: string): HTMLLinkElement {
   return el;
 }
 
+/** Dedicated home-screen icon — opaque PNG; never point apple-touch at .ico. */
+export const DEFAULT_APPLE_TOUCH_URL = "/brand/apple-touch-icon.png?v=3";
+
+export function appleTouchUrl(faviconHref: string): string {
+  const href = (faviconHref || "").trim();
+  // .ico / generic favicon paths are wrong for iOS Add to Home Screen.
+  if (!href || /favicon\.ico(?:$|\?)/i.test(href) || href.toLowerCase().includes("favicon")) {
+    return DEFAULT_APPLE_TOUCH_URL;
+  }
+  return href;
+}
+
 export function applyFavicon(href: string) {
   if (typeof document === "undefined" || !href) return;
   ensureLink("icon").href = href;
   ensureLink("shortcut icon").href = href;
   const apple = ensureLink("apple-touch-icon");
-  apple.href = href.includes("favicon") ? "/sub-assets/brand/apple-touch-icon.png" : href;
+  apple.href = appleTouchUrl(href);
+  apple.setAttribute("sizes", "180x180");
 }
 
 export function applyBranding(branding: Branding | null | undefined, fallbackTitle = "Shahkar") {

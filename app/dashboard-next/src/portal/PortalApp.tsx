@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect } from "react";
-import { detectPortalLang, pt } from "@/lib/portal-i18n";
 import { PortalProvider, usePortal } from "./PortalContext";
 import { LoginScreen } from "./components/LoginScreen";
 import { InstallGate } from "./components/InstallBanner";
@@ -41,8 +40,12 @@ function PortalBody() {
 
   if (bootstrapping) {
     return (
-      <div className="p-login">
-        <p className="p-muted">{pt(lang, "loading")}</p>
+      <div className="p-splash">
+        <img
+          src="/sub-assets/brand/shahkar.png"
+          alt=""
+          className="p-splash-logo"
+        />
       </div>
     );
   }
@@ -87,6 +90,13 @@ export function PortalApp() {
 }
 
 export function PortalFallback() {
-  const lang = detectPortalLang();
-  return <div className="p-login">{pt(lang, "loading")}</div>;
+  return (
+    <div className="p-splash">
+      <img
+        src="/sub-assets/brand/shahkar.png"
+        alt=""
+        className="p-splash-logo"
+      />
+    </div>
+  );
 }

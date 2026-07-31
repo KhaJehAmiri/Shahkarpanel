@@ -108,9 +108,16 @@
 }
 .sk-brand-logo-img {
   background: transparent !important;
-  object-fit: cover !important;
-  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.25) !important;
+  object-fit: contain !important;
+  box-shadow: none !important;
   padding: 0 !important;
+}
+img.sk-brand-logo,
+img.sk-brand-logo-img {
+  background: transparent !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+  object-fit: contain !important;
 }
 .sk-nav-item {
   border-radius: var(--sk-radius-sm) !important;

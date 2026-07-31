@@ -169,9 +169,39 @@ button { font-family: inherit; }
 }
 .sk-brand-logo-img {
   background: transparent !important;
-  object-fit: cover;
+  object-fit: contain;
   padding: 0;
   box-shadow: none;
+}
+/* Real logo PNGs are transparent — never paint a badge behind them. */
+img.sk-brand-logo,
+img.sk-brand-logo-img {
+  background: transparent !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+  object-fit: contain !important;
+}
+
+.sk-splash {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  background: var(--sk-bg, #07090d);
+}
+.sk-splash-logo {
+  width: min(42vw, 220px);
+  height: min(42vw, 220px);
+  object-fit: contain;
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  animation: sk-splash-pulse 1.4s ease-in-out infinite;
+}
+@keyframes sk-splash-pulse {
+  0%, 100% { opacity: 0.72; transform: scale(0.96); }
+  50% { opacity: 1; transform: scale(1); }
 }
 .sk-brand-name { font-weight: 700; font-size: 16px; letter-spacing: -0.02em; }
 .sk-brand-sub { font-size: 11px; color: var(--sk-text-faint); }

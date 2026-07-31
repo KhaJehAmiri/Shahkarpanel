@@ -340,13 +340,28 @@ export function PortalProvider({ children }: { children: ReactNode }) {
         }
         setBrandLogo((b?.logo_url || "").trim() || "/sub-assets/brand/shahkar.png");
         {
+          const fav = (b?.favicon_url || "").trim() || "/brand/favicon.ico";
           let link = document.querySelector("link[rel='icon']") as HTMLLinkElement | null;
           if (!link) {
             link = document.createElement("link");
             link.rel = "icon";
             document.head.appendChild(link);
           }
-          link.href = (b?.favicon_url || "").trim() || "/brand/favicon.ico";
+          link.href = fav;
+          let apple = document.querySelector(
+            "link[rel='apple-touch-icon']",
+          ) as HTMLLinkElement | null;
+          if (!apple) {
+            apple = document.createElement("link");
+            apple.rel = "apple-touch-icon";
+            document.head.appendChild(apple);
+          }
+          // Never use .ico for iOS home screen — opaque dedicated PNG.
+          apple.href =
+            !fav || /favicon\.ico(?:$|\?)/i.test(fav) || fav.toLowerCase().includes("favicon")
+              ? "/brand/apple-touch-icon.png?v=3"
+              : fav;
+          apple.setAttribute("sizes", "180x180");
         }
         if (b?.currency_label) setCurrencyLabel(b.currency_label);
       } catch {

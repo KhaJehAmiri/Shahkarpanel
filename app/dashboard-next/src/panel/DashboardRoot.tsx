@@ -18,12 +18,11 @@ import { ResellerOnboardingWizard } from "./components/ResellerOnboardingWizard"
 import "./i18n";
 
 const Splash: FC = () => (
-  <div style={{ minHeight: "100vh", display: "grid", placeItems: "center" }}>
+  <div className="sk-splash">
     <img
       src="/sub-assets/brand/shahkar.png"
       alt=""
-      className="sk-brand-logo sk-brand-logo-img"
-      style={{ width: 48, height: 48, animation: "sk-shimmer 1.3s infinite" }}
+      className="sk-splash-logo"
     />
   </div>
 );

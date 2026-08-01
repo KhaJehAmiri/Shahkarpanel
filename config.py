@@ -205,6 +205,11 @@ JOB_WARP_HEALTH_CHECK_ENABLED = config("JOB_WARP_HEALTH_CHECK_ENABLED", cast=boo
 JOB_WARP_HEALTH_CHECK_INTERVAL = config("JOB_WARP_HEALTH_CHECK_INTERVAL", cast=int, default=60)
 WARP_HEALTH_FAILURE_THRESHOLD = config("WARP_HEALTH_FAILURE_THRESHOLD", cast=int, default=2)
 WARP_HEALTH_REMEDIATION_COOLDOWN = config("WARP_HEALTH_REMEDIATION_COOLDOWN", cast=int, default=180)
+# Auto re-apply Reality/WG tunnels after node flaps (no manual Apply).
+JOB_TUNNEL_HEAL_ENABLED = config("JOB_TUNNEL_HEAL_ENABLED", cast=bool, default=True)
+JOB_TUNNEL_HEAL_INTERVAL = config("JOB_TUNNEL_HEAL_INTERVAL", cast=int, default=45)
+TUNNEL_HEAL_FAILURE_THRESHOLD = config("TUNNEL_HEAL_FAILURE_THRESHOLD", cast=int, default=2)
+TUNNEL_HEAL_COOLDOWN_SEC = config("TUNNEL_HEAL_COOLDOWN_SEC", cast=int, default=90)
 WARP_CANDIDATE_ENDPOINTS = [
     ep.strip()
     for ep in config(

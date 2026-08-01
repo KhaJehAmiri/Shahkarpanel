@@ -253,6 +253,36 @@ def _restart_endpoint(db: Session, node_id: Optional[int]):
         xray.operations.connect_node(node_id)
 
 
+def _wait_endpoint_ready(db: Session, node_id: Optional[int], *, timeout: float = 45.0) -> bool:
+    """Wait for async connect/restart to finish so health is not checked too early."""
+    import time
+
+    if node_id is None:
+        deadline = time.time() + min(timeout, 15.0)
+        while time.time() < deadline:
+            if getattr(xray.core, "started", False):
+                return True
+            time.sleep(0.4)
+        return bool(getattr(xray.core, "started", False))
+
+    from app.tunnel.relay import node_delegates_wireguard_to_tunnel
+
+    delegates = False
+    try:
+        delegates = node_delegates_wireguard_to_tunnel(db, int(node_id))
+    except Exception:
+        delegates = False
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        node = xray.nodes.get(node_id)
+        if node is not None and getattr(node, "connected", False):
+            if not delegates or bool(getattr(node, "wg_tunnel_capture_active", False)):
+                return True
+        time.sleep(0.5)
+    return False
+
+
 def _tcp_reachable(address: str, port: int, timeout: float = 3.0) -> bool:
     """Best-effort TCP connect probe used for post-apply health-checks."""
     import socket
@@ -284,11 +314,27 @@ def _tunnel_health(db: Session, tunnel: Tunnel) -> dict:
             checks[label] = {"kind": "panel", "connected": True}
         else:
             node = xray.nodes.get(node_id)
-            checks[label] = {
+            connected = bool(node is not None and getattr(node, "connected", False))
+            entry = {
                 "kind": "node",
                 "node_id": node_id,
-                "connected": bool(node is not None and getattr(node, "connected", False)),
+                "connected": connected,
             }
+            # Relays that delegate WG into dokodemo must still have capture up.
+            # Without this, keep-live / native fallback leaves health "green"
+            # while the Reality hop is actually dead until manual Apply.
+            if label == "relay" and connected:
+                try:
+                    from app.tunnel.relay import node_delegates_wireguard_to_tunnel
+
+                    if node_delegates_wireguard_to_tunnel(db, int(node_id)):
+                        capture = bool(getattr(node, "wg_tunnel_capture_active", False))
+                        entry["capture_active"] = capture
+                        if not capture:
+                            entry["tunnel_ready"] = False
+                except Exception:
+                    pass
+            checks[label] = entry
 
     if tunnel.intermediate_node_id:
         try:
@@ -320,6 +366,9 @@ def _tunnel_health(db: Session, tunnel: Tunnel) -> dict:
     ) and checks.get("exit_listen", {}).get("reachable", False)
     if tunnel.intermediate_node_id:
         healthy = healthy and checks.get("transit_listen", {}).get("reachable", False)
+    healthy = healthy and all(
+        c.get("tunnel_ready", True) for c in checks.values()
+    )
     return {"healthy": healthy, "checks": checks}
 
 
@@ -349,6 +398,9 @@ def _apply_tunnel(db: Session, tunnel: Tunnel, health: bool = True) -> dict:
             ordered_ends.append(node_id)
     for node_id in ordered_ends:
         _restart_endpoint(db, node_id)
+        # connect_node/restart_node are fire-and-forget threads — wait so the
+        # subsequent health check (and auto-heal) see the real capture state.
+        _wait_endpoint_ready(db, node_id)
 
     if tunnel.exit_node_id is None and (tunnel.params or {}).get("wireguard_port"):
         from app.wireguard.host_sync import sync_panel_exit_wireguard

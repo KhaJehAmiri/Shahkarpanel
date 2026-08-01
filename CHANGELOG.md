@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+## 0.22.17 — 2026-08-01
+
+Tunnel keep-live / auto-heal for Iran↔abroad relays.
+
+### Hard reconnect re-pushes tunnel config
+
+- WireGuard/Finalmask nodes no longer keep a live Xray core across a hard
+  reconnect (node was down, degraded, or tunnel capture down). Missing
+  `tunnel-*-out` / dokodemo left traffic dead while health looked fine.
+- Soft refresh while already connected may still keep-live to avoid OOM on
+  small relay VMs.
+
+### Tunnel apply + health
+
+- Apply waits for each endpoint's async connect/restart before health check.
+- Relay health requires `wg_tunnel_capture_active` when the node delegates WG
+  into the Reality hop — green only when the tunnel path is actually up.
+
+### Auto tunnel heal job
+
+- New `tunnel_heal` job re-applies enabled tunnels that fail health (streak +
+  cooldown), and accepts `schedule_reapply_for_node` after hard reconnect.
+- Tunables: `JOB_TUNNEL_HEAL_ENABLED`, `JOB_TUNNEL_HEAL_INTERVAL`,
+  `TUNNEL_HEAL_FAILURE_THRESHOLD`, `TUNNEL_HEAL_COOLDOWN_SEC`.
+
 ## 0.22.16 — 2026-08-01
 
 Reseller wholesale tariffs and clearer payment statistics.

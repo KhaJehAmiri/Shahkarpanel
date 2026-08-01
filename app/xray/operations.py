@@ -969,6 +969,7 @@ def connect_node(node_id, config=None):
         delegates_tunnel = False
         xray_wg_enabled = False
         kept_live = False
+        hard_reconnect = False
         if is_wg_node:
             with GetDB() as db:
                 from app.db.models import NodeWireGuard
@@ -984,11 +985,27 @@ def connect_node(node_id, config=None):
                     .first()
                 )
                 xray_wg_enabled = bool(wg_row[0]) if wg_row else False
-            # Keep-live is only safe for Finalmask / tunnel-capture relays
-            # (multi‑MB configs OOM small VMs on blind restart). Pure VLESS
-            # tunnel exits share core_kind=wireguard but must receive a fresh
-            # include_db_users config — otherwise reseller restores never land.
+            # Hard reconnect (node was down) must NEVER keep-live: a live Xray
+            # process can still be missing tunnel-*-out / dokodemo after RPyC
+            # loss, leaving tunnels dead until an admin hits Apply.
+            # Soft refresh while already connected may keep-live. Degraded
+            # (native WG fallback / capture down) must re-push.
             prefer_keep_live = bool(delegates_tunnel or xray_wg_enabled)
+            from app.models.node import NodeStatus as _NSKeep
+
+            msg = (getattr(dbnode, "message", None) or "").strip().lower()
+            degraded = (
+                "degraded" in msg
+                or "xray down" in msg
+                or "failed to connect" in msg
+                or "not connected" in msg
+            )
+            capture_down = delegates_tunnel and not bool(
+                getattr(node, "wg_tunnel_capture_active", False)
+            )
+            hard_reconnect = (
+                prev_status != _NSKeep.connected or degraded or capture_down
+            )
             try:
                 if not node.connected:
                     node.connect()
@@ -996,7 +1013,7 @@ def connect_node(node_id, config=None):
                     with GetDB() as db:
                         prepare_relay_wireguard_tunnel(db, node_id, node)
                 version = node.get_version()
-                if version and prefer_keep_live:
+                if version and prefer_keep_live and not hard_reconnect:
                     if delegates_tunnel:
                         node.wg_tunnel_capture_active = True
                     try:
@@ -1008,6 +1025,15 @@ def connect_node(node_id, config=None):
                         "WireGuard node \"%s\" keeping live Xray (%s)",
                         dbnode.name,
                         version,
+                    )
+                elif version and prefer_keep_live and hard_reconnect:
+                    logger.info(
+                        "WireGuard node \"%s\" hard reconnect — re-pushing "
+                        "Xray/tunnel config (was status=%s degraded=%s capture_down=%s)",
+                        dbnode.name,
+                        getattr(prev_status, "value", prev_status),
+                        degraded,
+                        capture_down,
                     )
             except Exception:
                 version = None
@@ -1033,9 +1059,9 @@ def connect_node(node_id, config=None):
             if kept_live:
                 xray_exc = None
             elif delegates_tunnel:
-                # Prefer reuse when the agent already has a live core. Blind
-                # restart of a ~2MB Finalmask config OOMs small relay VMs
-                # (second Xray during stop/start) and leaves UDP dead.
+                # We already decided not to keep-live (hard reconnect / no version).
+                # Always push the built config so tunnel dokodemo + outbounds land —
+                # do not re-enter keep-live just because get_version() answers.
                 for attempt in range(3):
                     try:
                         if not node.connected:
@@ -1043,29 +1069,17 @@ def connect_node(node_id, config=None):
                         with GetDB() as db:
                             prepare_relay_wireguard_tunnel(db, node_id, node)
                         try:
-                            version = node.get_version()
-                            if version:
-                                node.wg_tunnel_capture_active = True
-                                try:
-                                    node.started = True
-                                except Exception:
-                                    pass
-                                xray_exc = None
-                                logger.info(
-                                    "WireGuard node \"%s\" keeping live Xray (%s)",
-                                    dbnode.name,
-                                    version,
-                                )
-                                break
-                        except Exception:
-                            version = None
-                        try:
                             node.start(config)
                         except Exception:
                             node.restart(config)
                         version = node.get_version()
                         node.wg_tunnel_capture_active = True
                         xray_exc = None
+                        logger.info(
+                            "WireGuard node \"%s\" Xray/tunnel config applied (%s)",
+                            dbnode.name,
+                            version,
+                        )
                         break
                     except Exception as exc:
                         xray_exc = exc
@@ -1172,6 +1186,20 @@ def connect_node(node_id, config=None):
             logger.info(f"Connected to \"{dbnode.name}\" node, xray run on v{version}")
 
         _sync_wireguard_node(node_id, node)
+
+        # After a hard reconnect, re-apply enabled tunnels that use this node so
+        # dokodemo / Reality hops come back without a manual Apply click.
+        if hard_reconnect or degraded_msg:
+            try:
+                from app.jobs.tunnel_heal import schedule_reapply_for_node
+
+                schedule_reapply_for_node(int(node_id), reason="node-hard-reconnect")
+            except Exception:
+                logger.debug(
+                    "tunnel reapply schedule after connect failed for node %s",
+                    node_id,
+                    exc_info=True,
+                )
 
     except Exception as e:
         _change_node_status(node_id, NodeStatus.error, message=str(e))

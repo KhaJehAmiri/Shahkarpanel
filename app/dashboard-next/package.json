@@ -1,6 +1,6 @@
 {
   "name": "shahkar-dashboard-next",
-  "version": "0.22.16",
+  "version": "0.22.17",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3001",

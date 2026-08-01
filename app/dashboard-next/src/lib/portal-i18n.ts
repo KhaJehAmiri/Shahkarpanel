@@ -1,7 +1,7 @@
 export type PortalLang = "fa" | "en" | "ru" | "zh";
 
 const STRINGS: Record<PortalLang, Record<string, string>> = {
-  fa: {
+    fa: {
     title: "پورتال کاربر",
     subtitle: "خرید، تمدید و اتصال آسان — بدون دردسر فنی",
     brand: "Shahkar",
@@ -36,7 +36,7 @@ const STRINGS: Record<PortalLang, Record<string, string>> = {
     renewSection: "تمدید",
     security: "امنیت",
     plans: "پلن‌های موجود",
-    renew: "تمدید رایگان",
+    renew: "تمدید",
     buy: "خرید",
     pay: "پرداخت و تمدید الان",
     paying: "در حال پرداخت…",
@@ -350,7 +350,7 @@ const STRINGS: Record<PortalLang, Record<string, string>> = {
     renewSection: "Renew",
     security: "Security",
     plans: "Available plans",
-    renew: "Free renew",
+    renew: "Renew",
     buy: "Buy",
     pay: "Pay & renew now",
     paying: "Paying…",
@@ -664,7 +664,7 @@ const STRINGS: Record<PortalLang, Record<string, string>> = {
     renewSection: "Продление",
     security: "Безопасность",
     plans: "Доступные планы",
-    renew: "Бесплатно",
+    renew: "Продлить",
     buy: "Купить",
     pay: "Оплатить",
     paying: "Оплата…",
@@ -978,7 +978,7 @@ const STRINGS: Record<PortalLang, Record<string, string>> = {
     renewSection: "续费",
     security: "安全",
     plans: "可用套餐",
-    renew: "免费续费",
+    renew: "续费",
     buy: "购买",
     pay: "支付并开通",
     paying: "支付中…",

@@ -46,10 +46,7 @@ def apply_plan_to_user(db: Session, user: User, plan: Plan) -> User:
     user's previous volume cap (that left renewals updating only the expiry).
     """
     from app.db import crud
-    from app.billing.reseller_tariffs import (
-        locked_limit_overrides,
-        match_tariff_for_plan,
-    )
+    from app.billing.reseller_tariffs import resolve_locked_limits_for_admin
 
     new_expire = compute_renewal_expire(user, plan)
     # None = unlimited. Do not preserve the prior volume package.
@@ -61,8 +58,12 @@ def apply_plan_to_user(db: Session, user: User, plan: Plan) -> User:
     device_limit = plan.device_limit
     speed_up = None
     speed_down = None
-    tariff = match_tariff_for_plan(db, plan)
-    locks = locked_limit_overrides(tariff)
+    billing_admin = None
+    if getattr(user, "admin_id", None):
+        billing_admin = crud.get_admin_by_id(db, user.admin_id)
+    locks = resolve_locked_limits_for_admin(
+        db, billing_admin, commercial_plan=plan
+    )
     if "device_limit" in locks:
         device_limit = locks["device_limit"]
     if "speed_limit_up" in locks:
@@ -215,9 +216,14 @@ def create_account_from_plan(
     speed_up = None
     speed_down = None
     try:
-        from app.billing.reseller_tariffs import locked_limit_overrides, match_tariff_for_plan
+        from app.billing.reseller_tariffs import resolve_locked_limits_for_admin
 
-        locks = locked_limit_overrides(match_tariff_for_plan(db, plan))
+        owner_admin = None
+        if owner.admin_id:
+            owner_admin = crud.get_admin_by_id(db, owner.admin_id)
+        locks = resolve_locked_limits_for_admin(
+            db, owner_admin, commercial_plan=plan
+        )
         if "device_limit" in locks:
             device_limit = locks["device_limit"]
         if "speed_limit_up" in locks:

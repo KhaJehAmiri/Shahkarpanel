@@ -178,6 +178,101 @@ def locked_limit_overrides(tariff: Optional[ResellerPlanTariff]) -> Dict[str, An
     return out
 
 
+def locked_limit_overrides_from_plan(plan: Optional[Plan]) -> Dict[str, Any]:
+    """Device lock copied from a retail Plan row (Plans have no speed fields)."""
+    if plan is None:
+        return {}
+    dl = getattr(plan, "device_limit", None)
+    if dl is not None and int(dl) > 0:
+        return {"device_limit": int(dl)}
+    return {}
+
+
+def _normalize_duration_days(duration_days) -> Optional[int]:
+    if duration_days in (None, ""):
+        return None
+    try:
+        d = int(duration_days)
+    except (TypeError, ValueError):
+        return None
+    return d if d > 0 else None
+
+
+def _merge_limit_locks(*parts: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge lock dicts; device/speed use the strictest (minimum) positive value."""
+    out: Dict[str, Any] = {}
+    for part in parts:
+        if not part:
+            continue
+        for key, value in part.items():
+            if value is None:
+                continue
+            try:
+                n = int(value)
+            except (TypeError, ValueError):
+                continue
+            if n <= 0:
+                continue
+            if key not in out or n < int(out[key]):
+                out[key] = n
+    return out
+
+
+def match_plans_for_limits(
+    db: Session,
+    *,
+    data_limit=None,
+    duration_days: Optional[int] = None,
+) -> List[Plan]:
+    """Enabled retail plans with the same volume + duration shape (exact)."""
+    want_dl = normalize_data_limit(data_limit)
+    want_dur = _normalize_duration_days(duration_days)
+    rows = (
+        db.query(Plan)
+        .filter(Plan.enabled.is_(True))
+        .order_by(Plan.id.asc())
+        .all()
+    )
+    matched: List[Plan] = []
+    for plan in rows:
+        if normalize_data_limit(plan.data_limit) != want_dl:
+            continue
+        if _normalize_duration_days(plan.duration_days) != want_dur:
+            continue
+        matched.append(plan)
+    return matched
+
+
+def resolve_plan_limit_locks(
+    db: Session,
+    *,
+    data_limit=None,
+    duration_days: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Strictest device_limit among matching retail plans."""
+    locks: Dict[str, Any] = {}
+    for plan in match_plans_for_limits(
+        db, data_limit=data_limit, duration_days=duration_days
+    ):
+        locks = _merge_limit_locks(locks, locked_limit_overrides_from_plan(plan))
+    return locks
+
+
+def default_unlimited_tariff_locks(db: Session) -> Dict[str, Any]:
+    """Floor locks from any unlimited wholesale tariff (when no exact match).
+
+    Masters often set ``device_limit`` on 30/60/90 unlimited tariffs while
+    resellers still sell open-ended or oddly-shaped retail plans. Without this
+    floor those plans bypass the device cap entirely.
+    """
+    locks: Dict[str, Any] = {}
+    for tariff in list_tariffs(db, enabled_only=True):
+        if not is_unlimited_data_limit(tariff.data_limit):
+            continue
+        locks = _merge_limit_locks(locks, locked_limit_overrides(tariff))
+    return locks
+
+
 def duration_days_from_expire(expire) -> Optional[int]:
     """Best-effort days remaining from a unix expire timestamp."""
     if expire in (None, 0, "0"):
@@ -204,17 +299,28 @@ def resolve_locked_limits_for_admin(
     expire=None,
     commercial_plan: Optional[Plan] = None,
 ) -> Dict[str, Any]:
-    """For non-sudo resellers, return device/speed locks from matching tariff."""
+    """For non-sudo resellers, return device/speed locks from tariff and plans."""
     if admin is None or getattr(admin, "is_sudo", False):
         return {}
+
     if commercial_plan is not None:
-        tariff = match_tariff_for_plan(db, commercial_plan)
+        data_limit = getattr(commercial_plan, "data_limit", data_limit)
+        dur = _normalize_duration_days(getattr(commercial_plan, "duration_days", None))
     else:
-        dur = duration_days
+        dur = _normalize_duration_days(duration_days)
         if dur is None:
             dur = duration_days_from_expire(expire)
-        tariff = match_tariff(db, data_limit=data_limit, duration_days=dur)
-    return locked_limit_overrides(tariff)
+
+    tariff = match_tariff(db, data_limit=data_limit, duration_days=dur)
+    locks = _merge_limit_locks(
+        resolve_plan_limit_locks(db, data_limit=data_limit, duration_days=dur),
+        locked_limit_overrides_from_plan(commercial_plan),
+        locked_limit_overrides(tariff),
+    )
+    # No exact tariff/plan device cap: still enforce master's unlimited floor.
+    if "device_limit" not in locks and is_unlimited_data_limit(data_limit):
+        locks = _merge_limit_locks(locks, default_unlimited_tariff_locks(db))
+    return locks
 
 
 def apply_locked_limits_to_user_payload(payload, overrides: Dict[str, Any]):
@@ -261,10 +367,11 @@ def match_tariff(
         # No exact duration — do not silently pick another duration.
         return None
 
-    # No duration requested: prefer tariffs without duration, else cheapest.
+    # Open-ended request: only open-ended tariffs (never a timed 30/60/90).
     open_ended = [t for t in same_volume if t.duration_days is None]
-    pool = open_ended or same_volume
-    return sorted(pool, key=lambda t: (int(t.price or 0), t.id))[0]
+    if not open_ended:
+        return None
+    return sorted(open_ended, key=lambda t: (int(t.price or 0), t.id))[0]
 
 
 def match_tariff_for_plan(db: Session, plan: Plan) -> Optional[ResellerPlanTariff]:

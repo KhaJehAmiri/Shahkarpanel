@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.22.22 — 2026-08-01
+
+### Device limit locks actually reach portal + mismatched plans
+
+- Locks now come from matching retail Plans as well as wholesale tariffs (so setting device limit on Billing → Plans works even when Resellers → Tariffs is empty).
+- Unlimited reseller creates/renews also inherit the strictest `device_limit` set on any unlimited wholesale tariff (floor), so open-ended free retail plans like «یک» cannot bypass the cap.
+- Portal `/plans` returns the *effective* device limit after locks (UI no longer shows «نامحدود» when master locked 1 device).
+- Open-ended retail plans no longer silently match a 30/60/90-day wholesale tariff for charging.
+- Portal renew button label no longer always says «تمدید رایگان».
+
 ## 0.22.21 — 2026-08-01
 
 ### Reseller tariff device & speed locks

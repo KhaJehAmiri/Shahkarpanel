@@ -278,7 +278,25 @@ def portal_plans(
 ):
     """Enabled commercial plans available for renewal / purchase."""
     _require_billing()
-    return get_plans_for_portal_user(db, dbuser, enabled_only=True)
+    plans = get_plans_for_portal_user(db, dbuser, enabled_only=True)
+    billing_admin = (
+        crud.get_admin_by_id(db, dbuser.admin_id) if dbuser.admin_id else None
+    )
+    from app.billing.reseller_tariffs import resolve_locked_limits_for_admin
+
+    out: List[PortalPlan] = []
+    for plan in plans:
+        row = PortalPlan.model_validate(plan)
+        locks = resolve_locked_limits_for_admin(
+            db, billing_admin, commercial_plan=plan
+        )
+        locked_dl = locks.get("device_limit")
+        if locked_dl is not None:
+            current = int(row.device_limit) if row.device_limit and int(row.device_limit) > 0 else None
+            effective = locked_dl if current is None else min(current, int(locked_dl))
+            row = row.model_copy(update={"device_limit": effective})
+        out.append(row)
+    return out
 
 
 class RenewBody(BaseModel):

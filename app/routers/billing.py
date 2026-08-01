@@ -299,9 +299,15 @@ def billing_attention_counts(
         PaymentIntent.status == "awaiting_review",
     )
     if is_sudo:
+        from app.db.models import Admin as AdminRow
+
+        sudo_ids = [int(r[0]) for r in db.query(AdminRow.id).filter(AdminRow.is_sudo.is_(True)).all()]
         orders_q = orders_q.filter(
             or_(
-                PaymentIntent.kind.in_(("portal_renew", "portal_purchase")),
+                and_(
+                    PaymentIntent.kind.in_(("portal_renew", "portal_purchase")),
+                    PaymentIntent.admin_id.in_(sudo_ids or [-1]),
+                ),
                 PaymentIntent.kind == "topup",
             )
         )

@@ -491,13 +491,35 @@ def submit_card_payment(
 _CARD_REVIEW_KINDS = ("portal_renew", "portal_purchase", "topup")
 
 
-def _assert_can_review_card(admin: Admin, intent: PaymentIntent) -> None:
-    """Portal card → owning reseller/sudo; wallet top-up → sudo only."""
+def _owner_admin(db: Session, intent: PaymentIntent) -> Optional[Admin]:
+    from app.db.models import Admin as AdminRow
+
+    if intent.admin_id is None:
+        return None
+    return db.query(AdminRow).filter(AdminRow.id == int(intent.admin_id)).first()
+
+
+def _assert_can_review_card(db: Session, admin: Admin, intent: PaymentIntent) -> None:
+    """Portal card → owning reseller only; master only for master-owned users.
+
+    Wallet top-up → sudo only.
+    """
     if intent.kind == "topup":
         if not getattr(admin, "is_sudo", False):
             raise HTTPException(status_code=403, detail="Only the platform owner can approve wallet top-ups")
         return
-    # Portal payments: get_intent_for_admin_or_sudo already scopes ownership.
+    if intent.kind not in ("portal_renew", "portal_purchase"):
+        return
+    owner = _owner_admin(db, intent)
+    reviewer_id = getattr(admin, "id", None)
+    if owner is not None and reviewer_id is not None and int(owner.id) == int(reviewer_id):
+        return
+    if getattr(admin, "is_sudo", False) and owner is not None and bool(getattr(owner, "is_sudo", False)):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail="Reseller portal card orders are reviewed by that reseller, not the platform owner",
+    )
 
 
 def approve_portal_payment(db: Session, intent: PaymentIntent, *, reviewer: Optional[Admin] = None) -> PaymentIntent:
@@ -509,7 +531,7 @@ def approve_portal_payment(db: Session, intent: PaymentIntent, *, reviewer: Opti
     if intent.provider != "card":
         raise HTTPException(status_code=400, detail="Only card payments can be manually approved")
     if reviewer is not None:
-        _assert_can_review_card(reviewer, intent)
+        _assert_can_review_card(db, reviewer, intent)
     return complete_payment(db, intent, {"admin_approved": True})
 
 
@@ -526,7 +548,7 @@ def reject_portal_payment(
     if intent.status not in ("pending", "awaiting_review"):
         raise HTTPException(status_code=409, detail="Payment is not awaiting review")
     if reviewer is not None:
-        _assert_can_review_card(reviewer, intent)
+        _assert_can_review_card(db, reviewer, intent)
     extra = dict(intent.extra or {})
     if reason:
         extra["reject_reason"] = str(reason)[:500]
@@ -557,15 +579,22 @@ def list_portal_payments_for_admin(
 ) -> List[PaymentIntent]:
     """Card/portal queue for this admin.
 
-    Resellers see their portal purchases. Sudo also sees reseller wallet
-    top-ups that need platform-card approval.
+    Resellers see only their own portal card purchases/renewals.
+    Sudo sees master-owned portal orders + reseller wallet top-ups — never
+    reseller customer card orders (those are reviewed by that reseller).
     """
     from sqlalchemy import and_, or_
 
+    from app.db.models import Admin as AdminRow
+
     if getattr(admin, "is_sudo", False):
+        sudo_ids = [int(r[0]) for r in db.query(AdminRow.id).filter(AdminRow.is_sudo.is_(True)).all()]
         q = db.query(PaymentIntent).filter(
             or_(
-                PaymentIntent.kind.in_(("portal_renew", "portal_purchase")),
+                and_(
+                    PaymentIntent.kind.in_(("portal_renew", "portal_purchase")),
+                    PaymentIntent.admin_id.in_(sudo_ids or [-1]),
+                ),
                 and_(
                     PaymentIntent.kind == "topup",
                     PaymentIntent.provider == "card",
@@ -763,6 +792,14 @@ def get_intent_for_admin_or_sudo(db: Session, payment_id: int, admin: Admin) -> 
     if intent is None:
         raise HTTPException(status_code=404, detail="Payment not found")
     if getattr(admin, "is_sudo", False):
+        # Sudo may open wallet top-ups and master-owned portal orders only.
+        if intent.kind == "topup":
+            return intent
+        if intent.kind in ("portal_renew", "portal_purchase"):
+            owner = _owner_admin(db, intent)
+            if owner is not None and bool(getattr(owner, "is_sudo", False)):
+                return intent
+            raise HTTPException(status_code=404, detail="Payment not found")
         return intent
     if intent.admin_id != admin.id:
         raise HTTPException(status_code=404, detail="Payment not found")

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.22.20 — 2026-08-01
+
+### Master orders queue scoping
+
+- Platform owner no longer sees reseller customer card-to-card portal orders in Billing → Orders.
+- Those stay with the owning reseller for approve/reject; master still sees own portal orders and reseller wallet top-ups.
+- Badge counts and approve/reject API enforce the same rule.
+
 ## 0.22.19 — 2026-08-01
 
 ### Reseller account edit

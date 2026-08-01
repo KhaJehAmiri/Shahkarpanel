@@ -210,7 +210,7 @@ def count_pending_invoices_for_admin(db: Session, admin_id: int) -> int:
 
 def count_awaiting_card_for_admin(db: Session, admin_id: int) -> int:
     """How many card payments wait for this admin (orders queue only)."""
-    from sqlalchemy import or_
+    from sqlalchemy import and_, or_
 
     from app.db.models import Admin, PaymentIntent
 
@@ -220,10 +220,14 @@ def count_awaiting_card_for_admin(db: Session, admin_id: int) -> int:
         PaymentIntent.status == "awaiting_review",
     )
     if admin is not None and bool(getattr(admin, "is_sudo", False)):
-        # Same as /billing/attention-counts: all portal card orders + all top-ups.
+        # Master: own portal card orders + reseller wallet top-ups only.
+        sudo_ids = [int(r[0]) for r in db.query(Admin.id).filter(Admin.is_sudo.is_(True)).all()]
         q = q.filter(
             or_(
-                PaymentIntent.kind.in_(("portal_renew", "portal_purchase")),
+                and_(
+                    PaymentIntent.kind.in_(("portal_renew", "portal_purchase")),
+                    PaymentIntent.admin_id.in_(sudo_ids or [-1]),
+                ),
                 PaymentIntent.kind == "topup",
             )
         )

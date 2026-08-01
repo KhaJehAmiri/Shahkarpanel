@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.22.25 — 2026-08-01
+
+### All protocol links stay connectable; device cap after connect only
+
+- Disabled protocol-family holds (`device_conn_hold`) that dropped WireGuard / Xray / sing-box from serving when another family was online — that made other share links time out in apps.
+- Existing holds are cleared on the usage tick and protocols are re-enabled.
+- Concurrent device limits still apply after real connection via live online IP kicks (from 0.22.24).
+
 ## 0.22.24 — 2026-08-01
 
 ### Device limit after connect (not on subscription import)

@@ -809,6 +809,14 @@ def record_user_usages():
     except Exception:
         logger.exception("device exclusivity enforcement failed")
 
+    # Concurrent device cap from live Xray online IPs (not subscription import).
+    try:
+        from app.utils.device_limit import enforce_live_device_limits
+
+        enforce_live_device_limits(uids or None)
+    except Exception:
+        logger.exception("live device limit enforcement failed")
+
     from app.billing_guard import check_billing_integrity
 
     check_billing_integrity(xray)

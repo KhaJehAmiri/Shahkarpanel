@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.22.24 — 2026-08-01
+
+### Device limit after connect (not on subscription import)
+
+- Subscription / config download no longer returns ``403 Device limit`` — import and updates always work.
+- Concurrent device caps are enforced from live Xray online IP stats after users actually connect (usage job disconnects excess sessions).
+- ``device_limit == 1`` protocol exclusivity (WG vs Xray vs sing-box) unchanged.
+
 ## 0.22.23 — 2026-08-01
 
 ### Close reseller tariff bypass (create free → set expiry later)

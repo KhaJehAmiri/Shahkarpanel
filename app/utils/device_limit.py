@@ -5,7 +5,7 @@ import hashlib
 import json
 import time
 from datetime import datetime, timedelta
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 from sqlalchemy.orm import Session
 
@@ -209,8 +209,15 @@ def record_and_check_device_limit(
     client_ip: str,
     user_agent: str = "",
     hwid: str = "",
+    *,
+    enforce: bool = False,
 ) -> None:
-    """Track a device fingerprint and raise if the user exceeds ``device_limit``.
+    """Track a device fingerprint from a client request.
+
+    ``enforce=True`` raises HTTP 403 when over ``device_limit``. Subscription
+    import/export must call with ``enforce=False`` (or skip this helper) —
+    concurrent-device caps are applied after connect via
+    :func:`enforce_live_device_limits` using Xray online IP stats.
 
     Keys are ``hw:…`` / ``fp:…`` (not bare IPs) so two phones behind the same NAT
     count as two devices when their User-Agent or HWID differs. ``device_limit``
@@ -239,7 +246,7 @@ def record_and_check_device_limit(
         return
 
     limit = getattr(dbuser, "device_limit", None)
-    if limit and limit > 0 and len(ips) >= int(limit):
+    if enforce and limit and limit > 0 and len(ips) >= int(limit):
         raise HTTPException(
             status_code=403,
             detail=f"Device limit reached ({limit} concurrent devices)",
@@ -249,3 +256,56 @@ def record_and_check_device_limit(
     dbuser.device_ips = json.dumps(ips)
     if db is not None:
         db.commit()
+
+
+def enforce_live_device_limits(candidate_uids: Optional[Iterable] = None) -> int:
+    """Disconnect users whose live Xray online IP count exceeds ``device_limit``.
+
+    Runs after traffic collection so caps apply to real connections, not
+    subscription imports. Returns how many users were kicked.
+    """
+    import logging
+
+    from app.db import GetDB
+    from app.models.user import UserStatus
+
+    logger = logging.getLogger("shahkar-device-limit")
+    kicked = 0
+
+    with GetDB() as db:
+        q = db.query(User).filter(
+            User.device_limit.isnot(None),
+            User.device_limit > 0,
+            User.status.in_([UserStatus.active, UserStatus.on_hold]),
+        )
+        if candidate_uids is not None:
+            ids = [int(u) for u in candidate_uids]
+            if not ids:
+                return 0
+            q = q.filter(User.id.in_(ids))
+        users = q.all()
+        targets = [(int(u.id), int(u.device_limit), u) for u in users]
+
+    for uid, limit, dbuser in targets:
+        try:
+            n = _xray_online_device_count(dbuser)
+        except Exception:
+            continue
+        if n is None or n <= limit:
+            continue
+        try:
+            from app.xray.operations import update_user
+            from app.xray.serving import hot_disconnect_users
+
+            hot_disconnect_users([dbuser])
+            update_user(dbuser)
+            kicked += 1
+            logger.info(
+                "device limit kick user_id=%s online=%s limit=%s",
+                uid,
+                n,
+                limit,
+            )
+        except Exception:
+            logger.debug("device limit kick failed for %s", uid, exc_info=True)
+    return kicked

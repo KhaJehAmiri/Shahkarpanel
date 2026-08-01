@@ -308,16 +308,21 @@ def apply_protocol_holds(
 
 
 def kick_excess_xray_ips(dbuser: User) -> None:
-    """Best-effort: drop all Xray sessions when live online IP count exceeds 1."""
+    """Best-effort: reset Xray sessions when live online IP count exceeds limit."""
     if is_protocol_held(dbuser, PROTO_XRAY):
         return
+    limit = getattr(dbuser, "device_limit", None)
+    try:
+        cap = int(limit) if limit is not None and int(limit) > 0 else 1
+    except (TypeError, ValueError):
+        cap = 1
     try:
         from app.utils.device_limit import _xray_online_device_count
 
         n = _xray_online_device_count(dbuser)
     except Exception:
         return
-    if n is None or n <= 1:
+    if n is None or n <= cap:
         return
     try:
         from app.xray.operations import update_user

@@ -241,39 +241,19 @@ _KNOWN_CLIENT_UA_RE = re.compile(
 
 
 def _enforce_export_guards(db: Session, dbuser, request: Request) -> None:
-    """Common device/session-limit gate for every route that hands back live
-    connection material (config, .conf files, share links).
+    """Session-limit gate for routes that hand back connection material.
 
-    Previously this was only wired into the main multi-format ``/{token}``
-    route, so a client could freely rack up unlimited devices/sessions by
-    only ever hitting ``/info``, ``/wireguard``, ``/wireguard/prepare``,
-    ``/hysteria2``, ``/tuic``, or ``/anytls`` directly — each of those hands
-    out equally-live material without ever being counted
-    (AUDIT_FINDINGS.md M8). Raises HTTPException(403) if a limit is exceeded.
+    Device limits are enforced **after** a real VPN connection (usage job /
+    live Xray online IPs), not here. Blocking on subscription import made
+    ``device_limit=1`` accounts fail to update when the phone changed IP or
+    the user opened a second client — before they ever connected.
     """
-    from app.utils.device_limit import record_and_check_device_limit
     from app.utils.session_limit import check_session_limit, touch_online
 
     ua = request.headers.get("user-agent") or ""
-    # Browser visits to the subscribe UI (or direct .conf downloads in Chrome)
-    # must not count as VPN devices or bump presence — only real clients do.
     is_browser = bool(re.search(r"(Mozilla|Chrome|Safari|Firefox|Edg)/", ua, re.I)) and not bool(
         _KNOWN_CLIENT_UA_RE.match(ua)
     )
-    if not is_browser:
-        hwid = (
-            request.headers.get("x-hwid")
-            or request.headers.get("x-device-id")
-            or request.headers.get("hwid")
-            or ""
-        )
-        record_and_check_device_limit(
-            db,
-            dbuser,
-            _sub_client_ip(request),
-            user_agent=ua,
-            hwid=hwid,
-        )
     # Expired session is renewed by fetching subscription (the client "reconnect").
     try:
         check_session_limit(dbuser)

@@ -1279,7 +1279,9 @@
     "noTariffs": "No tariffs yet",
     "tariffPriceHint": "Amount debited from the reseller wallet (wholesale)",
     "tariffVolumeGb": "Volume (GB)",
-    "tariffDurationHint": "Leave empty for no fixed duration; set days (30/60/90) to match reseller plans."
+    "tariffDurationHint": "Leave empty for no fixed duration; set days (30/60/90) to match reseller plans.",
+    "tariffDeviceHint": "Если задано — лимит устройств обязателен для реселлера и не меняется. Пусто = свободно.",
+    "tariffSpeedHint": "Если задано — скорость (Mbps) фиксируется для реселлера. Пусто = свободно."
   },
   "automation": {
     "title": "Автоматизация",

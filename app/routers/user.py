@@ -227,10 +227,17 @@ def add_user(
         charge_unlimited_creates,
         prepare_unlimited_create_charge,
     )
+    from app.billing.reseller_tariffs import enforce_reseller_create_locks
+
+    new_user, duration_days = enforce_reseller_create_locks(db, dbadmin, new_user)
 
     try:
         tariff_plan, unit_price = prepare_unlimited_create_charge(
-            db, dbadmin, data_limit=new_user.data_limit, count=1
+            db,
+            dbadmin,
+            data_limit=new_user.data_limit,
+            duration_days=duration_days,
+            count=1,
         )
     except UnlimitedCreateChargeError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
@@ -325,10 +332,17 @@ def add_user_from_template(
         charge_unlimited_creates,
         prepare_unlimited_create_charge,
     )
+    from app.billing.reseller_tariffs import enforce_reseller_create_locks
+
+    new_user, duration_days = enforce_reseller_create_locks(db, dbadmin, new_user)
 
     try:
         tariff_plan, unit_price = prepare_unlimited_create_charge(
-            db, dbadmin, data_limit=new_user.data_limit, count=1
+            db,
+            dbadmin,
+            data_limit=new_user.data_limit,
+            duration_days=duration_days,
+            count=1,
         )
     except UnlimitedCreateChargeError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
@@ -407,13 +421,21 @@ def bulk_users_from_template(
         charge_unlimited_creates,
         prepare_unlimited_create_charge,
     )
+    from app.billing.reseller_tariffs import (
+        duration_days_from_expire,
+        enforce_reseller_create_locks,
+    )
     from app.subscription.panel_balance import bind_user_to_panel, resolve_panel_for_create
 
+    # Probe duration from template expire so 30-day unlimited tariffs match.
+    probe = _user_create_from_db_template(db_tpl, username="probeuserxx", status=status)
+    duration_days = duration_days_from_expire(getattr(probe, "expire", None))
     try:
         tariff_plan, unit_price = prepare_unlimited_create_charge(
             db,
             dbadmin,
             data_limit=getattr(db_tpl, "data_limit", None),
+            duration_days=duration_days,
             count=int(body.count),
         )
     except UnlimitedCreateChargeError as exc:
@@ -435,6 +457,7 @@ def bulk_users_from_template(
             )
             if balanced_username != new_user.username:
                 new_user = new_user.model_copy(update={"username": balanced_username})
+            new_user, _ = enforce_reseller_create_locks(db, dbadmin, new_user)
             for ptype in new_user.proxies:
                 _ensure_protocol_enabled(ptype, db)
             dbuser = crud.create_user(db, new_user, admin=dbadmin)
@@ -792,6 +815,35 @@ def modify_user(
 
     for proxy_type in modified_user.proxies:
         _ensure_protocol_enabled(proxy_type, db)
+
+    # Reseller cannot override master-locked device/speed from wholesale tariff.
+    if not admin.is_sudo:
+        from app.billing.reseller_tariffs import (
+            apply_locked_limits_to_user_payload,
+            duration_days_from_expire,
+            resolve_locked_limits_for_admin,
+        )
+
+        dbadmin = crud.get_admin(db, admin.username)
+        next_data_limit = (
+            modified_user.data_limit
+            if "data_limit" in modified_user.model_fields_set
+            else dbuser.data_limit
+        )
+        next_expire = (
+            modified_user.expire
+            if "expire" in modified_user.model_fields_set
+            else dbuser.expire
+        )
+        locks = resolve_locked_limits_for_admin(
+            db,
+            dbadmin,
+            data_limit=next_data_limit,
+            duration_days=duration_days_from_expire(next_expire),
+            expire=next_expire,
+        )
+        if locks:
+            modified_user = apply_locked_limits_to_user_payload(modified_user, locks)
 
     old_status = dbuser.status
     old_speed_up = dbuser.speed_limit_up

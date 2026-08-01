@@ -867,6 +867,9 @@ class ResellerPlanTariff(Base):
     account or their customer buys/renews a matching commercial plan, this
     ``price`` is debited from the reseller wallet. ``data_limit`` null/0 =
     unlimited; otherwise volume in bytes. Never shown in the customer portal.
+
+    ``device_limit`` / ``speed_limit_*`` (Mbps) when set are forced onto
+    reseller-created accounts and cannot be changed by the reseller.
     """
 
     __tablename__ = "reseller_plan_tariffs"
@@ -876,6 +879,9 @@ class ResellerPlanTariff(Base):
     price = Column(BigInteger, nullable=False, default=0)
     data_limit = Column(BigInteger, nullable=True)   # null/0 = unlimited
     duration_days = Column(Integer, nullable=True)
+    device_limit = Column(Integer, nullable=True)    # null = unlocked for reseller
+    speed_limit_up = Column(BigInteger, nullable=True)    # Mbps; null = unlocked
+    speed_limit_down = Column(BigInteger, nullable=True)  # Mbps; null = unlocked
     enabled = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 

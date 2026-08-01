@@ -1813,7 +1813,9 @@
     "noTariffs": "No tariffs yet",
     "tariffPriceHint": "Amount debited from the reseller wallet (wholesale)",
     "tariffVolumeGb": "Volume (GB)",
-    "tariffDurationHint": "Leave empty for no fixed duration; set days (30/60/90) to match reseller plans."
+    "tariffDurationHint": "Leave empty for no fixed duration; set days (30/60/90) to match reseller plans.",
+    "tariffDeviceHint": "If set, resellers must use this device count on create/edit and cannot change it. Empty = unlocked.",
+    "tariffSpeedHint": "If set, this speed (Mbps) is locked for reseller accounts. Empty = unlocked."
   },
   "automation": {
     "title": "Automation",

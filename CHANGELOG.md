@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.22.21 — 2026-08-01
+
+### Reseller tariff device & speed locks
+
+- Wholesale tariffs (Resellers → Tariffs) can set device limit and upload/download Mbps.
+- When set, matching reseller creates/edits (panel, bulk, template, portal) get those limits forced; resellers cannot override them.
+- Empty fields stay unlocked for the reseller.
+
 ## 0.22.20 — 2026-08-01
 
 ### Master orders queue scoping

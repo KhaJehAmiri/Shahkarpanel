@@ -556,12 +556,17 @@ def bulk_create_users(
         charge_unlimited_creates,
         prepare_unlimited_create_charge,
     )
+    from app.billing.reseller_tariffs import (
+        duration_days_from_expire,
+        enforce_reseller_create_locks,
+    )
 
     try:
         tariff_plan, unit_price = prepare_unlimited_create_charge(
             db,
             dbadmin,
             data_limit=body.data_limit,
+            duration_days=duration_days_from_expire(body.expire),
             count=int(body.count),
         )
     except UnlimitedCreateChargeError as exc:
@@ -630,6 +635,7 @@ def bulk_create_users(
             if panel_ep is not None and _PANEL_SLUG_RE.match((panel_ep.slug or "").strip()):
                 username = ensure_panel_username(username, panel_ep.slug)
             new_user = _user_create_from_bulk_body(body, username=username, db=db)
+            new_user, _ = enforce_reseller_create_locks(db, dbadmin, new_user)
             if enabled_proxies:
                 new_user.proxies = {
                     k: v for k, v in new_user.proxies.items() if k in enabled_proxies

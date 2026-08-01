@@ -137,6 +137,9 @@ type ResellerTariff = {
   price: number;
   data_limit?: number | null;
   duration_days?: number | null;
+  device_limit?: number | null;
+  speed_limit_up?: number | null;
+  speed_limit_down?: number | null;
   enabled: boolean;
   is_unlimited?: boolean;
 };
@@ -195,6 +198,8 @@ const ResellerTariffsTab: FC = () => {
                   <th className="sk-num">{t("billing.price")}</th>
                   <th className="sk-num">{t("billing.dataLimit")}</th>
                   <th className="sk-num">{t("billing.duration", "Duration (days)")}</th>
+                  <th className="sk-num">{t("users.devices", "Devices")}</th>
+                  <th className="sk-num">{t("users.speedDown", "Speed ↓")}</th>
                   <th>{t("common.status")}</th>
                   <th className="sk-actions">{t("common.actions")}</th>
                 </tr>
@@ -206,6 +211,12 @@ const ResellerTariffsTab: FC = () => {
                     <td className="sk-num">{Number(row.price || 0).toLocaleString()}</td>
                     <td className="sk-num">{volumeLabel(row)}</td>
                     <td className="sk-num">{row.duration_days ?? "—"}</td>
+                    <td className="sk-num">{row.device_limit ?? "—"}</td>
+                    <td className="sk-num">
+                      {row.speed_limit_down != null || row.speed_limit_up != null
+                        ? `${row.speed_limit_down ?? "—"}/${row.speed_limit_up ?? "—"}`
+                        : "—"}
+                    </td>
                     <td>
                       <Pill tone={row.enabled ? "ok" : "default"}>
                         {row.enabled ? t("common.enabled") : t("common.disabled")}
@@ -255,6 +266,9 @@ const ResellerTariffModal: FC<{
       ? String(Math.round(Number(initial.data_limit) / (1024 ** 3) * 1000) / 1000)
       : "",
     durationDays: initial?.duration_days != null ? String(initial.duration_days) : "",
+    deviceLimit: initial?.device_limit != null ? String(initial.device_limit) : "",
+    speedDown: initial?.speed_limit_down != null ? String(initial.speed_limit_down) : "",
+    speedUp: initial?.speed_limit_up != null ? String(initial.speed_limit_up) : "",
     enabled: initial?.enabled ?? true,
   });
   const upd = (k: string) => (e: any) => {
@@ -272,6 +286,9 @@ const ResellerTariffModal: FC<{
           ? null
           : Math.round(parseFloat(f.volumeGb || "0") * (1024 ** 3)) || null,
         duration_days: f.durationDays.trim() ? parseInt(f.durationDays, 10) : null,
+        device_limit: f.deviceLimit.trim() ? parseInt(f.deviceLimit, 10) : null,
+        speed_limit_down: f.speedDown.trim() ? parseInt(f.speedDown, 10) : null,
+        speed_limit_up: f.speedUp.trim() ? parseInt(f.speedUp, 10) : null,
         enabled: !!f.enabled,
       };
       if (!payload.name) throw new Error(t("common.required"));
@@ -317,6 +334,17 @@ const ResellerTariffModal: FC<{
         <Field label={t("billing.duration", "Duration (days)")} hint={t("resellers.tariffDurationHint")}>
           <Input type="number" value={f.durationDays} onChange={upd("durationDays")} placeholder="30" />
         </Field>
+        <Field label={t("users.devices", "Device limit")} hint={t("resellers.tariffDeviceHint")}>
+          <Input type="number" min={1} value={f.deviceLimit} onChange={upd("deviceLimit")} placeholder="∞" />
+        </Field>
+        <div className="sk-form-grid">
+          <Field label={t("users.speedDown", "Download Mbps")} hint={t("resellers.tariffSpeedHint")}>
+            <Input type="number" min={1} value={f.speedDown} onChange={upd("speedDown")} placeholder="∞" />
+          </Field>
+          <Field label={t("users.speedUp", "Upload Mbps")}>
+            <Input type="number" min={1} value={f.speedUp} onChange={upd("speedUp")} placeholder="∞" />
+          </Field>
+        </div>
         <label className="sk-row" style={{ gap: 8, alignItems: "center" }}>
           <input type="checkbox" checked={f.enabled} onChange={upd("enabled")} />
           <span>{t("common.enabled")}</span>

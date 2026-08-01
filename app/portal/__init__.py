@@ -46,6 +46,10 @@ def apply_plan_to_user(db: Session, user: User, plan: Plan) -> User:
     user's previous volume cap (that left renewals updating only the expiry).
     """
     from app.db import crud
+    from app.billing.reseller_tariffs import (
+        locked_limit_overrides,
+        match_tariff_for_plan,
+    )
 
     new_expire = compute_renewal_expire(user, plan)
     # None = unlimited. Do not preserve the prior volume package.
@@ -54,14 +58,31 @@ def apply_plan_to_user(db: Session, user: User, plan: Plan) -> User:
     if int(user.used_traffic or 0) > 0:
         user = crud.reset_user_data_usage(db, user)
 
-    modify = UserModify(
+    device_limit = plan.device_limit
+    speed_up = None
+    speed_down = None
+    tariff = match_tariff_for_plan(db, plan)
+    locks = locked_limit_overrides(tariff)
+    if "device_limit" in locks:
+        device_limit = locks["device_limit"]
+    if "speed_limit_up" in locks:
+        speed_up = locks["speed_limit_up"]
+    if "speed_limit_down" in locks:
+        speed_down = locks["speed_limit_down"]
+
+    modify_kwargs = dict(
         expire=new_expire if new_expire is not None else 0,
         data_limit=new_data_limit if new_data_limit is not None else 0,
         status=UserStatusModify.active,
         proxies={},
         inbounds={},
-        device_limit=plan.device_limit,
+        device_limit=device_limit,
     )
+    if speed_up is not None:
+        modify_kwargs["speed_limit_up"] = speed_up
+    if speed_down is not None:
+        modify_kwargs["speed_limit_down"] = speed_down
+    modify = UserModify(**modify_kwargs)
     user = crud.update_user(db, user, modify)
     return user
 
@@ -190,17 +211,38 @@ def create_account_from_plan(
     expire = compute_fresh_expire(plan)
     data_limit = plan.data_limit if plan.data_limit is not None else 0
 
+    device_limit = plan.device_limit
+    speed_up = None
+    speed_down = None
     try:
-        new_user = UserCreate(
+        from app.billing.reseller_tariffs import locked_limit_overrides, match_tariff_for_plan
+
+        locks = locked_limit_overrides(match_tariff_for_plan(db, plan))
+        if "device_limit" in locks:
+            device_limit = locks["device_limit"]
+        if "speed_limit_up" in locks:
+            speed_up = locks["speed_limit_up"]
+        if "speed_limit_down" in locks:
+            speed_down = locks["speed_limit_down"]
+    except Exception:
+        pass
+
+    try:
+        create_kwargs = dict(
             username=username,
             proxies=proxies,
             inbounds=inbounds,
             expire=expire or 0,
             data_limit=data_limit or 0,
             status=UserStatusCreate.active,
-            device_limit=plan.device_limit,
+            device_limit=device_limit,
             portal_enabled=False,
         )
+        if speed_up is not None:
+            create_kwargs["speed_limit_up"] = speed_up
+        if speed_down is not None:
+            create_kwargs["speed_limit_down"] = speed_down
+        new_user = UserCreate(**create_kwargs)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

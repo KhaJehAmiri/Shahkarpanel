@@ -1279,7 +1279,9 @@
     "noTariffs": "No tariffs yet",
     "tariffPriceHint": "Amount debited from the reseller wallet (wholesale)",
     "tariffVolumeGb": "Volume (GB)",
-    "tariffDurationHint": "Leave empty for no fixed duration; set days (30/60/90) to match reseller plans."
+    "tariffDurationHint": "Leave empty for no fixed duration; set days (30/60/90) to match reseller plans.",
+    "tariffDeviceHint": "若填写，代理商创建/编辑账号时必须使用该设备数且不可改。空=不锁定。",
+    "tariffSpeedHint": "若填写，代理商账号速度(Mbps)锁定。空=不锁定。"
   },
   "automation": {
     "title": "自动化",

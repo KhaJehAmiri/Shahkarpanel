@@ -493,6 +493,9 @@ class ResellerPlanTariffCreate(BaseModel):
     price: int = 0
     data_limit: Optional[int] = None
     duration_days: Optional[int] = None
+    device_limit: Optional[int] = None
+    speed_limit_up: Optional[int] = None
+    speed_limit_down: Optional[int] = None
     enabled: bool = True
 
 
@@ -501,6 +504,9 @@ class ResellerPlanTariffModify(BaseModel):
     price: Optional[int] = None
     data_limit: Optional[int] = None
     duration_days: Optional[int] = None
+    device_limit: Optional[int] = None
+    speed_limit_up: Optional[int] = None
+    speed_limit_down: Optional[int] = None
     enabled: Optional[bool] = None
 
 
@@ -512,6 +518,9 @@ class ResellerPlanTariffResponse(BaseModel):
     price: int
     data_limit: Optional[int] = None
     duration_days: Optional[int] = None
+    device_limit: Optional[int] = None
+    speed_limit_up: Optional[int] = None
+    speed_limit_down: Optional[int] = None
     enabled: bool = True
     created_at: Optional[datetime] = None
     is_unlimited: bool = False
@@ -546,6 +555,9 @@ def create_reseller_plan_tariff(
             price=body.price,
             data_limit=body.data_limit,
             duration_days=body.duration_days,
+            device_limit=body.device_limit,
+            speed_limit_up=body.speed_limit_up,
+            speed_limit_down=body.speed_limit_down,
             enabled=body.enabled,
         )
     except ResellerTariffError as exc:

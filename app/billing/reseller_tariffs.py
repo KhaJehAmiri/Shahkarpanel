@@ -54,6 +54,20 @@ def get_tariff(db: Session, tariff_id: int) -> Optional[ResellerPlanTariff]:
     return db.query(ResellerPlanTariff).filter(ResellerPlanTariff.id == tariff_id).first()
 
 
+def _normalize_positive_int(value, *, allow_zero: bool = False) -> Optional[int]:
+    if value is None or value == "":
+        return None
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return None
+    if n < 0:
+        return None
+    if n == 0 and not allow_zero:
+        return None
+    return n
+
+
 def create_tariff(
     db: Session,
     *,
@@ -61,6 +75,9 @@ def create_tariff(
     price: int,
     data_limit: Optional[int] = None,
     duration_days: Optional[int] = None,
+    device_limit: Optional[int] = None,
+    speed_limit_up: Optional[int] = None,
+    speed_limit_down: Optional[int] = None,
     enabled: bool = True,
 ) -> ResellerPlanTariff:
     name = (name or "").strip()
@@ -71,6 +88,9 @@ def create_tariff(
         price=max(0, int(price or 0)),
         data_limit=normalize_data_limit(data_limit),
         duration_days=int(duration_days) if duration_days not in (None, "") else None,
+        device_limit=_normalize_positive_int(device_limit),
+        speed_limit_up=_normalize_positive_int(speed_limit_up),
+        speed_limit_down=_normalize_positive_int(speed_limit_down),
         enabled=bool(enabled),
         created_at=datetime.utcnow(),
     )
@@ -90,6 +110,9 @@ def update_tariff(
     price: Optional[int] = None,
     data_limit: Any = ...,
     duration_days: Any = ...,
+    device_limit: Any = ...,
+    speed_limit_up: Any = ...,
+    speed_limit_down: Any = ...,
     enabled: Optional[bool] = None,
 ) -> ResellerPlanTariff:
     if name is not None:
@@ -107,6 +130,12 @@ def update_tariff(
         else:
             d = int(duration_days)
             row.duration_days = d if d > 0 else None
+    if device_limit is not ...:
+        row.device_limit = _normalize_positive_int(device_limit)
+    if speed_limit_up is not ...:
+        row.speed_limit_up = _normalize_positive_int(speed_limit_up)
+    if speed_limit_down is not ...:
+        row.speed_limit_down = _normalize_positive_int(speed_limit_down)
     if enabled is not None:
         row.enabled = bool(enabled)
     db.commit()
@@ -126,10 +155,86 @@ def tariff_to_dict(row: ResellerPlanTariff) -> Dict[str, Any]:
         "price": int(row.price or 0),
         "data_limit": row.data_limit,
         "duration_days": row.duration_days,
+        "device_limit": row.device_limit,
+        "speed_limit_up": int(row.speed_limit_up) if row.speed_limit_up is not None else None,
+        "speed_limit_down": int(row.speed_limit_down) if row.speed_limit_down is not None else None,
         "enabled": bool(row.enabled),
         "created_at": row.created_at,
         "is_unlimited": is_unlimited_data_limit(row.data_limit),
     }
+
+
+def locked_limit_overrides(tariff: Optional[ResellerPlanTariff]) -> Dict[str, Any]:
+    """Fields master locked on this tariff — applied to reseller create/edit."""
+    if tariff is None:
+        return {}
+    out: Dict[str, Any] = {}
+    if tariff.device_limit is not None and int(tariff.device_limit) > 0:
+        out["device_limit"] = int(tariff.device_limit)
+    if tariff.speed_limit_up is not None and int(tariff.speed_limit_up) > 0:
+        out["speed_limit_up"] = int(tariff.speed_limit_up)
+    if tariff.speed_limit_down is not None and int(tariff.speed_limit_down) > 0:
+        out["speed_limit_down"] = int(tariff.speed_limit_down)
+    return out
+
+
+def duration_days_from_expire(expire) -> Optional[int]:
+    """Best-effort days remaining from a unix expire timestamp."""
+    if expire in (None, 0, "0"):
+        return None
+    try:
+        ts = int(expire)
+    except (TypeError, ValueError):
+        return None
+    if ts <= 0:
+        return None
+    secs = ts - int(datetime.utcnow().timestamp())
+    if secs <= 0:
+        return None
+    days = int(round(secs / 86400.0))
+    return days if days > 0 else None
+
+
+def resolve_locked_limits_for_admin(
+    db: Session,
+    admin: Optional[Admin],
+    *,
+    data_limit=None,
+    duration_days: Optional[int] = None,
+    expire=None,
+    commercial_plan: Optional[Plan] = None,
+) -> Dict[str, Any]:
+    """For non-sudo resellers, return device/speed locks from matching tariff."""
+    if admin is None or getattr(admin, "is_sudo", False):
+        return {}
+    if commercial_plan is not None:
+        tariff = match_tariff_for_plan(db, commercial_plan)
+    else:
+        dur = duration_days
+        if dur is None:
+            dur = duration_days_from_expire(expire)
+        tariff = match_tariff(db, data_limit=data_limit, duration_days=dur)
+    return locked_limit_overrides(tariff)
+
+
+def apply_locked_limits_to_user_payload(payload, overrides: Dict[str, Any]):
+    """Force locked fields onto a Pydantic user create/modify model."""
+    if not overrides:
+        return payload
+    return payload.model_copy(update=overrides)
+
+
+def enforce_reseller_create_locks(db: Session, admin: Optional[Admin], new_user):
+    """Force master-locked device/speed onto a UserCreate for resellers."""
+    duration_days = duration_days_from_expire(getattr(new_user, "expire", None))
+    locks = resolve_locked_limits_for_admin(
+        db,
+        admin,
+        data_limit=getattr(new_user, "data_limit", None),
+        duration_days=duration_days,
+        expire=getattr(new_user, "expire", None),
+    )
+    return apply_locked_limits_to_user_payload(new_user, locks), duration_days
 
 
 def match_tariff(

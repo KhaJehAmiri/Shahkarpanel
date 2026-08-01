@@ -187,6 +187,16 @@ class User(Base):
         Boolean, nullable=False, server_default=text("false"), default=False
     )
 
+    # Last wholesale tariff debited for this account (anti create-then-edit bypass).
+    reseller_tariff_charged_id = Column(
+        Integer,
+        ForeignKey("reseller_plan_tariffs.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    # Expire timestamp that was covered by that charge (renew if new expire exceeds it).
+    reseller_tariff_charged_expire = Column(Integer, nullable=True)
+
     # SigmaGuard client profile (phase A): 'gamer' | 'trader' | 'normal'.
     # Drives protocol priority and node-selection policy in the client API.
     client_profile = Column(

@@ -390,11 +390,13 @@ def prepare_reseller_tariff_charge(
     duration_days: Optional[int] = None,
     commercial_plan: Optional[Plan] = None,
     count: int = 1,
+    require_match: bool = True,
 ) -> Tuple[Optional[ResellerPlanTariff], int]:
     """Validate wallet for ``count`` matching wholesale tariffs.
 
     Returns ``(tariff, unit_price)``. No matching tariff / sudo / billing off →
-    ``(None, 0)``. Insufficient balance → ``ResellerTariffError`` 402.
+    ``(None, 0)`` unless ``require_match`` and a relevant tariff catalog exists
+    (then ``ResellerTariffError`` 400). Insufficient balance → 402.
     """
     if admin is None or getattr(admin, "is_sudo", False):
         return None, 0
@@ -407,11 +409,17 @@ def prepare_reseller_tariff_charge(
         return None, 0
 
     if commercial_plan is not None:
+        data_limit = getattr(commercial_plan, "data_limit", data_limit)
+        duration_days = getattr(commercial_plan, "duration_days", duration_days)
         tariff = match_tariff_for_plan(db, commercial_plan)
     else:
         tariff = match_tariff(db, data_limit=data_limit, duration_days=duration_days)
 
     if tariff is None:
+        if require_match:
+            assert_reseller_shape_allowed(
+                db, admin, data_limit=data_limit, duration_days=duration_days
+            )
         return None, 0
 
     price = int(tariff.price or 0)
@@ -425,6 +433,320 @@ def prepare_reseller_tariff_charge(
     if int(wallet.balance or 0) < total:
         raise ResellerTariffError(
             f"Insufficient wallet balance — need {total} for {count}× «{tariff.name}», "
+            f"have {wallet.balance}",
+            status_code=402,
+        )
+    return tariff, price
+
+
+def _norm_expire(expire) -> Optional[int]:
+    if expire in (None, 0, "0"):
+        return None
+    try:
+        ts = int(expire)
+    except (TypeError, ValueError):
+        return None
+    return ts if ts > 0 else None
+
+
+def assert_reseller_shape_allowed(
+    db: Session,
+    admin: Optional[Admin],
+    *,
+    data_limit=None,
+    duration_days: Optional[int] = None,
+) -> None:
+    """Reject shapes that bypass the wholesale catalog when tariffs exist."""
+    if admin is None or getattr(admin, "is_sudo", False):
+        return
+    from app import feature_flags
+
+    if not feature_flags.is_enabled("billing"):
+        return
+
+    tariffs = list_tariffs(db, enabled_only=True)
+    if not tariffs:
+        return
+
+    if match_tariff(db, data_limit=data_limit, duration_days=duration_days) is not None:
+        return
+
+    if is_unlimited_data_limit(data_limit):
+        ul = [t for t in tariffs if is_unlimited_data_limit(t.data_limit)]
+        if not ul:
+            return
+        examples = sorted(
+            {
+                int(t.duration_days)
+                for t in ul
+                if t.duration_days is not None and int(t.duration_days) > 0
+            }
+        )
+        hint = (
+            f" (e.g. {', '.join(str(d) + ' days' for d in examples)})"
+            if examples
+            else ""
+        )
+        raise ResellerTariffError(
+            "Unlimited accounts must use a duration that matches a wholesale tariff"
+            + hint
+            + ". Creating without expiry (or a non-matching duration) is not allowed.",
+            status_code=400,
+        )
+
+    vol = [t for t in tariffs if not is_unlimited_data_limit(t.data_limit)]
+    if vol:
+        raise ResellerTariffError(
+            "No wholesale tariff matches this data limit / duration. "
+            "Pick a volume and period that exists under Resellers → Tariffs.",
+            status_code=400,
+        )
+
+
+def billable_duration_candidates(
+    old_expire, new_expire
+) -> List[int]:
+    """Possible package lengths for a modify that touches expiry."""
+    now = int(datetime.utcnow().timestamp())
+    old_e = _norm_expire(old_expire)
+    new_e = _norm_expire(new_expire)
+    if new_e is None:
+        return []
+    out: List[int] = []
+    from_now = int(round((new_e - now) / 86400.0))
+    if from_now > 0:
+        out.append(from_now)
+    if old_e is not None and old_e > now and new_e > old_e + 3600:
+        added = int(round((new_e - old_e) / 86400.0))
+        if added > 0 and added not in out:
+            out.append(added)
+    return out
+
+
+def match_tariff_for_modify(
+    db: Session,
+    *,
+    data_limit=None,
+    old_expire=None,
+    new_expire=None,
+) -> Optional[ResellerPlanTariff]:
+    for dur in billable_duration_candidates(old_expire, new_expire):
+        hit = match_tariff(db, data_limit=data_limit, duration_days=dur)
+        if hit is not None:
+            return hit
+    # Data-limit-only change (no expiry extension): match remaining duration shape.
+    old_e = _norm_expire(old_expire)
+    new_e = _norm_expire(new_expire)
+    if old_e == new_e or (
+        old_e is not None
+        and new_e is not None
+        and abs(int(new_e) - int(old_e)) <= 3600
+    ):
+        dur = duration_days_from_expire(new_expire)
+        return match_tariff(db, data_limit=data_limit, duration_days=dur)
+    return None
+
+
+def assert_reseller_modify_shape_allowed(
+    db: Session,
+    admin: Optional[Admin],
+    *,
+    old_data_limit=None,
+    old_expire=None,
+    next_data_limit=None,
+    next_expire=None,
+) -> None:
+    """Block clearing expiry / open-ended unlimited when timed tariffs exist."""
+    if admin is None or getattr(admin, "is_sudo", False):
+        return
+    from app import feature_flags
+
+    if not feature_flags.is_enabled("billing"):
+        return
+
+    tariffs = list_tariffs(db, enabled_only=True)
+    if not tariffs:
+        return
+
+    old_e = _norm_expire(old_expire)
+    new_e = _norm_expire(next_expire)
+    # Removing expiry on an unlimited account while timed unlimited tariffs exist.
+    if (
+        old_e is not None
+        and new_e is None
+        and is_unlimited_data_limit(next_data_limit)
+    ):
+        timed_ul = [
+            t
+            for t in tariffs
+            if is_unlimited_data_limit(t.data_limit)
+            and t.duration_days is not None
+            and int(t.duration_days) > 0
+        ]
+        if timed_ul:
+            raise ResellerTariffError(
+                "Cannot remove expiry on unlimited accounts while wholesale "
+                "duration tariffs are configured — renew with a matching period instead.",
+                status_code=400,
+            )
+
+    # Extending / setting expiry without a matching tariff.
+    candidates = billable_duration_candidates(old_expire, next_expire)
+    if not candidates and normalize_data_limit(old_data_limit) == normalize_data_limit(
+        next_data_limit
+    ):
+        return
+
+    if match_tariff_for_modify(
+        db,
+        data_limit=next_data_limit,
+        old_expire=old_expire,
+        new_expire=next_expire,
+    ) is not None:
+        return
+
+    if candidates and is_unlimited_data_limit(next_data_limit):
+        ul = [t for t in tariffs if is_unlimited_data_limit(t.data_limit)]
+        if ul:
+            raise ResellerTariffError(
+                "Expiry must match a wholesale tariff duration "
+                "(extension/set does not match 30/60/90…).",
+                status_code=400,
+            )
+
+    if normalize_data_limit(old_data_limit) != normalize_data_limit(next_data_limit):
+        assert_reseller_shape_allowed(
+            db,
+            admin,
+            data_limit=next_data_limit,
+            duration_days=duration_days_from_expire(next_expire),
+        )
+
+
+def should_charge_reseller_modify(
+    dbuser,
+    tariff: ResellerPlanTariff,
+    *,
+    next_expire=None,
+    old_expire=None,
+    old_data_limit=None,
+    next_data_limit=None,
+) -> bool:
+    """Whether this modify should debit wallet (anti double-charge)."""
+    if tariff is None:
+        return False
+    paid_id = getattr(dbuser, "reseller_tariff_charged_id", None)
+    paid_expire = _norm_expire(getattr(dbuser, "reseller_tariff_charged_expire", None))
+    new_e = _norm_expire(next_expire)
+    old_e = _norm_expire(old_expire)
+
+    extended = bool(
+        new_e is not None
+        and (
+            old_e is None
+            or old_e <= int(datetime.utcnow().timestamp())
+            or new_e > old_e + 3600
+        )
+    )
+    data_changed = normalize_data_limit(old_data_limit) != normalize_data_limit(
+        next_data_limit
+    )
+
+    if paid_id is None:
+        return extended or data_changed
+
+    if extended:
+        if paid_expire is None:
+            return True
+        if new_e is not None and new_e > int(paid_expire) + 3600:
+            return True
+        # Extended but still within already-paid window (clock skew / no-op).
+        return False
+
+    if data_changed and int(paid_id) != int(tariff.id):
+        return True
+    return False
+
+
+def mark_user_tariff_charged(dbuser, tariff: Optional[ResellerPlanTariff]) -> None:
+    if tariff is None or dbuser is None:
+        return
+    dbuser.reseller_tariff_charged_id = int(tariff.id)
+    dbuser.reseller_tariff_charged_expire = _norm_expire(getattr(dbuser, "expire", None))
+
+
+def mark_users_tariff_charged(
+    db: Session,
+    usernames: Sequence[str],
+    tariff: Optional[ResellerPlanTariff],
+) -> None:
+    if tariff is None or not usernames:
+        return
+    from app.db.models import User
+
+    rows = db.query(User).filter(User.username.in_(list(usernames))).all()
+    for row in rows:
+        mark_user_tariff_charged(row, tariff)
+    db.commit()
+
+
+def prepare_reseller_modify_charge(
+    db: Session,
+    admin: Optional[Admin],
+    dbuser,
+    *,
+    next_data_limit=None,
+    next_expire=None,
+) -> Tuple[Optional[ResellerPlanTariff], int]:
+    """Wallet check for a reseller edit that upgrades/renews into a tariff."""
+    if admin is None or getattr(admin, "is_sudo", False):
+        return None, 0
+    from app import feature_flags
+
+    if not feature_flags.is_enabled("billing"):
+        return None, 0
+
+    old_data = getattr(dbuser, "data_limit", None)
+    old_expire = getattr(dbuser, "expire", None)
+
+    assert_reseller_modify_shape_allowed(
+        db,
+        admin,
+        old_data_limit=old_data,
+        old_expire=old_expire,
+        next_data_limit=next_data_limit,
+        next_expire=next_expire,
+    )
+
+    tariff = match_tariff_for_modify(
+        db,
+        data_limit=next_data_limit,
+        old_expire=old_expire,
+        new_expire=next_expire,
+    )
+    if tariff is None:
+        return None, 0
+
+    if not should_charge_reseller_modify(
+        dbuser,
+        tariff,
+        next_expire=next_expire,
+        old_expire=old_expire,
+        old_data_limit=old_data,
+        next_data_limit=next_data_limit,
+    ):
+        return None, 0
+
+    price = int(tariff.price or 0)
+    if price <= 0:
+        return tariff, 0
+
+    from app.billing import get_or_create_wallet
+
+    wallet = get_or_create_wallet(db, admin.id)
+    if int(wallet.balance or 0) < price:
+        raise ResellerTariffError(
+            f"Insufficient wallet balance — need {price} for «{tariff.name}», "
             f"have {wallet.balance}",
             status_code=402,
         )
@@ -452,6 +774,7 @@ def charge_reseller_tariff(
     sample = usernames[0] if n == 1 else f"{usernames[0]} +{n - 1} more"
     label = {
         "create": "Reseller tariff create",
+        "modify": "Reseller tariff modify/renew",
         "portal_purchase": "Reseller tariff portal purchase",
         "portal_renew": "Reseller tariff portal renew",
     }.get(event, f"Reseller tariff {event}")
@@ -483,10 +806,17 @@ def charge_portal_plan_tariff(
         return None
 
     tariff, unit = prepare_reseller_tariff_charge(
-        db, admin, commercial_plan=commercial_plan, count=1
+        db, admin, commercial_plan=commercial_plan, count=1, require_match=True
     )
-    if tariff is None or unit <= 0:
+    if tariff is None:
         return None
-    return charge_reseller_tariff(
-        db, admin, tariff=tariff, unit_price=unit, usernames=[username], event=event
-    )
+    tx = None
+    if unit > 0:
+        tx = charge_reseller_tariff(
+            db, admin, tariff=tariff, unit_price=unit, usernames=[username], event=event
+        )
+    dbuser = crud.get_user(db, username)
+    if dbuser is not None:
+        mark_user_tariff_charged(dbuser, tariff)
+        db.commit()
+    return tx

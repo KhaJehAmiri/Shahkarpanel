@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.22.23 — 2026-08-01
+
+### Close reseller tariff bypass (create free → set expiry later)
+
+- When wholesale tariffs exist, reseller unlimited creates must match a tariff duration (e.g. 30/60/90); open-ended unlimited create is rejected.
+- Editing an account to add/extend expiry (or change into a matching shape) debits the matching wholesale tariff; clearing expiry on unlimited accounts is blocked while timed tariffs exist.
+- Each user stores the last charged tariff id + covered expire so renewals charge again but note-only edits do not double-bill.
+- Portal buy/renew of non-matching unlimited plans is rejected the same way.
+
 ## 0.22.22 — 2026-08-01
 
 ### Device limit locks actually reach portal + mismatched plans

@@ -78,9 +78,20 @@ def charge_unlimited_creates(
     event: str = "create",
 ):
     if isinstance(plan, ResellerPlanTariff):
-        return charge_reseller_tariff(
-            db, admin, tariff=plan, unit_price=unit_price, usernames=usernames, event=event
-        )
+        from app.billing.reseller_tariffs import mark_users_tariff_charged
+
+        tx = None
+        if unit_price > 0:
+            tx = charge_reseller_tariff(
+                db,
+                admin,
+                tariff=plan,
+                unit_price=unit_price,
+                usernames=usernames,
+                event=event,
+            )
+        mark_users_tariff_charged(db, usernames, plan)
+        return tx
     # Legacy Plan object — ignore; tariffs are separate.
     return None
 

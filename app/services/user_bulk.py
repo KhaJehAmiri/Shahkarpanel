@@ -689,6 +689,10 @@ def bulk_create_users(
             unit_price=unit_price,
             usernames=created,
         )
+    elif created and tariff_plan is not None:
+        from app.billing.reseller_tariffs import mark_users_tariff_charged
+
+        mark_users_tariff_charged(db, created, tariff_plan)
 
     if created:
         needs_full = bool(body.speed_limit_up or body.speed_limit_down)

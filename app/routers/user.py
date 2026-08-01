@@ -264,6 +264,11 @@ def add_user(
             unit_price=unit_price,
             usernames=[dbuser.username],
         )
+    elif tariff_plan is not None:
+        from app.billing.reseller_tariffs import mark_user_tariff_charged
+
+        mark_user_tariff_charged(dbuser, tariff_plan)
+        db.commit()
 
     if panel_ep is not None:
         bind_user_to_panel(
@@ -365,6 +370,11 @@ def add_user_from_template(
             unit_price=unit_price,
             usernames=[dbuser.username],
         )
+    elif tariff_plan is not None:
+        from app.billing.reseller_tariffs import mark_user_tariff_charged
+
+        mark_user_tariff_charged(dbuser, tariff_plan)
+        db.commit()
 
     if panel_ep is not None:
         bind_user_to_panel(
@@ -484,6 +494,10 @@ def bulk_users_from_template(
             unit_price=unit_price,
             usernames=created,
         )
+    elif created and tariff_plan is not None:
+        from app.billing.reseller_tariffs import mark_users_tariff_charged
+
+        mark_users_tariff_charged(db, created, tariff_plan)
 
     if created:
         bg.add_task(xray.operations.sync_core_users_async)
@@ -817,10 +831,15 @@ def modify_user(
         _ensure_protocol_enabled(proxy_type, db)
 
     # Reseller cannot override master-locked device/speed from wholesale tariff.
+    # Also debit wallet when edit upgrades/renews into a matching tariff.
+    modify_tariff = None
+    modify_unit_price = 0
     if not admin.is_sudo:
         from app.billing.reseller_tariffs import (
+            ResellerTariffError,
             apply_locked_limits_to_user_payload,
             duration_days_from_expire,
+            prepare_reseller_modify_charge,
             resolve_locked_limits_for_admin,
         )
 
@@ -845,10 +864,41 @@ def modify_user(
         if locks:
             modified_user = apply_locked_limits_to_user_payload(modified_user, locks)
 
+        try:
+            modify_tariff, modify_unit_price = prepare_reseller_modify_charge(
+                db,
+                dbadmin,
+                dbuser,
+                next_data_limit=next_data_limit,
+                next_expire=next_expire,
+            )
+        except ResellerTariffError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
     old_status = dbuser.status
     old_speed_up = dbuser.speed_limit_up
     old_speed_down = dbuser.speed_limit_down
     dbuser = crud.update_user(db, dbuser, modified_user)
+
+    if modify_tariff is not None:
+        from app.billing.reseller_tariffs import (
+            charge_reseller_tariff,
+            mark_user_tariff_charged,
+        )
+
+        if modify_unit_price > 0:
+            dbadmin = crud.get_admin(db, admin.username)
+            charge_reseller_tariff(
+                db,
+                dbadmin,
+                tariff=modify_tariff,
+                unit_price=modify_unit_price,
+                usernames=[dbuser.username],
+                event="modify",
+            )
+        mark_user_tariff_charged(dbuser, modify_tariff)
+        db.commit()
+
     user = _user_response(dbuser)
 
     speed_changed = (

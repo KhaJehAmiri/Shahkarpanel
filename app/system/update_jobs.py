@@ -89,9 +89,49 @@ def _github_raw(path: str) -> str:
     return f"https://raw.githubusercontent.com/{_github_repo()}/{branch}/{path.lstrip('/')}"
 
 
+def _github_token() -> Optional[str]:
+    """Token for private-repo update checks (env or git credential store)."""
+    for key in ("PANEL_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"):
+        val = (os.environ.get(key) or "").strip()
+        if val:
+            return val
+    for path in (
+        _data_dir() / "secrets" / "git-credentials",
+        Path("/root/.git-credentials"),
+        Path.home() / ".git-credentials",
+    ):
+        try:
+            if not path.is_file():
+                continue
+            for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+                line = raw.strip()
+                if "github.com" not in line:
+                    continue
+                # https://user:TOKEN@github.com  or  https://TOKEN@github.com
+                m = re.search(r"https://[^/\s:]+:([^@/\s]+)@github\.com", line)
+                if m:
+                    return m.group(1).strip()
+                m = re.search(r"https://([^:@/\s]+)@github\.com", line)
+                if m:
+                    tok = m.group(1).strip()
+                    if tok and tok not in ("git", "x-access-token"):
+                        return tok
+        except OSError:
+            continue
+    return None
+
+
 def _fetch_text(url: str, timeout: int = 8) -> Optional[str]:
     try:
-        with urlopen(url, timeout=timeout) as resp:
+        from urllib.request import Request
+
+        headers = {}
+        token = _github_token()
+        if token and ("github.com" in url or "githubusercontent.com" in url):
+            headers["Authorization"] = f"Bearer {token}"
+            headers["User-Agent"] = "Shahkar-Panel-Updater"
+        req = Request(url, headers=headers) if headers else url
+        with urlopen(req, timeout=timeout) as resp:
             return resp.read().decode("utf-8", errors="replace").strip()
     except (URLError, OSError, ValueError, TimeoutError):
         return None
@@ -202,12 +242,14 @@ def _remote_sha_https() -> Optional[str]:
     repo = _github_repo()
     branch = _github_branch()
     url = f"https://api.github.com/repos/{repo}/commits/{branch}"
+    raw = _fetch_text(url, timeout=12)
+    if not raw:
+        return None
     try:
-        with urlopen(url, timeout=8) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+        data = json.loads(raw)
         sha = data.get("sha") or ""
         return sha[:7] if sha else None
-    except (URLError, OSError, json.JSONDecodeError, ValueError, KeyError):
+    except (json.JSONDecodeError, TypeError, AttributeError):
         return None
 
 
@@ -1091,21 +1133,43 @@ def _compute_check_updates() -> dict:
             result["current_sha"] = _run_git_locked(["rev-parse", "--short", "HEAD"], timeout=15)
             # Hard timeout: on a filtered/slow network a fetch to github.com can
             # otherwise hang for minutes, blocking the whole check (and the
-            # Install button). Failing fast falls through to the HTTPS path.
+            # Install button). Failing fast falls through to cached origin refs
+            # then authenticated HTTPS.
             # Share ``_git_lock`` with apply so fetch never races ``reset --hard``.
             # 60s: private GitHub + cold TLS on some hosts exceeds the old 12s
             # budget and falsely falls back to unauthenticated HTTPS (no update).
-            _run_git_locked(["fetch", "origin", branch, "--depth", "1"], timeout=60)
-            remote_sha = _run_git_locked(["rev-parse", "--short", f"origin/{branch}"], timeout=15)
-            remote_version = _version_at_git_ref(f"origin/{branch}") or _remote_version_https() or current_version
-            if result["current_sha"] and remote_sha and result["current_sha"] != remote_sha:
-                count_out = _run_git_locked(
-                    ["rev-list", "--count", f"HEAD..origin/{branch}"],
-                    timeout=15,
+            fetch_ok = False
+            try:
+                _run_git_locked(["fetch", "origin", branch, "--depth", "1"], timeout=60)
+                fetch_ok = True
+            except (RuntimeError, subprocess.SubprocessError, OSError):
+                # Auth missing inside the container is common for private repos —
+                # still use origin/* from a previous host-side fetch if present.
+                fetch_ok = False
+            try:
+                remote_sha = _run_git_locked(
+                    ["rev-parse", "--short", f"origin/{branch}"], timeout=15
                 )
-                commits_behind = int(count_out or "0")
-            git_ok = True
-            result["check_source"] = "git"
+            except (RuntimeError, subprocess.SubprocessError, OSError):
+                remote_sha = None
+            remote_version = (
+                _version_at_git_ref(f"origin/{branch}")
+                or _remote_version_https()
+                or current_version
+            )
+            if result["current_sha"] and remote_sha and result["current_sha"] != remote_sha:
+                try:
+                    count_out = _run_git_locked(
+                        ["rev-list", "--count", f"HEAD..origin/{branch}"],
+                        timeout=15,
+                    )
+                    commits_behind = int(count_out or "0")
+                except (RuntimeError, subprocess.SubprocessError, OSError, ValueError):
+                    commits_behind = 1
+            # Treat as git-ok when we learned anything from refs or a successful fetch.
+            if fetch_ok or remote_sha or remote_version != current_version:
+                git_ok = True
+                result["check_source"] = "git" if (fetch_ok or remote_sha) else "github"
         except (RuntimeError, subprocess.SubprocessError, FileNotFoundError, OSError, ValueError):
             git_ok = False
 

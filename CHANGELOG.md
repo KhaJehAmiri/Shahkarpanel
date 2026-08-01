@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.22.18 — 2026-08-01
+
+Private-repo update checks work inside Docker.
+
+- Git credential store under `/var/lib/shahkar/secrets/git-credentials` is read for HTTPS GitHub API/raw when the container has no `~/.git-credentials`.
+- Update check no longer abandons already-fetched `origin/*` refs when `git fetch` fails (common without in-container auth).
+- Authenticated GitHub HTTPS fallback uses `PANEL_GITHUB_TOKEN` / `GITHUB_TOKEN` or the credential store.
+
 ## 0.22.17 — 2026-08-01
 
 Tunnel keep-live / auto-heal for Iran↔abroad relays.

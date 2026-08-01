@@ -89,17 +89,21 @@ def update_sub_reseller(
     parent: Admin,
     child: Admin,
     *,
-    max_users: Optional[int] = None,
-    max_nodes: Optional[int] = None,
+    max_users: Optional[int] = ...,
+    max_nodes: Optional[int] = ...,
     commission_percent: Optional[int] = None,
     password: Optional[str] = None,
 ) -> Admin:
     if child.parent_admin_id != parent.id:
         raise HTTPException(status_code=403, detail="Not your sub-reseller")
-    if max_users is not None:
-        child.max_users = clamp_child_quota(parent.max_users, max_users)
-    if max_nodes is not None:
-        child.max_nodes = clamp_child_quota(parent.max_nodes, max_nodes)
+    if max_users is not ...:
+        child.max_users = (
+            None if max_users is None else clamp_child_quota(parent.max_users, max_users)
+        )
+    if max_nodes is not ...:
+        child.max_nodes = (
+            None if max_nodes is None else clamp_child_quota(parent.max_nodes, max_nodes)
+        )
     if commission_percent is not None:
         child.commission_percent = max(0, min(100, int(commission_percent)))
     if password:

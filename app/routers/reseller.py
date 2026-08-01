@@ -150,8 +150,8 @@ def patch_sub_account(
         db,
         parent,
         child,
-        max_users=body.max_users,
-        max_nodes=body.max_nodes,
+        max_users=body.max_users if "max_users" in body.model_fields_set else ...,
+        max_nodes=body.max_nodes if "max_nodes" in body.model_fields_set else ...,
         commission_percent=body.commission_percent,
         password=body.password,
     )

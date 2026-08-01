@@ -393,9 +393,10 @@ const EditSubReseller: FC<{ account: SubResellerAccount; onClose: () => void; on
     try {
       const body: Record<string, unknown> = {
         commission_percent: parseInt(commission, 10) || 0,
+        // Always send null when cleared so unlimited actually persists.
+        max_users: maxUsers.trim() ? parseInt(maxUsers, 10) : null,
+        max_nodes: maxNodes.trim() ? parseInt(maxNodes, 10) : null,
       };
-      if (maxUsers.trim()) body.max_users = parseInt(maxUsers, 10);
-      if (maxNodes.trim()) body.max_nodes = parseInt(maxNodes, 10);
       if (password.trim()) body.password = password;
       await api.patch(`/reseller/sub-accounts/${encodeURIComponent(account.username)}`, body);
       toast.push(t("common.saved"), "success");
@@ -1075,10 +1076,17 @@ const EditResellerAccount: FC<{ account: ResellerAccount; onClose: () => void; o
   const save = async () => {
     setBusy(true);
     try {
-      const body: Record<string, unknown> = { is_sudo: false, role, centralpay_enabled: centralpay };
-      if (maxUsers.trim()) body.max_users = parseInt(maxUsers, 10);
-      if (maxNodes.trim()) body.max_nodes = parseInt(maxNodes, 10);
-      body.max_total_traffic = maxTraffic.trim() ? Math.round(parseFloat(maxTraffic) * BYTES_PER_GB) : null;
+      const body: Record<string, unknown> = {
+        is_sudo: false,
+        role,
+        centralpay_enabled: centralpay,
+        // Always send these (including null) so clearing a field to ∞ persists.
+        max_users: maxUsers.trim() ? parseInt(maxUsers, 10) : null,
+        max_nodes: maxNodes.trim() ? parseInt(maxNodes, 10) : null,
+        max_total_traffic: maxTraffic.trim()
+          ? Math.round(parseFloat(maxTraffic) * BYTES_PER_GB)
+          : null,
+      };
       if (password.trim()) body.password = password;
       await api.put(`/admin/${encodeURIComponent(account.username)}`, body);
       toast.push(t("common.saved"), "success");

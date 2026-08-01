@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.22.19 — 2026-08-01
+
+### Reseller account edit
+
+- Clearing max users / max nodes / max traffic in the edit form now sends `null` so unlimited quotas actually persist (previously the old limit stayed).
+
 ## 0.22.18 — 2026-08-01
 
 Private-repo update checks work inside Docker.

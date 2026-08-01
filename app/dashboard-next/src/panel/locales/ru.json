@@ -215,7 +215,7 @@
     "walletBlockedBadge": "Blocked",
     "gbRate": "{{rate}} {{currency}} / GB",
     "payTitle": "Payments",
-    "paySubtitle": "Live gateway sales & checkout methods",
+    "paySubtitle": "Checkouts via gateway & card — success, fail, renew, purchase",
     "payToday": "Today",
     "payYesterday": "Yesterday",
     "payWeek": "7 days",
@@ -252,7 +252,48 @@
     "quickAddUser": "Create user",
     "resellerOnlineTitle": "Онлайн пользователей реселлеров",
     "resellerOnlineOpen": "Открыть пользователей",
-    "viewResellerUsers": "Пользователи"
+    "viewResellerUsers": "Пользователи",
+    "paySuccess": "Successful amount",
+    "paySuccessCount": "Successful txns",
+    "paySuccessHint": "{{n}} successful checkouts",
+    "payFailed": "Failed txns",
+    "payFailedHint": "Failed / rejected / expired",
+    "payRenew": "Renewals",
+    "payRenewHint": "{{n}} renewals",
+    "payPurchase": "Purchases",
+    "payPurchaseHint": "{{n}} new accounts",
+    "payLeaderTip": "Renew {{renew}} · Purchase {{purchase}} · Failed {{failed}}",
+    "mrrType": {
+      "usage_billing": "Usage billing",
+      "plan_sale": "Plan sales",
+      "portal_renew": "Portal renew (wallet)",
+      "invoice": "Invoices",
+      "traffic_package": "Traffic packages"
+    },
+    "payDirectSales": "Direct panel sales",
+    "payChartDaily": "Daily successful amount",
+    "payChartDailyHint": "Last 14 days of completed checkouts",
+    "payChartFails": "Failed txns / day",
+    "payChartMix": "Mix for selected period",
+    "payChartMixHint": "Renew vs purchase vs top-up",
+    "payChartResellers": "By reseller / direct",
+    "payChartResellersHint": "{{n}} resellers on this panel",
+    "payResellersEmptyPeriod": "No checkout activity in this period.",
+    "payResellersListed": "{{n}} resellers registered (no portal sales in this filter).",
+    "payResellersCount": "registered resellers",
+    "mrrOpen": "Transactions",
+    "mrrRevenueHint": "Wallet debits from resellers",
+    "mrrFloatHint": "Sum of reseller wallet balances",
+    "mrrUsageShare": "Usage billing",
+    "mrrSubResellersCount": "{{n}} sub-resellers",
+    "mrrChartDaily": "Daily platform income",
+    "mrrChartDailyHint": "Last 14 days of wallet charges",
+    "mrrChartMix": "Income mix",
+    "mrrChartMixHint": "By charge type in this period",
+    "mrrTopHint": "{{n}} resellers — revenue, wallet & prepaid",
+    "mrrResellerSub": "Wallet {{wallet}} · Package {{prepaid}}",
+    "mrrNoRevenue": "No wallet charges in this period",
+    "mrrNoResellers": "No resellers yet"
   },
   "users": {
     "title": "Пользователи",
@@ -1230,7 +1271,15 @@
     "trafficUsed": "Traffic used / cap",
     "creditBalanceHint": "Current wallet balance: {{balance}}",
     "creditNotePlaceholder": "Optional note (e.g. bank transfer ref)",
-    "onlineUsers": "Онлайн"
+    "onlineUsers": "Онлайн",
+    "tabTariffs": "Tariffs",
+    "tariffsHint": "Define reseller wholesale tariffs here (volume or unlimited) — separate from master retail plans. When a reseller creates an account or their customer buys a matching plan, this price is debited from the reseller wallet.",
+    "addTariff": "Add tariff",
+    "editTariff": "Edit tariff",
+    "noTariffs": "No tariffs yet",
+    "tariffPriceHint": "Amount debited from the reseller wallet (wholesale)",
+    "tariffVolumeGb": "Volume (GB)",
+    "tariffDurationHint": "Leave empty for no fixed duration; set days (30/60/90) to match reseller plans."
   },
   "automation": {
     "title": "Автоматизация",
@@ -1426,7 +1475,12 @@
     "platformOwner": "Платформа",
     "resellerPlans": "Реселлер · {{name}}",
     "planOwner": "Каталог",
-    "allPlanCatalogs": "Все каталоги"
+    "allPlanCatalogs": "Все каталоги",
+    "dataLimitUnlimitedHint": "Создайте план с пустым лимитом трафика и ценой, затем укажите его ID. 0 — отключить.",
+    "usageMasterTitle": "Platform owner is not billed",
+    "usageMasterHint": "Usage billing and traffic packages apply only to resellers. Your owner account is never charged for GB usage and does not need to buy packages.",
+    "usageMasterTrafficNote": "Traffic below is from accounts you own directly — informational only, not invoiced.",
+    "usageRateResellerDefault": "Default reseller rate / GB"
   },
   "system": {
     "title": "Система",
@@ -1833,7 +1887,9 @@
       "reseller.sub_reseller_max": "Макс. субреселлеров у родителя",
       "reseller.default_commission_percent": "Комиссия по умолчанию, %",
       "portal.max_child_accounts": "Макс. доп. аккаунтов на логин портала",
-      "billing.currency_label": "Подпись валюты"
+      "billing.currency_label": "Подпись валюты",
+      "billing.reseller_unlimited_plan_id": "ID тарифа безлимитного аккаунта",
+      "billing.reseller_unlimited_plan_ids": "Reseller unlimited wholesale tariffs"
     },
     "hints": {
       "billing.usage_rate_per_gb": "0 отключает автоматический биллинг по ГБ. Используется как ставка PAYG по умолчанию для всех реселлеров.",
@@ -1853,8 +1909,15 @@
       "payment.card_bank": "Необязательное название банка на карточке.",
       "reseller.default_commission_percent": "Применяется при создании субреселлеров без явной комиссии.",
       "billing.currency_label": "Показывается рядом с ценами в портале (например تومان, USD). Суммы совпадают с ценами тарифов — без конвертации в риалы.",
-      "portal.max_child_accounts": "Сколько дополнительных аккаунтов клиент может создать или купить в портале. 0 снимает лимит — один клиент может исчерпать всю квоту реселлера."
-    }
+      "portal.max_child_accounts": "Сколько дополнительных аккаунтов клиент может создать или купить в портале. 0 снимает лимит — один клиент может исчерпать всю квоту реселлера.",
+      "billing.reseller_unlimited_plan_id": "Создайте план с пустым лимитом трафика и ценой, затем укажите его ID. 0 — отключить.",
+      "billing.reseller_unlimited_plan_ids": "Do not select master retail unlimited plans sold to your own customers. Create separate unlimited plans with wholesale prices; when a reseller's customer buys/renews unlimited, the matching-duration tariff is debited from the reseller wallet. These plans are hidden from the master customer portal."
+    },
+    "unlimitedPlansEmpty": "No reseller tariffs yet. Under Billing → Plans create separate unlimited plans (e.g. «Reseller tariff 1 month») with wholesale prices, then select them here.",
+    "unlimitedPlanDays": "{{n}} days",
+    "unlimitedMasterRetailBadge": "Master retail — your own customers",
+    "unlimitedResellerTariffBadge": "Reseller tariff — wallet debit",
+    "resellerTariffsHint": "Reseller tariffs are under Resellers → Tariffs — not under master Plans."
   },
   "errors": {
     "network": "Не удаётся связаться с сервером — проверьте соединение",

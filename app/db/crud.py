@@ -2817,9 +2817,15 @@ def get_plan_by_id(db: Session, plan_id: int) -> Optional[Plan]:
 
 
 def update_plan(db: Session, plan: Plan, **kwargs) -> Plan:
+    # Nullable commercial fields may be cleared back to unlimited / no-expiry
+    # by sending JSON null (exclude_unset=True still includes an explicit null).
+    _clearable = frozenset({"data_limit", "duration_days", "device_limit"})
     for key, value in kwargs.items():
-        if value is not None and hasattr(plan, key):
-            setattr(plan, key, value)
+        if not hasattr(plan, key):
+            continue
+        if value is None and key not in _clearable:
+            continue
+        setattr(plan, key, value)
     db.commit()
     db.refresh(plan)
     return plan

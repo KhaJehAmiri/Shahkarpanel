@@ -69,7 +69,79 @@ async def favicon():
     return FileResponse(path)
 
 
-@app.get("/portal/sw.js", include_in_schema=False)
+def _portal_manifest_body() -> dict:
+    """Installable user portal PWA (separate from admin dashboard)."""
+    # Prefer /brand; also list /sub-assets so install still gets icons if one mount fails.
+    icons = []
+    for purpose in ("any", "maskable"):
+        for size, name in (("192x192", "pwa-192.png"), ("512x512", "pwa-512.png")):
+            icons.append(
+                {
+                    "src": f"/brand/{name}?v=4",
+                    "sizes": size,
+                    "type": "image/png",
+                    "purpose": purpose,
+                }
+            )
+            icons.append(
+                {
+                    "src": f"/sub-assets/brand/{name}?v=4",
+                    "sizes": size,
+                    "type": "image/png",
+                    "purpose": purpose,
+                }
+            )
+    return {
+        "id": "/portal/",
+        "name": "Shahkar",
+        "short_name": "Shahkar",
+        "description": "خرید، تمدید و دریافت کانفیگ",
+        "start_url": "/portal/?source=pwa",
+        "scope": "/portal/",
+        "display": "standalone",
+        "display_override": ["standalone", "minimal-ui"],
+        "background_color": "#0b1220",
+        "theme_color": "#0b1220",
+        "orientation": "portrait-primary",
+        "lang": "fa",
+        "dir": "rtl",
+        "categories": ["utilities"],
+        "prefer_related_applications": False,
+        "icons": icons,
+    }
+
+
+def _write_portal_pwa_files(portal_dir: Path) -> None:
+    """Materialize manifest under the StaticFiles root.
+
+    ``app.mount("/portal", StaticFiles(..., html=True))`` otherwise answers HEAD
+    (and some GET edge cases) with SPA ``404.html`` for missing paths — browsers
+    then install the PWA with no icons.
+    """
+    import json
+
+    try:
+        (portal_dir / "manifest.webmanifest").write_text(
+            json.dumps(_portal_manifest_body(), ensure_ascii=False, separators=(",", ":")),
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        log.warning("Could not write portal manifest: %s", exc)
+    sw_src = _pwa_file("portal-sw.js")
+    if sw_src is not None:
+        try:
+            (portal_dir / "sw.js").write_text(
+                sw_src.read_text(encoding="utf-8"), encoding="utf-8"
+            )
+        except OSError as exc:
+            log.warning("Could not write portal service worker: %s", exc)
+
+
+@app.api_route(
+    "/portal/sw.js",
+    methods=["GET", "HEAD"],
+    include_in_schema=False,
+)
 async def portal_service_worker():
     path = _pwa_file("portal-sw.js")
     if path is None:
@@ -88,56 +160,16 @@ async def portal_service_worker():
     )
 
 
-@app.get("/portal/manifest.webmanifest", include_in_schema=False)
+@app.api_route(
+    "/portal/manifest.webmanifest",
+    methods=["GET", "HEAD"],
+    include_in_schema=False,
+)
 async def portal_web_manifest():
-    """Installable user portal PWA (separate from admin dashboard)."""
     from fastapi.responses import JSONResponse
 
-    body = {
-        "id": "/portal/",
-        "name": "Shahkar",
-        "short_name": "Shahkar",
-        "description": "خرید، تمدید و دریافت کانفیگ",
-        "start_url": "/portal/?source=pwa",
-        "scope": "/portal/",
-        "display": "standalone",
-        "display_override": ["standalone", "minimal-ui"],
-        "background_color": "#0b1220",
-        "theme_color": "#0b1220",
-        "orientation": "portrait-primary",
-        "lang": "fa",
-        "dir": "rtl",
-        "categories": ["utilities"],
-        "prefer_related_applications": False,
-        "icons": [
-            {
-                "src": "/brand/pwa-192.png",
-                "sizes": "192x192",
-                "type": "image/png",
-                "purpose": "any",
-            },
-            {
-                "src": "/brand/pwa-512.png",
-                "sizes": "512x512",
-                "type": "image/png",
-                "purpose": "any",
-            },
-            {
-                "src": "/brand/pwa-192.png",
-                "sizes": "192x192",
-                "type": "image/png",
-                "purpose": "maskable",
-            },
-            {
-                "src": "/brand/pwa-512.png",
-                "sizes": "512x512",
-                "type": "image/png",
-                "purpose": "maskable",
-            },
-        ],
-    }
     return JSONResponse(
-        content=body,
+        content=_portal_manifest_body(),
         media_type="application/manifest+json",
         headers={"Cache-Control": "no-cache"},
     )
@@ -261,6 +293,7 @@ def startup() -> None:
         portal_dir = _next_out / "portal"
         if portal_dir.is_dir():
             _ensure_spa_fallback(portal_dir)
+            _write_portal_pwa_files(portal_dir)
             log.info("Serving user portal from %s", portal_dir)
             app.mount(
                 "/portal",

@@ -215,7 +215,7 @@
     "walletBlockedBadge": "Blocked",
     "gbRate": "{{rate}} {{currency}} / GB",
     "payTitle": "Payments",
-    "paySubtitle": "Live gateway sales & checkout methods",
+    "paySubtitle": "Checkouts via gateway & card — success, fail, renew, purchase",
     "payToday": "Today",
     "payYesterday": "Yesterday",
     "payWeek": "7 days",
@@ -252,7 +252,48 @@
     "quickAddUser": "Create user",
     "resellerOnlineTitle": "代理商在线用户",
     "resellerOnlineOpen": "打开用户",
-    "viewResellerUsers": "查看用户"
+    "viewResellerUsers": "查看用户",
+    "paySuccess": "Successful amount",
+    "paySuccessCount": "Successful txns",
+    "paySuccessHint": "{{n}} successful checkouts",
+    "payFailed": "Failed txns",
+    "payFailedHint": "Failed / rejected / expired",
+    "payRenew": "Renewals",
+    "payRenewHint": "{{n}} renewals",
+    "payPurchase": "Purchases",
+    "payPurchaseHint": "{{n}} new accounts",
+    "payLeaderTip": "Renew {{renew}} · Purchase {{purchase}} · Failed {{failed}}",
+    "mrrType": {
+      "usage_billing": "Usage billing",
+      "plan_sale": "Plan sales",
+      "portal_renew": "Portal renew (wallet)",
+      "invoice": "Invoices",
+      "traffic_package": "Traffic packages"
+    },
+    "payDirectSales": "Direct panel sales",
+    "payChartDaily": "Daily successful amount",
+    "payChartDailyHint": "Last 14 days of completed checkouts",
+    "payChartFails": "Failed txns / day",
+    "payChartMix": "Mix for selected period",
+    "payChartMixHint": "Renew vs purchase vs top-up",
+    "payChartResellers": "By reseller / direct",
+    "payChartResellersHint": "{{n}} resellers on this panel",
+    "payResellersEmptyPeriod": "No checkout activity in this period.",
+    "payResellersListed": "{{n}} resellers registered (no portal sales in this filter).",
+    "payResellersCount": "registered resellers",
+    "mrrOpen": "Transactions",
+    "mrrRevenueHint": "Wallet debits from resellers",
+    "mrrFloatHint": "Sum of reseller wallet balances",
+    "mrrUsageShare": "Usage billing",
+    "mrrSubResellersCount": "{{n}} sub-resellers",
+    "mrrChartDaily": "Daily platform income",
+    "mrrChartDailyHint": "Last 14 days of wallet charges",
+    "mrrChartMix": "Income mix",
+    "mrrChartMixHint": "By charge type in this period",
+    "mrrTopHint": "{{n}} resellers — revenue, wallet & prepaid",
+    "mrrResellerSub": "Wallet {{wallet}} · Package {{prepaid}}",
+    "mrrNoRevenue": "No wallet charges in this period",
+    "mrrNoResellers": "No resellers yet"
   },
   "users": {
     "title": "用户",
@@ -1230,7 +1271,15 @@
     "trafficUsed": "Traffic used / cap",
     "creditBalanceHint": "Current wallet balance: {{balance}}",
     "creditNotePlaceholder": "Optional note (e.g. bank transfer ref)",
-    "onlineUsers": "在线"
+    "onlineUsers": "在线",
+    "tabTariffs": "Tariffs",
+    "tariffsHint": "Define reseller wholesale tariffs here (volume or unlimited) — separate from master retail plans. When a reseller creates an account or their customer buys a matching plan, this price is debited from the reseller wallet.",
+    "addTariff": "Add tariff",
+    "editTariff": "Edit tariff",
+    "noTariffs": "No tariffs yet",
+    "tariffPriceHint": "Amount debited from the reseller wallet (wholesale)",
+    "tariffVolumeGb": "Volume (GB)",
+    "tariffDurationHint": "Leave empty for no fixed duration; set days (30/60/90) to match reseller plans."
   },
   "automation": {
     "title": "自动化",
@@ -1426,7 +1475,12 @@
     "platformOwner": "平台",
     "resellerPlans": "代理商 · {{name}}",
     "planOwner": "目录",
-    "allPlanCatalogs": "全部目录"
+    "allPlanCatalogs": "全部目录",
+    "dataLimitUnlimitedHint": "Create an unlimited plan (empty data limit) with a price, then put its ID here. 0 disables.",
+    "usageMasterTitle": "Platform owner is not billed",
+    "usageMasterHint": "Usage billing and traffic packages apply only to resellers. Your owner account is never charged for GB usage and does not need to buy packages.",
+    "usageMasterTrafficNote": "Traffic below is from accounts you own directly — informational only, not invoiced.",
+    "usageRateResellerDefault": "Default reseller rate / GB"
   },
   "system": {
     "title": "系统",
@@ -1833,7 +1887,9 @@
       "reseller.sub_reseller_max": "每个上级最大下级代理数",
       "reseller.default_commission_percent": "默认佣金 %",
       "portal.max_child_accounts": "每个门户登录最多额外账户数",
-      "billing.currency_label": "货币标签"
+      "billing.currency_label": "货币标签",
+      "billing.reseller_unlimited_plan_id": "Unlimited-account tariff plan ID",
+      "billing.reseller_unlimited_plan_ids": "Reseller unlimited wholesale tariffs"
     },
     "hints": {
       "billing.usage_rate_per_gb": "0 表示关闭自动 GB 用量计费。作为所有代理商的默认按量（PAYG）费率。",
@@ -1853,8 +1909,15 @@
       "payment.card_bank": "卡片界面上可选的银行名。",
       "reseller.default_commission_percent": "创建下级代理且未指定佣金时应用。",
       "billing.currency_label": "显示在门户价格旁（如 تومان、USD）。金额与套餐价格一致 — 不做里亚尔换算。",
-      "portal.max_child_accounts": "一位客户可在门户创建或购买的额外账户数。0 表示不限制 — 单个客户可能占满整个代理商配额。"
-    }
+      "portal.max_child_accounts": "一位客户可在门户创建或购买的额外账户数。0 表示不限制 — 单个客户可能占满整个代理商配额。",
+      "billing.reseller_unlimited_plan_id": "Create an unlimited plan (empty data limit) with a price, then put its ID here. 0 disables.",
+      "billing.reseller_unlimited_plan_ids": "Do not select master retail unlimited plans sold to your own customers. Create separate unlimited plans with wholesale prices; when a reseller's customer buys/renews unlimited, the matching-duration tariff is debited from the reseller wallet. These plans are hidden from the master customer portal."
+    },
+    "unlimitedPlansEmpty": "No reseller tariffs yet. Under Billing → Plans create separate unlimited plans (e.g. «Reseller tariff 1 month») with wholesale prices, then select them here.",
+    "unlimitedPlanDays": "{{n}} days",
+    "unlimitedMasterRetailBadge": "Master retail — your own customers",
+    "unlimitedResellerTariffBadge": "Reseller tariff — wallet debit",
+    "resellerTariffsHint": "Reseller tariffs are under Resellers → Tariffs — not under master Plans."
   },
   "errors": {
     "network": "无法连接服务器 — 请检查网络",

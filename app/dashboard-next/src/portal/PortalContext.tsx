@@ -360,7 +360,7 @@ export function PortalProvider({ children }: { children: ReactNode }) {
           // Never use .ico for iOS home screen — opaque dedicated PNG.
           apple.href =
             !fav || /favicon\.ico(?:$|\?)/i.test(fav) || fav.toLowerCase().includes("favicon")
-              ? "/brand/apple-touch-icon.png?v=3"
+              ? "/brand/apple-touch-icon.png?v=4"
               : fav;
           apple.setAttribute("sizes", "180x180");
         }

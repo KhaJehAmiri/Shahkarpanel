@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+## 0.22.16 — 2026-08-01
+
+Reseller wholesale tariffs and clearer payment statistics.
+
+### Reseller plan tariffs (wholesale)
+
+- New `reseller_plan_tariffs` table, separate from master retail `Plan` rows.
+- Sudo UI under **Resellers → Tariffs**: create volume or unlimited wholesale tariffs with price and duration.
+- API: `GET/POST /api/billing/reseller-tariffs`, `PUT/DELETE /api/billing/reseller-tariffs/{id}`.
+- When a non-sudo reseller creates or renews an account that matches a tariff (data limit + duration), that wholesale price is debited from their wallet (`plan_sale`). Insufficient balance returns HTTP 402.
+- Portal buy/renew matches the same wholesale tariff for the owning reseller; sudo/master is not charged. Legacy retail plan wallet debit applies only when no matching tariff exists.
+- Plan edit can clear `data_limit` back to unlimited (JSON null).
+
+### Overview payment statistics
+
+- Payments strip includes card-to-card checkouts (not only CentralPay/Stripe/demo).
+- Successful amount/count, failed/rejected/expired count, renew amount, purchase amount, and wallet top-ups.
+- Reseller leaderboard includes renew/purchase/fail breakdown; platform income shows wallet spend by type and top resellers.
+
 ## 0.22.15 — 2026-08-01
 
 Node stability release. Recommended for every install with nodes on a

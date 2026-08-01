@@ -551,6 +551,22 @@ def bulk_create_users(
             f"Reseller total-traffic limit reached ({dbadmin.max_total_traffic} bytes)"
         )
 
+    from app.billing.unlimited_create import (
+        UnlimitedCreateChargeError,
+        charge_unlimited_creates,
+        prepare_unlimited_create_charge,
+    )
+
+    try:
+        tariff_plan, unit_price = prepare_unlimited_create_charge(
+            db,
+            dbadmin,
+            data_limit=body.data_limit,
+            count=int(body.count),
+        )
+    except UnlimitedCreateChargeError as exc:
+        raise ValueError(exc.message) from exc
+
     pinned_ep = None
     if body.subscription_endpoint_id is not None:
         pinned_ep = crud.get_subscription_endpoint(db, body.subscription_endpoint_id)
@@ -658,6 +674,15 @@ def bulk_create_users(
         except Exception:
             db.rollback()
             raise
+
+    if created and tariff_plan is not None and unit_price > 0 and dbadmin is not None:
+        charge_unlimited_creates(
+            db,
+            dbadmin,
+            plan=tariff_plan,
+            unit_price=unit_price,
+            usernames=created,
+        )
 
     if created:
         needs_full = bool(body.speed_limit_up or body.speed_limit_down)

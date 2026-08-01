@@ -317,6 +317,25 @@ def create_portal_payment(
         raise HTTPException(status_code=404, detail="Plan not found")
     assert_plan_for_user(db, dbuser.admin_id, plan)
 
+    # Fail before the customer pays if the reseller cannot cover the master
+    # unlimited tariff — avoids capturing money then 402'ing on apply.
+    from app.billing.unlimited_create import (
+        UnlimitedCreateChargeError,
+        prepare_unlimited_create_charge,
+    )
+
+    billing_admin = crud.get_admin_by_id(db, dbuser.admin_id) if dbuser.admin_id else None
+    try:
+        prepare_unlimited_create_charge(
+            db,
+            billing_admin,
+            data_limit=plan.data_limit,
+            count=1,
+            commercial_plan=plan,
+        )
+    except UnlimitedCreateChargeError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
     price = int(plan.price or 0)
     if price <= 0:
         raise HTTPException(status_code=422, detail="Use free renew/create for free plans")
@@ -601,6 +620,22 @@ def _apply_portal_renew(db: Session, intent: PaymentIntent) -> User:
     dbuser = apply_plan_to_user(db, dbuser, plan)
     mark_order_applied(db, order)
 
+    from app.billing.unlimited_create import (
+        UnlimitedCreateChargeError,
+        charge_portal_unlimited_tariff,
+    )
+
+    try:
+        charge_portal_unlimited_tariff(
+            db,
+            reseller_admin_id=dbuser.admin_id,
+            commercial_plan=plan,
+            username=dbuser.username,
+            event="portal_renew",
+        )
+    except UnlimitedCreateChargeError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
     if dbuser.status in (UserStatus.active, UserStatus.on_hold):
         xray.operations.sync_core_users()
     return dbuser
@@ -638,6 +673,23 @@ def _apply_portal_purchase(db: Session, intent: PaymentIntent) -> User:
     dbuser = create_account_from_plan(db, owner, plan, _free_username(db, username))
     order = create_user_order(db, dbuser, plan, status="paid")
     mark_order_applied(db, order)
+
+    from app.billing.unlimited_create import (
+        UnlimitedCreateChargeError,
+        charge_portal_unlimited_tariff,
+    )
+
+    try:
+        charge_portal_unlimited_tariff(
+            db,
+            reseller_admin_id=owner.admin_id,
+            commercial_plan=plan,
+            username=dbuser.username,
+            event="portal_purchase",
+        )
+    except UnlimitedCreateChargeError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
     # Point intent at the created account for admin UI.
     intent.user_id = dbuser.id
     extra = dict(extra)

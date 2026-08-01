@@ -180,7 +180,7 @@
     "mrrSubResellers": "Sub-resellers",
     "mrrTop": "Top resellers by spend",
     "payTitle": "Payments",
-    "paySubtitle": "Live gateway sales & checkout methods",
+    "paySubtitle": "Checkouts via gateway & card — success, fail, renew, purchase",
     "payToday": "Today",
     "payYesterday": "Yesterday",
     "payWeek": "7 days",
@@ -258,7 +258,48 @@
     "uptimeOs": "OS",
     "resellerOnlineTitle": "Reseller online users",
     "resellerOnlineOpen": "Open users",
-    "viewResellerUsers": "View users"
+    "viewResellerUsers": "View users",
+    "paySuccess": "Successful amount",
+    "paySuccessCount": "Successful txns",
+    "paySuccessHint": "{{n}} successful checkouts",
+    "payFailed": "Failed txns",
+    "payFailedHint": "Failed / rejected / expired",
+    "payRenew": "Renewals",
+    "payRenewHint": "{{n}} renewals",
+    "payPurchase": "Purchases",
+    "payPurchaseHint": "{{n}} new accounts",
+    "payLeaderTip": "Renew {{renew}} · Purchase {{purchase}} · Failed {{failed}}",
+    "mrrType": {
+      "usage_billing": "Usage billing",
+      "plan_sale": "Plan sales",
+      "portal_renew": "Portal renew (wallet)",
+      "invoice": "Invoices",
+      "traffic_package": "Traffic packages"
+    },
+    "payDirectSales": "Direct panel sales",
+    "payChartDaily": "Daily successful amount",
+    "payChartDailyHint": "Last 14 days of completed checkouts",
+    "payChartFails": "Failed txns / day",
+    "payChartMix": "Mix for selected period",
+    "payChartMixHint": "Renew vs purchase vs top-up",
+    "payChartResellers": "By reseller / direct",
+    "payChartResellersHint": "{{n}} resellers on this panel",
+    "payResellersEmptyPeriod": "No checkout activity in this period.",
+    "payResellersListed": "{{n}} resellers registered (no portal sales in this filter).",
+    "payResellersCount": "registered resellers",
+    "mrrOpen": "Transactions",
+    "mrrRevenueHint": "Wallet debits from resellers",
+    "mrrFloatHint": "Sum of reseller wallet balances",
+    "mrrUsageShare": "Usage billing",
+    "mrrSubResellersCount": "{{n}} sub-resellers",
+    "mrrChartDaily": "Daily platform income",
+    "mrrChartDailyHint": "Last 14 days of wallet charges",
+    "mrrChartMix": "Income mix",
+    "mrrChartMixHint": "By charge type in this period",
+    "mrrTopHint": "{{n}} resellers — revenue, wallet & prepaid",
+    "mrrResellerSub": "Wallet {{wallet}} · Package {{prepaid}}",
+    "mrrNoRevenue": "No wallet charges in this period",
+    "mrrNoResellers": "No resellers yet"
   },
   "hub": {
     "serversTitle": "Servers",
@@ -1764,7 +1805,15 @@
     "trafficUsed": "Traffic used / cap",
     "creditBalanceHint": "Current wallet balance: {{balance}}",
     "creditNotePlaceholder": "Optional note (e.g. bank transfer ref)",
-    "onlineUsers": "Online"
+    "onlineUsers": "Online",
+    "tabTariffs": "Tariffs",
+    "tariffsHint": "Define reseller wholesale tariffs here (volume or unlimited) — separate from master retail plans. When a reseller creates an account or their customer buys a matching plan, this price is debited from the reseller wallet.",
+    "addTariff": "Add tariff",
+    "editTariff": "Edit tariff",
+    "noTariffs": "No tariffs yet",
+    "tariffPriceHint": "Amount debited from the reseller wallet (wholesale)",
+    "tariffVolumeGb": "Volume (GB)",
+    "tariffDurationHint": "Leave empty for no fixed duration; set days (30/60/90) to match reseller plans."
   },
   "automation": {
     "title": "Automation",
@@ -1960,7 +2009,12 @@
     "platformOwner": "Platform",
     "resellerPlans": "Reseller · {{name}}",
     "planOwner": "Catalog",
-    "allPlanCatalogs": "All catalogs"
+    "allPlanCatalogs": "All catalogs",
+    "dataLimitUnlimitedHint": "Leave empty for unlimited volume. Create this plan with a price, then set its ID under Commercial → Unlimited-account tariff plan ID so resellers are charged when creating unlimited accounts.",
+    "usageMasterTitle": "Platform owner is not billed",
+    "usageMasterHint": "Usage billing and traffic packages apply only to resellers. Your owner account is never charged for GB usage and does not need to buy packages.",
+    "usageMasterTrafficNote": "Traffic below is from accounts you own directly — informational only, not invoiced.",
+    "usageRateResellerDefault": "Default reseller rate / GB"
   },
   "system": {
     "title": "System",
@@ -2199,6 +2253,7 @@
       "billing.usage_rate_per_gb": "Rate per GB (minor units)",
       "billing.default_package_price": "Default package price (minor units)",
       "billing.default_package_bytes": "Default package traffic (bytes)",
+      "billing.reseller_unlimited_plan_id": "Unlimited-account tariff plan ID",
       "billing.wallet_low_threshold": "Low wallet threshold",
       "billing.job_interval_seconds": "Usage billing job interval (seconds)",
       "payment.gateway_enabled": "Enable gateway payment",
@@ -2220,12 +2275,14 @@
       "reseller.sub_reseller_max": "Max sub-resellers per parent",
       "reseller.default_commission_percent": "Default commission %",
       "portal.max_child_accounts": "Max extra accounts per portal login",
-      "billing.currency_label": "Currency label"
+      "billing.currency_label": "Currency label",
+      "billing.reseller_unlimited_plan_ids": "Reseller unlimited wholesale tariffs"
     },
     "hints": {
       "billing.usage_rate_per_gb": "0 disables automatic GB usage billing. Used as the default free-usage (PAYG) rate for all resellers.",
       "billing.default_package_price": "Pre-fills the create-package form. Catalog rows remain the source of truth for sales.",
       "billing.default_package_bytes": "Pre-fills the create-package form (bytes). Example: 107374182400 = 100 GB.",
+      "billing.reseller_unlimited_plan_id": "Create a plan under Billing → Plans with empty data limit (unlimited) and a price, then put that plan's ID here. Resellers are charged that price from their wallet each time they create an unlimited-volume account. 0 disables the charge.",
       "billing.wallet_low_threshold": "Show low-balance warning on the overview when balance falls below this.",
       "billing.job_interval_seconds": "How often pay-as-you-go usage is settled. Minimum 15. Default 30 for near-realtime charges.",
       "payment.stripe_secret_key": "Leave blank to keep the current secret.",
@@ -2240,8 +2297,14 @@
       "payment.card_bank": "Optional bank name on the card UI.",
       "reseller.default_commission_percent": "Applied when creating sub-resellers without an explicit commission.",
       "billing.currency_label": "Shown next to prices in the portal (e.g. تومان, USD). Amounts match plan prices as entered — no Rial conversion.",
-      "portal.max_child_accounts": "How many extra accounts one customer may create or buy from the portal. 0 removes the limit — a single customer can then use up the whole reseller quota."
-    }
+      "portal.max_child_accounts": "How many extra accounts one customer may create or buy from the portal. 0 removes the limit — a single customer can then use up the whole reseller quota.",
+      "billing.reseller_unlimited_plan_ids": "Do not select master retail unlimited plans sold to your own customers. Create separate unlimited plans with wholesale prices; when a reseller's customer buys/renews unlimited, the matching-duration tariff is debited from the reseller wallet. These plans are hidden from the master customer portal."
+    },
+    "unlimitedPlansEmpty": "No reseller tariffs yet. Under Billing → Plans create separate unlimited plans (e.g. «Reseller tariff 1 month») with wholesale prices, then select them here.",
+    "unlimitedPlanDays": "{{n}} days",
+    "unlimitedMasterRetailBadge": "Master retail — your own customers",
+    "unlimitedResellerTariffBadge": "Reseller tariff — wallet debit",
+    "resellerTariffsHint": "Reseller tariffs are under Resellers → Tariffs — not under master Plans."
   },
   "migration": {
     "title": "3x-ui panel migration",

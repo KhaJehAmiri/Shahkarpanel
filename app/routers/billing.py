@@ -383,6 +383,7 @@ class UsageSummaryResponse(BaseModel):
     package_covered_bytes: int = 0
     overflow_owned_bytes: int = 0
     overflow_foreign_bytes: int = 0
+    subject_to_usage_billing: bool = True
 
 
 class TrafficPackageCreate(BaseModel):
@@ -479,6 +480,119 @@ def _map_package_error(exc: Exception) -> HTTPException:
 def _after_traffic_credit(db: Session, target) -> None:
     """Re-run billing/caps after prepaid traffic increases."""
     _after_wallet_topup(db, target)
+
+
+class ResellerPlanTariffCreate(BaseModel):
+    name: str
+    price: int = 0
+    data_limit: Optional[int] = None
+    duration_days: Optional[int] = None
+    enabled: bool = True
+
+
+class ResellerPlanTariffModify(BaseModel):
+    name: Optional[str] = None
+    price: Optional[int] = None
+    data_limit: Optional[int] = None
+    duration_days: Optional[int] = None
+    enabled: Optional[bool] = None
+
+
+class ResellerPlanTariffResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    price: int
+    data_limit: Optional[int] = None
+    duration_days: Optional[int] = None
+    enabled: bool = True
+    created_at: Optional[datetime] = None
+    is_unlimited: bool = False
+
+
+@router.get("/reseller-tariffs", response_model=List[ResellerPlanTariffResponse])
+def list_reseller_plan_tariffs(
+    enabled_only: bool = False,
+    db: Session = Depends(get_db),
+    _: Admin = Depends(Admin.check_sudo_admin),
+):
+    """Wholesale tariffs for resellers (volume or unlimited) — not master retail plans."""
+    _require_billing_enabled()
+    from app.billing.reseller_tariffs import list_tariffs, tariff_to_dict
+
+    return [ResellerPlanTariffResponse(**tariff_to_dict(r)) for r in list_tariffs(db, enabled_only=enabled_only)]
+
+
+@router.post("/reseller-tariffs", response_model=ResellerPlanTariffResponse)
+def create_reseller_plan_tariff(
+    body: ResellerPlanTariffCreate,
+    db: Session = Depends(get_db),
+    _: Admin = Depends(Admin.check_sudo_admin),
+):
+    _require_billing_enabled()
+    from app.billing.reseller_tariffs import ResellerTariffError, create_tariff, tariff_to_dict
+
+    try:
+        row = create_tariff(
+            db,
+            name=body.name,
+            price=body.price,
+            data_limit=body.data_limit,
+            duration_days=body.duration_days,
+            enabled=body.enabled,
+        )
+    except ResellerTariffError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return ResellerPlanTariffResponse(**tariff_to_dict(row))
+
+
+@router.put("/reseller-tariffs/{tariff_id}", response_model=ResellerPlanTariffResponse)
+def modify_reseller_plan_tariff(
+    tariff_id: int,
+    body: ResellerPlanTariffModify,
+    db: Session = Depends(get_db),
+    _: Admin = Depends(Admin.check_sudo_admin),
+):
+    _require_billing_enabled()
+    from app.billing.reseller_tariffs import (
+        ResellerTariffError,
+        get_tariff,
+        tariff_to_dict,
+        update_tariff,
+    )
+
+    row = get_tariff(db, tariff_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Tariff not found")
+    payload = body.model_dump(exclude_unset=True)
+    # Allow clearing data_limit / duration via explicit null.
+    kwargs = dict(payload)
+    if "data_limit" in payload:
+        kwargs["data_limit"] = payload["data_limit"]
+    if "duration_days" in payload:
+        kwargs["duration_days"] = payload["duration_days"]
+    try:
+        row = update_tariff(db, row, **kwargs)
+    except ResellerTariffError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return ResellerPlanTariffResponse(**tariff_to_dict(row))
+
+
+@router.delete("/reseller-tariffs/{tariff_id}")
+def remove_reseller_plan_tariff(
+    tariff_id: int,
+    db: Session = Depends(get_db),
+    _: Admin = Depends(Admin.check_sudo_admin),
+):
+    _require_billing_enabled()
+    from app.billing.reseller_tariffs import delete_tariff, get_tariff
+
+    row = get_tariff(db, tariff_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Tariff not found")
+    delete_tariff(db, row)
+    return {"detail": "Tariff deleted"}
 
 
 @router.get("/traffic-packages", response_model=List[TrafficPackageResponse])
@@ -1076,6 +1190,16 @@ class MrrResellerRow(BaseModel):
     admin_id: int
     username: str
     revenue: int
+    wallet_balance: int = 0
+    prepaid_traffic_remaining: int = 0
+    role: Optional[str] = None
+    is_sub: bool = False
+
+
+class MrrDailyRow(BaseModel):
+    date: str
+    label: str
+    revenue: int = 0
 
 
 class MrrResponse(BaseModel):
@@ -1087,6 +1211,9 @@ class MrrResponse(BaseModel):
     active_resellers: int
     sub_resellers: int
     top_resellers: List[MrrResellerRow]
+    resellers: List[MrrResellerRow] = []
+    daily: List[MrrDailyRow] = []
+    currency_label: str = ""
 
 
 @router.get("/mrr", response_model=MrrResponse)
@@ -1102,6 +1229,24 @@ def owner_mrr(
     return compute_mrr(db, days=days)
 
 
+class GatewayIncomePeriodStats(BaseModel):
+    success_count: int = 0
+    success_amount: int = 0
+    failed_count: int = 0
+    failed_amount: int = 0
+    renew_count: int = 0
+    renew_amount: int = 0
+    purchase_count: int = 0
+    purchase_amount: int = 0
+    topup_count: int = 0
+    topup_amount: int = 0
+
+
+class GatewayIncomeDailyRow(GatewayIncomePeriodStats):
+    date: str = ""
+    label: str = ""
+
+
 class GatewayIncomeResellerRow(BaseModel):
     admin_id: int
     username: str
@@ -1113,8 +1258,17 @@ class GatewayIncomeResellerRow(BaseModel):
     week: int
     total: int
     payments_count: int
+    failed_count: int = 0
+    failed_amount: int = 0
+    today_failed_count: int = 0
+    yesterday_failed_count: int = 0
+    week_failed_count: int = 0
+    renew_amount: int = 0
+    purchase_amount: int = 0
+    topup_amount: int = 0
     by_provider: Dict[str, int] = {}
     by_kind: Dict[str, int] = {}
+    periods: Dict[str, GatewayIncomePeriodStats] = {}
 
 
 class GatewayIncomePaymentRow(BaseModel):
@@ -1149,6 +1303,8 @@ class GatewayIncomeResponse(BaseModel):
     yesterday_by_kind: Dict[str, int] = {}
     week_by_kind: Dict[str, int] = {}
     total_by_kind: Dict[str, int] = {}
+    periods: Dict[str, GatewayIncomePeriodStats] = {}
+    daily: List[GatewayIncomeDailyRow] = []
     resellers: List[GatewayIncomeResellerRow] = []
     recent_payments: List[GatewayIncomePaymentRow] = []
 
@@ -1161,10 +1317,11 @@ def gateway_income(
     db: Session = Depends(get_db),
     admin: Admin = Depends(require_permission("billing:read")),
 ):
-    """Gateway (CentralPay/Stripe/demo) cash collected — today / yesterday / week / total.
+    """Checkout cash collected (CentralPay/Stripe/demo/card) — today / yesterday / week / total.
 
-    Sudo sees all resellers; a reseller sees only their own traffic — and only
-    when the master has enabled CentralPay for that reseller.
+    Includes success/fail counts and renew vs purchase amounts under ``periods``.
+    Sudo sees all resellers; a reseller sees only their own traffic when checkout
+    (CentralPay or card) is enabled for them.
     """
     _require_billing_enabled()
     from app.billing.gateway_income import compute_gateway_income
@@ -1182,10 +1339,14 @@ def gateway_income(
             admin_id = target.id
     else:
         dbadmin = crud.get_admin(db, admin.username)
-        if dbadmin is None or not admin_may_use_centralpay(dbadmin):
+        from app.billing.providers import admin_may_use_card
+
+        may_cp = dbadmin is not None and admin_may_use_centralpay(dbadmin)
+        may_card = dbadmin is not None and admin_may_use_card(dbadmin)
+        if dbadmin is None or not (may_cp or may_card):
             raise HTTPException(
                 status_code=403,
-                detail="Gateway income is only available when CentralPay is enabled for your account",
+                detail="Checkout income is only available when CentralPay or card-to-card is enabled for your account",
             )
         admin_id = _admin_id(db, admin)
 
@@ -1195,6 +1356,7 @@ def gateway_income(
         provider=(provider or "").strip() or None,
         include_payments=True,
         payments_limit=payments_limit,
+        include_card=True,
     )
 
 

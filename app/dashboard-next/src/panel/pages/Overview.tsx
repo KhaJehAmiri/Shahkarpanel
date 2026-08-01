@@ -13,7 +13,7 @@ import { HealthChecklist } from "../components/HealthChecklist";
 import { SystemVitals } from "../components/viz/SystemVitals";
 import { LiveValue } from "../components/viz/LiveValue";
 import { Card, SkeletonRows, Callout, Button, EmptyState, useToast } from "../components/ui";
-import { RankBars, Sparkline } from "../components/charts";
+import { RankBars, Sparkline, BarChart, Donut } from "../components/charts";
 import { IcUsers, IcServer, IcBolt, IcRefresh, IcMonitor, IcDownload } from "../components/icons";
 import { BackupRestoreModal } from "../components/BackupRestoreModal";
 
@@ -28,35 +28,67 @@ const PROVIDER_LABEL: Record<string, string> = {
   card: "Card",
 };
 
+const emptyPeriod = {
+  success_count: 0,
+  success_amount: 0,
+  failed_count: 0,
+  failed_amount: 0,
+  renew_count: 0,
+  renew_amount: 0,
+  purchase_count: 0,
+  purchase_amount: 0,
+  topup_count: 0,
+  topup_amount: 0,
+};
+
+function pickDefaultPayPeriod(income: GatewayIncome): PayPeriod {
+  const order: PayPeriod[] = ["today", "yesterday", "week", "total"];
+  for (const p of order) {
+    const s = income.periods?.[p];
+    if ((s?.success_amount || 0) > 0 || (s?.failed_count || 0) > 0) return p;
+  }
+  if ((income.today || 0) > 0) return "today";
+  if ((income.yesterday || 0) > 0) return "yesterday";
+  if ((income.week || 0) > 0) return "week";
+  if ((income.total || 0) > 0) return "total";
+  return "today";
+}
+
 const PaymentPulse: FC<{
   income: GatewayIncome;
   methods: string[];
   isSudo: boolean;
 }> = ({ income, methods, isSudo }) => {
   const { t } = useTranslation();
-  const [period, setPeriod] = useState<PayPeriod>("today");
+  const [period, setPeriod] = useState<PayPeriod>(() => pickDefaultPayPeriod(income));
+  const [periodTouched, setPeriodTouched] = useState(false);
   const cur = income.currency_label || "";
 
-  const amount = income[period] ?? 0;
-  const count =
-    period === "today" ? (income.today_count ?? 0)
-    : period === "yesterday" ? (income.yesterday_count ?? 0)
-    : period === "week" ? (income.week_count ?? 0)
-    : income.payments_count;
+  useEffect(() => {
+    if (periodTouched) return;
+    const next = pickDefaultPayPeriod(income);
+    setPeriod((prev) => (prev === next ? prev : next));
+  }, [income, periodTouched]);
 
-  const byKind =
-    period === "today" ? (income.today_by_kind || {})
-    : period === "yesterday" ? (income.yesterday_by_kind || {})
-    : period === "week" ? (income.week_by_kind || {})
-    : (income.total_by_kind || income.by_kind || {});
+  const stats = income.periods?.[period] || emptyPeriod;
+  const successAmt = stats.success_amount ?? income[period] ?? 0;
+  const successCount =
+    stats.success_count
+    ?? (period === "today" ? (income.today_count ?? 0)
+      : period === "yesterday" ? (income.yesterday_count ?? 0)
+      : period === "week" ? (income.week_count ?? 0)
+      : income.payments_count);
+  const failedAmt = stats.failed_amount ?? 0;
+  const failedCount = stats.failed_count ?? 0;
+  const renewAmt = stats.renew_amount ?? 0;
+  const purchaseAmt = stats.purchase_amount ?? 0;
+  const topupAmt = stats.topup_amount ?? 0;
 
-  const portalAmt = (byKind.portal_renew || 0) + (byKind.portal_purchase || 0);
-  const topupAmt = byKind.topup || 0;
-
-  const delta = period === "today" ? amount - (income.yesterday || 0) : null;
+  const yStats = income.periods?.yesterday || emptyPeriod;
+  const delta = period === "today" ? successAmt - (yStats.success_amount || income.yesterday || 0) : null;
   const deltaPct =
-    delta != null && income.yesterday
-      ? Math.round((delta / Math.abs(income.yesterday)) * 100)
+    delta != null && (yStats.success_amount || income.yesterday)
+      ? Math.round((delta / Math.abs(yStats.success_amount || income.yesterday || 1)) * 100)
       : null;
 
   const periods: { id: PayPeriod; label: string }[] = [
@@ -66,19 +98,56 @@ const PaymentPulse: FC<{
     { id: "total", label: t("overview.payTotal") },
   ];
 
-  const topResellers = useMemo(() => {
-    if (!isSudo) return [];
-    return [...(income.resellers || [])]
-      .filter((r) => !r.is_sudo)
-      .sort((a, b) => (b[period] || 0) - (a[period] || 0))
-      .slice(0, 3)
-      .filter((r) => (r[period] || 0) > 0);
-  }, [income.resellers, isSudo, period]);
-
   const fmt = (n: number) => {
     const body = formatCompactAmount(n);
     return cur ? `${body} ${cur}` : body;
   };
+
+  const boardRows = useMemo(() => {
+    if (!isSudo) return [];
+    return [...(income.resellers || [])]
+      .map((r) => {
+        const rp = r.periods?.[period];
+        return {
+          ...r,
+          success: rp?.success_amount ?? (r[period] || 0),
+          failed: rp?.failed_count ?? 0,
+          renew: rp?.renew_amount ?? 0,
+          purchase: rp?.purchase_amount ?? 0,
+          label: r.is_sudo ? t("overview.payDirectSales") : r.username,
+        };
+      })
+      .sort((a, b) => (b.success - a.success) || (b.failed - a.failed) || a.label.localeCompare(b.label));
+  }, [income.resellers, isSudo, period, t]);
+
+  const activeBoard = useMemo(
+    () => boardRows.filter((r) => r.success > 0 || r.failed > 0),
+    [boardRows],
+  );
+  const resellerCount = useMemo(
+    () => boardRows.filter((r) => !r.is_sudo).length,
+    [boardRows],
+  );
+
+  const dailyBars = useMemo(
+    () => (income.daily || []).map((d) => ({
+      label: d.label,
+      value: d.success_amount || 0,
+    })),
+    [income.daily],
+  );
+  const dailyFailSpark = useMemo(
+    () => (income.daily || []).map((d) => d.failed_count || 0),
+    [income.daily],
+  );
+  const kindSegments = useMemo(() => {
+    const segs = [
+      { label: t("overview.payRenew"), value: renewAmt, color: "var(--sk-accent)" },
+      { label: t("overview.payPurchase"), value: purchaseAmt, color: "var(--sk-info, #38bdf8)" },
+      { label: t("overview.payTopup"), value: topupAmt, color: "var(--sk-ok, #34d399)" },
+    ].filter((s) => s.value > 0);
+    return segs;
+  }, [renewAmt, purchaseAmt, topupAmt, t]);
 
   return (
     <div className="sk-pay-pulse">
@@ -96,7 +165,7 @@ const PaymentPulse: FC<{
                 role="tab"
                 aria-selected={period === p.id}
                 className={`sk-pay-period-btn${period === p.id ? " is-on" : ""}`}
-                onClick={() => setPeriod(p.id)}
+                onClick={() => { setPeriodTouched(true); setPeriod(p.id); }}
               >
                 {p.label}
               </button>
@@ -108,10 +177,10 @@ const PaymentPulse: FC<{
         </div>
       </div>
 
-      <div className="sk-pay-pulse-grid">
+      <div className="sk-pay-pulse-grid sk-pay-pulse-grid-6">
         <article className="sk-pay-tile sk-pay-tile-hero">
-          <span className="sk-pay-tile-label">{t("overview.payIncome")}</span>
-          <LiveValue className="sk-pay-tile-value" value={amount} format={fmt} />
+          <span className="sk-pay-tile-label">{t("overview.paySuccess")}</span>
+          <LiveValue className="sk-pay-tile-value" value={successAmt} format={fmt} />
           {delta != null ? (
             <span className={`sk-pay-delta${delta > 0 ? " is-up" : delta < 0 ? " is-down" : ""}`}>
               {delta === 0
@@ -122,20 +191,34 @@ const PaymentPulse: FC<{
                   })}
             </span>
           ) : (
-            <span className="sk-pay-delta">{t("overview.payOrdersCount", { n: count })}</span>
+            <span className="sk-pay-delta">{t("overview.paySuccessHint", { n: successCount })}</span>
           )}
         </article>
 
         <article className="sk-pay-tile">
-          <span className="sk-pay-tile-label">{t("overview.payOrders")}</span>
-          <LiveValue className="sk-pay-tile-value" value={count} />
+          <span className="sk-pay-tile-label">{t("overview.paySuccessCount")}</span>
+          <LiveValue className="sk-pay-tile-value" value={successCount} />
           <span className="sk-pay-delta">{t("overview.payCompleted")}</span>
         </article>
 
         <article className="sk-pay-tile">
-          <span className="sk-pay-tile-label">{t("overview.payPortal")}</span>
-          <LiveValue className="sk-pay-tile-value" value={portalAmt} format={fmt} />
-          <span className="sk-pay-delta">{t("overview.payPortalHint")}</span>
+          <span className="sk-pay-tile-label">{t("overview.payFailed")}</span>
+          <LiveValue className="sk-pay-tile-value" value={failedCount} />
+          <span className="sk-pay-delta">
+            {failedAmt > 0 ? fmt(failedAmt) : t("overview.payFailedHint")}
+          </span>
+        </article>
+
+        <article className="sk-pay-tile">
+          <span className="sk-pay-tile-label">{t("overview.payRenew")}</span>
+          <LiveValue className="sk-pay-tile-value" value={renewAmt} format={fmt} />
+          <span className="sk-pay-delta">{t("overview.payRenewHint", { n: stats.renew_count || 0 })}</span>
+        </article>
+
+        <article className="sk-pay-tile">
+          <span className="sk-pay-tile-label">{t("overview.payPurchase")}</span>
+          <LiveValue className="sk-pay-tile-value" value={purchaseAmt} format={fmt} />
+          <span className="sk-pay-delta">{t("overview.payPurchaseHint", { n: stats.purchase_count || 0 })}</span>
         </article>
 
         <article className="sk-pay-tile">
@@ -143,6 +226,69 @@ const PaymentPulse: FC<{
           <LiveValue className="sk-pay-tile-value" value={topupAmt} format={fmt} />
           <span className="sk-pay-delta">{t("overview.payTopupHint")}</span>
         </article>
+      </div>
+
+      <div className="sk-pay-charts">
+        <article className="sk-pay-chart-card">
+          <header className="sk-pay-chart-head">
+            <h3>{t("overview.payChartDaily")}</h3>
+            <p>{t("overview.payChartDailyHint")}</p>
+          </header>
+          {dailyBars.some((d) => d.value > 0) ? (
+            <BarChart data={dailyBars} height={160} format={(n) => formatCompactAmount(n)} />
+          ) : (
+            <div className="sk-muted sk-center" style={{ padding: 24 }}>{t("common.noData")}</div>
+          )}
+          {dailyFailSpark.some((n) => n > 0) && (
+            <div className="sk-pay-chart-spark">
+              <span className="sk-pay-methods-label">{t("overview.payChartFails")}</span>
+              <Sparkline data={dailyFailSpark} height={36} color="#f87171" />
+            </div>
+          )}
+        </article>
+
+        <article className="sk-pay-chart-card">
+          <header className="sk-pay-chart-head">
+            <h3>{t("overview.payChartMix")}</h3>
+            <p>{t("overview.payChartMixHint")}</p>
+          </header>
+          {kindSegments.length ? (
+            <Donut segments={kindSegments} size={140} format={(n) => formatCompactAmount(n)} />
+          ) : (
+            <div className="sk-muted sk-center" style={{ padding: 24 }}>{t("common.noData")}</div>
+          )}
+        </article>
+
+        {isSudo && (
+          <article className="sk-pay-chart-card sk-pay-chart-resellers">
+            <header className="sk-pay-chart-head">
+              <h3>{t("overview.payChartResellers")}</h3>
+              <p>{t("overview.payChartResellersHint", { n: resellerCount })}</p>
+            </header>
+            {activeBoard.length ? (
+              <RankBars
+                compact
+                data={activeBoard.slice(0, 8).map((r) => ({
+                  label: r.label,
+                  value: r.success,
+                  sub: t("overview.payLeaderTip", {
+                    renew: fmt(r.renew),
+                    purchase: fmt(r.purchase),
+                    failed: r.failed,
+                  }),
+                }))}
+                format={(n) => fmt(n)}
+              />
+            ) : (
+              <div className="sk-muted sk-center" style={{ padding: 24 }}>
+                {t("overview.payResellersEmptyPeriod")}
+                {resellerCount > 0 ? (
+                  <div style={{ marginTop: 8 }}>{t("overview.payResellersListed", { n: resellerCount })}</div>
+                ) : null}
+              </div>
+            )}
+          </article>
+        )}
       </div>
 
       <div className="sk-pay-pulse-foot">
@@ -155,18 +301,145 @@ const PaymentPulse: FC<{
             </span>
           ))}
         </div>
-        {topResellers.length > 0 && (
+        {isSudo && (
           <div className="sk-pay-leaders">
-            <span className="sk-pay-methods-label">{t("overview.payLeaders")}</span>
-            {topResellers.map((r, i) => (
-              <span key={r.admin_id} className="sk-pay-leader">
-                <em>{i + 1}</em>
-                <b>{r.username}</b>
-                <span>{fmt(r[period] || 0)}</span>
-              </span>
-            ))}
+            <span className="sk-pay-methods-label">{t("overview.mrrResellers")}</span>
+            <span className="sk-pay-leader">
+              <em>{resellerCount}</em>
+              <b>{t("overview.payResellersCount")}</b>
+            </span>
           </div>
         )}
+      </div>
+    </div>
+  );
+};
+
+const TYPE_COLORS = ["var(--sk-accent)", "var(--sk-info, #38bdf8)", "var(--sk-ok, #34d399)", "#fbbf24", "#f87171", "#a78bfa"];
+
+const PlatformIncomePulse: FC<{ data: MrrSummary }> = ({ data }) => {
+  const { t } = useTranslation();
+  const cur = data.currency_label || "";
+  const fmt = (n: number) => {
+    const body = Math.round(n).toLocaleString();
+    return cur ? `${body} ${cur}` : body;
+  };
+  const fmtCompact = (n: number) => {
+    const body = formatCompactAmount(n);
+    return cur ? `${body} ${cur}` : body;
+  };
+
+  const typeSegments = useMemo(() => {
+    const entries = Object.entries(data.by_type || {}).filter(([, v]) => v > 0);
+    return entries.map(([k, v], i) => ({
+      label: t(`overview.mrrType.${k}`, { defaultValue: k }),
+      value: v,
+      color: TYPE_COLORS[i % TYPE_COLORS.length],
+    }));
+  }, [data.by_type, t]);
+
+  const dailyBars = useMemo(
+    () => (data.daily || []).map((d) => ({ label: d.label, value: d.revenue || 0 })),
+    [data.daily],
+  );
+
+  const resellerBoard = useMemo(() => {
+    const rows = data.resellers?.length
+      ? data.resellers
+      : (data.top_resellers || []).map((r) => ({ ...r, wallet_balance: 0, prepaid_traffic_remaining: 0 }));
+    return rows;
+  }, [data.resellers, data.top_resellers]);
+
+  return (
+    <div className="sk-pay-pulse sk-mrr-pulse">
+      <div className="sk-pay-pulse-head">
+        <div className="sk-pay-pulse-title-row">
+          <span className="sk-pay-pulse-title">{t("overview.mrrTitle")}</span>
+          <span className="sk-pay-pulse-sub">{t("overview.mrrDesc", { days: data.period_days })}</span>
+        </div>
+        <Link to="/billing?billingTab=transactions" className="sk-pay-pulse-link">
+          {t("overview.mrrOpen")}
+        </Link>
+      </div>
+
+      <div className="sk-pay-pulse-grid sk-pay-pulse-grid-4">
+        <article className="sk-pay-tile sk-pay-tile-hero">
+          <span className="sk-pay-tile-label">{t("overview.mrrRevenue")}</span>
+          <LiveValue className="sk-pay-tile-value" value={data.total_revenue} format={fmt} />
+          <span className="sk-pay-delta">{t("overview.mrrRevenueHint")}</span>
+        </article>
+        <article className="sk-pay-tile">
+          <span className="sk-pay-tile-label">{t("overview.mrrFloat")}</span>
+          <LiveValue className="sk-pay-tile-value" value={data.wallet_float} format={fmt} />
+          <span className="sk-pay-delta">{t("overview.mrrFloatHint")}</span>
+        </article>
+        <article className="sk-pay-tile">
+          <span className="sk-pay-tile-label">{t("overview.mrrResellers")}</span>
+          <LiveValue className="sk-pay-tile-value" value={data.active_resellers} />
+          <span className="sk-pay-delta">
+            {(data.sub_resellers || 0) > 0
+              ? t("overview.mrrSubResellersCount", { n: data.sub_resellers })
+              : t("overview.payResellersCount")}
+          </span>
+        </article>
+        <article className="sk-pay-tile">
+          <span className="sk-pay-tile-label">{t("overview.mrrUsageShare")}</span>
+          <LiveValue
+            className="sk-pay-tile-value"
+            value={data.by_type?.usage_billing || 0}
+            format={fmt}
+          />
+          <span className="sk-pay-delta">{t("overview.mrrType.usage_billing")}</span>
+        </article>
+      </div>
+
+      <div className="sk-pay-charts sk-mrr-charts">
+        <article className="sk-pay-chart-card">
+          <header className="sk-pay-chart-head">
+            <h3>{t("overview.mrrChartDaily")}</h3>
+            <p>{t("overview.mrrChartDailyHint")}</p>
+          </header>
+          {dailyBars.some((d) => d.value > 0) ? (
+            <BarChart data={dailyBars} height={160} format={(n) => formatCompactAmount(n)} />
+          ) : (
+            <div className="sk-muted sk-center" style={{ padding: 24 }}>{t("common.noData")}</div>
+          )}
+        </article>
+
+        <article className="sk-pay-chart-card">
+          <header className="sk-pay-chart-head">
+            <h3>{t("overview.mrrChartMix")}</h3>
+            <p>{t("overview.mrrChartMixHint")}</p>
+          </header>
+          {typeSegments.length ? (
+            <Donut segments={typeSegments} size={140} format={fmtCompact} />
+          ) : (
+            <div className="sk-muted sk-center" style={{ padding: 24 }}>{t("overview.mrrNoRevenue")}</div>
+          )}
+        </article>
+
+        <article className="sk-pay-chart-card sk-pay-chart-resellers">
+          <header className="sk-pay-chart-head">
+            <h3>{t("overview.mrrTop")}</h3>
+            <p>{t("overview.mrrTopHint", { n: resellerBoard.length })}</p>
+          </header>
+          {resellerBoard.length ? (
+            <RankBars
+              compact
+              data={resellerBoard.slice(0, 8).map((r) => ({
+                label: r.username,
+                value: Math.max(r.revenue, 0),
+                sub: t("overview.mrrResellerSub", {
+                  wallet: fmt(r.wallet_balance || 0),
+                  prepaid: formatBytes(r.prepaid_traffic_remaining || 0),
+                }),
+              }))}
+              format={fmtCompact}
+            />
+          ) : (
+            <div className="sk-muted sk-center" style={{ padding: 24 }}>{t("overview.mrrNoResellers")}</div>
+          )}
+        </article>
       </div>
     </div>
   );
@@ -514,7 +787,7 @@ export const Overview: FC = () => {
   const gatewayIncome = useFetch<GatewayIncome>(
     () => (
       isEnabled("billing") && payActive
-        ? api.get("/billing/gateway-income?payments_limit=1")
+        ? api.get("/billing/gateway-income?payments_limit=20")
         : Promise.resolve(null as unknown as GatewayIncome)
     ),
     [isEnabled("billing"), payActive],
@@ -843,21 +1116,8 @@ export const Overview: FC = () => {
       )}
 
       {admin?.is_sudo && mrr.data && (
-        <Section title={t("overview.mrrTitle")}>
-          <div className="sk-home-mrr">
-            <div className="sk-home-mrr-cell">
-              <span className="sk-home-mrr-label">{t("overview.mrrRevenue")}</span>
-              <LiveValue className="sk-home-mrr-value" value={mrr.data.total_revenue} format={(n) => Math.round(n).toLocaleString()} />
-            </div>
-            <div className="sk-home-mrr-cell">
-              <span className="sk-home-mrr-label">{t("overview.mrrFloat")}</span>
-              <LiveValue className="sk-home-mrr-value" value={mrr.data.wallet_float} format={(n) => Math.round(n).toLocaleString()} />
-            </div>
-            <div className="sk-home-mrr-cell">
-              <span className="sk-home-mrr-label">{t("overview.mrrResellers")}</span>
-              <LiveValue className="sk-home-mrr-value" value={mrr.data.active_resellers} />
-            </div>
-          </div>
+        <Section>
+          <PlatformIncomePulse data={mrr.data} />
         </Section>
       )}
 

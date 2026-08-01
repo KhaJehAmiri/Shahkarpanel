@@ -23,7 +23,7 @@ function ensureLink(rel: string): HTMLLinkElement {
 }
 
 /** Dedicated home-screen icon — opaque PNG; never point apple-touch at .ico. */
-export const DEFAULT_APPLE_TOUCH_URL = "/brand/apple-touch-icon.png?v=3";
+export const DEFAULT_APPLE_TOUCH_URL = "/brand/apple-touch-icon.png?v=4";
 
 export function appleTouchUrl(faviconHref: string): string {
   const href = (faviconHref || "").trim();

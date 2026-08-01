@@ -46,6 +46,7 @@ export const Resellers: FC<{ embedded?: boolean }> = ({ embedded }) => {
           items: [
             { id: "accounts", label: t("resellers.tabAccounts") },
             { id: "tenants", label: t("resellers.tabTenants") },
+            { id: "tariffs", label: t("resellers.tabTariffs") },
           ],
         },
         {
@@ -117,6 +118,7 @@ export const Resellers: FC<{ embedded?: boolean }> = ({ embedded }) => {
         />
         <div className="sk-section-panel">
           {tab === "accounts" && <ResellerAccountsTab />}
+          {tab === "tariffs" && isSudo && <ResellerTariffsTab />}
           {tab === "subaccounts" && <SubResellersTab />}
           {tab === "tenants" && <TenantsTab />}
           {tab === "branding" && <BrandingTab />}
@@ -126,6 +128,201 @@ export const Resellers: FC<{ embedded?: boolean }> = ({ embedded }) => {
         </div>
       </div>
     </div>
+  );
+};
+
+type ResellerTariff = {
+  id: number;
+  name: string;
+  price: number;
+  data_limit?: number | null;
+  duration_days?: number | null;
+  enabled: boolean;
+  is_unlimited?: boolean;
+};
+
+const ResellerTariffsTab: FC = () => {
+  const { t } = useTranslation();
+  const toast = useToast();
+  const { data, loading, error, reload } = useFetch<ResellerTariff[]>(
+    () => api.get("/billing/reseller-tariffs"),
+    [],
+  );
+  const [show, setShow] = useState(false);
+  const [edit, setEdit] = useState<ResellerTariff | null>(null);
+
+  const remove = async (id: number) => {
+    if (!confirm(t("common.confirmDelete"))) return;
+    try {
+      await api.del(`/billing/reseller-tariffs/${id}`);
+      toast.push(t("common.deleted"), "success");
+      reload();
+    } catch (e: any) {
+      toast.push(e.message, "error");
+    }
+  };
+
+  const volumeLabel = (row: ResellerTariff) => {
+    if (row.data_limit == null || Number(row.data_limit) === 0) {
+      return t("billing.unlimited", { defaultValue: "Unlimited" });
+    }
+    return formatBytes(Number(row.data_limit));
+  };
+
+  return (
+    <>
+      <div style={{ marginBottom: 14 }}>
+        <Callout tone="info">{t("resellers.tariffsHint")}</Callout>
+      </div>
+      <div className="sk-row" style={{ justifyContent: "flex-end", marginBottom: 14 }}>
+        <Button variant="primary" onClick={() => setShow(true)}>
+          <IcPlus className="sk-ico" /> {t("resellers.addTariff")}
+        </Button>
+      </div>
+      <Card pad0>
+        {loading ? (
+          <div style={{ padding: 20 }}><SkeletonRows rows={3} cols={5} /></div>
+        ) : error ? (
+          <EmptyState title={t("common.error")} desc={error} />
+        ) : !data?.length ? (
+          <EmptyState title={t("resellers.noTariffs")} desc={t("resellers.tariffsHint")} />
+        ) : (
+          <div className="sk-table-wrap">
+            <table className="sk-table">
+              <thead>
+                <tr>
+                  <th>{t("common.name")}</th>
+                  <th className="sk-num">{t("billing.price")}</th>
+                  <th className="sk-num">{t("billing.dataLimit")}</th>
+                  <th className="sk-num">{t("billing.duration", "Duration (days)")}</th>
+                  <th>{t("common.status")}</th>
+                  <th className="sk-actions">{t("common.actions")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.map((row) => (
+                  <tr key={row.id}>
+                    <td>{row.name}</td>
+                    <td className="sk-num">{Number(row.price || 0).toLocaleString()}</td>
+                    <td className="sk-num">{volumeLabel(row)}</td>
+                    <td className="sk-num">{row.duration_days ?? "—"}</td>
+                    <td>
+                      <Pill tone={row.enabled ? "ok" : "default"}>
+                        {row.enabled ? t("common.enabled") : t("common.disabled")}
+                      </Pill>
+                    </td>
+                    <td className="sk-actions">
+                      <div className="sk-row" style={{ justifyContent: "flex-end", gap: 6 }}>
+                        <Button size="sm" variant="ghost" onClick={() => setEdit(row)}>
+                          <IcEdit className="sk-ico" />
+                        </Button>
+                        <Button size="sm" variant="danger" onClick={() => remove(row.id)}>
+                          <IcTrash className="sk-ico" />
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+      {(show || edit) && (
+        <ResellerTariffModal
+          initial={edit}
+          onClose={() => { setShow(false); setEdit(null); }}
+          onDone={() => { setShow(false); setEdit(null); reload(); }}
+        />
+      )}
+    </>
+  );
+};
+
+const ResellerTariffModal: FC<{
+  initial?: ResellerTariff | null;
+  onClose: () => void;
+  onDone: () => void;
+}> = ({ initial, onClose, onDone }) => {
+  const { t } = useTranslation();
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const [f, setF] = useState({
+    name: initial?.name || "",
+    price: String(initial?.price ?? 0),
+    unlimited: initial ? (initial.data_limit == null || Number(initial.data_limit) === 0) : true,
+    volumeGb: initial?.data_limit && Number(initial.data_limit) > 0
+      ? String(Math.round(Number(initial.data_limit) / (1024 ** 3) * 1000) / 1000)
+      : "",
+    durationDays: initial?.duration_days != null ? String(initial.duration_days) : "",
+    enabled: initial?.enabled ?? true,
+  });
+  const upd = (k: string) => (e: any) => {
+    const v = e?.target?.type === "checkbox" ? e.target.checked : e.target.value;
+    setF((s) => ({ ...s, [k]: v }));
+  };
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      const payload = {
+        name: f.name.trim(),
+        price: parseInt(f.price, 10) || 0,
+        data_limit: f.unlimited
+          ? null
+          : Math.round(parseFloat(f.volumeGb || "0") * (1024 ** 3)) || null,
+        duration_days: f.durationDays.trim() ? parseInt(f.durationDays, 10) : null,
+        enabled: !!f.enabled,
+      };
+      if (!payload.name) throw new Error(t("common.required"));
+      if (initial) await api.put(`/billing/reseller-tariffs/${initial.id}`, payload);
+      else await api.post("/billing/reseller-tariffs", payload);
+      toast.push(t("common.saved"), "success");
+      onDone();
+    } catch (e: any) {
+      toast.push(e.message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      open
+      title={initial ? t("resellers.editTariff") : t("resellers.addTariff")}
+      onClose={onClose}
+      footer={(
+        <>
+          <Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
+          <Button variant="primary" disabled={busy} onClick={save}>{t("common.save")}</Button>
+        </>
+      )}
+    >
+      <div className="sk-stack" style={{ gap: 12 }}>
+        <Field label={t("common.name")}>
+          <Input value={f.name} onChange={upd("name")} autoFocus />
+        </Field>
+        <Field label={t("billing.price")} hint={t("resellers.tariffPriceHint")}>
+          <Input type="number" value={f.price} onChange={upd("price")} />
+        </Field>
+        <label className="sk-row" style={{ gap: 8, alignItems: "center" }}>
+          <input type="checkbox" checked={f.unlimited} onChange={upd("unlimited")} />
+          <span>{t("billing.unlimited", { defaultValue: "Unlimited volume" })}</span>
+        </label>
+        {!f.unlimited && (
+          <Field label={t("resellers.tariffVolumeGb")}>
+            <Input type="number" value={f.volumeGb} onChange={upd("volumeGb")} placeholder="50" />
+          </Field>
+        )}
+        <Field label={t("billing.duration", "Duration (days)")} hint={t("resellers.tariffDurationHint")}>
+          <Input type="number" value={f.durationDays} onChange={upd("durationDays")} placeholder="30" />
+        </Field>
+        <label className="sk-row" style={{ gap: 8, alignItems: "center" }}>
+          <input type="checkbox" checked={f.enabled} onChange={upd("enabled")} />
+          <span>{t("common.enabled")}</span>
+        </label>
+      </div>
+    </Modal>
   );
 };
 

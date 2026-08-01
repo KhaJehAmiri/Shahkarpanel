@@ -4459,3 +4459,91 @@ body > .sk-drawer {
 .sk-templates-empty {
   display: none;
 }
+
+
+.sk-pay-pulse-grid-6 {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+@media (max-width: 1200px) {
+  .sk-pay-pulse-grid-6 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (max-width: 720px) {
+  .sk-pay-pulse-grid-6 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.sk-pay-leader-fail {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  background: color-mix(in oklab, #ef4444 22%, transparent);
+  color: #fca5a5;
+}
+
+
+.sk-pay-charts {
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr 1fr;
+  gap: 12px;
+  margin-top: 14px;
+}
+.sk-pay-chart-card {
+  background: color-mix(in oklab, var(--sk-surface-2) 88%, transparent);
+  border: 1px solid var(--sk-border);
+  border-radius: 14px;
+  padding: 12px 14px 10px;
+  min-height: 200px;
+}
+.sk-pay-chart-head {
+  margin-bottom: 8px;
+}
+.sk-pay-chart-head h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+}
+.sk-pay-chart-head p {
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: var(--sk-text-faint);
+}
+.sk-pay-chart-spark {
+  margin-top: 8px;
+  display: grid;
+  gap: 4px;
+}
+@media (max-width: 1100px) {
+  .sk-pay-charts { grid-template-columns: 1fr 1fr; }
+  .sk-pay-chart-resellers { grid-column: 1 / -1; }
+}
+@media (max-width: 720px) {
+  .sk-pay-charts { grid-template-columns: 1fr; }
+}
+
+
+.sk-pay-pulse-grid-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.sk-mrr-pulse {
+  background:
+    radial-gradient(90% 70% at 100% 0%, color-mix(in srgb, var(--sk-accent) 12%, transparent), transparent 50%),
+    radial-gradient(80% 60% at 0% 0%, color-mix(in srgb, var(--sk-ok) 10%, transparent), transparent 48%),
+    linear-gradient(180deg, color-mix(in srgb, var(--sk-surface-2) 65%, transparent), var(--sk-surface));
+}
+.sk-mrr-charts {
+  margin-top: 14px;
+}
+@media (max-width: 1100px) {
+  .sk-pay-pulse-grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 720px) {
+  .sk-pay-pulse-grid-4 { grid-template-columns: 1fr; }
+}

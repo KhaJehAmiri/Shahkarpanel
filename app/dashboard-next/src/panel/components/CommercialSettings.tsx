@@ -8,7 +8,7 @@ import {
 
 export interface PlatformSetting {
   key: string;
-  value: string | number | boolean | null;
+  value: string | number | boolean | null | number[] | Record<string, unknown>[];
   type: string;
   has_secret: boolean;
   is_set: boolean;
@@ -123,6 +123,12 @@ export const CommercialSettings: FC = () => {
   return (
     <div className="sk-stack" style={{ gap: 20 }}>
       <Callout tone="info">{t("commercial.hint")}</Callout>
+      <Callout tone="info">
+        {t("commercial.resellerTariffsHint", {
+          defaultValue:
+            "Reseller wholesale tariffs (volume or unlimited) are managed under Resellers → Tariffs — not here and not under Billing → Plans.",
+        })}
+      </Callout>
       {SECTIONS.map((section) => (
         <Card key={section.id}>
           <CardHead title={t(`commercial.section.${section.id}`)} />

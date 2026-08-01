@@ -667,6 +667,15 @@ def admin_may_use_centralpay(dbadmin) -> bool:
     return bool(getattr(dbadmin, "centralpay_enabled", False))
 
 
+def admin_may_use_card(dbadmin) -> bool:
+    """Sudo when platform card is on; resellers when card_enabled is set on their row."""
+    if dbadmin is None:
+        return False
+    if getattr(dbadmin, "is_sudo", False):
+        return bool(ps.get_bool("payment.card_enabled"))
+    return bool(getattr(dbadmin, "card_enabled", False))
+
+
 def filter_providers_for_admin(providers: List[str], dbadmin) -> List[str]:
     """Hide CentralPay unless this admin is opted in (or is sudo)."""
     if CentralPayProvider.name not in providers:

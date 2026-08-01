@@ -1360,9 +1360,14 @@ const AddPlan: FC<{ onClose: () => void; onDone: () => void }> = ({ onClose, onD
         <Field label={t("common.name")}><Input value={f.name} onChange={upd("name")} autoFocus /></Field>
         <div className="sk-row" style={{ gap: 12 }}>
           <Field label={t("billing.price")}><Input type="number" value={f.price} onChange={upd("price")} /></Field>
-          <Field label={t("billing.dataLimit")}>
+          <Field
+            label={t("billing.dataLimit")}
+            hint={t("billing.dataLimitUnlimitedHint", {
+              defaultValue: "Leave empty for unlimited volume. Use this with a price as the reseller tariff reference plan.",
+            })}
+          >
             <div className="sk-row" style={{ gap: 8 }}>
-              <Input type="number" value={f.dataLimitValue} onChange={upd("dataLimitValue")} style={{ flex: 1 }} />
+              <Input type="number" value={f.dataLimitValue} onChange={upd("dataLimitValue")} style={{ flex: 1 }} placeholder={t("billing.unlimited", { defaultValue: "Unlimited" })} />
               <Select value={f.dataLimitUnit} onChange={upd("dataLimitUnit")} style={{ width: 88 }}>
                 <option value="MB">MB</option>
                 <option value="GB">GB</option>
@@ -1669,13 +1674,36 @@ const TrafficPackageModal: FC<{
 
 const UsageTab: FC = () => {
   const { t } = useTranslation();
+  const { admin } = useApp();
   const { data, loading, error, reload } = useFetch<UsageSummary>(() => api.get("/billing/usage"), []);
   useLiveReload(() => { reload(); }, 20000);
   const currency = data?.currency_label ? ` ${data.currency_label}` : "";
+  const isMaster = !!admin?.is_sudo || data?.subject_to_usage_billing === false;
 
   if (loading && !data) return <div style={{ padding: 20 }}><SkeletonRows rows={3} cols={3} /></div>;
   if (error) return <EmptyState title={t("common.error")} desc={error} />;
   if (!data) return <EmptyState title={t("common.noData")} />;
+
+  if (isMaster) {
+    return (
+      <div className="sk-stack" style={{ gap: 14 }}>
+        <Callout tone="info" title={t("billing.usageMasterTitle")}>
+          {t("billing.usageMasterHint")}
+        </Callout>
+        <div className="sk-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+          <Stat
+            label={t("billing.usageRateResellerDefault")}
+            value={`${data.rate_per_gb.toLocaleString()}${currency}`}
+          />
+          <Stat label={t("billing.usageOwnTraffic")} value={formatBytes(data.owned_bytes || 0)} />
+          <Stat label={t("billing.usageSharedTraffic")} value={formatBytes(data.foreign_bytes || 0)} />
+        </div>
+        <p className="sk-muted" style={{ fontSize: 12, margin: 0 }}>
+          {t("billing.usageMasterTrafficNote")}
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="sk-stack" style={{ gap: 14 }}>

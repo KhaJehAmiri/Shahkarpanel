@@ -464,6 +464,35 @@ export interface MrrSummary {
   active_resellers: number;
   sub_resellers: number;
   top_resellers: { admin_id: number; username: string; revenue: number }[];
+  resellers?: {
+    admin_id: number;
+    username: string;
+    revenue: number;
+    wallet_balance?: number;
+    prepaid_traffic_remaining?: number;
+    role?: string | null;
+    is_sub?: boolean;
+  }[];
+  daily?: { date: string; label: string; revenue: number }[];
+  currency_label?: string;
+}
+
+export interface GatewayIncomePeriodStats {
+  success_count: number;
+  success_amount: number;
+  failed_count: number;
+  failed_amount: number;
+  renew_count: number;
+  renew_amount: number;
+  purchase_count: number;
+  purchase_amount: number;
+  topup_count: number;
+  topup_amount: number;
+}
+
+export interface GatewayIncomeDaily extends GatewayIncomePeriodStats {
+  date: string;
+  label: string;
 }
 
 export interface GatewayIncomeReseller {
@@ -477,8 +506,14 @@ export interface GatewayIncomeReseller {
   week: number;
   total: number;
   payments_count: number;
+  failed_count?: number;
+  failed_amount?: number;
+  renew_amount?: number;
+  purchase_amount?: number;
+  topup_amount?: number;
   by_provider: Record<string, number>;
   by_kind: Record<string, number>;
+  periods?: Record<string, GatewayIncomePeriodStats>;
 }
 
 export interface GatewayIncomePayment {
@@ -513,6 +548,8 @@ export interface GatewayIncome {
   yesterday_by_kind?: Record<string, number>;
   week_by_kind?: Record<string, number>;
   total_by_kind?: Record<string, number>;
+  periods?: Record<string, GatewayIncomePeriodStats>;
+  daily?: GatewayIncomeDaily[];
   resellers: GatewayIncomeReseller[];
   recent_payments: GatewayIncomePayment[];
 }
@@ -545,6 +582,8 @@ export interface UsageSummary {
   package_covered_bytes?: number;
   overflow_owned_bytes?: number;
   overflow_foreign_bytes?: number;
+  /** False for sudo/master — not charged for PAYG or packages. */
+  subject_to_usage_billing?: boolean;
 }
 
 export interface TrafficPackage {

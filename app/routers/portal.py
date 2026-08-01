@@ -301,11 +301,31 @@ def portal_renew(
     target = get_owned_account(db, dbuser, body.username or dbuser.username)
     assert_plan_for_user(db, dbuser.admin_id, plan)
 
+    from app.billing.unlimited_create import (
+        UnlimitedCreateChargeError,
+        charge_portal_unlimited_tariff,
+        prepare_unlimited_create_charge,
+    )
+    from app.billing.reseller_tariffs import match_tariff_for_plan
+
+    billing_admin = crud.get_admin_by_id(db, dbuser.admin_id) if dbuser.admin_id else None
+    try:
+        prepare_unlimited_create_charge(
+            db,
+            billing_admin,
+            data_limit=plan.data_limit,
+            count=1,
+            commercial_plan=plan,
+        )
+    except UnlimitedCreateChargeError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    has_tariff = match_tariff_for_plan(db, plan) is not None
     price = int(plan.price or 0)
-    if price > 0:
+    # Wholesale tariff (Resellers → Tariffs) replaces legacy retail wallet debit.
+    if price > 0 and not has_tariff:
         from app.billing.providers import portal_payment_methods
 
-        billing_admin = crud.get_admin_by_id(db, dbuser.admin_id) if dbuser.admin_id else None
         if portal_payment_methods(billing_admin).get("methods"):
             raise HTTPException(
                 status_code=402,
@@ -330,10 +350,29 @@ def portal_renew(
             description=f"Portal renewal for {target.username} — {plan.name}",
             reference=f"user:{target.id}:plan:{plan.id}",
         )
+    elif price > 0 and has_tariff:
+        from app.billing.providers import portal_payment_methods
+
+        if portal_payment_methods(billing_admin).get("methods"):
+            raise HTTPException(
+                status_code=402,
+                detail="Use payment methods in the shop to purchase this plan",
+            )
 
     order = create_user_order(db, target, plan, status="paid")
     target = apply_plan_to_user(db, target, plan)
     mark_order_applied(db, order)
+
+    try:
+        charge_portal_unlimited_tariff(
+            db,
+            reseller_admin_id=dbuser.admin_id,
+            commercial_plan=plan,
+            username=target.username,
+            event="portal_renew",
+        )
+    except UnlimitedCreateChargeError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
     from app.models.user import UserStatus
     if target.status in (UserStatus.active, UserStatus.on_hold):
@@ -1162,9 +1201,40 @@ def portal_create_account(
             detail="Paid plans require checkout via /api/portal/payments with action=purchase",
         )
     assert_can_add_account(db, dbuser)
+
+    from app.billing.unlimited_create import (
+        UnlimitedCreateChargeError,
+        charge_portal_unlimited_tariff,
+        prepare_unlimited_create_charge,
+    )
+
+    billing_admin = crud.get_admin_by_id(db, dbuser.admin_id) if dbuser.admin_id else None
+    try:
+        prepare_unlimited_create_charge(
+            db,
+            billing_admin,
+            data_limit=plan.data_limit,
+            count=1,
+            commercial_plan=plan,
+        )
+    except UnlimitedCreateChargeError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
     created = create_account_from_plan(db, dbuser, plan, body.username)
     order = create_user_order(db, created, plan, status="paid")
     mark_order_applied(db, order)
+
+    try:
+        charge_portal_unlimited_tariff(
+            db,
+            reseller_admin_id=dbuser.admin_id,
+            commercial_plan=plan,
+            username=created.username,
+            event="portal_purchase",
+        )
+    except UnlimitedCreateChargeError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
     return _portal_profile(created, owner=dbuser)
 
 

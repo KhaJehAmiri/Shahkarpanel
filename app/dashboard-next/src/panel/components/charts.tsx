@@ -109,11 +109,16 @@ export const RankBars: FC<{
   );
 };
 
-export const Donut: FC<{ segments: { label: string; value: number; color: string }[]; size?: number }> = ({ segments, size = 150 }) => {
+export const Donut: FC<{
+  segments: { label: string; value: number; color: string }[];
+  size?: number;
+  format?: (n: number) => string;
+}> = ({ segments, size = 150, format }) => {
   const total = segments.reduce((a, s) => a + s.value, 0) || 1;
   const r = size / 2 - 14;
   const c = 2 * Math.PI * r;
   let offset = 0;
+  const fmt = (n: number) => (format ? format(n) : String(n));
   return (
     <div style={{ display: "flex", gap: 20, alignItems: "center", flexWrap: "wrap" }}>
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
@@ -134,14 +139,14 @@ export const Donut: FC<{ segments: { label: string; value: number; color: string
             return el;
           })}
         </g>
-        <text x="50%" y="50%" textAnchor="middle" dy="0.35em" fontSize="22" fontWeight="700" fill="var(--sk-text)">{total}</text>
+        <text x="50%" y="50%" textAnchor="middle" dy="0.35em" fontSize={format ? 16 : 22} fontWeight="700" fill="var(--sk-text)">{fmt(total)}</text>
       </svg>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         {segments.map((s, i) => (
           <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5 }}>
             <span style={{ width: 10, height: 10, borderRadius: 3, background: s.color }} />
             <span className="sk-muted">{s.label}</span>
-            <span style={{ fontWeight: 600 }}>{s.value}</span>
+            <span style={{ fontWeight: 600 }}>{fmt(s.value)}</span>
           </div>
         ))}
       </div>

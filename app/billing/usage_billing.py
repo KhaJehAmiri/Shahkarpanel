@@ -242,7 +242,12 @@ def usage_summary_for_admin(
     prepaid = int(getattr(dbadmin, "prepaid_traffic_remaining", 0) or 0)
     overflow, covered = apply_prepaid_cover(split, prepaid)
     wallet = billing.get_or_create_wallet(db, dbadmin.id)
-    estimated = compute_charge(overflow, rate, discount) if rate > 0 else 0
+    # Platform owner (sudo) never pays PAYG / packages — job already skips them;
+    # keep traffic visible but never mark wallet blocked or estimate a charge.
+    subject = not bool(getattr(dbadmin, "is_sudo", False))
+    estimated = (
+        compute_charge(overflow, rate, discount) if subject and rate > 0 else 0
+    )
     currency = (ps.get_setting("billing.currency_label") or "").strip() or None
     return {
         "rate_per_gb": rate,
@@ -255,16 +260,19 @@ def usage_summary_for_admin(
         "foreign_gb": split.foreign_gb,
         "estimated_cost": estimated,
         "wallet_balance": wallet.balance,
-        "wallet_low": wallet_is_low(wallet.balance),
+        "wallet_low": subject and wallet_is_low(wallet.balance),
         "wallet_low_threshold": ps.get_int("billing.wallet_low_threshold", 10000),
-        "wallet_blocked": bool(rate > 0 and estimated > 0 and wallet.balance < estimated),
+        "wallet_blocked": bool(
+            subject and rate > 0 and estimated > 0 and wallet.balance < estimated
+        ),
         "currency_label": currency,
         "prepaid_traffic_remaining": prepaid,
-        "package_covered_bytes": covered,
-        "overflow_owned_bytes": overflow.owned_bytes,
-        "overflow_foreign_bytes": overflow.foreign_bytes,
+        "package_covered_bytes": covered if subject else 0,
+        "overflow_owned_bytes": overflow.owned_bytes if subject else 0,
+        "overflow_foreign_bytes": overflow.foreign_bytes if subject else 0,
         "users_usage": current_usage,
         "last_billed_users_usage": last_usage,
+        "subject_to_usage_billing": subject,
     }
 
 
@@ -296,6 +304,9 @@ def bill_reseller_usage(
     records (panel Xray, nodes, Finalmask, WG, sing-box), so pay-as-you-go
     no longer depends on hourly NodeUserUsage timestamps.
     """
+    if getattr(dbadmin, "is_sudo", False):
+        return None, UsageSplit()
+
     rate = resolve_usage_rate_per_gb(dbadmin, rate_per_gb)
     if rate <= 0:
         return None, UsageSplit()

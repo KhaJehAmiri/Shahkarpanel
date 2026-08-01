@@ -860,6 +860,26 @@ class ResellerTrafficPackage(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class ResellerPlanTariff(Base):
+    """Wholesale tariffs for resellers — separate from master retail Plans.
+
+    Sudo defines these under Resellers → Tariffs. When a reseller creates an
+    account or their customer buys/renews a matching commercial plan, this
+    ``price`` is debited from the reseller wallet. ``data_limit`` null/0 =
+    unlimited; otherwise volume in bytes. Never shown in the customer portal.
+    """
+
+    __tablename__ = "reseller_plan_tariffs"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(128), nullable=False)
+    price = Column(BigInteger, nullable=False, default=0)
+    data_limit = Column(BigInteger, nullable=True)   # null/0 = unlimited
+    duration_days = Column(Integer, nullable=True)
+    enabled = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class ResellerTrafficPackageOverride(Base):
     """Per-reseller price/bytes override for a global traffic package."""
 

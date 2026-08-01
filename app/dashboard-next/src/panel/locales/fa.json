@@ -167,7 +167,7 @@
     "mrrSubResellers": "زیرنماینده",
     "mrrTop": "پردرآمدترین نمایندگان",
     "payTitle": "پرداخت‌ها",
-    "paySubtitle": "فروش درگاه و روش‌های تسویه",
+    "paySubtitle": "تسویه درگاه و کارت — موفق، ناموفق، تمدید، خرید",
     "payToday": "امروز",
     "payYesterday": "دیروز",
     "payWeek": "۷ روز",
@@ -259,7 +259,48 @@
     "uptimeOs": "سیستم‌عامل",
     "resellerOnlineTitle": "آنلاین‌های نمایندگان",
     "resellerOnlineOpen": "باز کردن کاربران",
-    "viewResellerUsers": "مشاهده کاربران"
+    "viewResellerUsers": "مشاهده کاربران",
+    "paySuccess": "مبلغ موفق",
+    "paySuccessCount": "تراکنش موفق",
+    "paySuccessHint": "{{n}} پرداخت موفق",
+    "payFailed": "تراکنش ناموفق",
+    "payFailedHint": "ناموفق / رد / منقضی",
+    "payRenew": "مبلغ تمدید",
+    "payRenewHint": "{{n}} تمدید",
+    "payPurchase": "مبلغ خرید",
+    "payPurchaseHint": "{{n}} خرید اکانت",
+    "payLeaderTip": "تمدید {{renew}} · خرید {{purchase}} · ناموفق {{failed}}",
+    "mrrType": {
+      "usage_billing": "صورتحساب مصرف",
+      "plan_sale": "فروش پلن",
+      "portal_renew": "تمدید پرتال (کیف)",
+      "invoice": "فاکتور",
+      "traffic_package": "بسته ترافیک"
+    },
+    "payDirectSales": "فروش مستقیم پنل",
+    "payChartDaily": "مبلغ موفق روزانه",
+    "payChartDailyHint": "۱۴ روز اخیر پرداخت‌های تکمیل‌شده",
+    "payChartFails": "تراکنش ناموفق / روز",
+    "payChartMix": "ترکیب دوره انتخابی",
+    "payChartMixHint": "تمدید در برابر خرید و شارژ",
+    "payChartResellers": "به تفکیک نماینده / مستقیم",
+    "payChartResellersHint": "{{n}} نماینده روی این پنل",
+    "payResellersEmptyPeriod": "در این بازه پرداختی ثبت نشده.",
+    "payResellersListed": "{{n}} نماینده ثبت شده (در این فیلتر فروش پرتال ندارند).",
+    "payResellersCount": "نماینده ثبت‌شده",
+    "mrrOpen": "تراکنش‌ها",
+    "mrrRevenueHint": "کسر از کیف نمایندگان",
+    "mrrFloatHint": "جمع موجودی کیف نمایندگان",
+    "mrrUsageShare": "صورتحساب مصرف",
+    "mrrSubResellersCount": "{{n}} زیرنماینده",
+    "mrrChartDaily": "درآمد روزانه پلتفرم",
+    "mrrChartDailyHint": "۱۴ روز اخیر کسر از کیف",
+    "mrrChartMix": "ترکیب درآمد",
+    "mrrChartMixHint": "بر اساس نوع کسر در این دوره",
+    "mrrTopHint": "{{n}} نماینده — درآمد، کیف و بسته",
+    "mrrResellerSub": "کیف {{wallet}} · بسته {{prepaid}}",
+    "mrrNoRevenue": "در این دوره کسری از کیف ثبت نشده",
+    "mrrNoResellers": "هنوز نماینده‌ای نیست"
   },
   "hub": {
     "serversTitle": "سرورها",
@@ -1610,7 +1651,15 @@
     "trafficUsed": "ترافیک مصرفی / سقف",
     "creditBalanceHint": "موجودی فعلی کیف پول: {{balance}}",
     "creditNotePlaceholder": "یادداشت اختیاری (مثلاً شماره پیگیری واریز)",
-    "onlineUsers": "آنلاین"
+    "onlineUsers": "آنلاین",
+    "tabTariffs": "تعرفه‌ها",
+    "tariffsHint": "اینجا فقط تعرفه عمده نمایندگان را تعریف کنید (حجمی یا نامحدود). جدا از پلن‌های فروش مستر است. وقتی نماینده اکانت بسازد یا مشتری‌اش پلن هم‌حجم/هم‌مدت بخرد، این قیمت از کیف نماینده کسر می‌شود.",
+    "addTariff": "افزودن تعرفه",
+    "editTariff": "ویرایش تعرفه",
+    "noTariffs": "هنوز تعرفه‌ای نیست",
+    "tariffPriceHint": "مبلغ کسر از کیف نماینده (عمده)",
+    "tariffVolumeGb": "حجم (گیگابایت)",
+    "tariffDurationHint": "خالی = بدون مدت مشخص؛ برای تطبیق با پلن نماینده بهتر است روز بگذارید (۳۰/۶۰/۹۰)."
   },
   "automation": {
     "title": "اتوماسیون",
@@ -1806,7 +1855,12 @@
     "platformOwner": "پلتفرم",
     "resellerPlans": "نماینده · {{name}}",
     "planOwner": "کاتالوگ",
-    "allPlanCatalogs": "همه کاتالوگ‌ها"
+    "allPlanCatalogs": "همه کاتالوگ‌ها",
+    "dataLimitUnlimitedHint": "خالی بگذارید تا حجم نامحدود باشد. این پلن را با قیمت بسازید و شناسه‌اش را در تنظیمات تجاری → شناسه پلن تعرفه اکانت نامحدود بگذارید تا موقع ساخت اکانت نامحدود از کیف نماینده کسر شود.",
+    "usageMasterTitle": "مالک پنل مشمول صورتحساب نیست",
+    "usageMasterHint": "صورتحساب مصرف و خرید بسته فقط برای نمایندگان است. حساب مالک هرگز بابت مصرف GB کسر نمی‌شود و نیازی به خرید بسته ندارد.",
+    "usageMasterTrafficNote": "ترافیک زیر مربوط به اکانت‌های خودتان است — فقط برای نمایش، صورتحساب نمی‌شود.",
+    "usageRateResellerDefault": "نرخ پیش‌فرض نمایندگان / GB"
   },
   "system": {
     "title": "سیستم",
@@ -2200,6 +2254,7 @@
       "billing.usage_rate_per_gb": "نرخ هر GB (واحد جزئی)",
       "billing.default_package_price": "قیمت پیش‌فرض بسته (واحد جزئی)",
       "billing.default_package_bytes": "حجم پیش‌فرض بسته (بایت)",
+      "billing.reseller_unlimited_plan_id": "شناسه پلن تعرفه اکانت نامحدود",
       "billing.wallet_low_threshold": "آستانه کمبود کیف پول",
       "billing.job_interval_seconds": "فاصله job صورتحساب مصرف (ثانیه)",
       "payment.gateway_enabled": "فعال‌سازی پرداخت با درگاه",
@@ -2221,12 +2276,14 @@
       "reseller.sub_reseller_max": "حداکثر زیرنماینده برای هر والد",
       "reseller.default_commission_percent": "کمیسیون پیش‌فرض ٪",
       "billing.currency_label": "واحد پول نمایشی",
-      "portal.max_child_accounts": "حداکثر اکانت اضافه برای هر ورود پرتال"
+      "portal.max_child_accounts": "حداکثر اکانت اضافه برای هر ورود پرتال",
+      "billing.reseller_unlimited_plan_ids": "تعرفه نامحدود نمایندگان (عمده)"
     },
     "hints": {
       "billing.usage_rate_per_gb": "۰ یعنی صورتحساب خودکار GB غیرفعال است. به‌عنوان نرخ پیش‌فرض مصرف آزاد همه نمایندگان استفاده می‌شود.",
       "billing.default_package_price": "فرم ساخت بسته جدید را پر می‌کند. قیمت واقعی فروش از کاتالوگ + override می‌آید.",
       "billing.default_package_bytes": "فرم ساخت بسته را پر می‌کند (بایت). مثال: ۱۰۷۳۷۴۱۸۲۴۰۰ = ۱۰۰ گیگ.",
+      "billing.reseller_unlimited_plan_id": "در مالی → پلن‌ها یک پلن با حجم خالی (نامحدود) و قیمت بسازید، بعد شناسه همان پلن را اینجا بگذارید. هر بار که نماینده اکانت با حجم نامحدود بسازد، این مبلغ از کیف پولش کسر می‌شود. ۰ یعنی بدون کسر.",
       "billing.wallet_low_threshold": "وقتی موجودی کمتر از این مقدار باشد، هشدار در نمای کلی نشان داده می‌شود.",
       "billing.job_interval_seconds": "فاصله تسویه مصرف آزاد (pay-as-you-go). حداقل ۱۵. پیش‌فرض ۳۰ ثانیه برای کسر نزدیک به لحظه‌ای.",
       "payment.stripe_secret_key": "خالی بگذارید تا رمز فعلی حفظ شود.",
@@ -2241,8 +2298,14 @@
       "payment.card_bank": "اختیاری — نام بانک روی کارت نمایشی.",
       "reseller.default_commission_percent": "هنگام ساخت زیرنماینده بدون کمیسیون صریح اعمال می‌شود.",
       "billing.currency_label": "کنار قیمت‌ها در پرتال نمایش داده می‌شود (مثلاً تومان یا USD). قیمت‌ها همان عددی هستند که در پلن وارد می‌کنید — بدون تبدیل ریال.",
-      "portal.max_child_accounts": "هر مشتری چند اکانت اضافه می‌تواند از پرتال بسازد یا بخرد. مقدار ۰ محدودیت را برمی‌دارد — در این حالت یک مشتری می‌تواند تمام سهمیه نماینده را مصرف کند."
-    }
+      "portal.max_child_accounts": "هر مشتری چند اکانت اضافه می‌تواند از پرتال بسازد یا بخرد. مقدار ۰ محدودیت را برمی‌دارد — در این حالت یک مشتری می‌تواند تمام سهمیه نماینده را مصرف کند.",
+      "billing.reseller_unlimited_plan_ids": "پلن‌های فروش مستر (مثل نامحدود یک‌ماهه مشتری) را اینجا نگذارید. پلن‌های جدا با قیمت عمده بسازید؛ با خرید/تمدید نامحدود توسط مشتریِ نماینده، همان تعرفه (هم‌مدت) از کیف نماینده کسر می‌شود. این پلن‌ها از فروشگاه مشتری مستر مخفی می‌مانند."
+    },
+    "unlimitedPlansEmpty": "هنوز تعرفه نماینده‌ای نیست. در مالی → پلن‌ها پلن نامحدود جدا (مثلاً «تعرفه نماینده ۱ ماهه») با قیمت عمده بسازید، بعد اینجا تیک بزنید.",
+    "unlimitedPlanDays": "{{n}} روز",
+    "unlimitedMasterRetailBadge": "فروش مستر — برای مشتری خودتان",
+    "unlimitedResellerTariffBadge": "تعرفه نماینده — کسر از کیف",
+    "resellerTariffsHint": "تعرفه نمایندگان در منوی نمایندگان → تعرفه‌ها است؛ نه در پلن‌های مستر."
   },
   "migration": {
     "title": "مهاجرت پنل ۳x-ui",

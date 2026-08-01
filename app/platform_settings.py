@@ -23,6 +23,11 @@ SETTING_SPECS: Dict[str, tuple] = {
     # Defaults for the create-package form / optional POST body fields.
     "billing.default_package_price": ("", "int"),
     "billing.default_package_bytes": ("", "int"),
+    # Platform plan id(s) whose price is debited from reseller wallets when they
+    # create / sell an unlimited-volume account. Multi preferred; single kept
+    # for backward compatibility and is merged into the list at read time.
+    "billing.reseller_unlimited_plan_id": ("", "int"),
+    "billing.reseller_unlimited_plan_ids": ("", "json"),
     "payment.demo_enabled": ("PAYMENT_DEMO_ENABLED", "bool"),
     "payment.min_amount": ("PAYMENT_MIN_AMOUNT", "int"),
     "payment.max_amount": ("PAYMENT_MAX_AMOUNT", "int"),
@@ -99,8 +104,14 @@ def _env_default(key: str) -> Any:
             return "mailto:noreply@example.com"
         if key == "reseller.default_commission_percent":
             return 0
-        if key in ("billing.default_package_price", "billing.default_package_bytes"):
+        if key in (
+            "billing.default_package_price",
+            "billing.default_package_bytes",
+            "billing.reseller_unlimited_plan_id",
+        ):
             return 0
+        if key == "billing.reseller_unlimited_plan_ids":
+            return []
         return None
     import config as cfg
 

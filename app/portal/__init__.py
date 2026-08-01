@@ -168,9 +168,17 @@ def create_account_from_plan(
     username: str,
 ) -> User:
     """Create a new VPN account owned by the portal login user."""
+    import logging
+
     from app.db import crud
     from app import xray
+    from app.subscription.panel_balance import (
+        bind_user_to_panel,
+        default_panel_for_create,
+    )
     from sqlalchemy.exc import IntegrityError
+
+    logger = logging.getLogger("uvicorn.error")
 
     username = (username or "").strip().lower()
     if len(username) < 3 or len(username) > 32:
@@ -200,6 +208,10 @@ def create_account_from_plan(
     if owner.admin_id:
         admin = crud.get_admin_by_id(db, owner.admin_id)
 
+    # Least-loaded p1…p9 (or reseller branding) — same balancer as admin create.
+    # Do not rewrite the customer-chosen username with a pN_ prefix.
+    panel_ep = default_panel_for_create(db, admin)
+
     try:
         dbuser = crud.create_user(db, new_user, admin=admin)
     except IntegrityError:
@@ -214,6 +226,28 @@ def create_account_from_plan(
         dbuser.admin_id = owner.admin_id
     db.commit()
     db.refresh(dbuser)
+
+    if panel_ep is not None:
+        try:
+            bind_user_to_panel(
+                db,
+                user_id=dbuser.id,
+                username=dbuser.username,
+                endpoint=panel_ep,
+                source="portal-purchase",
+            )
+            logger.info(
+                'Portal account "%s" bound to subscription panel %s',
+                dbuser.username,
+                panel_ep.slug,
+            )
+        except Exception as exc:
+            logger.warning(
+                'Portal account "%s" created but panel bind failed (%s): %s',
+                dbuser.username,
+                getattr(panel_ep, "slug", "?"),
+                exc,
+            )
 
     try:
         xray.operations.add_user(dbuser=dbuser)

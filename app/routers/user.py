@@ -222,6 +222,19 @@ def add_user(
     if balanced_username != new_user.username:
         new_user = new_user.model_copy(update={"username": balanced_username})
 
+    from app.billing.unlimited_create import (
+        UnlimitedCreateChargeError,
+        charge_unlimited_creates,
+        prepare_unlimited_create_charge,
+    )
+
+    try:
+        tariff_plan, unit_price = prepare_unlimited_create_charge(
+            db, dbadmin, data_limit=new_user.data_limit, count=1
+        )
+    except UnlimitedCreateChargeError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
     try:
         dbuser = crud.create_user(
             db,
@@ -235,6 +248,15 @@ def add_user(
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=409, detail="User already exists")
+
+    if tariff_plan is not None and unit_price > 0:
+        charge_unlimited_creates(
+            db,
+            dbadmin,
+            plan=tariff_plan,
+            unit_price=unit_price,
+            usernames=[dbuser.username],
+        )
 
     if panel_ep is not None:
         bind_user_to_panel(
@@ -298,6 +320,19 @@ def add_user_from_template(
     for ptype in new_user.proxies:
         _ensure_protocol_enabled(ptype, db)
 
+    from app.billing.unlimited_create import (
+        UnlimitedCreateChargeError,
+        charge_unlimited_creates,
+        prepare_unlimited_create_charge,
+    )
+
+    try:
+        tariff_plan, unit_price = prepare_unlimited_create_charge(
+            db, dbadmin, data_limit=new_user.data_limit, count=1
+        )
+    except UnlimitedCreateChargeError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
     try:
         dbuser = crud.create_user(db, new_user, admin=dbadmin)
     except ValueError as exc:
@@ -307,6 +342,15 @@ def add_user_from_template(
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=409, detail="User already exists")
+
+    if tariff_plan is not None and unit_price > 0:
+        charge_unlimited_creates(
+            db,
+            dbadmin,
+            plan=tariff_plan,
+            unit_price=unit_price,
+            usernames=[dbuser.username],
+        )
 
     if panel_ep is not None:
         bind_user_to_panel(
@@ -358,7 +402,22 @@ def bulk_users_from_template(
     suffix = body.username_suffix or db_tpl.username_suffix or ""
     dbadmin = crud.get_admin(db, admin.username)
 
+    from app.billing.unlimited_create import (
+        UnlimitedCreateChargeError,
+        charge_unlimited_creates,
+        prepare_unlimited_create_charge,
+    )
     from app.subscription.panel_balance import bind_user_to_panel, resolve_panel_for_create
+
+    try:
+        tariff_plan, unit_price = prepare_unlimited_create_charge(
+            db,
+            dbadmin,
+            data_limit=getattr(db_tpl, "data_limit", None),
+            count=int(body.count),
+        )
+    except UnlimitedCreateChargeError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
     created: List[str] = []
     errors: List[str] = []
@@ -393,6 +452,15 @@ def bulk_users_from_template(
             errors.append(f"{prefix}{core}{suffix}: already exists")
         except Exception as exc:
             errors.append(f"{prefix}{core}{suffix}: {exc}")
+
+    if created and tariff_plan is not None and unit_price > 0 and dbadmin is not None:
+        charge_unlimited_creates(
+            db,
+            dbadmin,
+            plan=tariff_plan,
+            unit_price=unit_price,
+            usernames=created,
+        )
 
     if created:
         bg.add_task(xray.operations.sync_core_users_async)

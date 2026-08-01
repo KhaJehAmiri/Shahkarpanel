@@ -69,7 +69,17 @@ def get_global_plans(db: Session, *, enabled_only: bool = True) -> List[Plan]:
     q = db.query(Plan).filter(_global_plan_clause())
     if enabled_only:
         q = q.filter(Plan.enabled.is_(True))
-    return q.order_by(Plan.id).all()
+    plans = q.order_by(Plan.id).all()
+    # Hide reseller wholesale tariffs from the owner's customer portal catalog.
+    try:
+        from app.billing.unlimited_create import get_configured_unlimited_plan_ids
+
+        tariff_ids = set(get_configured_unlimited_plan_ids())
+    except Exception:
+        tariff_ids = set()
+    if not tariff_ids:
+        return plans
+    return [p for p in plans if p.id not in tariff_ids]
 
 
 def get_plans_for_user_reseller(
@@ -95,7 +105,17 @@ def get_plans_for_user_reseller(
         clauses.append(Plan.tenant_id == tenant_id)
     from sqlalchemy import or_
 
-    return q.filter(or_(*clauses)).order_by(Plan.id).all()
+    plans = q.filter(or_(*clauses)).order_by(Plan.id).all()
+    # Wholesale tariffs are never sold to end customers.
+    try:
+        from app.billing.unlimited_create import get_configured_unlimited_plan_ids
+
+        tariff_ids = set(get_configured_unlimited_plan_ids())
+    except Exception:
+        tariff_ids = set()
+    if not tariff_ids:
+        return plans
+    return [p for p in plans if p.id not in tariff_ids]
 
 
 def get_plans_for_portal_user(
@@ -114,6 +134,13 @@ def plan_available_for_portal_user(db: Session, dbuser, plan: Plan) -> bool:
     """Whether ``plan`` is in the portal catalog for this end-user."""
     if not plan or not plan.enabled:
         return False
+    try:
+        from app.billing.unlimited_create import is_reseller_unlimited_tariff_id
+
+        if is_reseller_unlimited_tariff_id(plan.id):
+            return False
+    except Exception:
+        pass
     admin_id = getattr(dbuser, "admin_id", None)
     # Platform-owned users (no reseller): global catalog only.
     if not admin_id:
@@ -143,6 +170,15 @@ def assert_plan_accessible(db: Session, admin, plan: Plan) -> None:
 
 def assert_plan_for_user(db: Session, user_admin_id: Optional[int], plan: Plan) -> None:
     """Enforce portal purchase scope: reseller customers cannot buy global plans."""
+    try:
+        from app.billing.unlimited_create import is_reseller_unlimited_tariff_id
+
+        if is_reseller_unlimited_tariff_id(plan.id):
+            raise HTTPException(status_code=403, detail="Plan not available for this user")
+    except HTTPException:
+        raise
+    except Exception:
+        pass
     if not user_admin_id:
         if plan.tenant_id is None and plan.owner_admin_id is None:
             return

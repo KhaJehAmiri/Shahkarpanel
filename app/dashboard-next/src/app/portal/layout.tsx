@@ -14,8 +14,11 @@ export const metadata: Metadata = {
     "mobile-web-app-capable": "yes",
   },
   icons: {
-    icon: [{ url: "/brand/pwa-192.png?v=3", type: "image/png", sizes: "192x192" }],
-    apple: { url: "/brand/apple-touch-icon.png?v=3", sizes: "180x180" },
+    icon: [
+      { url: "/brand/pwa-192.png?v=4", type: "image/png", sizes: "192x192" },
+      { url: "/sub-assets/brand/pwa-192.png?v=4", type: "image/png", sizes: "192x192" },
+    ],
+    apple: { url: "/brand/apple-touch-icon.png?v=4", sizes: "180x180" },
   },
 };
 

@@ -101,7 +101,10 @@ def _spawn_ssh_tunnel(
         "-o", "ExitOnForwardFailure=yes",
         "-o", "ServerAliveInterval=20",
         "-o", "ServerAliveCountMax=3",
-        "-o", "ConnectTimeout=15",
+        # Kept short: this runs inside the 20s core health job, which walks
+        # every node serially, so a slow dial here stalls health checks fleet-wide.
+        "-o", "ConnectTimeout=8",
+        "-o", "ConnectionAttempts=1",
         "-p", str(creds.port or ssh_port),
         "-L", f"127.0.0.1:{lc}:127.0.0.1:{int(remote_port)}",
         "-L", f"127.0.0.1:{la}:127.0.0.1:{int(remote_api_port)}",
@@ -202,12 +205,16 @@ def ensure_node_tunnel(
         if not shutil.which("ssh"):
             raise TunnelError("ssh client not available in the panel container")
 
-        from app.provisioning.node_ssh import resolve_node_ssh_candidates
+        from app.provisioning.node_ssh import (
+            remember_ssh_port,
+            resolve_node_ssh_candidates,
+            ssh_port_candidates,
+        )
 
-        try:
-            candidates = resolve_node_ssh_candidates(host, port=ssh_port, username=username)
-        except FileNotFoundError as exc:
-            raise TunnelError(str(exc)) from exc
+        # Nodes are not all on 22 — several listen on 2222. Trying only the
+        # caller's default meant every attempt on those hosts burned a full
+        # ConnectTimeout inside the health job and could never succeed.
+        ports = ssh_port_candidates(host, ssh_port)
 
         # A stored key file doesn't guarantee its pubkey was ever installed on
         # *this* node's authorized_keys (e.g. added before the key existed).
@@ -217,20 +224,33 @@ def ensure_node_tunnel(
         # without a human re-running the SSH bootstrap script per node.
         proc = None
         key_path = None
+        used_port = None
         last_err: Optional[TunnelError] = None
-        for creds in candidates:
+        for port in ports:
             try:
-                proc, key_path = _spawn_ssh_tunnel(
-                    creds, host, lc, la, remote_port, remote_api_port, ssh_port
+                candidates = resolve_node_ssh_candidates(
+                    host, port=port, username=username, resolve_port=False
                 )
+            except FileNotFoundError as exc:
+                raise TunnelError(str(exc)) from exc
+            for creds in candidates:
+                try:
+                    proc, key_path = _spawn_ssh_tunnel(
+                        creds, host, lc, la, remote_port, remote_api_port, port
+                    )
+                    used_port = port
+                    break
+                except TunnelError as exc:
+                    last_err = exc
+                    proc = None
+                    key_path = None
+                    continue
+            if proc is not None:
                 break
-            except TunnelError as exc:
-                last_err = exc
-                proc = None
-                key_path = None
-                continue
         if proc is None:
             raise last_err or TunnelError("No SSH key or password for control tunnel")
+        if used_port:
+            remember_ssh_port(host, used_port)
 
         _tunnels[node_id] = TunnelProc(
             node_id=node_id,

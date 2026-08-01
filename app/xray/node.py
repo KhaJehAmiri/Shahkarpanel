@@ -1,4 +1,5 @@
 import hashlib
+import os
 import socket
 import re
 import ssl
@@ -18,6 +19,16 @@ from websocket import WebSocketConnectionClosedException, WebSocketTimeoutExcept
 
 from app.xray.config import XRayConfig
 from xray_api import XRay as XRayAPI
+
+# How long to wait for a freshly started node core's gRPC API to accept a
+# channel. This was 5s, which is fine on a LAN but not on the Iran↔abroad
+# control path: the TLS handshake alone costs 200-550ms through the SSH
+# tunnel, and a core loading thousands of WireGuard peers needs several
+# seconds more before it binds. When the wait expired the panel concluded the
+# start had failed, tore the node back to native WireGuard, and the next
+# health tick restarted Xray again — a restart loop that dropped every session
+# on the node every couple of minutes while Xray was in fact running fine.
+NODE_API_READY_TIMEOUT = float(os.environ.get("NODE_API_READY_TIMEOUT", "30"))
 
 
 def _pem_peer_cert(address: str, port: int, timeout: float = 5.0) -> str:
@@ -277,7 +288,7 @@ class ReSTXRayNode:
         )
 
         try:
-            grpc.channel_ready_future(self._api._channel).result(timeout=5)
+            grpc.channel_ready_future(self._api._channel).result(timeout=NODE_API_READY_TIMEOUT)
         except grpc.FutureTimeoutError:
             raise ConnectionError('Failed to connect to node\'s API')
 
@@ -330,7 +341,7 @@ class ReSTXRayNode:
         )
 
         try:
-            grpc.channel_ready_future(self._api._channel).result(timeout=5)
+            grpc.channel_ready_future(self._api._channel).result(timeout=NODE_API_READY_TIMEOUT)
         except grpc.FutureTimeoutError:
             raise ConnectionError('Failed to connect to node\'s API')
 
@@ -701,7 +712,9 @@ class RPyCXRayNode:
     def get_version(self):
         return self.remote.fetch_xray_version()
 
-    def ensure_api(self, timeout: float = 5, *, refresh: bool = False) -> bool:
+    def ensure_api(
+        self, timeout: float = 5, *, refresh: bool = False, allow_unstarted: bool = False
+    ) -> bool:
         """Attach the gRPC stats/API client to an already-running remote core.
 
         For nodes marked ``started`` out-of-band (e.g. a WireGuard relay whose
@@ -715,10 +728,16 @@ class RPyCXRayNode:
         ``refresh=True`` drops a stale channel (common after Finalmask core
         blips / hot-replace) and dials again — without this, ``has_live_api``
         stays true while every ``get_users_stats`` gets Connection refused.
+
+        ``allow_unstarted=True`` dials even though this panel process has not
+        itself started the core. That is the situation right after a panel
+        restart: the node's Xray is running from before, but ``started`` only
+        becomes true once we decide to adopt it — and that decision needs to
+        query the core first.
         """
         if self._api is not None and not refresh:
             return True
-        if not self.connected or not self.started:
+        if not self.connected or (not self.started and not allow_unstarted):
             return False
         if self._api is not None:
             try:
@@ -786,7 +805,7 @@ class RPyCXRayNode:
             ssl_target_name="Shahkar"
         )
         try:
-            grpc.channel_ready_future(self._api._channel).result(timeout=5)
+            grpc.channel_ready_future(self._api._channel).result(timeout=NODE_API_READY_TIMEOUT)
         except grpc.FutureTimeoutError:
 
             start_time = time.time()
@@ -802,6 +821,19 @@ class RPyCXRayNode:
 
             if re.search(r'[Ff]ailed', last_log):
                 raise RuntimeError(last_log)
+
+            # An unreachable stats API is not the same thing as a dead core. If
+            # the core answers over RPyC it is serving users right now, and
+            # raising here would make the caller tear it back down to native
+            # WireGuard and restart it on the next tick — dropping every live
+            # session to fix nothing. Leave ``_api`` unset; ``ensure_api``
+            # re-attaches it on a later pass.
+            try:
+                version = self.remote.fetch_xray_version()
+            except Exception:
+                version = None
+            if version:
+                return
 
             raise ConnectionError('Failed to connect to node\'s API')
 

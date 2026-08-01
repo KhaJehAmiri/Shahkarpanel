@@ -1,5 +1,7 @@
+import os
 import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor
 
 from app import app, logger, scheduler, xray
 from app.db import GetDB, crud
@@ -16,6 +18,10 @@ from xray_api import exc as xray_exc
 
 _NODE_RESTART_COOLDOWN_SEC = 120
 _node_restart_after: dict[int, float] = {}
+# How many nodes to health-probe at once. Probes are network-bound (RPyC over a
+# high-latency path), so this is about not serialising 14 round trips inside a
+# 20s job — not about CPU.
+NODE_PROBE_CONCURRENCY = int(os.environ.get("NODE_PROBE_CONCURRENCY", "8"))
 _WG_RESYNC_COOLDOWN_SEC = 300
 _wg_resync_after: dict[int, float] = {}
 _WG_FLUSH_COOLDOWN_SEC = 4
@@ -339,6 +345,13 @@ def core_health_check():
     # nodes' core
     from app.models.node import CoreKind
 
+    # Probing is network-bound and each node costs 0.4-3.5s on the Iran↔abroad
+    # control path. Walking 14 nodes serially took longer than the job interval,
+    # so APScheduler kept skipping ticks (max_instances=1) and health checks
+    # effectively ran once a minute instead of every 20s. Probe every node
+    # concurrently, then handle the failures serially — remediation can restart
+    # a node's Xray and must stay single-threaded.
+    targets = []
     for node_id, node in list(xray.nodes.items()):
         # One fetch per node per tick, reused below — used to be up to 6
         # separate `get_node_by_id` queries per WireGuard node per tick
@@ -356,23 +369,47 @@ def core_health_check():
         except Exception:
             pass
         node_meta = _node_probe_meta(node_id)
-        is_wg_node = node_meta[0] == CoreKind.wireguard.value
+        targets.append((node_id, node, node_meta, node_meta[0] == CoreKind.wireguard.value))
+
+    def _probe(node_id, node, node_meta, is_wg_node):
+        """Run one node's health probe. Returns the exception on failure."""
+        try:
+            if is_wg_node:
+                latency_ms = _probe_wireguard_node(node_id, node, meta=node_meta)
+                _record_node_health(node_id, latency_ms)
+                _maybe_reconcile_awg_endpoints(node_id, node, now, meta=node_meta)
+                if JOB_AWG_FLUSH_STALE_PEERS:
+                    _maybe_flush_awg_peers(node_id, node, now, meta=node_meta)
+                _maybe_resync_wireguard(node_id, node, now)
+            else:
+                assert node.started
+                probe_start = time.time()
+                node.api.get_sys_stats(timeout=2)
+                latency_ms = (time.time() - probe_start) * 1000
+                _record_node_health(node_id, latency_ms)
+        except (ConnectionError, xray_exc.XrayError, AssertionError, TimeoutError, EOFError) as exc:
+            return exc
+        return None
+
+    probe_failed: dict[int, bool] = {}
+    connected_targets = [t for t in targets if t[1].connected]
+    if connected_targets:
+        with ThreadPoolExecutor(
+            max_workers=min(NODE_PROBE_CONCURRENCY, len(connected_targets)),
+            thread_name_prefix="node-probe",
+        ) as pool:
+            futures = {pool.submit(_probe, *t): t[0] for t in connected_targets}
+            for future in futures:
+                nid = futures[future]
+                try:
+                    probe_failed[nid] = future.result() is not None
+                except Exception:
+                    # Anything the probe did not classify is still a failure.
+                    probe_failed[nid] = True
+
+    for node_id, node, node_meta, is_wg_node in targets:
         if node.connected:
-            try:
-                if is_wg_node:
-                    latency_ms = _probe_wireguard_node(node_id, node, meta=node_meta)
-                    _record_node_health(node_id, latency_ms)
-                    _maybe_reconcile_awg_endpoints(node_id, node, now, meta=node_meta)
-                    if JOB_AWG_FLUSH_STALE_PEERS:
-                        _maybe_flush_awg_peers(node_id, node, now, meta=node_meta)
-                    _maybe_resync_wireguard(node_id, node, now)
-                else:
-                    assert node.started
-                    probe_start = time.time()
-                    node.api.get_sys_stats(timeout=2)
-                    latency_ms = (time.time() - probe_start) * 1000
-                    _record_node_health(node_id, latency_ms)
-            except (ConnectionError, xray_exc.XrayError, AssertionError, TimeoutError, EOFError):
+            if probe_failed.get(node_id):
                 if now < _node_restart_after.get(node_id, 0):
                     continue
                 # Hot-replace holds RPyC for a long time; a probe timeout here

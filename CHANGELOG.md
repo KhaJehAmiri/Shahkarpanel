@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.22.15 — 2026-08-01
+
+Node stability release. Recommended for every install with nodes on a
+high-latency path (Iran ↔ abroad) or with large WireGuard peer counts.
+
+### Node restart loop (critical)
+
+- After starting a node's Xray, the panel waited only 5s for its gRPC API to
+  accept a channel. On a high-latency control path the TLS handshake alone
+  costs 200-550ms, and a core loading thousands of WireGuard peers needs
+  seconds more — so the panel concluded the start had failed, reverted the node
+  to native WireGuard, and the next health tick restarted Xray again. Affected
+  nodes restarted every 1-2 minutes, dropping every session each time. The wait
+  is now 30s, tunable via `NODE_API_READY_TIMEOUT`.
+- If that wait does expire but the core still answers over RPyC, the node is no
+  longer torn down: an unreachable stats API does not mean a dead core, and
+  restarting one that is actively serving users fixes nothing.
+
+### Health check no longer starves under load
+
+- Node health probes now run concurrently (`NODE_PROBE_CONCURRENCY`, default 8)
+  instead of serially. With enough nodes on a slow path a single tick outlasted
+  the job interval, so APScheduler skipped ticks (`max_instances=1`) and health
+  checks effectively stopped running. Remediation stays single-threaded.
+
+### SSH control tunnel
+
+- Control tunnels honour each node's real SSH port instead of assuming 22, with
+  the working port remembered per host and 22/2222 tried as fallbacks. Nodes on
+  a non-standard SSH port previously produced a steady stream of connection
+  timeouts and never got a control tunnel.
+- Tunnel connect timeout cut from 15s to 8s with a single attempt, so one
+  unreachable node stops blocking the jobs behind it.
+
 ## 0.22.14 — 2026-07-31
 
 - Live 1-device exclusivity: with `device_limit=1`, WireGuard / VLESS / sing-box cannot stay online together (sticky winner + temporary protocol hold).

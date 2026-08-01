@@ -1,9 +1,13 @@
-"""Live cross-protocol exclusivity for ``device_limit == 1``.
+"""Device concurrency helpers (legacy protocol-hold APIs kept as no-ops).
 
-When a user is capped to one device, only one protocol family may stay online:
-``wireguard``, ``xray`` (VLESS/VMess/Trojan/SS/…), or ``singbox`` (Hy2/TUIC/AnyTLS).
-The winner is sticky until it goes quiet for ``ONLINE_WINDOW_MINUTES``; losers are
-held out of live serving without changing ``User.status``.
+Historically ``device_limit == 1`` meant only one protocol family
+(WireGuard / Xray / sing-box) could stay online; other families were held out
+of live serving so unused share links timed out in client apps.
+
+Device caps are now enforced **after connect** via live Xray online IP counts
+(``enforce_live_device_limits`` / ``kick_excess_xray_ips``). Protocol-family
+holds are disabled; leftover ``device_conn_hold`` rows are cleared on the
+usage tick.
 """
 from __future__ import annotations
 
@@ -53,18 +57,31 @@ def get_hold(dbuser: User) -> Optional[dict]:
 
 
 def is_protocol_held(dbuser: User, protocol: str) -> bool:
-    hold = get_hold(dbuser)
-    if not hold:
-        return False
-    return protocol in (hold.get("held") or [])
+    """Protocol-family holds are disabled.
+
+    Device limits are enforced on live concurrent connections (online IPs),
+    not by stripping other protocols from serving — that made every non-winner
+    share link time out inside client apps.
+    """
+    return False
 
 
 def is_xray_proxy_held(dbuser: User, proxy_type: str) -> bool:
     """Whether an Xray config proxy type should be omitted for this user."""
-    pt = (proxy_type or "").lower()
-    if pt in ("wireguard", "amneziawg"):
-        return is_protocol_held(dbuser, PROTO_WG)
-    return is_protocol_held(dbuser, PROTO_XRAY)
+    return False
+
+
+def decide_hold(
+    dbuser: User,
+    live_bytes: Dict[str, int],
+    *,
+    now: Optional[datetime] = None,
+) -> Optional[dict]:
+    """No longer compute protocol holds — always clear.
+
+    Concurrent-device caps live in ``enforce_live_device_limits`` (post-connect).
+    """
+    return None
 
 
 def bytes_by_family(
@@ -130,42 +147,6 @@ def winner_still_online(dbuser: User, *, now: Optional[datetime] = None) -> bool
     from app.utils.device_limit import account_is_online
 
     return account_is_online(dbuser, now=now)
-
-
-def decide_hold(
-    dbuser: User,
-    live_bytes: Dict[str, int],
-    *,
-    now: Optional[datetime] = None,
-) -> Optional[dict]:
-    """Compute the next ``device_conn_hold`` for a ``device_limit == 1`` user.
-
-    Returns ``None`` when no hold should be active (clear / unlimited / quiet).
-    """
-    limit = getattr(dbuser, "device_limit", None)
-    if not limit or int(limit) != 1:
-        return None
-
-    current = get_hold(dbuser)
-    sticky = current["winner"] if current else None
-    live = {k: v for k, v in (live_bytes or {}).items() if v > 0}
-
-    if live:
-        # Multiple families this tick, or first acquisition.
-        winner = pick_winner(live, sticky=sticky)
-        if winner is None:
-            return None
-        if len(live) == 1 and winner == sticky and current:
-            # Refresh timestamp only.
-            out = dict(current)
-            out["updated_at"] = datetime.utcnow().isoformat()
-            return out
-        return desired_hold_for_winner(winner)
-
-    # No traffic this tick: keep sticky hold while account still online.
-    if current and winner_still_online(dbuser, now=now):
-        return current
-    return None
 
 
 def _mark_finalmask_dirty_for_users(db: Session, user_ids: Iterable[int]) -> None:
@@ -338,10 +319,14 @@ def enforce_device_exclusivity(
     protocol_breakdown: Sequence[dict],
     candidate_uids: Optional[Iterable[int]] = None,
 ) -> int:
-    """Evaluate and apply holds for ``device_limit == 1`` users.
+    """Clear legacy protocol holds and kick excess live Xray sessions.
 
-    Returns the number of users whose hold JSON changed.
-    Safe to call outside a DB transaction (opens its own short sessions).
+    Protocol-family exclusivity (dropping WG/Xray/sing-box from serving while
+    another family is online) is retired — it made unused share links time out
+    in client apps. Concurrent devices are capped by live online IP count via
+    ``kick_excess_xray_ips`` / ``enforce_live_device_limits``.
+
+    Returns how many users had a hold cleared.
     """
     from app.db import GetDB
 
@@ -350,77 +335,45 @@ def enforce_device_exclusivity(
         uids=set(int(u) for u in candidate_uids) if candidate_uids is not None else None,
     )
 
+    cleared = 0
     with GetDB() as db:
-        held_ids = {
-            row[0]
-            for row in db.query(User.id)
-            .filter(User.device_limit == 1, User.device_conn_hold.isnot(None))
-            .all()
-        }
-        target_ids = set(by_family.keys()) | held_ids
-        if candidate_uids is not None:
-            target_ids |= {int(u) for u in candidate_uids}
-        if not target_ids:
-            return 0
-        targets = (
+        held_users = (
             db.query(User)
-            .filter(User.device_limit == 1, User.id.in_(target_ids))
+            .filter(User.device_conn_hold.isnot(None))
             .all()
         )
-        if not targets:
-            return 0
-
         previous: Dict[int, Optional[dict]] = {}
         changed: List[User] = []
-        now = datetime.utcnow()
-        dirty = False
-
-        for dbuser in targets:
-            uid = int(dbuser.id)
-            previous[uid] = get_hold(dbuser)
-            live = by_family.get(uid, {})
-            next_hold = decide_hold(dbuser, live, now=now)
-            old_norm = previous[uid]
-            new_norm = normalize_hold(next_hold) if next_hold else None
-            old_key = (
-                (old_norm or {}).get("winner"),
-                tuple(sorted((old_norm or {}).get("held") or [])),
-            )
-            new_key = (
-                (new_norm or {}).get("winner"),
-                tuple(sorted((new_norm or {}).get("held") or [])),
-            )
-            if old_key == new_key:
-                if new_norm and live:
-                    dbuser.device_conn_hold = desired_hold_for_winner(new_norm["winner"])
-                    dirty = True
-                continue
-            dbuser.device_conn_hold = new_norm
+        for dbuser in held_users:
+            previous[int(dbuser.id)] = get_hold(dbuser)
+            dbuser.device_conn_hold = None
             changed.append(dbuser)
-            dirty = True
-
-        if dirty:
+        if changed:
             db.commit()
             for u in changed:
                 db.refresh(u)
+            cleared = len(changed)
 
-        changed_ids = {int(u.id) for u in changed}
-        kick_users = [
-            u
-            for u in targets
-            if not is_protocol_held(u, PROTO_XRAY)
-            and (
-                by_family.get(int(u.id), {}).get(PROTO_XRAY, 0) > 0
-                or (get_hold(u) or {}).get("winner") == PROTO_XRAY
+        # Users with traffic this tick (any device_limit) may need an IP kick.
+        kick_ids = set(by_family.keys())
+        if candidate_uids is not None:
+            kick_ids |= {int(u) for u in candidate_uids}
+        kick_users: List[User] = []
+        if kick_ids:
+            kick_users = (
+                db.query(User)
+                .filter(
+                    User.id.in_(list(kick_ids)),
+                    User.device_limit.isnot(None),
+                    User.device_limit > 0,
+                )
+                .all()
             )
-        ]
 
     if changed:
         apply_protocol_holds(changed, previous=previous)
 
     for dbuser in kick_users:
-        if int(dbuser.id) in changed_ids and is_protocol_held(dbuser, PROTO_XRAY):
-            continue
         kick_excess_xray_ips(dbuser)
 
-    return len(changed)
+    return cleared

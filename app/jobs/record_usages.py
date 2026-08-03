@@ -462,10 +462,23 @@ def record_aggregated_user_usages(api_params: dict, usage_coefficient: dict):
     if not users_usage and not hit_limit_uids:
         return
 
+    # PAYG / prepaid burn only for volume-capped accounts. Unlimited accounts
+    # (monthly wholesale tariffs, etc.) are charged at create/renew — their
+    # bytes must not inflate Admin.users_usage or they get double-billed.
+    data_limit_by_uid = {int(row[0]): row[2] for row in billable_rows}
+
+    def _payg_billable(uid: int) -> bool:
+        dl = data_limit_by_uid.get(int(uid))
+        try:
+            return dl is not None and int(dl) > 0
+        except (TypeError, ValueError):
+            return False
+
     admin_usage = defaultdict(int)
     for user_usage in users_usage:
-        admin_id = user_admin_map.get(int(user_usage["uid"]))
-        if admin_id:
+        uid = int(user_usage["uid"])
+        admin_id = user_admin_map.get(uid)
+        if admin_id and _payg_billable(uid):
             admin_usage[admin_id] += user_usage["value"]
 
     # record users usage (only active / on_hold — disabled users must not accrue traffic or online_at)

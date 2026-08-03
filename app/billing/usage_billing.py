@@ -92,6 +92,9 @@ def aggregate_reseller_usage(
         .outerjoin(Node, NodeUserUsage.node_id == Node.id)
         .filter(
             User.admin_id == admin_id,
+            # Volume-capped only — unlimited monthly traffic is wholesale-prepaid.
+            User.data_limit.isnot(None),
+            User.data_limit > 0,
             NodeUserUsage.created_at > since,
             NodeUserUsage.created_at <= until,
         )
@@ -300,9 +303,9 @@ def bill_reseller_usage(
 ) -> Tuple[Optional[Transaction], UsageSplit]:
     """Bill unbilled usage for one reseller from Admin.users_usage deltas.
 
-    ``users_usage`` is incremented by every live connection path the panel
-    records (panel Xray, nodes, Finalmask, WG, sing-box), so pay-as-you-go
-    no longer depends on hourly NodeUserUsage timestamps.
+    ``users_usage`` is incremented only for volume-capped accounts (see
+    ``record_usages``). Unlimited monthly/wholesale accounts are charged at
+    create/renew and must not generate pay-as-you-go debits.
     """
     if getattr(dbadmin, "is_sudo", False):
         return None, UsageSplit()

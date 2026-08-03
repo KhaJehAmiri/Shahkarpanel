@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.22.29 — 2026-08-04
+
+### Unlimited monthly accounts no longer PAYG-billed
+
+- Volume traffic still burns prepaid / wallet at the GB rate.
+- Unlimited accounts (wholesale monthly tariffs) are charged only at create/renew — their usage no longer increments reseller PAYG counters.
+
 ## 0.22.28 — 2026-08-04
 
 ### Start expiry from first connection

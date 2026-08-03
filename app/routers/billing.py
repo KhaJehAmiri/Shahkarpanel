@@ -427,11 +427,17 @@ class PackageOverrideItem(BaseModel):
     bytes: Optional[int] = None
 
 
+class TariffOverrideItem(BaseModel):
+    tariff_id: int
+    price: Optional[int] = None
+
+
 class ResellerPricingUpdate(BaseModel):
     """null usage_rate_per_gb clears the admin override (use platform default)."""
 
     usage_rate_per_gb: Optional[int] = None
     packages: Optional[List[PackageOverrideItem]] = None
+    tariffs: Optional[List[TariffOverrideItem]] = None
 
 
 class ResellerPricingPackage(BaseModel):
@@ -448,12 +454,27 @@ class ResellerPricingPackage(BaseModel):
     created_at: Optional[datetime] = None
 
 
+class ResellerPricingTariff(BaseModel):
+    id: int
+    name: str
+    enabled: bool
+    data_limit: Optional[int] = None
+    duration_days: Optional[int] = None
+    is_unlimited: bool = False
+    catalog_price: int
+    price: int
+    price_overridden: bool = False
+    overridden: bool = False
+    created_at: Optional[datetime] = None
+
+
 class ResellerPricingResponse(BaseModel):
     username: str
     usage_rate_per_gb: Optional[int] = None
     effective_usage_rate_per_gb: int
     platform_usage_rate_per_gb: int
     packages: List[ResellerPricingPackage]
+    tariffs: List[ResellerPricingTariff] = []
 
 
 class TrafficCreditRequest(BaseModel):
@@ -684,6 +705,9 @@ def put_reseller_traffic_pricing(
     packages = None
     if "packages" in dumped and body.packages is not None:
         packages = [p.model_dump() for p in body.packages]
+    tariffs = None
+    if "tariffs" in dumped and body.tariffs is not None:
+        tariffs = [t.model_dump() for t in body.tariffs]
 
     try:
         return set_reseller_pricing(
@@ -692,6 +716,7 @@ def put_reseller_traffic_pricing(
             usage_rate_per_gb=dumped.get("usage_rate_per_gb"),
             clear_usage_rate=clear_usage_rate,
             packages=packages,
+            tariffs=tariffs,
         )
     except TrafficPackageError as exc:
         raise _map_package_error(exc) from exc

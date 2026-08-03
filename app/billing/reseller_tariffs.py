@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from sqlalchemy.orm import Session
 
-from app.db.models import Admin, Plan, ResellerPlanTariff
+from app.db.models import Admin, Plan, ResellerPlanTariff, ResellerPlanTariffOverride
 
 
 class ResellerTariffError(Exception):
@@ -144,8 +144,118 @@ def update_tariff(
 
 
 def delete_tariff(db: Session, row: ResellerPlanTariff) -> None:
+    (
+        db.query(ResellerPlanTariffOverride)
+        .filter(ResellerPlanTariffOverride.tariff_id == row.id)
+        .delete(synchronize_session=False)
+    )
     db.delete(row)
     db.commit()
+
+
+def get_tariff_override(
+    db: Session,
+    *,
+    admin_id: int,
+    tariff_id: int,
+) -> Optional[ResellerPlanTariffOverride]:
+    return (
+        db.query(ResellerPlanTariffOverride)
+        .filter(
+            ResellerPlanTariffOverride.admin_id == admin_id,
+            ResellerPlanTariffOverride.tariff_id == tariff_id,
+        )
+        .first()
+    )
+
+
+def effective_tariff_price(
+    db: Session,
+    admin: Optional[Admin],
+    tariff: ResellerPlanTariff,
+) -> int:
+    """Catalog price, or per-reseller override when set."""
+    catalog = int(tariff.price or 0)
+    if admin is None:
+        return catalog
+    ov = get_tariff_override(db, admin_id=admin.id, tariff_id=tariff.id)
+    if ov is not None and ov.price is not None:
+        return int(ov.price)
+    return catalog
+
+
+def effective_tariff_offer(
+    db: Session,
+    admin: Admin,
+    tariff: ResellerPlanTariff,
+) -> Dict[str, Any]:
+    catalog_price = int(tariff.price or 0)
+    price = catalog_price
+    price_overridden = False
+    ov = get_tariff_override(db, admin_id=admin.id, tariff_id=tariff.id)
+    if ov is not None and ov.price is not None:
+        price = int(ov.price)
+        price_overridden = True
+    return {
+        "id": tariff.id,
+        "name": tariff.name,
+        "enabled": bool(tariff.enabled),
+        "data_limit": tariff.data_limit,
+        "duration_days": tariff.duration_days,
+        "is_unlimited": is_unlimited_data_limit(tariff.data_limit),
+        "catalog_price": catalog_price,
+        "price": price,
+        "price_overridden": price_overridden,
+        "overridden": price_overridden,
+        "created_at": tariff.created_at,
+    }
+
+
+def list_tariffs_for_admin(
+    db: Session,
+    admin: Admin,
+    *,
+    enabled_only: bool = False,
+) -> List[Dict[str, Any]]:
+    return [
+        effective_tariff_offer(db, admin, row)
+        for row in list_tariffs(db, enabled_only=enabled_only)
+    ]
+
+
+def upsert_tariff_override(
+    db: Session,
+    *,
+    admin_id: int,
+    tariff_id: int,
+    price: Optional[int],
+    commit: bool = False,
+) -> Optional[ResellerPlanTariffOverride]:
+    """Set or clear price override. ``price is None`` removes the row."""
+    if price is not None and int(price) < 0:
+        raise ResellerTariffError("Override price cannot be negative")
+
+    ov = get_tariff_override(db, admin_id=admin_id, tariff_id=tariff_id)
+    if price is None:
+        if ov is not None:
+            db.delete(ov)
+            if commit:
+                db.commit()
+        return None
+
+    if ov is None:
+        ov = ResellerPlanTariffOverride(
+            admin_id=admin_id,
+            tariff_id=tariff_id,
+            price=int(price),
+        )
+        db.add(ov)
+    else:
+        ov.price = int(price)
+    if commit:
+        db.commit()
+        db.refresh(ov)
+    return ov
 
 
 def tariff_to_dict(row: ResellerPlanTariff) -> Dict[str, Any]:
@@ -462,7 +572,7 @@ def prepare_reseller_tariff_charge(
             )
         return None, 0
 
-    price = int(tariff.price or 0)
+    price = effective_tariff_price(db, admin, tariff)
     if price <= 0:
         return tariff, 0
 
@@ -783,7 +893,7 @@ def prepare_reseller_modify_charge(
     ):
         return None, 0
 
-    price = int(tariff.price or 0)
+    price = effective_tariff_price(db, admin, tariff)
     if price <= 0:
         return tariff, 0
 

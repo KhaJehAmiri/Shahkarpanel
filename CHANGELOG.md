@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.22.27 — 2026-08-04
+
+### Per-reseller wholesale tariff price overrides
+
+- Traffic pricing modal can override monthly/volume wholesale tariff prices per reseller (blank = global tariff catalog).
+- Create/modify wallet charges use the effective per-reseller tariff price.
+- Migration: `reseller_plan_tariff_overrides`.
+
 ## 0.22.26 — 2026-08-03
 
 ### Family Guard (محافظ خانواده) + storefront

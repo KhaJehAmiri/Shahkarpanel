@@ -781,6 +781,7 @@ const ResellerTrafficPricingModal: FC<{ account: ResellerAccount; onClose: () =>
   );
   const [rate, setRate] = useState("");
   const [rows, setRows] = useState<Record<number, { price: string; bytesGb: string }>>({});
+  const [tariffRows, setTariffRows] = useState<Record<number, string>>({});
   const [busy, setBusy] = useState(false);
   const [hydrated, setHydrated] = useState(false);
 
@@ -795,11 +796,29 @@ const ResellerTrafficPricingModal: FC<{ account: ResellerAccount; onClose: () =>
       };
     }
     setRows(next);
+    const nextTariffs: Record<number, string> = {};
+    for (const tr of data.tariffs || []) {
+      nextTariffs[tr.id] = tr.price_overridden ? String(tr.price) : "";
+    }
+    setTariffRows(nextTariffs);
     setHydrated(true);
   }, [data, hydrated]);
 
   const setRow = (id: number, key: "price" | "bytesGb", value: string) => {
     setRows((prev) => ({ ...prev, [id]: { ...(prev[id] || { price: "", bytesGb: "" }), [key]: value } }));
+  };
+
+  const tariffMeta = (tr: NonNullable<ResellerPricing["tariffs"]>[number]) => {
+    const parts: string[] = [tr.catalog_price.toLocaleString()];
+    if (tr.duration_days != null && tr.duration_days > 0) {
+      parts.push(`${tr.duration_days}d`);
+    }
+    if (tr.is_unlimited || tr.data_limit == null || Number(tr.data_limit) === 0) {
+      parts.push(t("billing.unlimited", { defaultValue: "Unlimited" }));
+    } else {
+      parts.push(formatBytes(Number(tr.data_limit)));
+    }
+    return parts.join(" · ");
   };
 
   const submit = async () => {
@@ -823,9 +842,17 @@ const ResellerTrafficPricingModal: FC<{ account: ResellerAccount; onClose: () =>
           bytes,
         };
       });
+      const tariffs = (data.tariffs || []).map((tr) => {
+        const priceRaw = (tariffRows[tr.id] ?? "").trim();
+        return {
+          tariff_id: tr.id,
+          price: priceRaw === "" ? null : (parseInt(priceRaw, 10) || 0),
+        };
+      });
       await api.put(`/billing/reseller-pricing/${encodeURIComponent(account.username)}`, {
         usage_rate_per_gb: rateTrim === "" ? null : (parseInt(rateTrim, 10) || 0),
         packages,
+        tariffs,
       });
       toast.push(t("common.saved"), "success");
       onDone();
@@ -835,6 +862,8 @@ const ResellerTrafficPricingModal: FC<{ account: ResellerAccount; onClose: () =>
       setBusy(false);
     }
   };
+
+  const tariffs = data?.tariffs || [];
 
   return (
     <Modal
@@ -864,8 +893,33 @@ const ResellerTrafficPricingModal: FC<{ account: ResellerAccount; onClose: () =>
                   <Input type="number" value={rate} onChange={(e: any) => setRate(e.target.value)} placeholder={String(data.platform_usage_rate_per_gb)} />
                 </Field>
               </div>
+              {!!tariffs.length && (
+                <div className="sk-price-pkgs">
+                  <div className="sk-price-pkgs-label">{t("resellers.tabTariffs")}</div>
+                  {tariffs.map((tr) => (
+                    <div key={tr.id} className="sk-price-pkg">
+                      <div className="sk-price-pkg-top">
+                        <strong className="sk-price-pkg-name">{tr.name}</strong>
+                        <span className="sk-price-pkg-meta">{tariffMeta(tr)}</span>
+                      </div>
+                      <div className="sk-price-pkg-fields">
+                        <Field label={t("resellers.packageOverridePrice")} hint={t("resellers.overrideBlankHint")}>
+                          <Input
+                            type="number"
+                            value={tariffRows[tr.id] ?? ""}
+                            placeholder={String(tr.catalog_price)}
+                            onChange={(e: any) => setTariffRows((prev) => ({ ...prev, [tr.id]: e.target.value }))}
+                          />
+                        </Field>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
               {!data.packages.length ? (
-                <EmptyState title={t("common.noData")} desc={t("billing.noTrafficPackages")} />
+                !tariffs.length ? (
+                  <EmptyState title={t("common.noData")} desc={t("billing.noTrafficPackages")} />
+                ) : null
               ) : (
                 <div className="sk-price-pkgs">
                   <div className="sk-price-pkgs-label">{t("billing.tabTrafficPackages")}</div>

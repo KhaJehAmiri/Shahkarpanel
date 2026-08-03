@@ -614,12 +614,27 @@ export interface ResellerPricingPackage {
   created_at?: string | null;
 }
 
+export interface ResellerPricingTariff {
+  id: number;
+  name: string;
+  enabled: boolean;
+  data_limit?: number | null;
+  duration_days?: number | null;
+  is_unlimited?: boolean;
+  catalog_price: number;
+  price: number;
+  price_overridden: boolean;
+  overridden: boolean;
+  created_at?: string | null;
+}
+
 export interface ResellerPricing {
   username: string;
   usage_rate_per_gb?: number | null;
   effective_usage_rate_per_gb: number;
   platform_usage_rate_per_gb: number;
   packages: ResellerPricingPackage[];
+  tariffs?: ResellerPricingTariff[];
 }
 
 export interface TrafficPurchase {

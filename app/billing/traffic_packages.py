@@ -369,7 +369,9 @@ def list_purchases(
 
 
 def get_reseller_pricing(db: Session, admin: Admin) -> Dict[str, Any]:
-    """Sudo view: effective rate + packages with catalog vs effective fields."""
+    """Sudo view: effective rate + packages/tariffs with catalog vs effective fields."""
+    from app.billing.reseller_tariffs import list_tariffs_for_admin
+
     platform_rate = int(ps.get_int("billing.usage_rate_per_gb", 0) or 0)
     admin_rate = getattr(admin, "usage_rate_per_gb", None)
     return {
@@ -378,6 +380,7 @@ def get_reseller_pricing(db: Session, admin: Admin) -> Dict[str, Any]:
         "effective_usage_rate_per_gb": effective_usage_rate_per_gb(admin),
         "platform_usage_rate_per_gb": platform_rate,
         "packages": list_packages_for_admin(db, admin, enabled_only=False),
+        "tariffs": list_tariffs_for_admin(db, admin, enabled_only=False),
     }
 
 
@@ -388,8 +391,9 @@ def set_reseller_pricing(
     usage_rate_per_gb: Optional[int] = None,
     clear_usage_rate: bool = False,
     packages: Optional[List[Dict[str, Any]]] = None,
+    tariffs: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
-    """Apply PAYG rate and/or package overrides for one reseller."""
+    """Apply PAYG rate and/or package/tariff overrides for one reseller."""
     if clear_usage_rate:
         admin.usage_rate_per_gb = None
     elif usage_rate_per_gb is not None:
@@ -410,6 +414,29 @@ def set_reseller_pricing(
             bytes=item.get("bytes"),
             commit=False,
         )
+
+    if tariffs is not None:
+        from app.billing.reseller_tariffs import (
+            ResellerTariffError,
+            get_tariff,
+            upsert_tariff_override,
+        )
+
+        for item in tariffs:
+            tariff_id = int(item["tariff_id"])
+            row = get_tariff(db, tariff_id)
+            if row is None:
+                raise TrafficPackageError(f"Reseller tariff {tariff_id} not found", 404)
+            try:
+                upsert_tariff_override(
+                    db,
+                    admin_id=admin.id,
+                    tariff_id=tariff_id,
+                    price=item.get("price"),
+                    commit=False,
+                )
+            except ResellerTariffError as exc:
+                raise TrafficPackageError(exc.message, exc.status_code) from exc
 
     db.commit()
     db.refresh(admin)

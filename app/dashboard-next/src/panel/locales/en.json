@@ -1753,7 +1753,7 @@
     "creditTraffic": "Credit traffic",
     "creditTrafficHint": "Adds prepaid GB without debiting the wallet.",
     "trafficPricing": "Traffic pricing",
-    "trafficPricingHint": "Override PAYG rate and package price/volume for this reseller. Leave blank to use the global catalog or platform default.",
+    "trafficPricingHint": "Override PAYG rate, traffic packages, and wholesale tariff prices for this reseller. Leave blank to use the global catalog or platform default.",
     "usageRatePerGb": "Free-usage rate per GB",
     "usageRatePerGbHint": "Blank = platform default ({{rate}}).",
     "packageCatalogPrice": "Catalog price",

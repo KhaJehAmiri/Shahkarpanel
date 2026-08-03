@@ -925,6 +925,25 @@ class ResellerTrafficPackageOverride(Base):
     package = relationship("ResellerTrafficPackage")
 
 
+class ResellerPlanTariffOverride(Base):
+    """Per-reseller wholesale price override for a global plan tariff."""
+
+    __tablename__ = "reseller_plan_tariff_overrides"
+    __table_args__ = (
+        UniqueConstraint("admin_id", "tariff_id", name="uq_reseller_tariff_override"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    admin_id = Column(Integer, ForeignKey("admins.id"), index=True, nullable=False)
+    tariff_id = Column(
+        Integer, ForeignKey("reseller_plan_tariffs.id"), index=True, nullable=False
+    )
+    price = Column(BigInteger, nullable=True)  # null = catalog tariff price
+
+    admin = relationship("Admin", foreign_keys=[admin_id])
+    tariff = relationship("ResellerPlanTariff")
+
+
 class ResellerTrafficPurchase(Base):
     """Ledger of reseller traffic package purchases and manual credits."""
 

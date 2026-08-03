@@ -26,9 +26,10 @@ from app.wireguard.transport import WireGuardTransportError, client_for_node
 logger = logging.getLogger("shahkar-wg")
 
 # Users in these statuses are actively served (carry a live peer). Anything
-# else (disabled / limited / expired / on_hold) is pushed as inactive so the
-# node drops the peer and traffic stops immediately.
-SERVED_STATUSES = (UserStatus.active,)
+# else (disabled / limited / expired) is pushed as inactive so the node drops
+# the peer and traffic stops immediately. ``on_hold`` is served so the first
+# connection can start the expiry timer (same as Xray).
+SERVED_STATUSES = (UserStatus.active, UserStatus.on_hold)
 
 # Throttle for _maybe_kick_tunnel_restart: sync_node can be called often (WG
 # resync loop, tunnel apply, health check, ...); restart_node rebuilds and

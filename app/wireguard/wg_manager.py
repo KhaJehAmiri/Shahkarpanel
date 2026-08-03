@@ -28,7 +28,7 @@ logger = logging.getLogger("shahkar-wg-autoscale")
 DEFAULT_MAX_PEERS = 200
 BASE_SUBNET_PREFIX = "10.8"
 BASE_LISTEN_PORT = 51820
-SERVED_STATUSES = (UserStatus.active,)
+SERVED_STATUSES = (UserStatus.active, UserStatus.on_hold)
 
 
 class WireGuardAutoScaleError(Exception):

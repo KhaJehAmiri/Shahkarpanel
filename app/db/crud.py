@@ -960,6 +960,12 @@ def update_user(
         if explicit_status in (UserStatus.disabled, UserStatus.expired, UserStatus.limited):
             dbuser.online_at = None
             needs_disconnect = True
+        if explicit_status != UserStatus.on_hold:
+            # Leaving on-hold: clear package timer so it cannot reactivate later.
+            if modify.on_hold_expire_duration is None:
+                dbuser.on_hold_expire_duration = None
+            if modify.on_hold_timeout is None:
+                dbuser.on_hold_timeout = None
         dbuser.last_status_change = datetime.utcnow()
 
     if modify.data_limit is not None:

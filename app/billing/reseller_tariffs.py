@@ -400,6 +400,28 @@ def duration_days_from_expire(expire) -> Optional[int]:
     return days if days > 0 else None
 
 
+def duration_days_from_on_hold(on_hold_expire_duration) -> Optional[int]:
+    """Package length in days from on_hold duration (seconds)."""
+    if on_hold_expire_duration in (None, 0, "0"):
+        return None
+    try:
+        secs = int(on_hold_expire_duration)
+    except (TypeError, ValueError):
+        return None
+    if secs <= 0:
+        return None
+    days = int(round(secs / 86400.0))
+    return days if days > 0 else None
+
+
+def duration_days_for_create_payload(user) -> Optional[int]:
+    """Duration shape for create: prefer on_hold package length, else expire."""
+    hold = duration_days_from_on_hold(getattr(user, "on_hold_expire_duration", None))
+    if hold is not None:
+        return hold
+    return duration_days_from_expire(getattr(user, "expire", None))
+
+
 # Date-pickers often set expire to calendar midnight / end-of-day, so
 # ``round((expire-now)/86400)`` lands on 29 or 31 when the reseller picked
 # "30 days". Snap within this window to a catalog duration — never across
@@ -472,7 +494,7 @@ def apply_locked_limits_to_user_payload(payload, overrides: Dict[str, Any]):
 
 def enforce_reseller_create_locks(db: Session, admin: Optional[Admin], new_user):
     """Force master-locked device/speed onto a UserCreate for resellers."""
-    duration_days = duration_days_from_expire(getattr(new_user, "expire", None))
+    duration_days = duration_days_for_create_payload(new_user)
     locks = resolve_locked_limits_for_admin(
         db,
         admin,

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.22.28 — 2026-08-04
+
+### Start expiry from first connection
+
+- User create/edit: checkbox to start the expiry timer on first connection (on hold until then); otherwise from create time.
+- Bulk create supports the same option.
+- Reseller tariff matching uses on-hold package duration; WireGuard serves on-hold peers so the timer can start.
+
 ## 0.22.27 — 2026-08-04
 
 ### Per-reseller wholesale tariff price overrides

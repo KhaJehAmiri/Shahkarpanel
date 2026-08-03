@@ -397,7 +397,10 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
       if (dnsPreset) body.dns_policy = { preset: dnsPreset };
       if (status === "on_hold") {
         body.on_hold_expire_duration = !noExpire && expireDate
-          ? Math.max(3600, Math.floor((new Date(expireDate).getTime() - Date.now()) / 1000))
+          ? Math.max(
+              3600,
+              Math.round((new Date(expireDate).getTime() - Date.now()) / 1000 / 86400) * 86400,
+            )
           : 30 * 86400;
         body.expire = 0;
       }
@@ -659,9 +662,19 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
                 />
               </Field>
               <Field label={t("common.status")}>
-                <Select value={status} onChange={(e: ChangeEvent<HTMLSelectElement>) => setStatus(e.target.value)}>
+                <Select
+                  value={status}
+                  onChange={(e: ChangeEvent<HTMLSelectElement>) => {
+                    const next = e.target.value;
+                    setStatus(next);
+                    if (next === "on_hold" && noExpire) {
+                      setNoExpire(false);
+                      setExpireDate(new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10));
+                    }
+                  }}
+                >
                   <option value="active">{t("users.status.active")}</option>
-                  <option value="on_hold">{t("users.status.on_hold")}</option>
+                  <option value="on_hold">{t("users.startFromFirstUse")}</option>
                 </Select>
               </Field>
               <Field label={t("bulkCreate.prefix")}>
@@ -922,6 +935,28 @@ export const BulkCreateUsersModal: FC<Props> = ({ open, onClose, onDone, templat
                         </button>
                       ))}
                     </div>
+                  </>
+                )}
+                {!noExpire && (
+                  <>
+                    <label className="sk-ue-check" style={{ marginTop: 10 }}>
+                      <Checkbox
+                        checked={status === "on_hold"}
+                        onChange={() => {
+                          if (status === "on_hold") {
+                            setStatus("active");
+                          } else {
+                            setStatus("on_hold");
+                            if (noExpire) {
+                              setNoExpire(false);
+                              setExpireDate(new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10));
+                            }
+                          }
+                        }}
+                      />
+                      <span>{t("users.startFromFirstUse")}</span>
+                    </label>
+                    <p className="sk-ue-help">{t("users.startFromFirstUseHint")}</p>
                   </>
                 )}
               </div>

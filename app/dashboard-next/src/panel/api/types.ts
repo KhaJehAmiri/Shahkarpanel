@@ -53,6 +53,8 @@ export interface UserItem {
   overage_traffic?: number;
   data_limit: number | null;
   expire: number | null;
+  on_hold_expire_duration?: number | null;
+  on_hold_timeout?: string | null;
   online_at: string | null;
   online?: boolean;
   data_limit_reset_strategy?: string;

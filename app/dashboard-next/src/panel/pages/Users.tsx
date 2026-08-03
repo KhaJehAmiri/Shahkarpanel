@@ -878,6 +878,12 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
   const [status, setStatus] = useState(
     user && ["active", "on_hold", "disabled", "limited", "expired"].includes(user.status) ? user.status : "active"
   );
+  const [startFromFirstUse, setStartFromFirstUse] = useState(user?.status === "on_hold");
+  const [durationDays, setDurationDays] = useState<number | null>(
+    user?.status === "on_hold" && user?.on_hold_expire_duration
+      ? Math.max(1, Math.round(Number(user.on_hold_expire_duration) / 86400))
+      : null,
+  );
   const [reset, setReset] = useState(user?.data_limit_reset_strategy || "no_reset");
   const [clientProfile, setClientProfile] = useState(user?.client_profile || "normal");
   const [routingPreset, setRoutingPreset] = useState(user?.routing_preset || "");
@@ -931,11 +937,17 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
         : "",
     );
     setExpireDate(record.expire ? new Date(record.expire * 1000).toISOString().slice(0, 10) : "");
-    setNoExpire(!record.expire);
+    setNoExpire(!record.expire && record.status !== "on_hold");
     setStatus(
       ["active", "on_hold", "disabled", "limited", "expired"].includes(record.status)
         ? record.status
         : "active",
+    );
+    setStartFromFirstUse(record.status === "on_hold");
+    setDurationDays(
+      record.status === "on_hold" && record.on_hold_expire_duration
+        ? Math.max(1, Math.round(Number(record.on_hold_expire_duration) / 86400))
+        : null,
     );
     setReset(record.data_limit_reset_strategy || "no_reset");
     setClientProfile(record.client_profile || "normal");
@@ -1214,15 +1226,27 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
           body.session_limit_minutes = parseInt(sessionLimitMinutes, 10);
         }
       }
-      if (status === "on_hold") {
+      if (startFromFirstUse || status === "on_hold") {
         body.status = "on_hold";
-        body.on_hold_expire_duration = !noExpire && expireDate
-          ? Math.max(3600, Math.floor((new Date(expireDate).getTime() - Date.now()) / 1000))
-          : 30 * 86400;
+        let holdSecs: number;
+        if (durationDays != null && durationDays > 0) {
+          holdSecs = durationDays * 86400;
+        } else if (!noExpire && expireDate) {
+          holdSecs = Math.max(
+            3600,
+            Math.round((new Date(expireDate).getTime() - Date.now()) / 1000 / 86400) * 86400,
+          );
+        } else {
+          holdSecs = 30 * 86400;
+        }
+        body.on_hold_expire_duration = holdSecs;
         body.expire = 0;
       } else {
-        body.status = status;
+        body.status = mode === "create" ? "active" : status;
         body.expire = noExpire || !expireDate ? 0 : Math.floor(new Date(expireDate).getTime() / 1000);
+        if (mode === "edit") {
+          body.on_hold_expire_duration = null;
+        }
       }
 
       if (isEnabled("user_portal") && portalEnabled) {
@@ -1245,7 +1269,31 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
     } catch (e: any) { toast.push(e.message, "error"); } finally { setBusy(false); }
   };
 
-  const preset = (days: number) => { setNoExpire(false); setExpireDate(new Date(Date.now() + days * 86400000).toISOString().slice(0, 10)); };
+  const preset = (days: number) => {
+    setNoExpire(false);
+    setDurationDays(days);
+    setExpireDate(new Date(Date.now() + days * 86400000).toISOString().slice(0, 10));
+  };
+
+  const toggleStartFromFirstUse = () => {
+    setStartFromFirstUse((prev) => {
+      const next = !prev;
+      if (next) {
+        setStatus("on_hold");
+        if (!durationDays && !noExpire && expireDate) {
+          const days = Math.max(1, Math.round((new Date(expireDate).getTime() - Date.now()) / 86400000));
+          setDurationDays(days);
+        } else if (!durationDays) {
+          setDurationDays(30);
+          setNoExpire(false);
+          setExpireDate(new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10));
+        }
+      } else if (status === "on_hold") {
+        setStatus("active");
+      }
+      return next;
+    });
+  };
 
   const availableProtos = PROTO_ORDER.filter((p) => {
     if (!protos[p]) return false;
@@ -1655,7 +1703,19 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
                       key={s}
                       type="button"
                       className={status === s ? "on" : ""}
-                      onClick={() => setStatus(s)}
+                      onClick={() => {
+                        setStatus(s);
+                        if (s === "on_hold") {
+                          setStartFromFirstUse(true);
+                          if (noExpire) {
+                            setNoExpire(false);
+                            setDurationDays(30);
+                            setExpireDate(new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10));
+                          }
+                        } else if (s === "active") {
+                          setStartFromFirstUse(false);
+                        }
+                      }}
                     >
                       {t(`users.status.${s}`)}
                     </button>
@@ -1689,24 +1749,56 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
               <div className="sk-ue-field">
                 <div className="sk-ue-label">{t("users.expire")}</div>
                 <label className="sk-ue-check">
-                  <Checkbox checked={noExpire} onChange={() => setNoExpire((u) => !u)} />
+                  <Checkbox checked={noExpire} onChange={() => { setNoExpire((u) => !u); if (!noExpire) setDurationDays(null); }} />
                   <span>{t("users.never")}</span>
                 </label>
                 {!noExpire && (
                   <>
-                    <Input
-                      type="date"
-                      className="sk-input-date"
-                      value={expireDate}
-                      onChange={(e: any) => setExpireDate(e.target.value)}
-                      dir="ltr"
-                      inputMode="none"
-                    />
+                    {startFromFirstUse ? (
+                      <>
+                        <Input
+                          type="number"
+                          min={1}
+                          value={durationDays ?? ""}
+                          placeholder="30"
+                          onChange={(e: any) => {
+                            const n = parseInt(e.target.value, 10);
+                            setDurationDays(Number.isFinite(n) && n > 0 ? n : null);
+                            if (Number.isFinite(n) && n > 0) {
+                              setExpireDate(new Date(Date.now() + n * 86400000).toISOString().slice(0, 10));
+                            }
+                          }}
+                          dir="ltr"
+                        />
+                        <p className="sk-ue-help">{t("users.packageDurationDays")}</p>
+                      </>
+                    ) : (
+                      <Input
+                        type="date"
+                        className="sk-input-date"
+                        value={expireDate}
+                        onChange={(e: any) => { setExpireDate(e.target.value); setDurationDays(null); }}
+                        dir="ltr"
+                        inputMode="none"
+                      />
+                    )}
                     <div className="sk-ue-chips">
                       {[30, 60, 90].map((d) => (
                         <button key={d} type="button" className="sk-ue-chip" onClick={() => preset(d)}>+{d}d</button>
                       ))}
                     </div>
+                  </>
+                )}
+                {!noExpire && (status === "active" || status === "on_hold") && (
+                  <>
+                    <label className="sk-ue-check" style={{ marginTop: 10 }}>
+                      <Checkbox
+                        checked={startFromFirstUse}
+                        onChange={toggleStartFromFirstUse}
+                      />
+                      <span>{t("users.startFromFirstUse")}</span>
+                    </label>
+                    <p className="sk-ue-help">{t("users.startFromFirstUseHint")}</p>
                   </>
                 )}
               </div>
@@ -1743,17 +1835,6 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
           ) : (
             <div className="sk-uc-plan">
               <div className="sk-ue-field">
-                <div className="sk-ue-label">{t("common.status")}</div>
-                <div className="sk-ue-seg" role="group">
-                  {(["active", "on_hold"] as const).map((s) => (
-                    <button key={s} type="button" className={status === s ? "on" : ""} onClick={() => setStatus(s)}>
-                      {t(`users.status.${s}`)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="sk-ue-field">
                 <div className="sk-ue-label">{t("users.dataLimit")}</div>
                 <div className="sk-ue-inline">
                   <Input
@@ -1779,24 +1860,56 @@ const UserFormDrawer: FC<{ mode: "create" | "edit"; user?: UserItem; presetWireg
               <div className="sk-ue-field">
                 <div className="sk-ue-label">{t("users.expire")}</div>
                 <label className="sk-ue-check">
-                  <Checkbox checked={noExpire} onChange={() => setNoExpire((u) => !u)} />
+                  <Checkbox checked={noExpire} onChange={() => { setNoExpire((u) => !u); if (!noExpire) setDurationDays(null); }} />
                   <span>{t("users.never")}</span>
                 </label>
                 {!noExpire && (
                   <>
-                    <Input
-                      type="date"
-                      className="sk-input-date"
-                      value={expireDate}
-                      onChange={(e: any) => setExpireDate(e.target.value)}
-                      dir="ltr"
-                      inputMode="none"
-                    />
+                    {startFromFirstUse ? (
+                      <>
+                        <Input
+                          type="number"
+                          min={1}
+                          value={durationDays ?? ""}
+                          placeholder="30"
+                          onChange={(e: any) => {
+                            const n = parseInt(e.target.value, 10);
+                            setDurationDays(Number.isFinite(n) && n > 0 ? n : null);
+                            if (Number.isFinite(n) && n > 0) {
+                              setExpireDate(new Date(Date.now() + n * 86400000).toISOString().slice(0, 10));
+                            }
+                          }}
+                          dir="ltr"
+                        />
+                        <p className="sk-ue-help">{t("users.packageDurationDays")}</p>
+                      </>
+                    ) : (
+                      <Input
+                        type="date"
+                        className="sk-input-date"
+                        value={expireDate}
+                        onChange={(e: any) => { setExpireDate(e.target.value); setDurationDays(null); }}
+                        dir="ltr"
+                        inputMode="none"
+                      />
+                    )}
                     <div className="sk-ue-chips">
                       {[30, 60, 90].map((d) => (
                         <button key={d} type="button" className="sk-ue-chip" onClick={() => preset(d)}>+{d}d</button>
                       ))}
                     </div>
+                  </>
+                )}
+                {!noExpire && (
+                  <>
+                    <label className="sk-ue-check" style={{ marginTop: 10 }}>
+                      <Checkbox
+                        checked={startFromFirstUse}
+                        onChange={toggleStartFromFirstUse}
+                      />
+                      <span>{t("users.startFromFirstUse")}</span>
+                    </label>
+                    <p className="sk-ue-help">{t("users.startFromFirstUseHint")}</p>
                   </>
                 )}
               </div>

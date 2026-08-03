@@ -222,12 +222,12 @@ def add_user(
     if balanced_username != new_user.username:
         new_user = new_user.model_copy(update={"username": balanced_username})
 
+    from app.billing.reseller_tariffs import enforce_reseller_create_locks
     from app.billing.unlimited_create import (
         UnlimitedCreateChargeError,
         charge_unlimited_creates,
         prepare_unlimited_create_charge,
     )
-    from app.billing.reseller_tariffs import enforce_reseller_create_locks
 
     new_user, duration_days = enforce_reseller_create_locks(db, dbadmin, new_user)
 
@@ -332,12 +332,12 @@ def add_user_from_template(
     for ptype in new_user.proxies:
         _ensure_protocol_enabled(ptype, db)
 
+    from app.billing.reseller_tariffs import enforce_reseller_create_locks
     from app.billing.unlimited_create import (
         UnlimitedCreateChargeError,
         charge_unlimited_creates,
         prepare_unlimited_create_charge,
     )
-    from app.billing.reseller_tariffs import enforce_reseller_create_locks
 
     new_user, duration_days = enforce_reseller_create_locks(db, dbadmin, new_user)
 
@@ -426,14 +426,14 @@ def bulk_users_from_template(
     suffix = body.username_suffix or db_tpl.username_suffix or ""
     dbadmin = crud.get_admin(db, admin.username)
 
+    from app.billing.reseller_tariffs import (
+        duration_days_from_expire,
+        enforce_reseller_create_locks,
+    )
     from app.billing.unlimited_create import (
         UnlimitedCreateChargeError,
         charge_unlimited_creates,
         prepare_unlimited_create_charge,
-    )
-    from app.billing.reseller_tariffs import (
-        duration_days_from_expire,
-        enforce_reseller_create_locks,
     )
     from app.subscription.panel_balance import bind_user_to_panel, resolve_panel_for_create
 

@@ -220,32 +220,46 @@ class UserCreate(User):
                 del inbounds[proxy_type]
 
         # check by proxies to ensure that every protocol has inbounds set
-        for proxy_type in proxies:
+        for proxy_type in list(proxies):
             ptype = proxy_type if isinstance(proxy_type, ProxyTypes) else ProxyTypes(str(proxy_type))
             if ptype in (ProxyTypes.WireGuard, ProxyTypes.Hysteria2, ProxyTypes.TUIC, ProxyTypes.AnyTLS):
                 inbounds[proxy_type] = inbounds.get(proxy_type) or []
                 continue
 
-            if proxy_type in inbounds:
-                tags = inbounds[proxy_type]
-                if not tags:
-                    raise ValueError(f"{proxy_type} inbounds cannot be empty")
-
-                proxy_settings = proxies.get(proxy_type)
-                for tag in tags:
-                    if tag not in xray.config.inbounds_by_tag:
-                        raise ValueError(f"Inbound {tag} doesn't exist")
-                    if not inbound_matches_proxy(proxy_type, tag, proxy_settings):
-                        raise ValueError(
-                            f"Inbound {tag} is not compatible with {proxy_type} settings"
-                        )
-            else:
-                proxy_settings = proxies.get(proxy_type)
-                inbounds[proxy_type] = [
+            proxy_settings = proxies.get(proxy_type)
+            tags = inbounds.get(proxy_type)
+            # Missing or explicitly empty → auto-select compatible product inbounds.
+            # Empty lists used to raise ("inbounds cannot be empty") and blocked
+            # portal purchase approve when the owner blueprint copied Shadowsocks
+            # with no usable tags on this panel.
+            if not tags:
+                tags = [
                     i["tag"]
                     for i in xray.config.inbounds_by_protocol.get(ptype.value, [])
-                    if inbound_matches_proxy(proxy_type, i["tag"], proxy_settings, inbound_meta=i)
+                    if inbound_matches_proxy(
+                        proxy_type, i["tag"], proxy_settings, inbound_meta=i
+                    )
                 ]
+                inbounds[proxy_type] = tags
+
+            if not tags:
+                # Panel cannot serve this protocol — drop it instead of failing
+                # the whole create (common when cloning a multi-protocol owner
+                # onto a VLESS-only panel).
+                proxies.pop(proxy_type, None)
+                inbounds.pop(proxy_type, None)
+                continue
+
+            for tag in tags:
+                if tag not in xray.config.inbounds_by_tag:
+                    raise ValueError(f"Inbound {tag} doesn't exist")
+                if not inbound_matches_proxy(proxy_type, tag, proxy_settings):
+                    raise ValueError(
+                        f"Inbound {tag} is not compatible with {proxy_type} settings"
+                    )
+
+        if not proxies:
+            raise ValueError("No compatible proxy protocols configured on this panel")
 
         return inbounds
 

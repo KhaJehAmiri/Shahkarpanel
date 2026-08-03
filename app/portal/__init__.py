@@ -189,14 +189,65 @@ def get_owned_account(db: Session, owner: User, username: str) -> User:
 
 
 def _protocol_blueprint_from_owner(owner: User) -> Tuple[dict, dict]:
-    """Clone protocol types/inbounds from the portal login user (fresh credentials)."""
+    """Clone protocol types from the portal login user (fresh credentials).
+
+    Only keep protocols that this panel can actually serve. Copying Shadowsocks
+    (or other) from an owner when the panel has no matching inbound produces
+    ``UserCreate`` validation errors on purchase approve
+    (``Shadowsocks inbounds cannot be empty``).
+    """
+    from app import xray
     from app.models.proxy import ProxyTypes
+    from app.xray.inbound_match import inbound_matches_proxy
+
+    _no_inbound_required = {
+        ProxyTypes.WireGuard,
+        ProxyTypes.Hysteria2,
+        ProxyTypes.TUIC,
+        ProxyTypes.AnyTLS,
+    }
 
     ur = UserResponse.model_validate(owner, context={"skip_default_links": True})
     proxies: dict = {}
-    for ptype in (ur.proxies or {}):
-        proxies[ptype] = {}
-    inbounds = dict(ur.inbounds or {})
+    inbounds: dict = {}
+    owner_inbounds = ur.inbounds or {}
+
+    for ptype in ur.proxies or {}:
+        ptype_enum = ptype if isinstance(ptype, ProxyTypes) else ProxyTypes(str(ptype))
+        if ptype_enum in _no_inbound_required:
+            proxies[ptype] = {}
+            tags = list(owner_inbounds.get(ptype) or [])
+            if tags:
+                inbounds[ptype] = tags
+            continue
+
+        available = list(
+            xray.config.product_inbounds_for_type(ptype_enum)
+            or xray.config.inbounds_by_protocol.get(ptype_enum.value, [])
+            or []
+        )
+        if not available:
+            # Panel has no inbound for this protocol — skip it.
+            continue
+
+        settings: dict = {}
+        if ptype_enum == ProxyTypes.Shadowsocks:
+            method = (available[0].get("ss_method") or "").strip()
+            if method:
+                settings["method"] = method
+
+        # Keep owner tags that still exist and match cipher family; otherwise
+        # omit so UserCreate auto-selects compatible inbounds.
+        kept = [
+            tag
+            for tag in (owner_inbounds.get(ptype) or [])
+            if tag in xray.config.inbounds_by_tag
+            and inbound_matches_proxy(ptype, tag, settings)
+        ]
+        proxies[ptype] = settings
+        if kept:
+            inbounds[ptype] = kept
+
     if not proxies:
         proxies = {ProxyTypes.VLESS: {}}
         inbounds = {}

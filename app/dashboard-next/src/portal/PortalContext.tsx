@@ -195,6 +195,43 @@ export function PortalProvider({ children }: { children: ReactNode }) {
     [lang, currencyLabel],
   );
 
+  // Pre-auth white-label: Host / ?tenant= / ?ref= before /portal/branding is available.
+  useEffect(() => {
+    if (authed) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { fetchStorefront } = await import("@/lib/storefront-api");
+        const sp = new URLSearchParams(window.location.search);
+        const payload = await fetchStorefront({
+          tenant: sp.get("tenant"),
+          ref: sp.get("ref"),
+        });
+        if (cancelled) return;
+        const b = payload.branding;
+        const title = (b.panel_title || payload.headline || "").trim();
+        if (title) {
+          setBrandTitle(title);
+          document.title = title;
+        }
+        setBrandLogo((b.logo_url || "").trim() || "/sub-assets/brand/shahkar.png");
+        if (b.primary_color) {
+          document.documentElement.style.setProperty("--p-accent", b.primary_color);
+          document.documentElement.style.setProperty("--p-accent-2", b.primary_color);
+          const theme = document.querySelector(".portal-theme") as HTMLElement | null;
+          theme?.style.setProperty("--p-accent", b.primary_color);
+          theme?.style.setProperty("--p-accent-2", b.primary_color);
+        }
+        if (payload.currency_label) setCurrencyLabel(payload.currency_label);
+      } catch {
+        /* keep defaults until login */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [authed]);
+
   const loadAccounts = useCallback(async () => {
     try {
       const list = await portalGet<PortalAccountSummary[]>("/portal/accounts");

@@ -514,6 +514,20 @@ def _ssh_host_for_node(dbnode) -> str:
 
 def _connect_node_session(dbnode, node):
     """Connect ``node``, falling back to an SSH control tunnel when needed."""
+    # If we are already on a live control tunnel, keep it — do not dial the
+    # public IP and steal the agent session back.
+    if getattr(node, "control_tunneled", False):
+        try:
+            node.connect()
+            return node
+        except Exception as tun_exc:
+            logger.debug(
+                "Control-tunneled session connect failed for node %s: %s",
+                getattr(dbnode, "id", "?"),
+                tun_exc,
+            )
+            # fall through to rebuild / direct
+
     try:
         node.connect()
         return node
@@ -568,16 +582,31 @@ def _prefer_control_tunnel(dbnode) -> object | None:
     return add_node(dbnode, dial_host=host, dial_port=lc, dial_api_port=la)
 
 
-def _force_control_tunnel_session(dbnode, node):
+def _session_for_node(dbnode, *, reason: str = "preferred path"):
+    """Return a node session.
+
+    Reuse a *live* SSH control tunnel when one is already up. Otherwise dial the
+    node directly — on some Iran relays the SSH local-forward accepts TCP but
+    TLS handshake hangs, while the direct path completes in <1s. Forcing the
+    tunnel on every connect left those nodes stuck ``connecting`` / SSL timeout.
+    Large-payload failures still fail over via ``_force_control_tunnel_session``.
+    """
+    preferred = _prefer_control_tunnel(dbnode)
+    if preferred is not None:
+        return preferred
+    return add_node(dbnode)
+
+
+def _force_control_tunnel_session(
+    dbnode, node, *, reason: str = "large-config transfer failure"
+):
     """Rebuild the node session over the SSH control tunnel.
 
-    Fallback for routes where the direct TLS/RPyC socket connects fine (so
-    ``node.connect()`` never raises) but drops mid-write on a large payload —
-    seen on some Iran↔abroad paths as ``EOFError: stream has been closed``
-    while pushing a big WireGuard/Finalmask config. Plain reconnect-and-retry
-    on the same direct path reproduces the same failure every time; routing
-    the bulk transfer through SSH (which handles its own retransmission)
-    is what actually gets a large config through automatically.
+    Used both as a fallback when the direct TLS/RPyC socket connects but drops
+    mid-write on a large payload (``EOFError: stream has been closed`` on
+    Iran↔abroad paths), and proactively on first connect when SSH credentials
+    exist — so the panel does not keep flip-flopping direct ↔ tunnel sessions
+    (each takeover restarts Xray on the node).
     """
     from app.control_tunnel import TunnelError, ensure_node_tunnel, has_ssh_for_host
 
@@ -601,9 +630,11 @@ def _force_control_tunnel_session(dbnode, node):
         logger.debug("Control tunnel connect failed for node %s: %s", dbnode.id, exc)
         return None
     logger.info(
-        "Node %s: switched to SSH control tunnel after a direct large-config "
-        "transfer failure",
+        "Node %s: using SSH control tunnel 127.0.0.1:%s (host %s) — %s",
         dbnode.id,
+        local_control,
+        host,
+        reason,
     )
     return tunneled
 
@@ -793,10 +824,10 @@ def push_all_node_configs_sync() -> int:
                 if not node.connected:
                     raise KeyError
             except KeyError:
-                node = add_node(dbnode)
+                node = _session_for_node(dbnode, reason="bulk config push")
 
             if not node.connected:
-                node.connect()
+                node = _connect_node_session(dbnode, node)
 
             config = build_node_xray_config(node_id)
             with GetDB() as db:
@@ -844,8 +875,8 @@ def push_all_node_configs_sync() -> int:
                             except Exception:
                                 pass
                             xray.nodes.pop(node_id, None)
-                        node = add_node(dbnode)
-                        node.connect()
+                        node = _session_for_node(dbnode, reason="fresh session after push fail")
+                        node = _connect_node_session(dbnode, node)
                         logger.info(
                             'Node "%s" retrying Xray push on fresh session (attempt %s)',
                             dbnode.name,
@@ -912,8 +943,7 @@ def connect_node(node_id, config=None):
             if not node.connected:
                 raise KeyError
         except KeyError:
-            preferred = _prefer_control_tunnel(dbnode)
-            node = preferred if preferred is not None else xray.operations.add_node(dbnode)
+            node = _session_for_node(dbnode, reason="preferred path")
 
         # Skip soft refresh while a Finalmask hot-replace holds the RPyC
         # channel — preempting it is what flips nodes connecting↔connected.
@@ -956,7 +986,7 @@ def connect_node(node_id, config=None):
             try:
                 node = _connect_node_session(dbnode, node)
             except Exception:
-                node = xray.operations.add_node(dbnode)
+                node = _session_for_node(dbnode, reason="reconnect after session failure")
                 node = _connect_node_session(dbnode, node)
         else:
             logger.debug("Reusing live RPyC session for \"%s\"", dbnode.name)
@@ -1233,7 +1263,7 @@ def restart_node(node_id, config=None):
         try:
             node = xray.nodes[dbnode.id]
         except KeyError:
-            node = xray.operations.add_node(dbnode)
+            node = _session_for_node(dbnode, reason="restart_node")
 
         if not node.connected:
             # connect_node() claims its own slot — release ours first so the
@@ -1241,6 +1271,18 @@ def restart_node(node_id, config=None):
             _release_connecting_node(node_id)
             released = True
             return connect_node(node_id, config)
+        # Existing live session on the public IP? Keep it for restart — moving
+        # to a tunnel mid-restart is what hung TLS on some relays (SSH forward
+        # accepts TCP, handshake never completes). Large-push failover still
+        # uses ``_force_control_tunnel_session`` below on stream errors.
+        if not getattr(node, "control_tunneled", False):
+            pass
+        elif not node.connected:
+            moved = _force_control_tunnel_session(
+                dbnode, node, reason="restart via tunnel"
+            )
+            if moved is not None:
+                node = moved
 
         from app.models.node import CoreKind
 

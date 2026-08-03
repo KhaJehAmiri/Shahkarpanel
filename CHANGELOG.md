@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.22.26 — 2026-08-03
+
+### Family Guard (محافظ خانواده) + storefront
+
+- Portal **Family Guard**: parental controls (app catalog blocks, adult/ads, schedule, daily minutes, pause, PIN).
+- Server-side Xray routing enforces blocks per user (works for plain `vless://` subs); catalog uses geosite/geoip packs where available.
+- Avoid fleet-wide sniffing / `IPIfNonMatch` rewrites so enabling Family Guard does not tank latency for everyone.
+- Subscription access respects Family Guard schedule/daily limits.
+- Storefront signup / landing / become-reseller surfaces and related panel settings.
+- Migrations: `users.family_controls`, storefront signup support.
+
 ## 0.22.25 — 2026-08-01
 
 ### All protocol links stay connectable; device cap after connect only

@@ -57,6 +57,10 @@ SETTING_SPECS: Dict[str, tuple] = {
     "portal.max_child_accounts": ("PORTAL_MAX_CHILD_ACCOUNTS", "int"),
     "reseller.sub_reseller_max": ("SUB_RESELLER_MAX_PER_PARENT", "int"),
     "reseller.default_commission_percent": ("", "int"),
+    # Public white-label storefront (landing + customer signup + reseller apply).
+    "storefront.enabled": ("", "bool"),
+    "storefront.public_signup_enabled": ("", "bool"),
+    "storefront.reseller_apply_enabled": ("", "bool"),
 }
 
 SECRET_KEYS = frozenset({
@@ -104,6 +108,12 @@ def _env_default(key: str) -> Any:
             return "mailto:noreply@example.com"
         if key == "reseller.default_commission_percent":
             return 0
+        if key in (
+            "storefront.enabled",
+            "storefront.public_signup_enabled",
+            "storefront.reseller_apply_enabled",
+        ):
+            return True
         if key in (
             "billing.default_package_price",
             "billing.default_package_bytes",

@@ -34,6 +34,10 @@ from app.models.portal_user import (
     PortalCompleteSetupBody,
     PortalConfigs,
     PortalDailyUsage,
+    FamilyControlsPutBody,
+    FamilyControlsResponse,
+    FamilyPresetInfo,
+    FamilyServiceInfo,
     PortalLinkItem,
     PortalNodeLink,
     PortalOrder,
@@ -1332,4 +1336,149 @@ def portal_account_set_sub_token(
         sub_token=target.sub_token or "",
         subscription_url=profile.subscription_url,
         public_subscription_url=profile.public_subscription_url,
+    )
+
+
+def _verify_family_pin(controls: Optional[dict], pin: Optional[str]) -> None:
+    from app.models.admin import pwd_context
+
+    stored = (controls or {}).get("pin_hash")
+    if not stored:
+        return
+    if not pin or not pwd_context.verify(str(pin), stored):
+        raise HTTPException(status_code=403, detail="کد والدین (PIN) نادرست است")
+
+
+@router.get(
+    "/accounts/{username}/family-controls",
+    response_model=FamilyControlsResponse,
+)
+def portal_get_family_controls(
+    username: str,
+    db: Session = Depends(get_db),
+    dbuser: User = Depends(get_current_portal_user),
+):
+    """Family Guard settings for an owned VPN account."""
+    target = get_owned_account(db, dbuser, username)
+    from app.family_guard import list_presets_for_api, list_services_for_api, public_controls
+
+    lang = "fa"
+    return FamilyControlsResponse(
+        username=target.username,
+        controls=public_controls(target.family_controls),
+        services=[
+            FamilyServiceInfo(**row) for row in list_services_for_api(lang=lang)
+        ],
+        presets=[
+            FamilyPresetInfo(**row) for row in list_presets_for_api(lang=lang)
+        ],
+    )
+
+
+@router.put(
+    "/accounts/{username}/family-controls",
+    response_model=FamilyControlsResponse,
+)
+def portal_put_family_controls(
+    username: str,
+    body: FamilyControlsPutBody,
+    db: Session = Depends(get_db),
+    dbuser: User = Depends(get_current_portal_user),
+):
+    """Update Family Guard settings (PIN-protected once a PIN is set)."""
+    target = get_owned_account(db, dbuser, username)
+    from app.family_guard import (
+        list_presets_for_api,
+        list_services_for_api,
+        merge_controls,
+        pause_for,
+        public_controls,
+        set_block_state,
+    )
+    from app.family_guard.schedule import evaluate_access
+    from app.models.admin import pwd_context
+
+    existing = (
+        dict(target.family_controls)
+        if isinstance(target.family_controls, dict)
+        else {}
+    )
+    _verify_family_pin(existing, body.pin)
+
+    patch = body.model_dump(
+        exclude_unset=True,
+        exclude={"pin", "new_pin", "clear_pin", "pause_minutes"},
+    )
+    merged = merge_controls(existing, patch)
+
+    if body.pause_minutes:
+        merged = pause_for(merged, minutes=int(body.pause_minutes))
+
+    if body.clear_pin:
+        merged.pop("pin_hash", None)
+    elif body.new_pin:
+        pin = str(body.new_pin).strip()
+        if not pin.isdigit() or not (4 <= len(pin) <= 8):
+            raise HTTPException(
+                status_code=400,
+                detail="PIN must be 4–8 digits",
+            )
+        merged["pin_hash"] = pwd_context.hash(pin)
+
+    # Preserve pin_hash from existing when not clearing/changing
+    if "pin_hash" not in merged and existing.get("pin_hash") and not body.clear_pin:
+        merged["pin_hash"] = existing["pin_hash"]
+
+    allowed, reason = evaluate_access(merged)
+    merged = set_block_state(merged, not allowed, reason)
+    was_blocked = bool((existing.get("runtime") or {}).get("schedule_blocked"))
+
+    target.family_controls = merged
+    # Keep continuous session limit aligned with daily minutes when set.
+    daily = (merged.get("schedule") or {}).get("daily_minutes")
+    if daily and int(daily) > 0:
+        target.session_limit_minutes = int(daily)
+    elif daily is None or daily == "" or (isinstance(daily, int) and daily <= 0):
+        # Clearing daily cap should not leave a stale session_limit behind.
+        if (existing.get("schedule") or {}).get("daily_minutes"):
+            target.session_limit_minutes = None
+    db.add(target)
+    db.commit()
+    db.refresh(target)
+
+    if not allowed and not was_blocked:
+        try:
+            from app.quota import disconnect_users_everywhere
+
+            disconnect_users_everywhere([target.id])
+        except Exception:
+            pass
+    elif allowed and was_blocked:
+        try:
+            from app.quota import restore_users_everywhere
+
+            restore_users_everywhere([target.id])
+        except Exception:
+            pass
+
+    # Server-side domain blocks require a core config rebuild (routing rules).
+    try:
+        from app.family_guard.server_routing import family_block_fingerprint
+
+        if family_block_fingerprint(existing) != family_block_fingerprint(merged):
+            from app.quota import flush_live_serving
+
+            flush_live_serving(force_restart=True)
+    except Exception:
+        pass
+
+    return FamilyControlsResponse(
+        username=target.username,
+        controls=public_controls(target.family_controls),
+        services=[
+            FamilyServiceInfo(**row) for row in list_services_for_api(lang="fa")
+        ],
+        presets=[
+            FamilyPresetInfo(**row) for row in list_presets_for_api(lang="fa")
+        ],
     )

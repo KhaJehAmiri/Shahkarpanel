@@ -290,6 +290,36 @@ def duration_days_from_expire(expire) -> Optional[int]:
     return days if days > 0 else None
 
 
+# Date-pickers often set expire to calendar midnight / end-of-day, so
+# ``round((expire-now)/86400)`` lands on 29 or 31 when the reseller picked
+# "30 days". Snap within this window to a catalog duration — never across
+# packages (30 must not become 60).
+_DURATION_SNAP_TOLERANCE_DAYS = 1
+
+
+def snap_duration_to_catalog(
+    want_days: Optional[int],
+    catalog_days: Sequence[int],
+    *,
+    tolerance: int = _DURATION_SNAP_TOLERANCE_DAYS,
+) -> Optional[int]:
+    """Return ``want_days`` or the nearest catalog day within ``tolerance``."""
+    if want_days is None:
+        return None
+    want = int(want_days)
+    if want <= 0:
+        return None
+    catalog = sorted({int(d) for d in catalog_days if d is not None and int(d) > 0})
+    if not catalog:
+        return want
+    if want in catalog:
+        return want
+    near = [d for d in catalog if abs(d - want) <= int(tolerance)]
+    if not near:
+        return want
+    return min(near, key=lambda d: (abs(d - want), d))
+
+
 def resolve_locked_limits_for_admin(
     db: Session,
     admin: Optional[Admin],
@@ -361,10 +391,20 @@ def match_tariff(
         return None
 
     if want_dur is not None:
-        exact = [t for t in same_volume if t.duration_days == want_dur]
+        catalog_durs = [
+            int(t.duration_days)
+            for t in same_volume
+            if t.duration_days is not None and int(t.duration_days) > 0
+        ]
+        snapped = snap_duration_to_catalog(want_dur, catalog_durs)
+        exact = [
+            t
+            for t in same_volume
+            if t.duration_days is not None and int(t.duration_days) == snapped
+        ]
         if exact:
             return sorted(exact, key=lambda t: (int(t.price or 0), t.id))[0]
-        # No exact duration — do not silently pick another duration.
+        # Farther than snap tolerance — do not silently pick another package.
         return None
 
     # Open-ended request: only open-ended tariffs (never a timed 30/60/90).
@@ -487,9 +527,15 @@ def assert_reseller_shape_allowed(
             if examples
             else ""
         )
+        got = (
+            f" (received {int(duration_days)} days)"
+            if duration_days not in (None, "")
+            else " (no expiry)"
+        )
         raise ResellerTariffError(
             "Unlimited accounts must use a duration that matches a wholesale tariff"
             + hint
+            + got
             + ". Creating without expiry (or a non-matching duration) is not allowed.",
             status_code=400,
         )

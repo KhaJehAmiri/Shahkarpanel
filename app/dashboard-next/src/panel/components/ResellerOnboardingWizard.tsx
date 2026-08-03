@@ -47,9 +47,10 @@ export const ResellerOnboardingWizard: FC = () => {
     >
       <p className="sk-faint" style={{ fontSize: 13, marginTop: 0 }}>{t("onboarding.description")}</p>
       <div className="sk-stack" style={{ gap: 10 }}>
-        <Step done={!!steps.branding} label={t("onboarding.stepBranding")} to="/resellers" />
+        <Step done={!!steps.branding} label={t("onboarding.stepBranding")} to="/resellers?tab=branding" />
         <Step done={!!steps.plan} label={t("onboarding.stepPlan")} to="/billing" />
         <Step done={!!steps.user} label={t("onboarding.stepUser")} to="/users" />
+        <Step done={!!steps.storefront} label={t("onboarding.stepStorefront")} to="/resellers?tab=storefront" />
       </div>
     </Modal>
   );

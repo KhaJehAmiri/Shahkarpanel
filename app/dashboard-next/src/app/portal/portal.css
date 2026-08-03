@@ -3269,3 +3269,390 @@ html.p-standalone.p-portal-lock .portal-theme.p-app-shell {
     place-items: center;
   }
 }
+
+/* —— Family Guard —— */
+.p-family-banner {
+  border: 1px solid color-mix(in srgb, var(--p-accent) 35%, transparent);
+  background: color-mix(in srgb, var(--p-accent) 12%, transparent);
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.p-family-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.85rem 0;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+}
+
+.p-family-row:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.p-family-row:first-child {
+  padding-top: 0;
+}
+
+.p-family-switch {
+  position: relative;
+  display: inline-flex;
+  width: 48px;
+  height: 28px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.p-family-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.p-family-switch span {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 18%, transparent);
+  transition: background 0.15s ease;
+}
+
+.p-family-switch span::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  inset-inline-start: 3px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  transition: transform 0.15s ease;
+}
+
+.p-family-switch input:checked + span {
+  background: var(--p-accent);
+}
+
+.p-family-switch input:checked + span::after {
+  transform: translateX(20px);
+}
+
+[dir="rtl"] .p-family-switch input:checked + span::after {
+  transform: translateX(-20px);
+}
+
+.p-family-presets {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 0.75rem;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+}
+
+.p-family-preset {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+  text-align: start;
+  border: 1px solid color-mix(in srgb, var(--p-accent) 35%, transparent);
+  background: color-mix(in srgb, var(--p-accent) 8%, transparent);
+  color: inherit;
+  border-radius: 14px;
+  padding: 0.75rem 0.85rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+.p-family-preset strong {
+  font-size: 0.95rem;
+}
+
+.p-family-preset span {
+  font-size: 0.78rem;
+  opacity: 0.75;
+  line-height: 1.35;
+}
+
+.p-family-blocked {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.75rem;
+  min-height: 2.5rem;
+}
+
+.p-family-blocked-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border: 1px solid color-mix(in srgb, #ef4444 45%, transparent);
+  background: color-mix(in srgb, #ef4444 14%, transparent);
+  color: inherit;
+  border-radius: 999px;
+  padding: 0.4rem 0.75rem;
+  font: inherit;
+  font-weight: 700;
+  font-size: 0.86rem;
+  cursor: pointer;
+}
+
+.p-family-cats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0.65rem 0;
+}
+
+.p-family-cat-chip {
+  border: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+  background: transparent;
+  color: inherit;
+  border-radius: 999px;
+  padding: 0.35rem 0.7rem;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.p-family-cat-chip.is-on {
+  border-color: color-mix(in srgb, var(--p-accent) 55%, transparent);
+  background: color-mix(in srgb, var(--p-accent) 16%, transparent);
+  color: var(--p-accent);
+}
+
+.p-family-pick-actions {
+  margin-bottom: 0.55rem;
+}
+
+.p-family-catalog {
+  display: grid;
+  gap: 0.4rem;
+  max-height: 320px;
+  overflow: auto;
+  padding-inline-end: 2px;
+}
+
+.p-family-catalog-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  text-align: start;
+  border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  background: color-mix(in srgb, currentColor 4%, transparent);
+  color: inherit;
+  border-radius: 12px;
+  padding: 0.65rem 0.8rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+.p-family-catalog-item:hover {
+  border-color: color-mix(in srgb, var(--p-accent) 40%, transparent);
+}
+
+.p-family-catalog-item strong {
+  display: block;
+  font-size: 0.92rem;
+}
+
+.p-family-catalog-item em {
+  display: block;
+  font-style: normal;
+  font-size: 0.75rem;
+  opacity: 0.6;
+  margin-top: 0.15rem;
+}
+
+.p-family-daily-label {
+  font-weight: 800;
+  font-size: 0.95rem;
+}
+
+.p-family-daily-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.p-family-daily-chip {
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  background: var(--p-surface, transparent);
+  color: var(--p-ink, inherit);
+  border-radius: 12px;
+  padding: 0.55rem 0.85rem;
+  font: inherit;
+  font-weight: 750;
+  font-size: 0.88rem;
+  cursor: pointer;
+  min-width: 5.5rem;
+}
+
+.p-family-daily-chip.is-on {
+  border-color: color-mix(in srgb, var(--p-accent) 55%, transparent);
+  background: color-mix(in srgb, var(--p-accent) 18%, transparent);
+  color: var(--p-accent);
+}
+
+.p-family-cat {
+  margin-top: 0.9rem;
+}
+
+.p-family-cat-title {
+  font-size: 0.78rem;
+  font-weight: 800;
+  opacity: 0.65;
+  margin-bottom: 0.45rem;
+}
+
+.p-family-time-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.p-family-time-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.p-family-time-row .p-input {
+  min-width: 8rem;
+}
+
+.p-family-adv-toggle {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 800;
+  padding: 0;
+  cursor: pointer;
+}
+
+.p-family-advanced {
+  margin-top: 1rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+}
+
+.p-family-service {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+  background: transparent;
+  color: inherit;
+  border-radius: 999px;
+  padding: 0.4rem 0.75rem;
+  font: inherit;
+  font-weight: 700;
+  font-size: 0.86rem;
+  cursor: pointer;
+}
+
+.p-family-service em {
+  font-style: normal;
+  opacity: 0.7;
+}
+
+.p-family-service.is-on {
+  border-color: color-mix(in srgb, var(--p-accent) 55%, transparent);
+  background: color-mix(in srgb, var(--p-accent) 14%, transparent);
+  color: var(--p-accent);
+}
+
+.p-family-domain-add {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin: 0.75rem 0;
+}
+
+.p-family-domain-add .p-input {
+  flex: 1 1 180px;
+}
+
+.p-family-domains {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.p-family-days {
+  display: grid;
+  gap: 0.85rem;
+  margin-top: 0.75rem;
+}
+
+.p-family-day {
+  padding: 0.75rem;
+  border-radius: 12px;
+  background: color-mix(in srgb, currentColor 5%, transparent);
+}
+
+.p-family-day-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.p-family-day-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.p-family-day-add .p-input {
+  width: auto;
+  min-width: 7rem;
+  padding-block: 0.35rem;
+}
+
+.p-family-windows {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.p-family-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  position: sticky;
+  bottom: 4.5rem;
+  z-index: 5;
+  padding: 0.75rem 0 0.25rem;
+  background: linear-gradient(to top, var(--p-bg, #0b0d12) 60%, transparent);
+}
+
+.p-family-actions .p-btn.primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+@media (min-width: 960px) {
+  .p-family-actions {
+    bottom: 0.5rem;
+  }
+}

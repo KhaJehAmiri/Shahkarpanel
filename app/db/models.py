@@ -83,6 +83,13 @@ class Admin(Base):
     # Multiple cards: [{id, number, holder, bank, enabled?}]. Scalars kept as legacy mirror of first card.
     cards = Column(JSON, nullable=True)
 
+    # Public storefront / acquisition (landing + signup + invite).
+    invite_code = Column(String(32), unique=True, nullable=True, index=True)
+    public_signup_enabled = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    reseller_apply_enabled = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    storefront_headline = Column(String(256), nullable=True)
+    storefront_tagline = Column(String(512), nullable=True)
+
 
 
 class AdminUsageLogs(Base):
@@ -153,6 +160,8 @@ class User(Base):
     session_limit_minutes = Column(Integer, nullable=True, default=None)
     routing_preset = Column(String(64), nullable=True)
     dns_policy = Column(JSON, nullable=True)
+    # Portal Family Guard (parental controls): schedules, adult/service/domain blocks.
+    family_controls = Column(JSON, nullable=True)
 
     # * Positive values: User will be deleted after the value of this field in days automatically.
     # * Negative values: User won't be deleted automatically at all.
@@ -1420,4 +1429,28 @@ class PeerChangeOutbox(Base):
     user_id = Column(Integer, nullable=True, index=True)
     public_key = Column(String(128), nullable=True, index=True)
     payload = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class ResellerApplication(Base):
+    """Public become-a-reseller request awaiting sudo/parent approval."""
+
+    __tablename__ = "reseller_applications"
+
+    id = Column(Integer, primary_key=True)
+    username = Column(String(34), nullable=False, index=True)
+    # Held until approve/reject, then cleared.
+    password_plain = Column(String(128), nullable=True)
+    display_name = Column(String(128), nullable=True)
+    contact = Column(String(256), nullable=True)
+    message = Column(Text, nullable=True)
+    status = Column(String(16), nullable=False, default="pending", server_default=text("'pending'"), index=True)
+    # Parent reseller when applying via invite; NULL = platform-level application.
+    parent_admin_id = Column(Integer, ForeignKey("admins.id"), nullable=True, index=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=True, index=True)
+    invite_code = Column(String(32), nullable=True)
+    created_admin_id = Column(Integer, ForeignKey("admins.id"), nullable=True)
+    reviewed_by_admin_id = Column(Integer, ForeignKey("admins.id"), nullable=True)
+    reviewed_at = Column(DateTime, nullable=True)
+    reject_reason = Column(String(256), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)

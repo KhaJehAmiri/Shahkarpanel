@@ -225,3 +225,41 @@ class PortalDailyUsage(BaseModel):
     username: str
     days: List[PortalUsageDay]
     total: int = 0
+
+
+class FamilyServiceInfo(BaseModel):
+    id: str
+    label: str
+    category: str = "other"
+    popular: bool = False
+    aliases: List[str] = []
+    domain_count: int = 0
+
+
+class FamilyPresetInfo(BaseModel):
+    id: str
+    label: str
+    hint: str = ""
+    block_adult: bool = False
+    block_ads: bool = False
+    services: List[str] = []
+
+
+class FamilyControlsResponse(BaseModel):
+    username: str
+    controls: dict
+    services: List[FamilyServiceInfo] = []
+    presets: List[FamilyPresetInfo] = []
+
+
+class FamilyControlsPutBody(BaseModel):
+    enabled: Optional[bool] = None
+    block_adult: Optional[bool] = None
+    block_ads: Optional[bool] = None
+    services: Optional[List[str]] = None
+    custom_domains: Optional[List[str]] = None
+    schedule: Optional[dict] = None
+    pin: Optional[str] = Field(default=None, max_length=32)
+    new_pin: Optional[str] = Field(default=None, min_length=4, max_length=8)
+    clear_pin: bool = False
+    pause_minutes: Optional[int] = Field(default=None, ge=1, le=24 * 60)

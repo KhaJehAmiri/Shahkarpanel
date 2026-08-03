@@ -790,7 +790,7 @@ class RPyCXRayNode:
         try:
             if conn is not None:
                 prev = conn._config.get("sync_request_timeout")
-                conn._config["sync_request_timeout"] = max(int(prev or 15), 180)
+                conn._config["sync_request_timeout"] = max(int(prev or 15), 600)
             self.remote.start(json_config)
         finally:
             if conn is not None and prev is not None:

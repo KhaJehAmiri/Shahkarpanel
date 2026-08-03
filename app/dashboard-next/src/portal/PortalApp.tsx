@@ -6,6 +6,7 @@ import { LoginScreen } from "./components/LoginScreen";
 import { InstallGate } from "./components/InstallBanner";
 import { Shell, Toast } from "./components/Shell";
 import { AccountsView } from "./views/AccountsView";
+import { FamilyGuardView } from "./views/FamilyGuardView";
 import { HistoryView } from "./views/HistoryView";
 import { HomeView } from "./views/HomeView";
 import { SecurityView } from "./views/SecurityView";
@@ -70,6 +71,7 @@ function PortalBody() {
               {tab === "home" ? <HomeView /> : null}
               {tab === "accounts" || tab === "configs" ? <AccountsView /> : null}
               {tab === "shop" ? <ShopView /> : null}
+              {tab === "family" ? <FamilyGuardView /> : null}
               {tab === "security" ? <SecurityView /> : null}
               {tab === "history" ? <HistoryView /> : null}
             </Shell>

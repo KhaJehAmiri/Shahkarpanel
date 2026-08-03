@@ -945,6 +945,16 @@ export const Overview: FC = () => {
           {t("overview.cappedUsersHint", { count: ws?.capped_users ?? 0 })}
         </Callout>
       )}
+      {!admin?.is_sudo && (
+        <Callout tone="info" className="sk-mb-16">
+          <div className="sk-row" style={{ justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+            <span>{t("storefront.overviewHint")}</span>
+            <Link to="/resellers?tab=storefront">
+              <Button variant="ghost" size="sm">{t("storefront.overviewOpen")}</Button>
+            </Link>
+          </div>
+        </Callout>
+      )}
 
       {admin?.is_sudo && healthItems.length > 0 && !setupDone && (
         <div className="sk-mb-20"><HealthChecklist items={healthItems} /></div>

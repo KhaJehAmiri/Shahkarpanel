@@ -59,6 +59,14 @@ const SECTIONS: { id: string; keys: string[] }[] = [
       "portal.max_child_accounts",
     ],
   },
+  {
+    id: "storefront",
+    keys: [
+      "storefront.enabled",
+      "storefront.public_signup_enabled",
+      "storefront.reseller_apply_enabled",
+    ],
+  },
 ];
 
 export const CommercialSettings: FC = () => {

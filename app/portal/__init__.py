@@ -33,26 +33,46 @@ def compute_fresh_expire(plan: Plan) -> Optional[int]:
     return int(datetime.utcnow().timestamp() + plan.duration_days * 86400)
 
 
+def compute_renewal_data_limit(user: User, plan: Plan) -> Optional[int]:
+    """Data limit after a portal/admin plan renew.
+
+    - Volume → volume: purchased bytes are *added* to unused remaining quota.
+    - Unlimited → volume: start a fresh package (no carry-over).
+    - Any → unlimited: ``None`` (unlimited); prior volume is not kept.
+    """
+    from app.billing.reseller_tariffs import (
+        is_unlimited_data_limit,
+        normalize_data_limit,
+    )
+
+    plan_limit = normalize_data_limit(plan.data_limit)
+    if plan_limit is None:
+        return None
+    if is_unlimited_data_limit(user.data_limit):
+        return plan_limit
+    remaining = max(0, int(user.data_limit or 0) - int(user.used_traffic or 0))
+    return int(plan_limit) + remaining
+
+
 def apply_plan_to_user(db: Session, user: User, plan: Plan) -> User:
     """Immediately renew a user from a commercial plan.
 
-    A plan that carries its own data cap starts a *new* package period, so the
-    previous counter is archived into ``user_usage_logs`` first. Without that,
-    ``update_user`` keeps the old ``used_traffic`` against the new cap (see
-    ``quota.apply_overage_on_recharge``) and a user who already burned the last
-    package pays for a renewal yet stays ``limited``.
-
-    ``plan.data_limit is None`` means *unlimited* — never fall back to the
-    user's previous volume cap (that left renewals updating only the expiry).
+    Volume renewals keep unused remaining traffic and add the new plan package
+    on top (then archive/reset the usage counter so the UI shows a fresh
+    period against the combined cap). Converting unlimited → volume starts
+    from zero with only the new package. Unlimited plans never fall back to
+    a previous volume cap.
     """
     from app.db import crud
     from app.billing.reseller_tariffs import resolve_locked_limits_for_admin
 
     new_expire = compute_renewal_expire(user, plan)
-    # None = unlimited. Do not preserve the prior volume package.
-    new_data_limit = plan.data_limit
+    # Must run before reset_user_data_usage — remaining depends on current used.
+    new_data_limit = compute_renewal_data_limit(user, plan)
 
-    if int(user.used_traffic or 0) > 0:
+    used = int(user.used_traffic or 0)
+    overage = int(getattr(user, "overage_traffic", 0) or 0)
+    if used > 0 or overage > 0:
         user = crud.reset_user_data_usage(db, user)
 
     device_limit = plan.device_limit

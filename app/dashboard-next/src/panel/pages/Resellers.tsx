@@ -15,6 +15,7 @@ import {
 import { SectionRail, type RailGroup } from "../components/SectionRail";
 import { IcPlus, IcTrash, IcServer, IcEdit, IcWallet, IcMore } from "../components/icons";
 import { UserImportWizard } from "../components/UserImportWizard";
+import { StorefrontPanel } from "../components/StorefrontPanel";
 
 type ResellerAccount = {
   username: string;
@@ -54,6 +55,7 @@ export const Resellers: FC<{ embedded?: boolean }> = ({ embedded }) => {
           label: t("resellers.groupBrand"),
           items: [
             { id: "branding", label: t("resellers.tabBranding") },
+            { id: "storefront", label: t("resellers.tabStorefront") },
             { id: "provision", label: t("infra.addNode") },
           ],
         },
@@ -69,6 +71,7 @@ export const Resellers: FC<{ embedded?: boolean }> = ({ embedded }) => {
           label: t("resellers.groupBrand"),
           items: [
             { id: "branding", label: t("resellers.tabBranding") },
+            { id: "storefront", label: t("resellers.tabStorefront") },
             { id: "provision", label: t("infra.addNode") },
           ],
         },
@@ -122,6 +125,7 @@ export const Resellers: FC<{ embedded?: boolean }> = ({ embedded }) => {
           {tab === "subaccounts" && <SubResellersTab />}
           {tab === "tenants" && <TenantsTab />}
           {tab === "branding" && <BrandingTab />}
+          {tab === "storefront" && <StorefrontPanel />}
           {tab === "account" && <AccountTab />}
           {tab === "migration" && <MigrationTab />}
           {tab === "provision" && <ProvisionTab />}

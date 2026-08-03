@@ -8,6 +8,7 @@ import {
   Radio,
   ShoppingBag,
   History,
+  Shield,
 } from "lucide-react";
 import { PORTAL_LANGS, pt } from "@/lib/portal-i18n";
 import { accountHealth, healthRemainingLabel, remainingDataPct } from "../format";
@@ -20,6 +21,7 @@ const NAV: { id: TabId; icon: typeof Home; labelKey: string; mobile?: boolean }[
   { id: "home", icon: Home, labelKey: "nav_home", mobile: true },
   { id: "accounts", icon: Radio, labelKey: "nav_connect", mobile: true },
   { id: "shop", icon: ShoppingBag, labelKey: "nav_shop", mobile: true },
+  { id: "family", icon: Shield, labelKey: "nav_family", mobile: true },
   { id: "history", icon: History, labelKey: "nav_history", mobile: true },
   { id: "security", icon: KeyRound, labelKey: "nav_security" },
 ];

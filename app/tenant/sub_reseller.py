@@ -146,8 +146,21 @@ def onboarding_status(db: Session, admin) -> dict:
         plan_filters.append(Plan.tenant_id == dbadmin.tenant_id)
     has_plan = db.query(Plan).filter(or_(*plan_filters)).first() is not None
     has_user = db.query(User).filter(User.admin_id == dbadmin.id).count() > 0
-    steps = {"branding": has_branding, "plan": has_plan, "user": has_user}
-    all_done = all(steps.values())
+    storefront_ready = bool(
+        getattr(dbadmin, "invite_code", None)
+        or getattr(dbadmin, "public_signup_enabled", False)
+    )
+    # Treat storefront as ready once branding+plan exist (link can be shared).
+    has_storefront = has_branding and has_plan
+    steps = {
+        "branding": has_branding,
+        "plan": has_plan,
+        "user": has_user,
+        "storefront": has_storefront or storefront_ready,
+    }
+    # Wizard completion still driven by classic three steps; storefront is advisory.
+    classic_done = has_branding and has_plan and has_user
+    all_done = classic_done
     return {
         "show_wizard": not completed and not all_done,
         "completed": completed or all_done,

@@ -117,7 +117,7 @@ export interface PortalConfigs {
   singbox_nodes?: PortalNodeLink[];
 }
 
-export type TabId = "home" | "accounts" | "shop" | "configs" | "security" | "history";
+export type TabId = "home" | "accounts" | "shop" | "configs" | "security" | "history" | "family";
 export type ShopMode = "buy" | "renew";
 export type ShopStep = "mode" | "plan" | "pay";
 export type Quality = "great" | "ok" | "busy" | "unknown";

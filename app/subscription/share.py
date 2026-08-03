@@ -309,9 +309,11 @@ def generate_subscription(
         apply_dns_policy_to_singbox,
         apply_routing_preset_to_json,
     )
+    from app.family_guard.apply import apply_family_guard
 
     preset = kwargs["extra_data"].get("routing_preset")
     dns_policy = kwargs["extra_data"].get("dns_policy")
+    family_controls = kwargs["extra_data"].get("family_controls")
     if config_format == "v2ray-json" and (preset or dns_policy):
         if preset:
             config = apply_routing_preset_to_json(config, preset)
@@ -321,6 +323,9 @@ def generate_subscription(
         config = apply_dns_policy_to_singbox(config, dns_policy)
     elif config_format in ("clash-meta", "clash") and dns_policy:
         config = apply_dns_policy_to_clash(config, dns_policy)
+
+    if family_controls:
+        config = apply_family_guard(config, config_format, family_controls)
 
     from app.subscription.unified import merge_unified_subscription
 

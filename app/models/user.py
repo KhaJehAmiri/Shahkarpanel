@@ -105,6 +105,7 @@ class User(BaseModel):
     speed_limit_down: Optional[int] = Field(None, nullable=True, ge=0, description="Download cap in Mbps")
     routing_preset: Optional[str] = Field(None, nullable=True)
     dns_policy: Optional[dict] = Field(None, nullable=True)
+    family_controls: Optional[dict] = Field(None, nullable=True)
     session_limit_minutes: Optional[int] = Field(None, nullable=True, ge=0)
 
     # SigmaGuard client profile. None on a patch = leave unchanged.
@@ -411,6 +412,7 @@ class UserResponse(User):
     session_limit_minutes: Optional[int] = None
     routing_preset: Optional[str] = None
     dns_policy: Optional[dict] = None
+    family_controls: Optional[dict] = None
     sub_revoked_at: Optional[datetime] = None
     portal_enabled: bool = False
     links: List[str] = []
@@ -425,6 +427,14 @@ class UserResponse(User):
 
     admin: Optional[Admin] = None
     model_config = ConfigDict(from_attributes=True)
+
+    @field_serializer("family_controls")
+    def serialize_family_controls(self, value: Optional[dict]) -> Optional[dict]:
+        if not value:
+            return value
+        from app.family_guard.policy import public_controls
+
+        return public_controls(value)
 
     @model_validator(mode="after")
     def validate_links(self, info: ValidationInfo):

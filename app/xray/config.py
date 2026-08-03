@@ -746,6 +746,22 @@ class XRayConfig(dict):
                 if traffic_limits:
                     config["traffic_limits"] = traffic_limits
 
+            # Domain/app blocks must live on the core — plain vless:// subs
+            # cannot carry client routing rules (see family_guard.server_routing).
+            try:
+                from app.family_guard.server_routing import (
+                    apply_family_guard_server_routing,
+                )
+
+                apply_family_guard_server_routing(config, db)
+            except Exception:
+                # Never block core rebuild on Family Guard mistakes.
+                import logging
+
+                logging.getLogger("uvicorn.error").exception(
+                    "Family Guard server routing inject failed"
+                )
+
         if DEBUG:
             with open('generated_config-debug.json', 'w') as f:
                 f.write(config.to_json(indent=4))

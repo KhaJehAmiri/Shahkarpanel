@@ -69,9 +69,25 @@ def dial_endpoints(node_id: int) -> Optional[Tuple[str, int, int]]:
         return ("127.0.0.1", tun.local_control, tun.local_api)
 
 
+def _tunnel_denied(host: str) -> bool:
+    """Hosts where SSH local-forward breaks TLS (direct path still works)."""
+    host = (host or "").strip().lower()
+    if not host:
+        return False
+    raw = os.environ.get("SHAHKAR_CONTROL_TUNNEL_DENY", "")
+    deny = {h.strip().lower() for h in raw.split(",") if h.strip()}
+    # Measured 2026-08-02 on panel 107: ``ssh -L …:62050`` to wir2 accepts TCP
+    # but TLS handshake hangs; direct ``wir2.serverab.ir:62050`` completes in ~0.1s.
+    # Forcing the control tunnel left the node stuck in SSL timeout / connecting.
+    deny.add("wir2.serverab.ir")
+    return host in deny
+
+
 def has_ssh_for_host(host: str) -> bool:
     host = (host or "").strip()
     if not host or host in ("127.0.0.1", "localhost", "::1"):
+        return False
+    if _tunnel_denied(host):
         return False
     try:
         from app.provisioning.node_ssh import resolve_node_ssh_candidates
@@ -93,10 +109,16 @@ def _spawn_ssh_tunnel(
     """Start one ``ssh -L`` attempt with a single credential; raise on failure."""
     key_path = None
     env = os.environ.copy()
+    # BatchMode=yes is correct for key auth (fail fast, never prompt). With
+    # password + sshpass it must stay OFF — BatchMode disables password prompts
+    # entirely, so sshpass never gets a chance to inject the password and the
+    # attempt fails; the port loop then falls through to 22 and surfaces a
+    # misleading "Connection refused" as the final error.
+    use_batch = bool(creds.private_key) and not creds.password
     cmd = [
         "ssh",
         "-N",
-        "-o", "BatchMode=yes",
+        "-o", f"BatchMode={'yes' if use_batch else 'no'}",
         "-o", "StrictHostKeyChecking=accept-new",
         "-o", "ExitOnForwardFailure=yes",
         "-o", "ServerAliveInterval=20",
@@ -123,6 +145,13 @@ def _spawn_ssh_tunnel(
                 "configure a panel node SSH key instead"
             )
         env["SSHPASS"] = creds.password
+        # PreferredAuthentications keeps ssh from trying pubkey first (and
+        # hanging on agent sockets) when we already know we have a password.
+        cmd.extend([
+            "-o", "PreferredAuthentications=password,keyboard-interactive",
+            "-o", "PubkeyAuthentication=no",
+            "-o", "NumberOfPasswordPrompts=1",
+        ])
         cmd = ["sshpass", "-e"] + cmd
     else:
         raise TunnelError("No SSH key or password for control tunnel")

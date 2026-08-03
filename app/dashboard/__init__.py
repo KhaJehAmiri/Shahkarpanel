@@ -300,6 +300,20 @@ def startup() -> None:
                 StaticFiles(directory=portal_dir, html=True),
                 name="next-portal",
             )
+        for mount_name, rel in (
+            ("next-register", "register"),
+            ("next-become-reseller", "become-reseller"),
+            ("next-landing", "landing"),
+        ):
+            d = _next_out / rel
+            if d.is_dir() and (d / "index.html").is_file():
+                _ensure_spa_fallback(d)
+                log.info("Serving storefront page from %s", d)
+                app.mount(
+                    f"/{rel}",
+                    StaticFiles(directory=d, html=True),
+                    name=mount_name,
+                )
         next_chunks = _next_out / "_next"
         if next_chunks.is_dir():
             app.mount(

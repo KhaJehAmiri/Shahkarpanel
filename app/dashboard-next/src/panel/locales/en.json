@@ -1688,6 +1688,7 @@
     "tabAccounts": "Reseller accounts",
     "tabTenants": "Tenants (white-label)",
     "tabBranding": "My branding",
+    "tabStorefront": "Storefront",
     "tabSubAccounts": "Sub-resellers",
     "tabAccount": "My account",
     "tabMigration": "Migrate users",
@@ -2234,11 +2235,38 @@
     "stepBranding": "Set your brand (title & colors)",
     "stepPlan": "Create your first commercial plan",
     "stepUser": "Add your first customer",
+    "stepStorefront": "Publish your storefront link",
     "open": "Open",
     "skip": "Skip for now",
     "done": "Done",
     "doneBadge": "Done",
     "todoBadge": "To do"
+  },
+  "storefront": {
+    "settingsTitle": "Storefront settings",
+    "linksTitle": "Share links",
+    "applicationsTitle": "Reseller applications",
+    "publicSignup": "Customer self-signup",
+    "resellerApply": "Accept reseller applications",
+    "headline": "Landing headline",
+    "tagline": "Landing tagline",
+    "linkLanding": "Landing page",
+    "linkRegister": "Customer registration",
+    "linkBecome": "Become a reseller (invite)",
+    "copyInvite": "Copy invite code",
+    "rotateInvite": "Rotate invite",
+    "inviteRotated": "Invite code rotated",
+    "preview": "Preview",
+    "noApplications": "No pending applications",
+    "approve": "Approve",
+    "reject": "Reject",
+    "approved": "Application approved",
+    "rejected": "Application rejected",
+    "platformOff": "Platform storefront is disabled under System → Commercial.",
+    "effectiveOn": "Currently active",
+    "effectiveOff": "Currently inactive (check platform + your toggles)",
+    "overviewHint": "Share your storefront to acquire customers and sub-resellers.",
+    "overviewOpen": "Open storefront settings"
   },
   "commercial": {
     "hint": "All commercial settings are stored in the database. Changes apply immediately; restart the panel service if you change the usage billing job interval.",
@@ -2249,7 +2277,8 @@
       "billing": "Usage billing",
       "payment": "Payment gateways",
       "reseller": "Reseller hierarchy",
-      "portal": "Customer portal"
+      "portal": "Customer portal",
+      "storefront": "Public storefront"
     },
     "keys": {
       "billing.usage_rate_per_gb": "Rate per GB (minor units)",
@@ -2278,7 +2307,10 @@
       "reseller.default_commission_percent": "Default commission %",
       "portal.max_child_accounts": "Max extra accounts per portal login",
       "billing.currency_label": "Currency label",
-      "billing.reseller_unlimited_plan_ids": "Reseller unlimited wholesale tariffs"
+      "billing.reseller_unlimited_plan_ids": "Reseller unlimited wholesale tariffs",
+      "storefront.enabled": "Enable public storefront",
+      "storefront.public_signup_enabled": "Allow customer self-signup",
+      "storefront.reseller_apply_enabled": "Allow become-a-reseller applications"
     },
     "hints": {
       "billing.usage_rate_per_gb": "0 disables automatic GB usage billing. Used as the default free-usage (PAYG) rate for all resellers.",
@@ -2300,7 +2332,10 @@
       "reseller.default_commission_percent": "Applied when creating sub-resellers without an explicit commission.",
       "billing.currency_label": "Shown next to prices in the portal (e.g. تومان, USD). Amounts match plan prices as entered — no Rial conversion.",
       "portal.max_child_accounts": "How many extra accounts one customer may create or buy from the portal. 0 removes the limit — a single customer can then use up the whole reseller quota.",
-      "billing.reseller_unlimited_plan_ids": "Do not select master retail unlimited plans sold to your own customers. Create separate unlimited plans with wholesale prices; when a reseller's customer buys/renews unlimited, the matching-duration tariff is debited from the reseller wallet. These plans are hidden from the master customer portal."
+      "billing.reseller_unlimited_plan_ids": "Do not select master retail unlimited plans sold to your own customers. Create separate unlimited plans with wholesale prices; when a reseller's customer buys/renews unlimited, the matching-duration tariff is debited from the reseller wallet. These plans are hidden from the master customer portal.",
+      "storefront.enabled": "Master switch for public landing, signup, and reseller apply pages.",
+      "storefront.public_signup_enabled": "When on, customers can register from the landing under each reseller that also enables signup.",
+      "storefront.reseller_apply_enabled": "When on, visitors can apply to become resellers (invite auto-creates sub-resellers)."
     },
     "unlimitedPlansEmpty": "No reseller tariffs yet. Under Billing → Plans create separate unlimited plans (e.g. «Reseller tariff 1 month») with wholesale prices, then select them here.",
     "unlimitedPlanDays": "{{n}} days",

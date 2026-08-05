@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.22.39 — 2026-08-05
+
+### Fix panel freeze after restart (hard-reconnect storm)
+
+- Soft keep-live whenever a WG/tunnel node still answers `get_version()` and is not degraded — even if DB status is still `connecting`.
+- Stops post-restart multi-MB Finalmask re-pushes from saturating the API worker.
+
 ## 0.22.38 — 2026-08-05
 
 ### Fix panel freeze from zlib config storm

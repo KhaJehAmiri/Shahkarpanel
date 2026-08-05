@@ -1105,9 +1105,11 @@ def connect_node(node_id, config=None):
             )
             capture_flag = bool(getattr(node, "wg_tunnel_capture_active", False))
             was_connected = prev_status == _NSKeep.connected
-            # Only treat capture as hard-fail when we also have evidence the
-            # core is unhealthy — not when the flag alone was cleared.
-            hard_reconnect = (not was_connected) or degraded
+            # Degraded message → must re-push. A mere "connecting" DB status
+            # after panel restart must NOT — re-pushing Finalmask multi-MB
+            # configs for every relay saturates the single uvicorn worker and
+            # freezes /api/health (panel appears "down" / extremely slow).
+            hard_reconnect = bool(degraded)
             try:
                 if not node.connected:
                     node.connect()
@@ -1115,7 +1117,7 @@ def connect_node(node_id, config=None):
                     with GetDB() as db:
                         prepare_relay_wireguard_tunnel(db, node_id, node)
                 version = node.get_version()
-                if version and prefer_keep_live and not hard_reconnect:
+                if version and prefer_keep_live and not degraded:
                     if delegates_tunnel:
                         node.wg_tunnel_capture_active = True
                     try:
@@ -1123,12 +1125,15 @@ def connect_node(node_id, config=None):
                     except Exception:
                         pass
                     kept_live = True
-                    if delegates_tunnel and not capture_flag:
+                    hard_reconnect = False
+                    if not was_connected or (delegates_tunnel and not capture_flag):
                         logger.info(
-                            "WireGuard node \"%s\" soft-restored tunnel capture "
-                            "flag (Xray live %s) — skip hard reconnect",
+                            "WireGuard node \"%s\" soft-restored live Xray (%s) "
+                            "status=%s capture_flag=%s — skip hard reconnect",
                             dbnode.name,
                             version,
+                            getattr(prev_status, "value", prev_status),
+                            capture_flag,
                         )
                     else:
                         logger.info(
@@ -1136,7 +1141,8 @@ def connect_node(node_id, config=None):
                             dbnode.name,
                             version,
                         )
-                elif version and prefer_keep_live and hard_reconnect:
+                elif version and prefer_keep_live and degraded:
+                    hard_reconnect = True
                     logger.info(
                         "WireGuard node \"%s\" hard reconnect — re-pushing "
                         "Xray/tunnel config (was status=%s degraded=%s "
@@ -1149,6 +1155,7 @@ def connect_node(node_id, config=None):
             except Exception:
                 version = None
                 kept_live = False
+                hard_reconnect = True
 
         if not kept_live:
             if config is None:

@@ -1047,6 +1047,7 @@ def connect_node(node_id, config=None):
         xray_wg_enabled = False
         kept_live = False
         hard_reconnect = False
+        xray_exc = None
         if is_wg_node:
             with GetDB() as db:
                 from app.db.models import NodeWireGuard
@@ -1070,11 +1071,17 @@ def connect_node(node_id, config=None):
             from app.models.node import NodeStatus as _NSKeep
 
             msg = (getattr(dbnode, "message", None) or "").strip().lower()
-            degraded = (
-                "degraded" in msg
-                or "xray down" in msg
-                or "failed to connect" in msg
-                or "not connected" in msg
+            degraded = any(
+                tok in msg
+                for tok in (
+                    "degraded",
+                    "xray down",
+                    "xray core not running",
+                    "failed to connect",
+                    "not connected",
+                    "connect backoff",
+                    "backoff",
+                )
             )
             capture_flag = bool(getattr(node, "wg_tunnel_capture_active", False))
             was_connected = prev_status == _NSKeep.connected
@@ -1271,10 +1278,11 @@ def connect_node(node_id, config=None):
 
         _sync_wireguard_node(node_id, node)
 
-        # Re-apply tunnels only when we actually re-pushed Xray (or stayed
-        # degraded). Soft keep-live must not queue Apply — that restart storm
-        # is what flaps healthy Reality hops.
-        if (hard_reconnect and not kept_live) or degraded_msg:
+        # Re-apply tunnels only when we actually re-pushed Xray config.
+        # Soft keep-live must not queue Apply. Persisting a degraded message
+        # alone also must not — that used to re-queue heal on every connect
+        # tick for WG-up/Xray-down relays and flap healthy sibling tunnels.
+        if hard_reconnect and not kept_live and xray_exc is None:
             try:
                 from app.jobs.tunnel_heal import schedule_reapply_for_node
 

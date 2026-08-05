@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.22.32 — 2026-08-05
+
+### Tunnel heal: stop perpetual re-apply on Xray-down relays
+
+- Treat `Xray core not running` / connect backoff as degraded (no false soft-restore).
+- Queue tunnel re-apply only after a successful hard Xray push — not on every degraded connect tick.
+
 ## 0.22.31 — 2026-08-05
 
 ### Tunnel stability (less reconnect churn)

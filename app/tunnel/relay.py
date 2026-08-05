@@ -473,7 +473,15 @@ def relay_tunnel_xray_ready(
                 msg = (str(row[0] or "") if row else "").lower()
                 degraded = any(
                     tok in msg
-                    for tok in ("degraded", "xray down", "failed to connect", "not connected")
+                    for tok in (
+                        "degraded",
+                        "xray down",
+                        "xray core not running",
+                        "failed to connect",
+                        "not connected",
+                        "connect backoff",
+                        "backoff",
+                    )
                 )
                 if not degraded:
                     setattr(node_object, "wg_tunnel_capture_active", True)

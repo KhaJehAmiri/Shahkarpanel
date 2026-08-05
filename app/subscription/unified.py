@@ -143,7 +143,10 @@ def _relay_ok_for_client(wg_node) -> bool:
         if not nid:
             return True
         msg = (getattr(wg_node, "message", None) or "").strip().lower()
-        if any(tok in msg for tok in ("xray down", "degraded", "backoff")):
+        if any(
+            tok in msg
+            for tok in ("xray down", "xray core not running", "degraded", "backoff")
+        ):
             # Still allow if live capture probe says ready.
             pass
         with GetDB() as db:

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.22.35 — 2026-08-05
+
+### wir1 recovery: SSH control tunnel for large config push
+
+- Re-enable SSH control tunnel for wir1 (direct `:62050` connects but large Xray config write times out on the Iran path).
+- Rely on sticky-session (0.22.33) so tunnel↔direct takeovers no longer stop Xray after failover.
+
 ## 0.22.34 — 2026-08-05
 
 ### wir1: force direct control (deny flaky SSH tunnel)

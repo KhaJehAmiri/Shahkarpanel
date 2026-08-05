@@ -97,10 +97,31 @@ class XrayService(rpyc.Service):
             return conn.peer
         return "127.0.0.1"
 
+    @staticmethod
+    def _decode_config_blob(config: str) -> str:
+        """Accept plain JSON or ``zlib:`` + base64 (panel compresses large configs)."""
+        if not isinstance(config, str):
+            return config
+        if config.startswith("zlib:"):
+            import base64
+            import zlib
+
+            return zlib.decompress(base64.b64decode(config[5:].encode("ascii"))).decode(
+                "utf-8"
+            )
+        return config
+
+    @rpyc.exposed
+    def start_from_file(self, path: str):
+        """Start Xray from a config file already on the node (SSH/SFTP upload)."""
+        with open(path, "r", encoding="utf-8") as fh:
+            return self.start(fh.read())
+
     @rpyc.exposed
     def start(self, config: str):
         from xray import _kill_stale_stdin_xray, find_stdin_xray_pids
 
+        config = self._decode_config_blob(config)
         config_obj = XRayConfig(config, self._panel_peer_ip())
         if self.core is not None:
             proc = getattr(self.core, "process", None)
@@ -159,7 +180,7 @@ class XrayService(rpyc.Service):
     def restart(self, config: str):
         if self.core is None:
             return self.start(config)
-        config = XRayConfig(config, self._panel_peer_ip())
+        config = XRayConfig(self._decode_config_blob(config), self._panel_peer_ip())
         self.core.restart(config)
 
     @rpyc.exposed

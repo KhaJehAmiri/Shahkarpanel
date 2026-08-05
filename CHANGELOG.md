@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.22.37 — 2026-08-05
+
+### wir1: zlib-compressed Xray config over RPyC
+
+- Panel compresses large node configs (`zlib:` blob); agent decodes before start/restart.
+- Agent gains `start_from_file` for SSH/SFTP upload fallback.
+
 ## 0.22.36 — 2026-08-05
 
 ### wir1: slim relay configs + direct control

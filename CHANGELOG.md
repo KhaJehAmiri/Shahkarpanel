@@ -6,9 +6,10 @@
 
 ### Node egress security (torrent / malware / piracy)
 
-- Fleet-wide Xray Egress Guard (`shahkarEgressGuard`): block BitTorrent protocol, geosite malware/phishing, badbox2 C2 domains (`holadns.com`, `martianinc.co`), and common piracy/tracker hosts.
+- Fleet-wide Xray Egress Guard (`shahkarEgressGuard`): block BitTorrent protocol, badbox2 C2 domains (`holadns.com`, `martianinc.co`), and common piracy/tracker hosts.
 - Platform setting `security.egress_guard_enabled` (default ON) with panel toggle and apply-to-all-nodes.
 - Node host harden hook: UFW default-deny incoming + fail2ban SSH; content blocks remain in Xray (egress not restricted).
+- Note: geosite malware/phishing tags are omitted — current fleet `geosite.dat` lacks those codes and Xray rejects the config.
 
 ## 0.22.29 — 2026-08-04
 

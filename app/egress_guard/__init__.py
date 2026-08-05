@@ -13,11 +13,10 @@ RULE_MARK = "shahkarEgressGuard"
 _OUTBOUND = "BLOCK"
 _CHUNK = 48
 
-# Geosite packs present in the panel's geosite.dat (v2fly/Loyalsoldier subset).
-GEOSITE_BLOCKS: Sequence[str] = (
-    "geosite:malware",
-    "geosite:phishing",
-)
+# Optional geosite packs — only include tags that exist in the fleet geosite.dat.
+# Current dat lacks malware/phishing (Xray fails hard on unknown codes), so keep empty
+# and rely on the explicit abuse/piracy domain list + BitTorrent protocol sniff.
+GEOSITE_BLOCKS: Sequence[str] = ()
 
 # Explicit domains — badbox2 C2 from NCSC/Shadowserver + common piracy/trackers.
 # Kept as domain: suffixes so subdomains match.

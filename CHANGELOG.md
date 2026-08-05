@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.22.36 — 2026-08-05
+
+### wir1: slim relay configs + direct control
+
+- WG/sing-box relays without Xray product bindings no longer receive the full multi-MB `in1/in2/…` user config (was `allowed=None`).
+- Deny SSH control-tunnel for wir1 (TLS-over-forward hangs); keep direct `:62050` and raise SSL write timeout for large Finalmask pushes.
+
 ## 0.22.35 — 2026-08-05
 
 ### wir1 recovery: SSH control tunnel for large config push

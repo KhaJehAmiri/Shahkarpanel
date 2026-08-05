@@ -80,6 +80,10 @@ def _tunnel_denied(host: str) -> bool:
     # but TLS handshake hangs; direct ``wir2.serverab.ir:62050`` completes in ~0.1s.
     # Forcing the control tunnel left the node stuck in SSL timeout / connecting.
     deny.add("wir2.serverab.ir")
+    # wir1: same TLS-over-ssh-forward hang; direct :62050 handshakes fine.
+    # Large-config pushes must stay on the direct path (with slim relay configs).
+    deny.add("wir1.serverad.ir")
+    deny.add("37.32.40.53")
     return host in deny
 
 

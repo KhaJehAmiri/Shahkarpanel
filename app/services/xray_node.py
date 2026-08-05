@@ -12,13 +12,18 @@ def node_xray_inbound_tags(db, node_id: int) -> Optional[Set[str]]:
 
     ``None`` means the node runs every product inbound defined on the master
     (legacy behaviour and the default ``xray`` service).
+
+    An empty set means *no* product inbounds — used for WireGuard / sing-box
+    relays that only need tunnel capture + Finalmask shards. Returning ``None``
+    for those nodes used to ship the full multi-MB user config (in1/in2/…)
+    over Iran paths and timed out the RPyC write (wir1-class Xray-down).
     """
     from app.db import crud
 
     bindings = crud.get_node_service_bindings(db, node_id, enabled_only=True)
     xray_bindings = [b for b in bindings if b.service and b.service.engine == "xray"]
     if not xray_bindings:
-        return None
+        return set()
 
     for b in xray_bindings:
         cfg = b.service.config or {}
@@ -32,7 +37,7 @@ def node_xray_inbound_tags(db, node_id: int) -> Optional[Set[str]]:
         slug = b.service.slug
         if slug.startswith("xray-inbound-"):
             tags.add(slug[len("xray-inbound-"):])
-    return tags if tags else None
+    return tags
 
 
 def filter_xray_config_for_node(config, allowed_tags: Optional[Set[str]]):

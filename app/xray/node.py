@@ -786,15 +786,30 @@ class RPyCXRayNode:
         # default 15s RPyC sync timeout and surface as "result expired", leaving
         # the node without Xray (UDP 51820/51901 timeout for clients).
         prev = None
+        prev_sock_timeout = None
         conn = getattr(self, "connection", None)
+        sock = None
         try:
             if conn is not None:
                 prev = conn._config.get("sync_request_timeout")
                 conn._config["sync_request_timeout"] = max(int(prev or 15), 600)
+                # Iran↔abroad paths also hit SSL *write* timeouts while streaming
+                # multi-MB configs; bump the underlying socket so send() can finish.
+                try:
+                    sock = conn._channel.stream.sock
+                    prev_sock_timeout = sock.gettimeout()
+                    sock.settimeout(max(float(prev_sock_timeout or 0), 600.0))
+                except Exception:
+                    sock = None
             self.remote.start(json_config)
         finally:
             if conn is not None and prev is not None:
                 conn._config["sync_request_timeout"] = prev
+            if sock is not None and prev_sock_timeout is not None:
+                try:
+                    sock.settimeout(prev_sock_timeout)
+                except Exception:
+                    pass
         self.started = True
 
         # connect to API

@@ -555,6 +555,12 @@ def _connect_node_session(dbnode, node):
     # public IP and steal the agent session back.
     if getattr(node, "control_tunneled", False):
         try:
+            # Stale backoff on a dead tunneled session blocks recovery forever
+            # ("Node 127.0.0.1 connect backoff active…") while Xray stays down.
+            try:
+                node._next_connect_attempt = 0.0
+            except Exception:
+                pass
             node.connect()
             return node
         except Exception as tun_exc:
@@ -566,6 +572,10 @@ def _connect_node_session(dbnode, node):
             # fall through to rebuild / direct
 
     try:
+        try:
+            node._next_connect_attempt = 0.0
+        except Exception:
+            pass
         node.connect()
         return node
     except Exception as direct_exc:
@@ -622,25 +632,35 @@ def _prefer_control_tunnel(dbnode) -> object | None:
 def _session_for_node(dbnode, *, reason: str = "preferred path"):
     """Return a node session.
 
-    Prefer **direct** dial when the node's public control port answers — sticky
-    SSH local-forwards often accept TCP while TLS hangs, and flip-flopping
-    direct↔tunnel steals the single agent session (Xray restarts on the node).
-    Fall back to a live SSH control tunnel only when direct is unreachable.
+    Path flips (direct ↔ SSH ``127.0.0.1``) steal the agent's single RPyC
+    session and stop Xray on the node — that is the wir1-class flap. Rules:
+
+    1. Reuse a live session whose ``get_version()`` still answers.
+    2. If an SSH control tunnel is already up, **keep** it (do not tear it
+       down just because public ``:62050`` also answers).
+    3. Otherwise dial direct when reachable; else start/reuse a tunnel.
     Large-payload failures still fail over via ``_force_control_tunnel_session``.
     """
     host = (getattr(dbnode, "address", None) or "").strip()
     port = int(getattr(dbnode, "port", None) or 62050)
-    if _control_port_reachable(host, port):
-        try:
-            from app.control_tunnel import stop_node_tunnel
 
-            stop_node_tunnel(int(dbnode.id))
+    prev = xray.nodes.get(getattr(dbnode, "id", None))
+    if prev is not None:
+        try:
+            if getattr(prev, "connected", False):
+                prev.get_version()
+                return prev
         except Exception:
             pass
-        return add_node(dbnode)
+
+    # Stick to an already-open SSH forward — killing it to "prefer direct"
+    # is what thrash-stops Xray on Iran relays (wir1).
     preferred = _prefer_control_tunnel(dbnode)
     if preferred is not None:
         return preferred
+
+    if _control_port_reachable(host, port):
+        return add_node(dbnode)
     return add_node(dbnode)
 
 

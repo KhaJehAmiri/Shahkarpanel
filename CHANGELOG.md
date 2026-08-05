@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.22.33 — 2026-08-05
+
+### Fix wir1-class control-path thrash
+
+- Keep a healthy RPyC session / open SSH control tunnel instead of flip-flopping to direct whenever `:62050` answers (each takeover stops Xray on the node).
+- Clear stuck `127.0.0.1 connect backoff` when reconnecting a tunneled session.
+
 ## 0.22.32 — 2026-08-05
 
 ### Tunnel heal: stop perpetual re-apply on Xray-down relays

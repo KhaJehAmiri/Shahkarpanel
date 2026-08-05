@@ -156,6 +156,73 @@ def restart_core(admin: Admin = _core_write):
     return {}
 
 
+@router.get("/core/egress-guard", responses={403: responses._403})
+def get_egress_guard(_: Admin = Depends(require_permission("core:read"))):
+    """Fleet egress-guard status (BitTorrent / malware / piracy blocks)."""
+    from app import platform_settings as ps
+    from app.egress_guard import RULE_MARK, build_egress_guard_rules, is_enabled
+
+    enabled = is_enabled()
+    rules = build_egress_guard_rules() if enabled else []
+    return {
+        "enabled": enabled,
+        "rule_mark": RULE_MARK,
+        "rule_count": len(rules),
+        "setting_key": "security.egress_guard_enabled",
+        "platform_value": ps.get_bool("security.egress_guard_enabled", True),
+    }
+
+
+class EgressGuardUpdate(BaseModel):
+    enabled: bool
+    apply_now: bool = True
+
+
+@router.put("/core/egress-guard", responses={403: responses._403})
+def put_egress_guard(body: EgressGuardUpdate, admin: Admin = _core_write):
+    """Enable/disable fleet egress guard and optionally rebuild+push configs."""
+    from app import platform_settings as ps
+
+    ps.set_setting("security.egress_guard_enabled", bool(body.enabled))
+    applied = False
+    if body.apply_now:
+        startup_config = xray.config.include_db_users()
+        if xray.core.started:
+            xray.core.restart(startup_config, force=True)
+        for node_id, node in list(xray.nodes.items()):
+            if node.connected:
+                xray.operations.restart_node(node_id, startup_config)
+        applied = True
+    return {"enabled": bool(body.enabled), "applied": applied}
+
+
+@router.post("/core/egress-guard/apply", responses={403: responses._403})
+def apply_egress_guard(admin: Admin = _core_write):
+    """Rebuild panel+node Xray configs so egress-guard rules are live."""
+    from app.egress_guard import RULE_MARK, is_enabled
+
+    startup_config = xray.config.include_db_users()
+    if xray.core.started:
+        xray.core.restart(startup_config, force=True)
+    nodes = 0
+    for node_id, node in list(xray.nodes.items()):
+        if node.connected:
+            xray.operations.restart_node(node_id, startup_config)
+            nodes += 1
+    live_rules = 0
+    try:
+        routing = startup_config.get("routing") or {}
+        rules = routing.get("rules") or []
+        live_rules = sum(1 for r in rules if isinstance(r, dict) and r.get(RULE_MARK))
+    except Exception:
+        live_rules = 0
+    return {
+        "enabled": is_enabled(),
+        "nodes_restarted": nodes,
+        "egress_rules": live_rules,
+    }
+
+
 @router.post("/core/start", responses={403: responses._403})
 def start_core(admin: Admin = _core_write):
     """Start the panel Xray core if it is stopped."""

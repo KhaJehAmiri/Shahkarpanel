@@ -61,6 +61,8 @@ SETTING_SPECS: Dict[str, tuple] = {
     "storefront.enabled": ("", "bool"),
     "storefront.public_signup_enabled": ("", "bool"),
     "storefront.reseller_apply_enabled": ("", "bool"),
+    # Fleet Xray egress guard (BitTorrent / malware / piracy / abuse C2). Default ON.
+    "security.egress_guard_enabled": ("", "bool"),
 }
 
 SECRET_KEYS = frozenset({
@@ -113,6 +115,8 @@ def _env_default(key: str) -> Any:
             "storefront.public_signup_enabled",
             "storefront.reseller_apply_enabled",
         ):
+            return True
+        if key == "security.egress_guard_enabled":
             return True
         if key in (
             "billing.default_package_price",

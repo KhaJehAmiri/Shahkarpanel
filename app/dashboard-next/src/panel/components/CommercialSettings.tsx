@@ -67,8 +67,13 @@ const SECTIONS: { id: string; keys: string[] }[] = [
       "storefront.reseller_apply_enabled",
     ],
   },
+  {
+    id: "security",
+    keys: [
+      "security.egress_guard_enabled",
+    ],
+  },
 ];
-
 export const CommercialSettings: FC = () => {
   const { t } = useTranslation();
   const toast = useToast();
@@ -116,9 +121,37 @@ export const CommercialSettings: FC = () => {
         }
       }
       await api.put("/platform-settings", { settings: payload });
+      if ("security.egress_guard_enabled" in payload) {
+        try {
+          await api.post("/core/egress-guard/apply");
+        } catch {
+          /* core apply is best-effort after settings save */
+        }
+      }
       toast.push(t("common.saved"), "success");
       setDraft({});
       reload();
+    } catch (e: any) {
+      toast.push(e.message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const applyEgressGuard = async () => {
+    setBusy(true);
+    try {
+      const r = await api.post<{ enabled: boolean; nodes_restarted: number; egress_rules: number }>(
+        "/core/egress-guard/apply",
+      );
+      toast.push(
+        t("commercial.egressGuardApplied", {
+          nodes: r.nodes_restarted,
+          rules: r.egress_rules,
+          defaultValue: `Egress guard applied (${r.egress_rules} rules → ${r.nodes_restarted} nodes)`,
+        }),
+        "success",
+      );
     } catch (e: any) {
       toast.push(e.message, "error");
     } finally {
@@ -191,6 +224,21 @@ export const CommercialSettings: FC = () => {
                       "Stripe stays disabled until webhook secret is set. Unsigned webhooks are rejected.",
                   })}
                 </Callout>
+              </>
+            )}
+            {section.id === "security" && (
+              <>
+                <Callout tone="info">
+                  {t("commercial.egressGuardHint", {
+                    defaultValue:
+                      "Blocks BitTorrent, malware/phishing geosites, known abuse C2 domains, and common piracy hosts on all Xray nodes. Does not scan user devices.",
+                  })}
+                </Callout>
+                <div className="sk-row" style={{ justifyContent: "flex-start" }}>
+                  <Button variant="ghost" disabled={busy} onClick={applyEgressGuard}>
+                    {t("commercial.applyEgressGuard", { defaultValue: "Apply to all nodes now" })}
+                  </Button>
+                </div>
               </>
             )}
           </div>

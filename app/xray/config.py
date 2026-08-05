@@ -762,6 +762,18 @@ class XRayConfig(dict):
                     "Family Guard server routing inject failed"
                 )
 
+            # Fleet egress: BitTorrent / malware / abuse C2 / piracy hosts.
+            try:
+                from app.egress_guard import apply_egress_guard_routing
+
+                apply_egress_guard_routing(config)
+            except Exception:
+                import logging
+
+                logging.getLogger("uvicorn.error").exception(
+                    "Egress Guard routing inject failed"
+                )
+
         if DEBUG:
             with open('generated_config-debug.json', 'w') as f:
                 f.write(config.to_json(indent=4))

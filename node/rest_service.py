@@ -68,6 +68,7 @@ class Service(object):
         self.router.add_api_route("/wg/sync-status", self.wg_sync_status, methods=["POST"])
         self.router.add_api_route("/wg/warp-tproxy", self.wg_warp_tproxy, methods=["POST"])
         self.router.add_api_route("/wg/open-udp-ports", self.wg_open_udp_ports, methods=["POST"])
+        self.router.add_api_route("/host/harden", self.host_harden, methods=["POST"])
         self.router.add_api_route("/wg/transfer", self.wg_transfer, methods=["POST"])
         self.router.add_api_route("/wg/down", self.wg_down, methods=["POST"])
         self.router.add_api_route("/wg/amnezia-available", self.wg_amnezia_available, methods=["POST"])
@@ -255,6 +256,22 @@ class Service(object):
                 detail=last_log
             )
 
+        # Best-effort host harden after a successful config push.
+        try:
+            from host_harden import harden_host_firewall, ports_from_xray_config_json
+
+            tcp_ports, udp_ports = ports_from_xray_config_json(dict(config))
+            # Service control port must stay reachable from the panel.
+            from config import SERVICE_PORT
+
+            try:
+                tcp_ports = sorted(set(tcp_ports) | {int(SERVICE_PORT)})
+            except Exception:
+                pass
+            harden_host_firewall(tcp_ports=tcp_ports, udp_ports=udp_ports, enable=True)
+        except Exception as exc:
+            logger.warning("host harden after restart skipped: %s", exc)
+
         return self.response()
 
     def xray_hot_replace_inbounds(
@@ -417,6 +434,34 @@ class Service(object):
             logger.error(f"Failed to open UDP ports: {exc}")
             raise HTTPException(status_code=503, detail=str(exc))
         return {"ports": wanted, "opened": len(wanted)}
+
+    def host_harden(
+        self,
+        session_id: UUID = Body(embed=True),
+        tcp_ports: list = Body(embed=True, default=[]),
+        udp_ports: list = Body(embed=True, default=[]),
+        enable_ufw: bool = Body(embed=True, default=True),
+    ):
+        """Default-deny firewall + fail2ban SSH; allow only listed service ports."""
+        self.match_session_id(session_id)
+        try:
+            from host_harden import harden_host_firewall
+            from config import SERVICE_PORT
+
+            tcp = [int(p) for p in (tcp_ports or []) if p]
+            udp = [int(p) for p in (udp_ports or []) if p]
+            try:
+                tcp = sorted(set(tcp) | {int(SERVICE_PORT)})
+            except Exception:
+                pass
+            return harden_host_firewall(
+                tcp_ports=tcp,
+                udp_ports=udp,
+                enable=bool(enable_ufw),
+            )
+        except Exception as exc:
+            logger.error(f"host harden failed: {exc}")
+            raise HTTPException(status_code=503, detail=str(exc))
 
     def wg_transfer(self, session_id: UUID = Body(embed=True), interface: str = Body(embed=True)):
         self.match_session_id(session_id)

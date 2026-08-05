@@ -30,7 +30,16 @@ class SettingsUpdate(BaseModel):
 
 @router.get("", response_model=List[SettingItem])
 def list_settings(_: Admin = Depends(Admin.check_sudo_admin)):
+    # Security knobs must stay reachable even when billing is off.
     if not feature_flags.is_enabled("billing"):
+        items = [
+            s
+            for s in ps.list_settings_for_ui()
+            if str(s.get("key") or "").startswith("security.")
+            or str(s.get("key") or "").startswith("storefront.")
+        ]
+        if items:
+            return items
         raise HTTPException(status_code=404, detail="Billing is disabled")
     return ps.list_settings_for_ui()
 
@@ -40,7 +49,11 @@ def update_settings(
     body: SettingsUpdate,
     _: Admin = Depends(Admin.check_sudo_admin),
 ):
-    if not feature_flags.is_enabled("billing"):
+    keys = set(body.settings or {})
+    security_only = bool(keys) and all(
+        k.startswith("security.") or k.startswith("storefront.") for k in keys
+    )
+    if not feature_flags.is_enabled("billing") and not security_only:
         raise HTTPException(status_code=404, detail="Billing is disabled")
     try:
         ps.update_settings_bulk(body.settings)

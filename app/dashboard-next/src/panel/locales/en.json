@@ -2281,7 +2281,8 @@
       "payment": "Payment gateways",
       "reseller": "Reseller hierarchy",
       "portal": "Customer portal",
-      "storefront": "Public storefront"
+      "storefront": "Public storefront",
+      "security": "Node egress security"
     },
     "keys": {
       "billing.usage_rate_per_gb": "Rate per GB (minor units)",
@@ -2313,7 +2314,8 @@
       "billing.reseller_unlimited_plan_ids": "Reseller unlimited wholesale tariffs",
       "storefront.enabled": "Enable public storefront",
       "storefront.public_signup_enabled": "Allow customer self-signup",
-      "storefront.reseller_apply_enabled": "Allow become-a-reseller applications"
+      "storefront.reseller_apply_enabled": "Allow become-a-reseller applications",
+      "security.egress_guard_enabled": "Block torrent, malware & piracy egress"
     },
     "hints": {
       "billing.usage_rate_per_gb": "0 disables automatic GB usage billing. Used as the default free-usage (PAYG) rate for all resellers.",
@@ -2338,13 +2340,17 @@
       "billing.reseller_unlimited_plan_ids": "Do not select master retail unlimited plans sold to your own customers. Create separate unlimited plans with wholesale prices; when a reseller's customer buys/renews unlimited, the matching-duration tariff is debited from the reseller wallet. These plans are hidden from the master customer portal.",
       "storefront.enabled": "Master switch for public landing, signup, and reseller apply pages.",
       "storefront.public_signup_enabled": "When on, customers can register from the landing under each reseller that also enables signup.",
-      "storefront.reseller_apply_enabled": "When on, visitors can apply to become resellers (invite auto-creates sub-resellers)."
+      "storefront.reseller_apply_enabled": "When on, visitors can apply to become resellers (invite auto-creates sub-resellers).",
+      "security.egress_guard_enabled": "Injects Xray BLOCK rules on every node: BitTorrent protocol, geosite malware/phishing, badbox C2 domains, and common piracy hosts."
     },
     "unlimitedPlansEmpty": "No reseller tariffs yet. Under Billing → Plans create separate unlimited plans (e.g. «Reseller tariff 1 month») with wholesale prices, then select them here.",
     "unlimitedPlanDays": "{{n}} days",
     "unlimitedMasterRetailBadge": "Master retail — your own customers",
     "unlimitedResellerTariffBadge": "Reseller tariff — wallet debit",
-    "resellerTariffsHint": "Reseller tariffs are under Resellers → Tariffs — not under master Plans."
+    "resellerTariffsHint": "Reseller tariffs are under Resellers → Tariffs — not under master Plans.",
+    "egressGuardHint": "Blocks BitTorrent, malware/phishing geosites, known abuse C2 domains, and common piracy hosts on all Xray nodes. Does not scan user devices.",
+    "applyEgressGuard": "Apply to all nodes now",
+    "egressGuardApplied": "Egress guard applied ({{rules}} rules → {{nodes}} nodes)"
   },
   "migration": {
     "title": "3x-ui panel migration",

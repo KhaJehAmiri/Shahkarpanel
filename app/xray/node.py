@@ -782,17 +782,23 @@ class RPyCXRayNode:
     def start(self, config: XRayConfig):
         config = self._prepare_config(config)
         json_config = config.to_json()
-        # Compress large payloads — Iran↔abroad RPyC writes of multi-MB Finalmask
-        # configs routinely time out; zlib cuts ~2.5MB → ~1MB and older agents
-        # that lack zlib: support will reject the blob (caller can fall back).
+        # Compress large payloads only when the node agent understands ``zlib:``
+        # blobs. Shipping zlib to unpatched agents makes XRayConfig JSON-parse
+        # fail (Expecting value…) and reconnect-storms the whole panel.
         payload = json_config
         if isinstance(payload, str) and len(payload) >= 200_000:
-            import base64
-            import zlib
+            try:
+                root = self.connection.root if self.connection else None
+                exposed = dir(root) if root is not None else []
+                if "_decode_config_blob" in exposed or "start_from_file" in exposed:
+                    import base64
+                    import zlib
 
-            payload = "zlib:" + base64.b64encode(
-                zlib.compress(payload.encode("utf-8"), 6)
-            ).decode("ascii")
+                    payload = "zlib:" + base64.b64encode(
+                        zlib.compress(payload.encode("utf-8"), 6)
+                    ).decode("ascii")
+            except Exception:
+                payload = json_config
         # Large WG/Finalmask configs (thousands of peers) routinely exceed the
         # default 15s RPyC sync timeout and surface as "result expired", leaving
         # the node without Xray (UDP 51820/51901 timeout for clients).

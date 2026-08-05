@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.22.38 — 2026-08-05
+
+### Fix panel freeze from zlib config storm
+
+- Only zlib-compress Xray pushes when the node agent exposes `start_from_file` / `_decode_config_blob`.
+- Unpatched agents were receiving `zlib:` blobs, failing JSON parse, and reconnect-looping until `/api/health` took 8s+.
+
 ## 0.22.37 — 2026-08-05
 
 ### wir1: zlib-compressed Xray config over RPyC

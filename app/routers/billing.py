@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict
 
@@ -1171,9 +1171,35 @@ def portal_payment_receipt(
     )
 
 
+def _notify_portal_review_result(payment_id: int, *, approved: bool, reason: Optional[str] = None) -> None:
+    """Web-push / portal notify after approve/reject — runs off the request thread."""
+    try:
+        from app.db import GetDB
+        from app.db.models import PaymentIntent
+        from app.portal_push import notify_portal_payment
+        from app.web_push import notify_admin_badge_sync, notify_topup_result
+
+        with GetDB() as db:
+            intent = db.query(PaymentIntent).filter(PaymentIntent.id == int(payment_id)).first()
+            if intent is None:
+                return
+            if intent.kind in ("portal_renew", "portal_purchase"):
+                notify_portal_payment(db, intent, approved=approved)
+            elif intent.kind == "topup":
+                notify_topup_result(db, intent, approved=approved, reason=reason)
+            reviewer_id = (intent.extra or {}).get("reviewed_by_admin_id")
+            if reviewer_id:
+                notify_admin_badge_sync(db, int(reviewer_id))
+            elif getattr(intent, "admin_id", None) and intent.kind != "topup":
+                notify_admin_badge_sync(db, int(intent.admin_id))
+    except Exception:
+        pass
+
+
 @router.post("/portal-payments/{payment_id}/approve", response_model=PortalPaymentRow)
 def approve_portal_purchase(
     payment_id: int,
+    bg: BackgroundTasks,
     db: Session = Depends(get_db),
     admin: Admin = Depends(require_permission("billing:write")),
 ):
@@ -1183,20 +1209,18 @@ def approve_portal_purchase(
     scope = dbadmin if dbadmin is not None else admin
     intent = get_intent_for_admin_or_sudo(db, payment_id, scope)
     intent = approve_portal_payment(db, intent, reviewer=scope)
+    # Record reviewer for async badge sync; do not block HTTP on web-push.
     try:
-        from app.portal_push import notify_portal_payment
-        from app.web_push import notify_admin_badge_sync, notify_topup_result
-
-        if intent.kind in ("portal_renew", "portal_purchase"):
-            notify_portal_payment(db, intent, approved=True)
-        elif intent.kind == "topup":
-            notify_topup_result(db, intent, approved=True)
-        # Refresh reviewer badge (sudo or reseller who cleared the queue item).
+        extra = dict(intent.extra or {})
         rid = getattr(scope, "id", None)
         if rid:
-            notify_admin_badge_sync(db, int(rid))
+            extra["reviewed_by_admin_id"] = int(rid)
+            intent.extra = extra
+            db.commit()
+            db.refresh(intent)
     except Exception:
         pass
+    bg.add_task(_notify_portal_review_result, int(intent.id), approved=True)
     return _portal_payment_row(db, intent)
 
 
@@ -1204,6 +1228,7 @@ def approve_portal_purchase(
 def reject_portal_purchase(
     payment_id: int,
     body: PortalPaymentRejectBody,
+    bg: BackgroundTasks,
     db: Session = Depends(get_db),
     admin: Admin = Depends(require_permission("billing:write")),
 ):
@@ -1214,18 +1239,21 @@ def reject_portal_purchase(
     intent = get_intent_for_admin_or_sudo(db, payment_id, scope)
     intent = reject_portal_payment(db, intent, reason=body.reason, reviewer=scope)
     try:
-        from app.portal_push import notify_portal_payment
-        from app.web_push import notify_admin_badge_sync, notify_topup_result
-
-        if intent.kind in ("portal_renew", "portal_purchase"):
-            notify_portal_payment(db, intent, approved=False)
-        elif intent.kind == "topup":
-            notify_topup_result(db, intent, approved=False, reason=body.reason)
+        extra = dict(intent.extra or {})
         rid = getattr(scope, "id", None)
         if rid:
-            notify_admin_badge_sync(db, int(rid))
+            extra["reviewed_by_admin_id"] = int(rid)
+            intent.extra = extra
+            db.commit()
+            db.refresh(intent)
     except Exception:
         pass
+    bg.add_task(
+        _notify_portal_review_result,
+        int(intent.id),
+        approved=False,
+        reason=body.reason,
+    )
     return _portal_payment_row(db, intent)
 
 

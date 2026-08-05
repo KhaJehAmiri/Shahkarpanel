@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.22.41 — 2026-08-05
+
+### Faster order approve / reject
+
+- Portal renew approve no longer runs a blocking full-core `sync_core_users()` on the HTTP thread.
+- Web-push / badge notify after approve/reject runs in a background task.
+- Top-up restore-users fleet push is backgrounded.
+
 ## 0.22.40 — 2026-08-05
 
 ### Soft keep-live for tunnel exits too

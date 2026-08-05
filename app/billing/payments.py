@@ -634,7 +634,19 @@ def _apply_topup(db: Session, intent: PaymentIntent) -> None:
         _newly, reactivated = enforce_reseller_traffic_caps(db)
         if reactivated:
             db.commit()
-            restore_users_everywhere(reactivated)
+            # Restore on a background thread — fleet Finalmask/Xray push must
+            # not block the approve HTTP response.
+            import threading
+
+            ids = list(reactivated)
+
+            def _restore() -> None:
+                try:
+                    restore_users_everywhere(ids)
+                except Exception:
+                    pass
+
+            threading.Thread(target=_restore, name="topup-restore-users", daemon=True).start()
     except Exception:
         pass
 
@@ -666,7 +678,25 @@ def _apply_portal_renew(db: Session, intent: PaymentIntent) -> User:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
     if dbuser.status in (UserStatus.active, UserStatus.on_hold):
-        xray.operations.sync_core_users()
+        # Fast path only on the HTTP thread. Full ``sync_core_users()`` /
+        # ``update_user``→``_push_user_to_nodes`` used to block approve for
+        # tens of seconds while every Iran node was dialed.
+        try:
+            xray.operations.sync_core_users_async()
+        except Exception:
+            pass
+        try:
+            from app.xray.serving import sync_main_core_user
+
+            sync_main_core_user(dbuser)
+        except Exception:
+            pass
+        try:
+            from app.wireguard.operations import sync_user_change
+
+            sync_user_change()
+        except Exception:
+            pass
     return dbuser
 
 

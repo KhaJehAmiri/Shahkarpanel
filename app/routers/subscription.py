@@ -140,6 +140,7 @@ def _resolve_subscription_body(
     inbound_filter: str | None = None,
     profile_web_page_url: str = "",
     branding: dict | None = None,
+    exclude_protocols: set[str] | None = None,
 ) -> tuple[str, dict]:
     """Return subscription body plus access metadata (for blocked profile title)."""
     from app.tenant import subscription_brand_title
@@ -162,6 +163,7 @@ def _resolve_subscription_body(
             as_base64=as_base64,
             reverse=reverse,
             inbound_filter=inbound_filter,
+            exclude_protocols=exclude_protocols,
         )
     conf = attach_subscription_body_metadata(
         conf,
@@ -203,6 +205,7 @@ def _v2ray_base64_response(
     *,
     inbound_filter: str | None = None,
     branding: dict | None = None,
+    exclude_protocols: set[str] | None = None,
 ) -> Response:
     conf, access = _resolve_subscription_body(
         user,
@@ -212,6 +215,7 @@ def _v2ray_base64_response(
         inbound_filter=inbound_filter,
         profile_web_page_url=response_headers.get("profile-web-page-url", ""),
         branding=branding,
+        exclude_protocols=exclude_protocols,
     )
     if not access["config_available"]:
         response_headers["profile-title"] = encode_title(blocked_message(access["block_reason"]))
@@ -645,8 +649,14 @@ def user_subscription(
         # V2Box imports the base64 share-link list (vless://, vmess://, …).
         # Serving v2ray-json broke subscription import in the app.
         # Finalmask / Xray-native WG: use /sub/<token>/v2ray-json explicitly.
+        # Hysteria2: V2Box often shows ping/connected with no data; omit from
+        # this client's subscription (other apps still receive hy2 links).
         return _v2ray_base64_response(
-            user, response_headers, inbound_filter=inbound_filter, branding=branding
+            user,
+            response_headers,
+            inbound_filter=inbound_filter,
+            branding=branding,
+            exclude_protocols={"hysteria2"},
         )
 
     elif re.match(r'^v2rayN/(\d+\.\d+)', user_agent):

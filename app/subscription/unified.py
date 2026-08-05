@@ -729,12 +729,21 @@ def user_has_unified_protocols(user: "UserResponse") -> bool:
     )
 
 
-def collect_unified_share_links(user: "UserResponse") -> list[str]:
-    """Share URIs for QUIC/WG protocols (for v2ray base64 subscriptions)."""
+def collect_unified_share_links(
+    user: "UserResponse",
+    *,
+    exclude_protocols: Optional[set[str]] = None,
+) -> list[str]:
+    """Share URIs for QUIC/WG protocols (for v2ray base64 subscriptions).
+
+    ``exclude_protocols`` uses lowercase scheme names (``hysteria2``, ``tuic``,
+    ``anytls``, ``wireguard``) for clients that cannot handle them reliably.
+    """
     from app.db import GetDB, crud
     from app.models.node import NodeStatus
     from app.subscription.wireguard import user_share_link
 
+    skip = {p.lower() for p in (exclude_protocols or set())}
     links: list[str] = []
     with GetDB() as db:
         nodes = [n for n in crud.get_nodes(db) if n.status == NodeStatus.connected]
@@ -744,7 +753,7 @@ def collect_unified_share_links(user: "UserResponse") -> list[str]:
         )
 
         settings = _client_settings(user, ProxyTypes.Hysteria2)
-        if settings:
+        if settings and "hysteria2" not in skip:
             for node in sb_nodes:
                 if not (node.singbox and node.singbox.hysteria2_enabled):
                     continue
@@ -757,7 +766,7 @@ def collect_unified_share_links(user: "UserResponse") -> list[str]:
                     links.append(link)
 
         settings = _client_settings(user, ProxyTypes.TUIC)
-        if settings:
+        if settings and "tuic" not in skip:
             for node in sb_nodes:
                 if not (node.singbox and node.singbox.tuic_enabled):
                     continue
@@ -770,7 +779,7 @@ def collect_unified_share_links(user: "UserResponse") -> list[str]:
                     links.append(link)
 
         settings = _client_settings(user, ProxyTypes.AnyTLS)
-        if settings:
+        if settings and "anytls" not in skip:
             for node in sb_nodes:
                 if not (node.singbox and node.singbox.anytls_enabled):
                     continue
@@ -783,7 +792,7 @@ def collect_unified_share_links(user: "UserResponse") -> list[str]:
                     links.append(link)
 
         settings = _client_settings(user, ProxyTypes.WireGuard)
-        if settings:
+        if settings and "wireguard" not in skip:
             from app.wireguard.sync import amneziawg_enabled, plain_wg_enabled
             from app.wireguard.xray_native import xray_native_wg_enabled
 

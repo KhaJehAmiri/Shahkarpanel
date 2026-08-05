@@ -193,6 +193,7 @@ def collect_v2ray_share_links(
     *,
     inbound_filter: str | None = None,
     reverse: bool = False,
+    exclude_protocols: set[str] | None = None,
 ) -> list[str]:
     """All share URIs including QUIC/WG (for display endpoints that tolerate mixed schemes)."""
     links = collect_xray_share_links(
@@ -200,7 +201,9 @@ def collect_v2ray_share_links(
     )
     from app.subscription.unified import collect_unified_share_links
 
-    links.extend(collect_unified_share_links(user))
+    links.extend(
+        collect_unified_share_links(user, exclude_protocols=exclude_protocols)
+    )
     return links
 
 
@@ -270,6 +273,7 @@ def generate_subscription(
         as_base64: bool,
         reverse: bool,
         inbound_filter: str | None = None,
+        exclude_protocols: set[str] | None = None,
 ) -> str:
     inbounds = _filter_inbounds_by_tag(user.inbounds, inbound_filter)
     kwargs = {
@@ -281,7 +285,10 @@ def generate_subscription(
 
     if config_format == "v2ray":
         links = collect_v2ray_share_links(
-            user, inbound_filter=inbound_filter, reverse=reverse
+            user,
+            inbound_filter=inbound_filter,
+            reverse=reverse,
+            exclude_protocols=exclude_protocols,
         )
         config = "\n".join(links)
     elif config_format == "clash-meta":

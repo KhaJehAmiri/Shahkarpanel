@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.22.40 — 2026-08-05
+
+### Soft keep-live for tunnel exits too
+
+- Extend post-restart soft keep-live to all WireGuard-core nodes (not only Finalmask relays) so exit nodes do not full-repush Xray and freeze the panel.
+
 ## 0.22.39 — 2026-08-05
 
 ### Fix panel freeze after restart (hard-reconnect storm)

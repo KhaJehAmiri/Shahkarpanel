@@ -1087,7 +1087,11 @@ def connect_node(node_id, config=None):
             # A missing in-memory ``wg_tunnel_capture_active`` after session
             # rebuild used to force full Xray re-push + tunnel re-apply on a
             # healthy core — that is the main Iran↔abroad flap loop.
-            prefer_keep_live = bool(delegates_tunnel or xray_wg_enabled)
+            # Keep-live for *all* WG-core nodes (relays and exits). Restricting
+            # this to Finalmask relays forced every tunnel-exit to take a full
+            # Xray re-push on panel restart and froze the API worker.
+            prefer_keep_live = True
+            _ = xray_wg_enabled  # retained for future policy hooks
             from app.models.node import NodeStatus as _NSKeep
 
             msg = (getattr(dbnode, "message", None) or "").strip().lower()

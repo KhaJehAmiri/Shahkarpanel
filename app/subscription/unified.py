@@ -125,6 +125,36 @@ def _clash_wireguard_proxy(
     return proxy
 
 
+def _relay_ok_for_client(wg_node) -> bool:
+    """False when this node is a tunnel relay whose capture path is not ready.
+
+    Clients should only receive endpoints for stable relays; unhealthy hops are
+    omitted so subscriptions auto-prefer working tunnels.
+    """
+    try:
+        from app import xray
+        from app.db import GetDB
+        from app.tunnel.relay import (
+            node_delegates_wireguard_to_tunnel,
+            relay_tunnel_xray_ready,
+        )
+
+        nid = int(getattr(wg_node, "id", 0) or 0)
+        if not nid:
+            return True
+        msg = (getattr(wg_node, "message", None) or "").strip().lower()
+        if any(tok in msg for tok in ("xray down", "degraded", "backoff")):
+            # Still allow if live capture probe says ready.
+            pass
+        with GetDB() as db:
+            if not node_delegates_wireguard_to_tunnel(db, nid):
+                return True
+            live = xray.nodes.get(nid)
+            return bool(relay_tunnel_xray_ready(live, db=db, node_id=nid))
+    except Exception:
+        return True
+
+
 def _collect_wireguard_exports(
     user: "UserResponse",
     wg_nodes: list,
@@ -155,6 +185,10 @@ def _collect_wireguard_exports(
     exports: list[tuple[str, str, object, dict, str, int, str, Optional[dict]]] = []
     for wg in wg_nodes:
         if not wg.wireguard:
+            continue
+        # Skip tunnel relays that are not capture-ready so clients only dial
+        # stable hops (healthy Reality path). Exits / non-delegated stay.
+        if not _relay_ok_for_client(wg):
             continue
         native_ok = bool(
             xray_native_wg_enabled(wg.wireguard) and settings.get("private_key")

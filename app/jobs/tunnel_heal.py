@@ -126,11 +126,47 @@ def tunnel_heal_tick() -> None:
         to_apply: dict[int, tuple[Tunnel, str]] = {}
 
         with GetDB() as db:
+            # Node-hard-reconnect queues: only re-apply if the tunnel is still
+            # unhealthy after cooldown + failure streak. Blind apply on every
+            # reconnect was restarting already-healthy Reality hops.
             for node_id in pending:
                 reason = reasons.get(node_id, "reconnect")
                 for tunnel in _tunnels_for_node(db, node_id):
-                    if _cooldown_ok(int(tunnel.id), now):
-                        to_apply[int(tunnel.id)] = (tunnel, f"{reason}:node-{node_id}")
+                    tid = int(tunnel.id)
+                    if not _cooldown_ok(tid, now):
+                        continue
+                    try:
+                        health = _tunnel_health(db, tunnel)
+                    except Exception as exc:
+                        logger.debug(
+                            "tunnel %s health probe (pending node %s) failed: %s",
+                            tid,
+                            node_id,
+                            exc,
+                        )
+                        continue
+                    if health.get("healthy"):
+                        _fail_streak.pop(tid, None)
+                        logger.debug(
+                            "Tunnel %s (%s) already healthy after %s — skip apply",
+                            tid,
+                            tunnel.name,
+                            reason,
+                        )
+                        continue
+                    streak = _fail_streak.get(tid, 0) + 1
+                    _fail_streak[tid] = streak
+                    if streak < int(TUNNEL_HEAL_FAILURE_THRESHOLD):
+                        logger.info(
+                            "Tunnel %s (%s) unhealthy after %s (%s/%s) — waiting",
+                            tid,
+                            tunnel.name,
+                            reason,
+                            streak,
+                            TUNNEL_HEAL_FAILURE_THRESHOLD,
+                        )
+                        continue
+                    to_apply[tid] = (tunnel, f"{reason}:node-{node_id}")
 
             for tunnel in (
                 db.query(Tunnel)
@@ -170,6 +206,13 @@ def tunnel_heal_tick() -> None:
                 live = db.query(Tunnel).filter(Tunnel.id == tid).first()
                 if live is None or not live.enabled:
                     continue
+                # Last-second skip if another tick already healed it.
+                try:
+                    if _tunnel_health(db, live).get("healthy"):
+                        _fail_streak.pop(tid, None)
+                        continue
+                except Exception:
+                    pass
                 _apply_one(db, live, reason=reason)
     finally:
         with _lock:

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.22.31 — 2026-08-05
+
+### Tunnel stability (less reconnect churn)
+
+- Soft-restore tunnel capture flag when Xray is already live — stop hard-reconnect storms from cleared in-memory flags.
+- Prefer direct node control when port 62050 is reachable; sticky SSH forwards no longer steal the agent session.
+- Tunnel heal requires consecutive unhealthy probes + longer cooldown; skips Apply when already healthy.
+- Subscriptions omit unhealthy tunnel relays so clients dial stable hops only.
+
 ## 0.22.30 — 2026-08-05
 
 ### Node egress security (torrent / malware / piracy)

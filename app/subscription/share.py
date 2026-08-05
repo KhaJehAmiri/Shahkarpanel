@@ -486,6 +486,26 @@ def _expand_host_addresses(
     return out
 
 
+def _node_ok_for_subscription(node) -> bool:
+    """Drop tunnel relays whose capture path is not ready from multinode fan-out."""
+    try:
+        from app.db import GetDB
+        from app.tunnel.relay import (
+            node_delegates_wireguard_to_tunnel,
+            relay_tunnel_xray_ready,
+        )
+
+        nid = getattr(node, "id", None)
+        if nid is None:
+            return True
+        with GetDB() as db:
+            if not node_delegates_wireguard_to_tunnel(db, int(nid)):
+                return True
+            return bool(relay_tunnel_xray_ready(node, db=db, node_id=int(nid)))
+    except Exception:
+        return True
+
+
 def _multinode_variants(
     address_list: list, format_variables: dict, node_ids_raw: str | None = None
 ) -> list[tuple[list, str, int | None]]:
@@ -516,6 +536,7 @@ def _multinode_variants(
         if getattr(n, "connected", False)
         and getattr(n, "address", None)
         and host_visible_on_node(node_ids_raw, getattr(n, "id", None))
+        and _node_ok_for_subscription(n)
     ]
     if bound_ids and not has_template:
         nodes = [n for n in nodes if getattr(n, "id", None) in bound_ids]

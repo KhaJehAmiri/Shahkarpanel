@@ -465,6 +465,14 @@ def add_node(
     dial_port: int | None = None,
     dial_api_port: int | None = None,
 ):
+    # Preserve tunnel-capture / started flags across session rebuilds so a mere
+    # dial-path swap does not look like ``capture_down`` and trigger hard reconnect.
+    prev = xray.nodes.get(dbnode.id)
+    prev_capture = bool(getattr(prev, "wg_tunnel_capture_active", False)) if prev else False
+    prev_started = bool(getattr(prev, "started", False)) if prev else False
+    prev_pin = getattr(prev, "pinned_cert_sha256", None) if prev else None
+    prev_observed = getattr(prev, "observed_cert_sha256", None) if prev else None
+
     remove_node(dbnode.id)
 
     tls = get_tls()
@@ -478,7 +486,7 @@ def add_node(
         ssl_key=tls["key"],
         ssl_cert=tls["certificate"],
         usage_coefficient=dbnode.usage_coefficient,
-        pinned_cert_sha256=getattr(dbnode, "server_cert_sha256", None),
+        pinned_cert_sha256=getattr(dbnode, "server_cert_sha256", None) or prev_pin,
     )
     # Tag the live node object with its DB id so callers can recover it from the
     # ``xray.nodes`` values alone (e.g. host-visibility filtering in share.py).
@@ -492,9 +500,38 @@ def add_node(
         )
     except Exception:
         pass
+    if prev_capture:
+        try:
+            node.wg_tunnel_capture_active = True
+        except Exception:
+            pass
+    if prev_started:
+        try:
+            node.started = True
+        except Exception:
+            pass
+    if prev_observed:
+        try:
+            node.observed_cert_sha256 = prev_observed
+        except Exception:
+            pass
     xray.nodes[dbnode.id] = node
 
     return xray.nodes[dbnode.id]
+
+
+def _control_port_reachable(host: str, port: int, *, timeout: float = 1.25) -> bool:
+    """Cheap TCP probe used to prefer direct control over a sticky SSH forward."""
+    import socket
+
+    host = (host or "").strip()
+    if not host or host in ("127.0.0.1", "localhost", "::1"):
+        return False
+    try:
+        with socket.create_connection((host, int(port)), timeout=timeout):
+            return True
+    except Exception:
+        return False
 
 
 def _ssh_host_for_node(dbnode) -> str:
@@ -585,12 +622,22 @@ def _prefer_control_tunnel(dbnode) -> object | None:
 def _session_for_node(dbnode, *, reason: str = "preferred path"):
     """Return a node session.
 
-    Reuse a *live* SSH control tunnel when one is already up. Otherwise dial the
-    node directly — on some Iran relays the SSH local-forward accepts TCP but
-    TLS handshake hangs, while the direct path completes in <1s. Forcing the
-    tunnel on every connect left those nodes stuck ``connecting`` / SSL timeout.
+    Prefer **direct** dial when the node's public control port answers — sticky
+    SSH local-forwards often accept TCP while TLS hangs, and flip-flopping
+    direct↔tunnel steals the single agent session (Xray restarts on the node).
+    Fall back to a live SSH control tunnel only when direct is unreachable.
     Large-payload failures still fail over via ``_force_control_tunnel_session``.
     """
+    host = (getattr(dbnode, "address", None) or "").strip()
+    port = int(getattr(dbnode, "port", None) or 62050)
+    if _control_port_reachable(host, port):
+        try:
+            from app.control_tunnel import stop_node_tunnel
+
+            stop_node_tunnel(int(dbnode.id))
+        except Exception:
+            pass
+        return add_node(dbnode)
     preferred = _prefer_control_tunnel(dbnode)
     if preferred is not None:
         return preferred
@@ -1015,11 +1062,10 @@ def connect_node(node_id, config=None):
                     .first()
                 )
                 xray_wg_enabled = bool(wg_row[0]) if wg_row else False
-            # Hard reconnect (node was down) must NEVER keep-live: a live Xray
-            # process can still be missing tunnel-*-out / dokodemo after RPyC
-            # loss, leaving tunnels dead until an admin hits Apply.
-            # Soft refresh while already connected may keep-live. Degraded
-            # (native WG fallback / capture down) must re-push.
+            # Hard reconnect only when the node was actually down / degraded.
+            # A missing in-memory ``wg_tunnel_capture_active`` after session
+            # rebuild used to force full Xray re-push + tunnel re-apply on a
+            # healthy core — that is the main Iran↔abroad flap loop.
             prefer_keep_live = bool(delegates_tunnel or xray_wg_enabled)
             from app.models.node import NodeStatus as _NSKeep
 
@@ -1030,12 +1076,11 @@ def connect_node(node_id, config=None):
                 or "failed to connect" in msg
                 or "not connected" in msg
             )
-            capture_down = delegates_tunnel and not bool(
-                getattr(node, "wg_tunnel_capture_active", False)
-            )
-            hard_reconnect = (
-                prev_status != _NSKeep.connected or degraded or capture_down
-            )
+            capture_flag = bool(getattr(node, "wg_tunnel_capture_active", False))
+            was_connected = prev_status == _NSKeep.connected
+            # Only treat capture as hard-fail when we also have evidence the
+            # core is unhealthy — not when the flag alone was cleared.
+            hard_reconnect = (not was_connected) or degraded
             try:
                 if not node.connected:
                     node.connect()
@@ -1051,19 +1096,28 @@ def connect_node(node_id, config=None):
                     except Exception:
                         pass
                     kept_live = True
-                    logger.info(
-                        "WireGuard node \"%s\" keeping live Xray (%s)",
-                        dbnode.name,
-                        version,
-                    )
+                    if delegates_tunnel and not capture_flag:
+                        logger.info(
+                            "WireGuard node \"%s\" soft-restored tunnel capture "
+                            "flag (Xray live %s) — skip hard reconnect",
+                            dbnode.name,
+                            version,
+                        )
+                    else:
+                        logger.info(
+                            "WireGuard node \"%s\" keeping live Xray (%s)",
+                            dbnode.name,
+                            version,
+                        )
                 elif version and prefer_keep_live and hard_reconnect:
                     logger.info(
                         "WireGuard node \"%s\" hard reconnect — re-pushing "
-                        "Xray/tunnel config (was status=%s degraded=%s capture_down=%s)",
+                        "Xray/tunnel config (was status=%s degraded=%s "
+                        "capture_flag=%s)",
                         dbnode.name,
                         getattr(prev_status, "value", prev_status),
                         degraded,
-                        capture_down,
+                        capture_flag,
                     )
             except Exception:
                 version = None
@@ -1217,9 +1271,10 @@ def connect_node(node_id, config=None):
 
         _sync_wireguard_node(node_id, node)
 
-        # After a hard reconnect, re-apply enabled tunnels that use this node so
-        # dokodemo / Reality hops come back without a manual Apply click.
-        if hard_reconnect or degraded_msg:
+        # Re-apply tunnels only when we actually re-pushed Xray (or stayed
+        # degraded). Soft keep-live must not queue Apply — that restart storm
+        # is what flaps healthy Reality hops.
+        if (hard_reconnect and not kept_live) or degraded_msg:
             try:
                 from app.jobs.tunnel_heal import schedule_reapply_for_node
 

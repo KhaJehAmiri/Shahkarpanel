@@ -462,6 +462,28 @@ def relay_tunnel_xray_ready(
         # is the tunnel-capturing config (it can be a stale native-fallback core
         # left over from before delegation was (re)granted).
         ready = bool(getattr(node_object, "wg_tunnel_capture_active", False))
+        # Session rebuild clears the in-memory flag even when dokodemo is still
+        # live. If the core answers and the DB node is not marked degraded,
+        # soft-restore the flag so health checks stop forcing reconnect storms.
+        if not ready and node_alive and node_id is not None and db is not None:
+            try:
+                from app.db.models import Node as _Node
+
+                row = db.query(_Node.message, _Node.status).filter(_Node.id == int(node_id)).first()
+                msg = (str(row[0] or "") if row else "").lower()
+                degraded = any(
+                    tok in msg
+                    for tok in ("degraded", "xray down", "failed to connect", "not connected")
+                )
+                if not degraded:
+                    setattr(node_object, "wg_tunnel_capture_active", True)
+                    try:
+                        node_object.started = True
+                    except Exception:
+                        pass
+                    ready = True
+            except Exception:
+                pass
     else:
         ready = True
 

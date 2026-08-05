@@ -80,6 +80,11 @@ def _tunnel_denied(host: str) -> bool:
     # but TLS handshake hangs; direct ``wir2.serverab.ir:62050`` completes in ~0.1s.
     # Forcing the control tunnel left the node stuck in SSL timeout / connecting.
     deny.add("wir2.serverab.ir")
+    # wir1 (digicdn): SSH :2222 flaps from the panel while public :62050 stays
+    # reachable. Forcing ``ssh -L`` → 127.0.0.1 then thrash-stops Xray and
+    # leaves the session in connect-backoff. Stick to direct control only.
+    deny.add("wir1.serverad.ir")
+    deny.add("37.32.40.53")
     return host in deny
 
 

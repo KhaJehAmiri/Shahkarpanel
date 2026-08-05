@@ -1175,6 +1175,10 @@ def connect_node(node_id, config=None):
                 # do not re-enter keep-live just because get_version() answers.
                 for attempt in range(3):
                     try:
+                        try:
+                            node._next_connect_attempt = 0.0
+                        except Exception:
+                            pass
                         if not node.connected:
                             node.connect()
                         with GetDB() as db:
@@ -1202,15 +1206,18 @@ def connect_node(node_id, config=None):
                         )
                         if attempt < 2:
                             time.sleep(1)
+                            # Never disconnect() just to retry — that stops Xray on
+                            # the agent before the replacement session arrives.
                             try:
-                                node.disconnect()
+                                node._next_connect_attempt = 0.0
                             except Exception:
                                 pass
                             if attempt == 0 and not getattr(node, "control_tunneled", False):
                                 # A direct socket that connects but drops mid-write on
                                 # a large tunnel/Finalmask config retries into the exact
                                 # same failure every time. Route through SSH instead of
-                                # blindly reconnecting on the same unreliable path.
+                                # blindly reconnecting on the same unreliable path
+                                # (skipped for hosts on SHAHKAR_CONTROL_TUNNEL_DENY).
                                 forced = _force_control_tunnel_session(dbnode, node)
                                 if forced is not None:
                                     node = forced

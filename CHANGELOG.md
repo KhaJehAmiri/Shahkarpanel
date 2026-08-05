@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.22.34 — 2026-08-05
+
+### wir1: force direct control (deny flaky SSH tunnel)
+
+- Deny SSH control-tunnel for `wir1.serverad.ir` / `37.32.40.53` — panel→SSH:2222 flaps while direct :62050 works.
+- Clear connect backoff before Xray start retries; do not disconnect() mid-retry (that stops Xray on the agent).
+
 ## 0.22.33 — 2026-08-05
 
 ### Fix wir1-class control-path thrash

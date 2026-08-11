@@ -31,6 +31,8 @@ type ResellerAccount = {
   prepaid_traffic_remaining?: number | null;
   centralpay_enabled?: boolean;
   card_enabled?: boolean;
+  parent_admin_id?: number | null;
+  parent_admin_username?: string | null;
 };
 
 export const Resellers: FC<{ embedded?: boolean }> = ({ embedded }) => {
@@ -362,6 +364,7 @@ const SubResellersTab: FC = () => {
   const { t } = useTranslation();
   const [show, setShow] = useState(false);
   const [edit, setEdit] = useState<SubResellerAccount | null>(null);
+  const [pricing, setPricing] = useState<SubResellerAccount | null>(null);
   const { data, loading, error, reload } = useFetch<SubResellerAccount[]>(() => api.get("/reseller/sub-accounts"), []);
 
   return (
@@ -394,7 +397,10 @@ const SubResellersTab: FC = () => {
                       <td className="sk-num">{a.max_nodes ?? "∞"}</td>
                       <td className="sk-num">{a.commission_percent ?? 0}%</td>
                       <td className="sk-actions">
-                        <div className="sk-row" style={{ justifyContent: "flex-end" }}>
+                        <div className="sk-row" style={{ justifyContent: "flex-end", gap: 4 }}>
+                          <Button size="sm" variant="ghost" onClick={() => setPricing(a)} title={t("resellers.trafficPricing")}>
+                            <IcWallet className="sk-ico" />
+                          </Button>
                           <Button size="sm" variant="ghost" onClick={() => setEdit(a)}><IcEdit className="sk-ico" /></Button>
                         </div>
                       </td>
@@ -407,6 +413,14 @@ const SubResellersTab: FC = () => {
       </Card>
       {show && <AddSubReseller onClose={() => setShow(false)} onDone={() => { setShow(false); reload(); }} />}
       {edit && <EditSubReseller account={edit} onClose={() => setEdit(null)} onDone={() => { setEdit(null); reload(); }} />}
+      {pricing && (
+        <ResellerTrafficPricingModal
+          account={pricing}
+          onClose={() => setPricing(null)}
+          onDone={() => { setPricing(null); reload(); }}
+          parentMode
+        />
+      )}
     </>
   );
 };
@@ -692,6 +706,7 @@ const ResellerAccountsTab: FC = () => {
                 <thead>
                   <tr>
                     <th>{t("common.username")}</th>
+                    <th>{t("resellers.parentReseller")}</th>
                     <th className="sk-num">{t("resellers.usersCount")}</th>
                     <th className="sk-num">{t("resellers.onlineUsers")}</th>
                     <th className="sk-num">{t("billing.wallet")}</th>
@@ -704,13 +719,21 @@ const ResellerAccountsTab: FC = () => {
                   {pager.slice.map((a) => {
                     const usersMax = a.max_users != null ? a.max_users.toLocaleString() : "∞";
                     const trafficCap = a.max_total_traffic != null ? formatBytes(a.max_total_traffic) : "∞";
+                    const isSub = !!a.parent_admin_id || !!a.parent_admin_username;
                     return (
                       <tr key={a.username}>
                         <td>
                           <div className="sk-ra-user">
                             <span className="sk-ra-user-name">{a.username}</span>
-                            <span className="sk-ra-user-role">{a.role || "reseller"}</span>
+                            <span className="sk-ra-user-role">
+                              {isSub ? t("resellers.subResellerRole") : (a.role || "reseller")}
+                            </span>
                           </div>
+                        </td>
+                        <td>
+                          {a.parent_admin_username
+                            ? <code>{a.parent_admin_username}</code>
+                            : <span className="sk-muted">—</span>}
                         </td>
                         <td className="sk-num">
                           {(a.users_count ?? 0).toLocaleString()}
@@ -770,8 +793,14 @@ const ResellerAccountsTab: FC = () => {
   );
 };
 
-const ResellerTrafficPricingModal: FC<{ account: ResellerAccount; onClose: () => void; onDone: () => void }> = ({
-  account, onClose, onDone,
+const ResellerTrafficPricingModal: FC<{
+  account: { username: string };
+  onClose: () => void;
+  onDone: () => void;
+  /** Parent reseller pricing a sub-account — show master price floor hint. */
+  parentMode?: boolean;
+}> = ({
+  account, onClose, onDone, parentMode = false,
 }) => {
   const { t } = useTranslation();
   const toast = useToast();
@@ -880,7 +909,9 @@ const ResellerTrafficPricingModal: FC<{ account: ResellerAccount; onClose: () =>
       }
     >
       <div className="sk-price-modal">
-        <p className="sk-price-hint">{t("resellers.trafficPricingHint")}</p>
+        <p className="sk-price-hint">
+          {parentMode ? t("resellers.trafficPricingHintParent") : t("resellers.trafficPricingHint")}
+        </p>
         {loading ? <SkeletonRows rows={4} cols={2} />
           : error ? <EmptyState title={t("common.error")} desc={error} />
           : data && (
@@ -890,7 +921,13 @@ const ResellerTrafficPricingModal: FC<{ account: ResellerAccount; onClose: () =>
                   label={t("resellers.usageRatePerGb")}
                   hint={t("resellers.usageRatePerGbHint", { rate: data.platform_usage_rate_per_gb.toLocaleString() })}
                 >
-                  <Input type="number" value={rate} onChange={(e: any) => setRate(e.target.value)} placeholder={String(data.platform_usage_rate_per_gb)} />
+                  <Input
+                    type="number"
+                    min={parentMode ? data.platform_usage_rate_per_gb : undefined}
+                    value={rate}
+                    onChange={(e: any) => setRate(e.target.value)}
+                    placeholder={String(data.platform_usage_rate_per_gb)}
+                  />
                 </Field>
               </div>
               {!!tariffs.length && (
@@ -903,9 +940,15 @@ const ResellerTrafficPricingModal: FC<{ account: ResellerAccount; onClose: () =>
                         <span className="sk-price-pkg-meta">{tariffMeta(tr)}</span>
                       </div>
                       <div className="sk-price-pkg-fields">
-                        <Field label={t("resellers.packageOverridePrice")} hint={t("resellers.overrideBlankHint")}>
+                        <Field
+                          label={t("resellers.packageOverridePrice")}
+                          hint={parentMode
+                            ? t("resellers.overrideMinMasterHint", { price: tr.catalog_price.toLocaleString() })
+                            : t("resellers.overrideBlankHint")}
+                        >
                           <Input
                             type="number"
+                            min={parentMode ? tr.catalog_price : undefined}
                             value={tariffRows[tr.id] ?? ""}
                             placeholder={String(tr.catalog_price)}
                             onChange={(e: any) => setTariffRows((prev) => ({ ...prev, [tr.id]: e.target.value }))}
@@ -936,11 +979,17 @@ const ResellerTrafficPricingModal: FC<{ account: ResellerAccount; onClose: () =>
                           </span>
                         </div>
                         <div className="sk-price-pkg-fields">
-                          <Field label={t("resellers.packageOverridePrice")}>
+                          <Field
+                            label={t("resellers.packageOverridePrice")}
+                            hint={parentMode
+                              ? t("resellers.overrideMinMasterHint", { price: pkg.catalog_price.toLocaleString() })
+                              : t("resellers.overrideBlankHint")}
+                          >
                             <Input
                               type="number"
+                              min={parentMode ? pkg.catalog_price : undefined}
                               value={row.price}
-                              placeholder={t("resellers.overrideBlankHint")}
+                              placeholder={String(pkg.catalog_price)}
                               onChange={(e: any) => setRow(pkg.id, "price", e.target.value)}
                             />
                           </Field>

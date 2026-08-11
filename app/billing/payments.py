@@ -196,14 +196,31 @@ def _require_provider(name: str, dbadmin=None, *, kind: Optional[str] = None) ->
                     detail="CentralPay is not enabled for this reseller",
                 )
     if name == "card":
-        from app.billing.providers import resolve_card_for_admin, resolve_platform_card
+        from app.billing.providers import (
+            list_topup_cards_for_admin,
+            resolve_card_for_admin,
+            resolve_platform_card,
+            resolve_topup_payee,
+        )
+        from sqlalchemy.orm import object_session
 
-        # Wallet top-ups pay the platform card; portal purchases use the owner card.
+        # Wallet top-ups: sub-reseller → parent card; top-level → platform card.
+        # Portal purchases use the owning reseller's card.
         if kind == "topup":
-            if resolve_platform_card() is None:
+            db = object_session(dbadmin) if dbadmin is not None else None
+            if db is not None and list_topup_cards_for_admin(db, dbadmin):
+                pass
+            elif db is None and resolve_platform_card() is not None:
+                pass
+            else:
+                payee = resolve_topup_payee(db, dbadmin) if db is not None else None
                 raise HTTPException(
                     status_code=403,
-                    detail="Platform card payment is not configured",
+                    detail=(
+                        "Parent reseller card payment is not configured"
+                        if payee is not None
+                        else "Platform card payment is not configured"
+                    ),
                 )
         elif dbadmin is not None and resolve_card_for_admin(dbadmin) is None:
             raise HTTPException(
@@ -415,7 +432,7 @@ def set_payment_card(
     from app.billing.providers import (
         apply_card_to_intent_extra,
         list_cards_for_admin,
-        list_platform_cards,
+        list_topup_cards_for_admin,
         pick_payment_card,
     )
     from app.db import crud
@@ -428,10 +445,10 @@ def set_payment_card(
     if not cid:
         raise HTTPException(status_code=422, detail="card_id required")
 
+    dbadmin = crud.get_admin_by_id(db, intent.admin_id) if intent.admin_id else None
     if intent.kind == "topup":
-        cards = list_platform_cards()
+        cards = list_topup_cards_for_admin(db, dbadmin)
     else:
-        dbadmin = crud.get_admin_by_id(db, intent.admin_id) if intent.admin_id else None
         cards = list_cards_for_admin(dbadmin)
     card = pick_payment_card(cards, cid)
     if not card or card.get("id") != cid:
@@ -502,12 +519,26 @@ def _owner_admin(db: Session, intent: PaymentIntent) -> Optional[Admin]:
 def _assert_can_review_card(db: Session, admin: Admin, intent: PaymentIntent) -> None:
     """Portal card → owning reseller only; master only for master-owned users.
 
-    Wallet top-up → sudo only.
+    Wallet top-up:
+    - Sub-reseller → parent reseller (or sudo)
+    - Top-level reseller → sudo only
     """
     if intent.kind == "topup":
-        if not getattr(admin, "is_sudo", False):
-            raise HTTPException(status_code=403, detail="Only the platform owner can approve wallet top-ups")
-        return
+        if getattr(admin, "is_sudo", False):
+            return
+        payer = _owner_admin(db, intent)
+        reviewer_id = getattr(admin, "id", None)
+        if (
+            payer is not None
+            and reviewer_id is not None
+            and getattr(payer, "parent_admin_id", None) is not None
+            and int(payer.parent_admin_id) == int(reviewer_id)
+        ):
+            return
+        raise HTTPException(
+            status_code=403,
+            detail="Only the parent reseller or platform owner can approve this wallet top-up",
+        )
     if intent.kind not in ("portal_renew", "portal_purchase"):
         return
     owner = _owner_admin(db, intent)
@@ -579,9 +610,10 @@ def list_portal_payments_for_admin(
 ) -> List[PaymentIntent]:
     """Card/portal queue for this admin.
 
-    Resellers see only their own portal card purchases/renewals.
-    Sudo sees master-owned portal orders + reseller wallet top-ups — never
-    reseller customer card orders (those are reviewed by that reseller).
+    Resellers see their own portal card purchases/renewals plus wallet top-ups
+    from their sub-resellers.
+    Sudo sees master-owned portal orders + top-level reseller wallet top-ups
+    (sub-reseller top-ups are reviewed by the parent).
     """
     from sqlalchemy import and_, or_
 
@@ -589,6 +621,12 @@ def list_portal_payments_for_admin(
 
     if getattr(admin, "is_sudo", False):
         sudo_ids = [int(r[0]) for r in db.query(AdminRow.id).filter(AdminRow.is_sudo.is_(True)).all()]
+        top_level_ids = [
+            int(r[0])
+            for r in db.query(AdminRow.id)
+            .filter(AdminRow.is_sudo.is_(False), AdminRow.parent_admin_id.is_(None))
+            .all()
+        ]
         q = db.query(PaymentIntent).filter(
             or_(
                 and_(
@@ -598,6 +636,7 @@ def list_portal_payments_for_admin(
                 and_(
                     PaymentIntent.kind == "topup",
                     PaymentIntent.provider == "card",
+                    PaymentIntent.admin_id.in_(top_level_ids or [-1]),
                 ),
             )
         )
@@ -605,10 +644,25 @@ def list_portal_payments_for_admin(
         admin_pk = getattr(admin, "id", None)
         if admin_pk is None:
             return []
-        q = db.query(PaymentIntent).filter(
-            PaymentIntent.kind.in_(("portal_renew", "portal_purchase")),
-            PaymentIntent.admin_id == admin_pk,
-        )
+        child_ids = [
+            int(r[0])
+            for r in db.query(AdminRow.id).filter(AdminRow.parent_admin_id == int(admin_pk)).all()
+        ]
+        clauses = [
+            and_(
+                PaymentIntent.kind.in_(("portal_renew", "portal_purchase")),
+                PaymentIntent.admin_id == admin_pk,
+            )
+        ]
+        if child_ids:
+            clauses.append(
+                and_(
+                    PaymentIntent.kind == "topup",
+                    PaymentIntent.provider == "card",
+                    PaymentIntent.admin_id.in_(child_ids),
+                )
+            )
+        q = db.query(PaymentIntent).filter(or_(*clauses))
     if status:
         q = q.filter(PaymentIntent.status == status)
     return q.order_by(PaymentIntent.id.desc()).limit(max(1, min(limit, 200))).all()
@@ -831,6 +885,17 @@ def get_intent_for_admin_or_sudo(db: Session, payment_id: int, admin: Admin) -> 
                 return intent
             raise HTTPException(status_code=404, detail="Payment not found")
         return intent
+    # Parent may open sub-reseller wallet top-ups for review.
+    if intent.kind == "topup":
+        payer = _owner_admin(db, intent)
+        reviewer_id = getattr(admin, "id", None)
+        if (
+            payer is not None
+            and reviewer_id is not None
+            and getattr(payer, "parent_admin_id", None) is not None
+            and int(payer.parent_admin_id) == int(reviewer_id)
+        ):
+            return intent
     if intent.admin_id != admin.id:
         raise HTTPException(status_code=404, detail="Payment not found")
     return intent

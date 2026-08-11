@@ -146,6 +146,8 @@ def sibling_subnets(cfg, *, excluding_key: str) -> List[str]:
     """Other subnets on the same node that must not be overlapped."""
     if cfg is None:
         return []
+    from app.wireguard.sync import amneziawg_enabled
+
     out: List[str] = []
     plain = getattr(cfg, "subnet", None)
     awg = getattr(cfg, "awg_subnet", None)
@@ -153,7 +155,10 @@ def sibling_subnets(cfg, *, excluding_key: str) -> List[str]:
         if plain:
             out.append(plain)
     else:
-        if awg:
+        # Disabled AmneziaWG still leaves a default 10.11.0.0/24 that used to
+        # block 10.10.0.0/15 from widening past /14 (overlaps 10.8.0.0/14).
+        # Only reserve AWG space when Amnezia is actually enabled.
+        if awg and amneziawg_enabled(cfg):
             out.append(awg)
     return out
 
@@ -277,8 +282,7 @@ def guard_fleet_subnet_capacity(db, *, active_peers: int) -> None:
     ``proxy.settings["address"]``.
     """
     from app.db import crud
-    from app.wireguard.sync import amneziawg_enabled, plain_wg_enabled
-    from app.wireguard.xray_native import xray_native_wg_enabled
+    from app.wireguard.sync import amneziawg_enabled
 
     need = max(0, int(active_peers or 0)) + 64  # headroom
     if need <= 0:
@@ -288,9 +292,10 @@ def guard_fleet_subnet_capacity(db, *, active_peers: int) -> None:
         if cfg is None:
             continue
         try:
-            wants_plain_pool = bool(cfg.subnet) and (
-                plain_wg_enabled(cfg) or xray_native_wg_enabled(cfg)
-            )
+            # Any node with a plain/Finalmask address pool must fit active peers.
+            # Previously we skipped exits that had plain+xray both off but still
+            # held WgPeer rows on a /24 — those showed FULL (peer_count>>253).
+            wants_plain_pool = bool(cfg.subnet)
             if wants_plain_pool:
                 ensure_cfg_subnet_capacity(
                     db, cfg, settings_key="address", needed_peers=need

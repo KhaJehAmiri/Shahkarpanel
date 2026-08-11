@@ -1,5 +1,7 @@
 import base64
 import random
+import threading
+import time
 from collections import defaultdict
 from datetime import datetime as dt
 from datetime import timedelta
@@ -28,6 +30,9 @@ from config import (
 SERVER_IP = get_public_ip()
 SERVER_IPV6 = get_public_ipv6()
 
+_SUB_CACHE_TTL_SEC = 20.0
+_SUB_CACHE_LOCK = threading.Lock()
+_SUB_CACHE: dict = {}
 STATUS_EMOJIS = {
     "active": "✅",
     "expired": "⌛️",
@@ -275,6 +280,33 @@ def generate_subscription(
         inbound_filter: str | None = None,
         exclude_protocols: set[str] | None = None,
 ) -> str:
+    """Render a subscription body.
+
+    A short in-process cache absorbs client import storms: dozens of apps
+    re-fetch the same token within seconds, and without caching each request
+    re-runs the full Python render under the GIL so concurrent imports queue
+    up to multi-second waits.
+    """
+    cache_key = (
+        getattr(user, "id", None),
+        config_format,
+        bool(as_base64),
+        bool(reverse),
+        inbound_filter or "",
+        tuple(sorted(exclude_protocols or ())),
+        getattr(user, "routing_preset", None),
+        getattr(user, "dns_policy", None),
+        str(getattr(user, "family_controls", None) or ""),
+        # Invalidate when the user's proxies/inbounds change shape.
+        tuple(sorted((getattr(user, "inbounds") or {}).keys())),
+        tuple(sorted((getattr(user, "proxies") or {}).keys())),
+    )
+    now = time.monotonic()
+    with _SUB_CACHE_LOCK:
+        hit = _SUB_CACHE.get(cache_key)
+        if hit and hit[0] > now:
+            return hit[1]
+
     inbounds = _filter_inbounds_by_tag(user.inbounds, inbound_filter)
     kwargs = {
         "proxies": user.proxies,
@@ -341,6 +373,14 @@ def generate_subscription(
 
     if as_base64:
         config = base64.b64encode(config.encode()).decode()
+
+    with _SUB_CACHE_LOCK:
+        # Bound memory: drop expired entries occasionally.
+        if len(_SUB_CACHE) > 4096:
+            alive = {k: v for k, v in _SUB_CACHE.items() if v[0] > now}
+            _SUB_CACHE.clear()
+            _SUB_CACHE.update(alive)
+        _SUB_CACHE[cache_key] = (now + _SUB_CACHE_TTL_SEC, config)
 
     return config
 
@@ -508,7 +548,10 @@ def _node_ok_for_subscription(node) -> bool:
         with GetDB() as db:
             if not node_delegates_wireguard_to_tunnel(db, int(nid)):
                 return True
-            return bool(relay_tunnel_xray_ready(node, db=db, node_id=int(nid)))
+            # probe=False: subscription rendering stays off the RPyC path.
+            return bool(
+                relay_tunnel_xray_ready(node, db=db, node_id=int(nid), probe=False)
+            )
     except Exception:
         return True
 

@@ -90,27 +90,32 @@ def build_finalmask_usage_params(
 
 
 def _read_transfer_via_rpyc(node, *, timeout: float = 8.0) -> Dict[str, dict]:
-    """Cumulative per-email ``{rx, tx}`` via node-agent loopback StatsService."""
+    """Cumulative per-email ``{rx, tx}`` via node-agent loopback StatsService.
+
+    Never dials: a dead relay must not park the usage tick (or its DB session)
+    behind ``node.remote`` → ``connect()``. Health check reconnects; we wait.
+    """
     if node is None:
         return {}
-    remote = getattr(node, "remote", None)
+    remote = getattr(node, "try_remote", None)
+    if callable(remote):
+        remote = node.try_remote()
+    else:
+        conn = getattr(node, "connection", None)
+        if conn is None or getattr(conn, "closed", True):
+            return {}
+        remote = getattr(node, "remote", None)
     if remote is None:
         return {}
-    try:
-        # AttributeError → agent too old (no xray_users_transfer).
-        if not hasattr(remote, "xray_users_transfer"):
-            return {}
-    except Exception:
-        return {}
 
-    pool = ThreadPoolExecutor(max_workers=1)
     try:
-        raw = pool.submit(remote.xray_users_transfer, False).result(timeout=timeout)
+        # ``xray_users_transfer`` is a fast-fail RPyC method (2s lock budget).
+        raw = remote.xray_users_transfer(False)
+    except AttributeError:
+        return {}
     except Exception as exc:
         logger.warning("Finalmask xray_users_transfer failed: %s", exc)
         return {}
-    finally:
-        pool.shutdown(wait=False, cancel_futures=True)
 
     return _normalize_transfer_payload(raw)
 
@@ -130,17 +135,25 @@ def _normalize_transfer_payload(raw) -> Dict[str, dict]:
     return data if isinstance(data, dict) else {}
 
 
-def _read_node_transfer(node_id: int) -> Dict[str, dict]:
-    """Read cumulative Finalmask user counters; reconnect once if RPyC is dead."""
+def _read_node_transfer(node_id: int, *, allow_reconnect: bool = True) -> Dict[str, dict]:
+    """Read cumulative Finalmask user counters; optionally reconnect if RPyC is dead.
+
+    ``allow_reconnect=False`` is required for the periodic usage tick: reconnect
+    under Finalmask hot-sync holds the node lock for minutes and freezes
+    ``record_user_usages`` (max_instances=1 → Overview online counter stuck at 0).
+    """
     from app import xray as xray_app
 
     node = xray_app.nodes.get(node_id) or _node_object(node_id, connect=False)
-    transfer = _read_transfer_via_rpyc(node)
+    transfer = _read_transfer_via_rpyc(node, timeout=3.0)
     if transfer:
         return transfer
-    transfer = _read_transfer_via_grpc(node)
+    transfer = _read_transfer_via_grpc(node, timeout=5.0)
     if transfer:
         return transfer
+
+    if not allow_reconnect:
+        return {}
 
     # RPyC often dies after competing one-shot connections / hot-replace.
     # One reconnect restores billing without waiting for the health job.
@@ -161,10 +174,10 @@ def _read_node_transfer(node_id: int) -> Dict[str, dict]:
         )
         node = None
 
-    transfer = _read_transfer_via_rpyc(node)
+    transfer = _read_transfer_via_rpyc(node, timeout=3.0)
     if transfer:
         return transfer
-    return _read_transfer_via_grpc(node)
+    return _read_transfer_via_grpc(node, timeout=5.0)
 
 
 def _read_transfer_via_grpc(node, *, timeout: float = 15.0) -> Dict[str, dict]:
@@ -236,18 +249,32 @@ def collect_finalmask_usage_params(db=None) -> Tuple[Dict[int, List[dict]], Dict
     deltas_by_node: Dict[int, Dict[str, int]] = {}
     coefficient: Dict[int, float] = {}
 
-    for plan in plans:
+    # Parallel, no reconnect: usage tick must finish even when Finalmask sync
+    # holds node locks (otherwise Overview online_users freezes at 0).
+    def _one(plan: dict) -> Tuple[int, Dict[str, int], float]:
         node_id = int(plan["id"])
-        transfer = _read_node_transfer(node_id)
+        transfer = _read_node_transfer(node_id, allow_reconnect=False)
         if not transfer:
-            continue
-        email_deltas = _tracker.deltas(node_id, transfer)
-        if not email_deltas:
-            # Baseline-only cycle — still remember coefficient for merges.
-            coefficient[node_id] = plan["coefficient"]
-            continue
-        deltas_by_node[node_id] = email_deltas
-        coefficient[node_id] = plan["coefficient"]
+            return node_id, {}, float(plan["coefficient"])
+        return node_id, _tracker.deltas(node_id, transfer), float(plan["coefficient"])
+
+    executor = ThreadPoolExecutor(max_workers=min(8, max(1, len(plans))))
+    try:
+        futures = [executor.submit(_one, plan) for plan in plans]
+        for fut in futures:
+            try:
+                node_id, email_deltas, coef = fut.result(timeout=8)
+            except Exception as exc:
+                logger.warning("Finalmask usage node poll failed: %s", exc)
+                continue
+            coefficient[node_id] = coef
+            if email_deltas:
+                deltas_by_node[node_id] = email_deltas
+    finally:
+        # wait=True: workers now fail-fast via try_remote, so this returns
+        # quickly. wait=False used to orphan hundreds of threads stuck on
+        # ``node.remote`` → ``connect()``.
+        executor.shutdown(wait=True, cancel_futures=True)
 
     return build_finalmask_usage_params(deltas_by_node), coefficient
 

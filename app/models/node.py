@@ -109,6 +109,8 @@ class Node(BaseModel):
     # Per-node Cloudflare WARP exit (Xray nodes).
     warp_enabled: bool = False
     warp_tag: Optional[str] = None
+    # ``full`` = all traffic via WARP; ``sensitive`` = Google/YouTube/AI only.
+    warp_mode: str = "full"
 
 
 class NodeCreate(Node):
@@ -135,6 +137,7 @@ class NodeModify(Node):
     core_kind: Optional[CoreKind] = Field(None, nullable=True)
     warp_enabled: Optional[bool] = Field(None, nullable=True)
     warp_tag: Optional[str] = Field(None, nullable=True)
+    warp_mode: Optional[str] = Field(None, nullable=True)
     model_config = ConfigDict(json_schema_extra={
         "example": {
             "name": "DE node",
@@ -148,10 +151,18 @@ class NodeModify(Node):
 
 
 class NodeWarpSettings(BaseModel):
-    """Toggle Cloudflare WARP as this node's default Xray exit."""
+    """Toggle Cloudflare WARP exit policy for this node.
+
+    - ``mode=full``: all protocols exit via WARP (legacy).
+    - ``mode=sensitive``: only Google / YouTube / AI domains exit via WARP;
+      other traffic stays DIRECT. Same client configs — no new links.
+    - ``tag`` may be comma-separated (``warp,warp-2,warp-3``) for load-balance
+      across multiple registered WARP accounts (sensitive mode).
+    """
 
     enabled: bool = False
-    tag: Optional[str] = Field(default="warp", max_length=64)
+    tag: Optional[str] = Field(default="warp", max_length=512)
+    mode: Optional[str] = Field(default="sensitive", max_length=16)
 
 
 class NodeResponse(Node):

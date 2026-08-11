@@ -109,10 +109,13 @@ def _alias_endpoint_id_for_admin(db: Session, dbadmin) -> Optional[int]:
     """Prefer reseller branding subscription endpoint for preserved subId tokens."""
     if dbadmin is not None:
         try:
+            from app.tenant import branding_scope_admin_id
             from app.tenant.subscription_domain import get_reseller_subscription_endpoint
 
             brand_ep = get_reseller_subscription_endpoint(
-                db, getattr(dbadmin, "tenant_id", None)
+                db,
+                getattr(dbadmin, "tenant_id", None),
+                admin_id=branding_scope_admin_id(db, dbadmin),
             )
             if brand_ep is not None:
                 return int(brand_ep.id)

@@ -121,12 +121,21 @@ def upsert_package_override(
     price: Optional[int],
     bytes: Optional[int],
     commit: bool = False,
+    min_price: Optional[int] = None,
 ) -> Optional[ResellerTrafficPackageOverride]:
-    """Set or clear override fields. Both null removes the row."""
+    """Set or clear override fields. Both null removes the row.
+
+    ``min_price`` (when set) enforces a floor — used when a parent reseller
+    prices a sub-reseller so they cannot go below the master catalog price.
+    """
     if price is not None and int(price) < 0:
         raise TrafficPackageError("Override price cannot be negative")
     if bytes is not None and int(bytes) <= 0:
         raise TrafficPackageError("Override bytes must be positive")
+    if price is not None and min_price is not None and int(price) < int(min_price):
+        raise TrafficPackageError(
+            f"Price cannot be below master catalog price ({int(min_price):,})"
+        )
 
     ov = get_override(db, admin_id=admin_id, package_id=package_id)
     if price is None and bytes is None:
@@ -392,13 +401,24 @@ def set_reseller_pricing(
     clear_usage_rate: bool = False,
     packages: Optional[List[Dict[str, Any]]] = None,
     tariffs: Optional[List[Dict[str, Any]]] = None,
+    enforce_master_floor: bool = False,
 ) -> Dict[str, Any]:
-    """Apply PAYG rate and/or package/tariff overrides for one reseller."""
+    """Apply PAYG rate and/or package/tariff overrides for one reseller.
+
+    When ``enforce_master_floor`` is True (parent pricing a sub-reseller),
+    override prices cannot go below the master catalog / platform rate.
+    """
+    platform_rate = int(ps.get_int("billing.usage_rate_per_gb", 0) or 0)
+
     if clear_usage_rate:
         admin.usage_rate_per_gb = None
     elif usage_rate_per_gb is not None:
         if int(usage_rate_per_gb) < 0:
             raise TrafficPackageError("usage_rate_per_gb cannot be negative")
+        if enforce_master_floor and int(usage_rate_per_gb) < platform_rate:
+            raise TrafficPackageError(
+                f"usage_rate_per_gb cannot be below master rate ({platform_rate:,})"
+            )
         admin.usage_rate_per_gb = int(usage_rate_per_gb)
 
     for item in packages or []:
@@ -406,6 +426,7 @@ def set_reseller_pricing(
         pkg = get_package(db, package_id)
         if pkg is None:
             raise TrafficPackageError(f"Traffic package {package_id} not found", 404)
+        catalog_price = int(pkg.price or 0)
         upsert_package_override(
             db,
             admin_id=admin.id,
@@ -413,6 +434,7 @@ def set_reseller_pricing(
             price=item.get("price"),
             bytes=item.get("bytes"),
             commit=False,
+            min_price=catalog_price if enforce_master_floor else None,
         )
 
     if tariffs is not None:
@@ -434,6 +456,7 @@ def set_reseller_pricing(
                     tariff_id=tariff_id,
                     price=item.get("price"),
                     commit=False,
+                    min_price=int(row.price or 0) if enforce_master_floor else None,
                 )
             except ResellerTariffError as exc:
                 raise TrafficPackageError(exc.message, exc.status_code) from exc

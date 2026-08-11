@@ -887,7 +887,7 @@ server {{
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_connect_timeout 1s;
+        proxy_connect_timeout 10s;
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
         proxy_next_upstream off;
@@ -923,27 +923,35 @@ def _render_subscription_legacy_site(
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_connect_timeout 1s;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 120s;
     }}
 """
-    # Browser UI belongs on standard HTTPS (443) — legacy sub port lacks /_next assets.
-    # Keep the Host ($host) so p2/p3 never bounce onto the default srw1 vhost name.
-    if host and host != "_":
-        locations += """
-    location /subscribe/ {
-        return 301 https://$host$request_uri;
-    }
-"""
-    else:
+    # Browser subscribe UI + static assets must work on the legacy port too.
+    # Do NOT 301 to bare https://$host (drops :2096) — that breaks clients that
+    # only reach the subscription listener.
+    # /api/portal/ + /portal/ are required for "ورود به داشبورد" on :2096:
+    # subscribe calls POST /api/portal/bootstrap then redirects to /portal/.
+    # Without these locations nginx `return 444` → browser "Load failed".
+    for ui_loc in (
+        "/subscribe/",
+        "/_next/",
+        "/sub-assets/",
+        "/brand/",
+        "/fonts/",
+        "/api/portal/",
+        "/portal/",
+    ):
         locations += f"""
-    location /subscribe/ {{
+    location {ui_loc} {{
         proxy_pass {SUB_LEGACY_BACKEND};
         proxy_http_version 1.1;
         proxy_set_header Host $http_host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_connect_timeout 1s;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 120s;
     }}
 """
     if tls:

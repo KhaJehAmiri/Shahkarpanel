@@ -230,10 +230,18 @@ def upsert_tariff_override(
     tariff_id: int,
     price: Optional[int],
     commit: bool = False,
+    min_price: Optional[int] = None,
 ) -> Optional[ResellerPlanTariffOverride]:
-    """Set or clear price override. ``price is None`` removes the row."""
+    """Set or clear price override. ``price is None`` removes the row.
+
+    ``min_price`` enforces a floor (parent pricing sub-reseller vs master catalog).
+    """
     if price is not None and int(price) < 0:
         raise ResellerTariffError("Override price cannot be negative")
+    if price is not None and min_price is not None and int(price) < int(min_price):
+        raise ResellerTariffError(
+            f"Price cannot be below master catalog price ({int(min_price):,})"
+        )
 
     ov = get_tariff_override(db, admin_id=admin_id, tariff_id=tariff_id)
     if price is None:

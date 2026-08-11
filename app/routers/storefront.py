@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.db import Session, get_db
 from app.db.models import Admin as DbAdmin
-from app.login_limit import enforce_login_rate_limit
+from app.login_limit import enforce_login_rate_limit, record_login_failure
 from app.models.admin import Admin
 from app.rbac import require_permission
 from app import storefront as sf
@@ -161,6 +161,8 @@ def public_register(
         max_attempts=LOGIN_MAX_ATTEMPTS,
         window_seconds=LOGIN_MAX_WINDOW_SECONDS,
     )
+    # Public signup: count every attempt (abuse), keyed by real client IP.
+    record_login_failure(request, window_seconds=LOGIN_MAX_WINDOW_SECONDS)
     ctx = _ctx(db, request, tenant=body.tenant, ref=body.ref)
     return sf.register_customer(
         db,
@@ -183,6 +185,7 @@ def public_reseller_apply(
         max_attempts=LOGIN_MAX_ATTEMPTS,
         window_seconds=LOGIN_MAX_WINDOW_SECONDS,
     )
+    record_login_failure(request, window_seconds=LOGIN_MAX_WINDOW_SECONDS)
     ctx = _ctx(db, request, tenant=body.tenant, ref=body.ref)
     return sf.apply_reseller(
         db,

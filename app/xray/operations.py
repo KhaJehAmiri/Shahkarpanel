@@ -1,3 +1,4 @@
+import re
 import threading
 import time
 from functools import lru_cache
@@ -10,7 +11,11 @@ from app.db import GetDB, crud
 from app.models.node import NodeStatus
 from app.models.proxy import ProxyTypes
 from app.models.user import UserResponse
-from app.utils.concurrency import threaded_function
+from app.utils.concurrency import (
+    _NODE_ALTER_TIMEOUT,
+    node_alter_threaded,
+    threaded_function,
+)
 from app.xray.node import XRayNode
 from app.xray.serving import schedule_core_sync, sync_core_users_now, sync_main_core_user
 from xray_api import XRay as XRayAPI
@@ -19,6 +24,101 @@ from xray_api.types.account import Account, XTLSFlows
 if TYPE_CHECKING:
     from app.db import User as DBUser
     from app.db.models import Node as DBNode
+
+
+_LIVE_INBOUND_RECHECK_SEC = 900.0
+_last_live_inbound_repush: dict[int, float] = {}
+
+
+def _live_inbound_repush_due(node_id: int) -> bool:
+    last = _last_live_inbound_repush.get(int(node_id), 0.0)
+    return (time.time() - last) >= _LIVE_INBOUND_RECHECK_SEC
+
+
+def _note_live_inbound_repush(node_id: int) -> None:
+    _last_live_inbound_repush[int(node_id)] = time.time()
+
+
+_BIND_CONFLICT_RE = re.compile(r":(\d+): bind: address already in use")
+
+
+def _config_without_bind_conflicts(exc, node_id: int, dbnode):
+    """Rebuild a node's config without the inbounds it is not allowed to bind.
+
+    Relay servers commonly forward the advertised client port to the panel with
+    ``socat``, so a port that hosts point at is not always the node's to listen
+    on. Xray then refuses to start *the whole core*, taking down the tunnel
+    capture and Finalmask shards that were working. Returns ``None`` when the
+    failure was something else or the conflict is already known.
+    """
+    ports = {int(p) for p in _BIND_CONFLICT_RE.findall(str(exc) or "")}
+    if not ports:
+        return None
+
+    from app.services.xray_node import build_node_xray_config, note_node_port_conflicts
+
+    if not note_node_port_conflicts(node_id, ports):
+        return None
+    logger.warning(
+        "Node \"%s\" cannot bind %s — the port is already in use on that server; "
+        "rebuilding its Xray config without those inbounds",
+        getattr(dbnode, "name", node_id),
+        ", ".join(str(p) for p in sorted(ports)),
+    )
+    try:
+        return build_node_xray_config(node_id)
+    except Exception:
+        logger.debug("Rebuild without conflicting inbounds failed", exc_info=True)
+        return None
+
+
+def _expected_product_ports(node_id: int) -> list:
+    """Ports this node is supposed to accept client traffic on."""
+    from app.services.xray_node import node_xray_inbound_tags
+
+    try:
+        inbounds = dict(xray.config.inbounds_by_tag)
+    except Exception:
+        return []
+    with GetDB() as db:
+        allowed = node_xray_inbound_tags(db, node_id)
+    ports = []
+    for tag, inbound in inbounds.items():
+        if allowed is not None and tag not in allowed:
+            continue
+        port = inbound.get("port") if isinstance(inbound, dict) else None
+        try:
+            ports.append(int(port))
+        except (TypeError, ValueError):
+            continue
+    return ports
+
+
+def _live_core_lost_inbounds(dbnode) -> bool:
+    """True when a reachable node answers on none of its client ports.
+
+    Keeping a live core alive across panel restarts avoids re-push storms, but
+    it also means a core that came up *without* the product inbounds (a stale
+    or wrongly filtered config) stays broken until somebody restarts it by
+    hand — the panel would keep reporting the node as connected while every
+    VLESS client fails. The node's control channel is already up at this
+    point, so a closed client port is not a routing problem: it is a core that
+    is not serving what the panel expects.
+    """
+    import socket
+
+    ports = _expected_product_ports(int(dbnode.id))
+    address = (dbnode.address or "").strip()
+    if not ports or not address:
+        return False
+
+    for port in ports:
+        try:
+            with socket.create_connection((address, port), timeout=2.5):
+                return False
+        except OSError:
+            continue
+    return True
 
 
 @lru_cache(maxsize=None)
@@ -32,25 +132,26 @@ def get_tls():
         }
 
 
-@threaded_function
+@node_alter_threaded
 def _add_user_to_inbound(api: XRayAPI, inbound_tag: str, account: Account):
     if api is None:
         return
     try:
-        api.add_inbound_user(tag=inbound_tag, user=account, timeout=30)
-    except (xray.exc.EmailExistsError, xray.exc.ConnectionError):
+        api.add_inbound_user(tag=inbound_tag, user=account, timeout=_NODE_ALTER_TIMEOUT)
+    except (xray.exc.EmailExistsError, xray.exc.ConnectionError, xray.exc.TimeoutError):
         pass
 
 
-@threaded_function
+@node_alter_threaded
 def _remove_user_from_inbound(api: XRayAPI, inbound_tag: str, email: str):
     if api is None:
         return
     try:
-        api.remove_inbound_user(tag=inbound_tag, email=email, timeout=5)
+        api.remove_inbound_user(tag=inbound_tag, email=email, timeout=_NODE_ALTER_TIMEOUT)
     except (
         xray.exc.EmailNotFoundError,
         xray.exc.ConnectionError,
+        xray.exc.TimeoutError,
         # Orphan inbound tags left after a 3x-ui migration (or deleted hosts)
         # are not present on the live core — removing against them must not
         # explode the caller thread.
@@ -59,21 +160,27 @@ def _remove_user_from_inbound(api: XRayAPI, inbound_tag: str, email: str):
         pass
 
 
-@threaded_function
+@node_alter_threaded
 def _alter_inbound_user(api: XRayAPI, inbound_tag: str, account: Account):
     if api is None:
         return
     try:
-        api.remove_inbound_user(tag=inbound_tag, email=account.email, timeout=30)
+        api.remove_inbound_user(tag=inbound_tag, email=account.email, timeout=_NODE_ALTER_TIMEOUT)
     except (
         xray.exc.EmailNotFoundError,
         xray.exc.ConnectionError,
+        xray.exc.TimeoutError,
         xray.exc.TagNotFoundError,
     ):
         pass
     try:
-        api.add_inbound_user(tag=inbound_tag, user=account, timeout=30)
-    except (xray.exc.EmailExistsError, xray.exc.ConnectionError, xray.exc.TagNotFoundError):
+        api.add_inbound_user(tag=inbound_tag, user=account, timeout=_NODE_ALTER_TIMEOUT)
+    except (
+        xray.exc.EmailExistsError,
+        xray.exc.ConnectionError,
+        xray.exc.TimeoutError,
+        xray.exc.TagNotFoundError,
+    ):
         pass
 
 
@@ -174,10 +281,11 @@ def add_user(dbuser: "DBUser"):
 def _remove_user_from_inbound_sync(api: XRayAPI, inbound_tag: str, email: str):
     try:
         # Keep hot-path removes short so a hung node cannot stall the usage job.
-        api.remove_inbound_user(tag=inbound_tag, email=email, timeout=5)
+        api.remove_inbound_user(tag=inbound_tag, email=email, timeout=_NODE_ALTER_TIMEOUT)
     except (
         xray.exc.EmailNotFoundError,
         xray.exc.ConnectionError,
+        xray.exc.TimeoutError,
         xray.exc.TagNotFoundError,
     ):
         pass
@@ -317,7 +425,13 @@ def _finalmask_outbound_tag(db, dbnode, node_id: int, config=None) -> str:
     # while every other Xray inbound traversed it.
     outbound_tag = relay_tunnel_outbound_tag(db, node_id, config) or "DIRECT"
     if outbound_tag == "DIRECT" and dbnode and bool(getattr(dbnode, "warp_enabled", False)):
-        outbound_tag = (getattr(dbnode, "warp_tag", None) or "warp").strip() or "warp"
+        # Sensitive mode keeps Finalmask on DIRECT; domain rules send Google/YT
+        # via WARP. Full mode still nest-all through the primary WARP tag.
+        mode = str(getattr(dbnode, "warp_mode", None) or "full").strip().lower()
+        if mode != "sensitive":
+            from app.xray.warp_routing import primary_warp_tag
+
+            outbound_tag = primary_warp_tag(getattr(dbnode, "warp_tag", None))
     return outbound_tag
 
 
@@ -1130,7 +1244,16 @@ def connect_node(node_id, config=None):
                         pass
                     kept_live = True
                     hard_reconnect = False
-                    if not was_connected or (delegates_tunnel and not capture_flag):
+                    if _live_inbound_repush_due(node_id) and _live_core_lost_inbounds(dbnode):
+                        kept_live = False
+                        hard_reconnect = True
+                        _note_live_inbound_repush(node_id)
+                        logger.warning(
+                            "WireGuard node \"%s\" answers on no client port; "
+                            "re-pushing Xray config instead of keeping the live core",
+                            dbnode.name,
+                        )
+                    elif not was_connected or (delegates_tunnel and not capture_flag):
                         logger.info(
                             "WireGuard node \"%s\" soft-restored live Xray (%s) "
                             "status=%s capture_flag=%s — skip hard reconnect",
@@ -1217,6 +1340,9 @@ def connect_node(node_id, config=None):
                         )
                         if attempt < 2:
                             time.sleep(1)
+                            rebuilt = _config_without_bind_conflicts(exc, node_id, dbnode)
+                            if rebuilt is not None:
+                                config = rebuilt
                             # Never disconnect() just to retry — that stops Xray on
                             # the agent before the replacement session arrives.
                             try:
@@ -1262,6 +1388,9 @@ def connect_node(node_id, config=None):
                         )
                         if attempt < 2:
                             time.sleep(1)
+                            rebuilt = _config_without_bind_conflicts(exc, node_id, dbnode)
+                            if rebuilt is not None:
+                                config = rebuilt
                         try:
                             node.disconnect()
                         except Exception:
@@ -1440,6 +1569,9 @@ def restart_node(node_id, config=None):
                     )
                     if attempt < 2:
                         time.sleep(1)
+                        rebuilt = _config_without_bind_conflicts(exc, node_id, dbnode)
+                        if rebuilt is not None:
+                            config = rebuilt
                         try:
                             node.disconnect()
                         except Exception:

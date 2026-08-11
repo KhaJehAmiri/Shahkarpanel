@@ -8,8 +8,9 @@ Every entry point is best-effort and never raises into the caller — sing-box
 sync must never break the Xray user lifecycle.
 """
 import logging
+import threading
 from sqlalchemy.orm import joinedload
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from app.db import GetDB, crud
 from app.db.models import Proxy
@@ -28,6 +29,26 @@ _PROTOCOL_BY_TYPE = {
     ProxyTypes.TUIC: "tuic",
     ProxyTypes.AnyTLS: "anytls",
 }
+
+_sb_sync_lock = threading.Lock()
+_sb_sync_in_flight = False
+_sb_sync_queued = False
+_sb_sync_timer: Optional[threading.Timer] = None
+_SB_SYNC_DEBOUNCE_SEC = 2.0
+
+
+def _node_channel_live(node_object) -> bool:
+    """True when the control channel is already open — never dials."""
+    if node_object is None:
+        return False
+    checker = getattr(node_object, "has_live_rpyc", None)
+    if callable(checker):
+        try:
+            return bool(checker())
+        except Exception:
+            return False
+    conn = getattr(node_object, "connection", None)
+    return conn is not None and not getattr(conn, "closed", True)
 
 
 def collect_singbox_users(db) -> List[SBUser]:
@@ -119,7 +140,11 @@ def sync_node(db, dbnode, *, users: Optional[List[SBUser]] = None, node_object=N
     if cfg is None:
         return False
 
-    node_object = node_object if node_object is not None else _node_object(dbnode.id)
+    node_object = node_object if node_object is not None else _node_object(dbnode.id, connect=False)
+    if not _node_channel_live(node_object):
+        # Health check reconnects; dialling here piles threads behind a dead
+        # peer and holds the caller's DB session open the whole time.
+        return False
     client = client_for_node(node_object)
     if client is None:
         return False
@@ -146,29 +171,96 @@ def sync_node(db, dbnode, *, users: Optional[List[SBUser]] = None, node_object=N
         return False
 
 
+def _sync_node_snapshot(node_id: int, cfg: dict, users: List[SBUser]) -> bool:
+    """Apply a previously snapshotted config — no DB session held."""
+    node_object = _node_object(node_id, connect=False)
+    if not _node_channel_live(node_object):
+        return False
+    client = client_for_node(node_object)
+    if client is None:
+        return False
+    spec = build_node_spec(cfg, users)
+    try:
+        from app.tunnel.singbox_inject import apply_singbox_endpoint_tunnels
+
+        spec = apply_singbox_endpoint_tunnels(spec, node_id)
+    except Exception as exc:
+        logger.warning("sing-box tunnel inject for node %s failed: %s", node_id, exc)
+    try:
+        client.apply(spec)
+        return True
+    except Exception as exc:
+        logger.warning("sing-box sync to node %s failed: %s", node_id, exc)
+        return False
+
+
 def sync_all_nodes(db=None) -> int:
-    """Re-sync every sing-box node. Returns the count of successful applies."""
-    def _run(session) -> int:
+    """Re-sync every sing-box node. Returns the count of successful applies.
+
+    DB work finishes before any RPyC call so a hung node cannot leave the
+    session ``idle in transaction`` and starve subscriptions of pool slots.
+    """
+    def _snapshot(session) -> Tuple[List[Tuple[int, dict]], List[SBUser]]:
         sb_nodes = crud.get_singbox_nodes(session)
         if not sb_nodes:
-            return 0
+            return [], []
         users = collect_singbox_users(session)
-        return sum(1 for n in sb_nodes if sync_node(session, n, users=users))
+        snaps = [
+            (int(n.id), _cfg_to_dict(n.singbox))
+            for n in sb_nodes
+            if n.singbox is not None
+        ]
+        return snaps, users
 
     if db is not None:
-        return _run(db)
-    with GetDB() as session:
-        return _run(session)
+        snaps, users = _snapshot(db)
+    else:
+        with GetDB() as session:
+            snaps, users = _snapshot(session)
+
+    return sum(1 for nid, cfg in snaps if _sync_node_snapshot(nid, cfg, users))
 
 
-@threaded_function
-def sync_user_change() -> None:
-    """Lifecycle hook: re-sync sing-box nodes after any user add/update/remove.
-
-    Cheap no-op when no sing-box node exists. Runs off-thread so it never blocks
-    the Xray path.
-    """
+def _run_coalesced_sb_sync() -> None:
+    global _sb_sync_in_flight, _sb_sync_queued, _sb_sync_timer
+    with _sb_sync_lock:
+        _sb_sync_timer = None
+        if _sb_sync_in_flight:
+            _sb_sync_queued = True
+            return
+        _sb_sync_in_flight = True
+        _sb_sync_queued = False
     try:
         sync_all_nodes()
     except Exception as exc:
         logger.warning("sing-box user-change sync failed: %s", exc)
+    finally:
+        rerun = False
+        with _sb_sync_lock:
+            _sb_sync_in_flight = False
+            if _sb_sync_queued:
+                _sb_sync_queued = False
+                rerun = True
+        if rerun:
+            sync_user_change()
+
+
+def sync_user_change() -> None:
+    """Lifecycle hook: re-sync sing-box nodes after any user add/update/remove.
+
+    Debounced + single-flight. Without this, every user mutation spawned a new
+    daemon thread that opened a DB session and then blocked on RPyC — hundreds
+    of threads and ``idle in transaction`` connections starved the API.
+    """
+    global _sb_sync_timer
+    with _sb_sync_lock:
+        if _sb_sync_timer is not None:
+            _sb_sync_timer.cancel()
+            _sb_sync_timer = None
+        if _sb_sync_in_flight:
+            _sb_sync_queued = True
+            return
+        timer = threading.Timer(_SB_SYNC_DEBOUNCE_SEC, _run_coalesced_sb_sync)
+        timer.daemon = True
+        _sb_sync_timer = timer
+        timer.start()

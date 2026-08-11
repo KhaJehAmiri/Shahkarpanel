@@ -125,11 +125,14 @@ def _clash_wireguard_proxy(
     return proxy
 
 
-def _relay_ok_for_client(wg_node) -> bool:
+def _relay_ok_for_client(wg_node, *, db=None) -> bool:
     """False when this node is a tunnel relay whose capture path is not ready.
 
     Clients should only receive endpoints for stable relays; unhealthy hops are
     omitted so subscriptions auto-prefer working tunnels.
+
+    Pass a shared ``db`` when filtering many nodes so we do not open one session
+    (and rebuild the tunnel index) per hop under concurrent import storms.
     """
     try:
         from app import xray
@@ -149,11 +152,21 @@ def _relay_ok_for_client(wg_node) -> bool:
         ):
             # Still allow if live capture probe says ready.
             pass
-        with GetDB() as db:
-            if not node_delegates_wireguard_to_tunnel(db, nid):
+
+        def _check(session) -> bool:
+            if not node_delegates_wireguard_to_tunnel(session, nid):
                 return True
             live = xray.nodes.get(nid)
-            return bool(relay_tunnel_xray_ready(live, db=db, node_id=nid))
+            # probe=False: rendering a subscription must never open an RPyC
+            # session to a node (an unreachable relay would hang the request).
+            return bool(
+                relay_tunnel_xray_ready(live, db=session, node_id=nid, probe=False)
+            )
+
+        if db is not None:
+            return _check(db)
+        with GetDB() as session:
+            return _check(session)
     except Exception:
         return True
 
@@ -183,72 +196,74 @@ def _collect_wireguard_exports(
     settings = _client_settings(user, ProxyTypes.WireGuard)
     if not (settings and wg_nodes):
         return []
+    from app.db import GetDB
     from app.subscription.wireguard import node_host_endpoints
 
     exports: list[tuple[str, str, object, dict, str, int, str, Optional[dict]]] = []
-    for wg in wg_nodes:
-        if not wg.wireguard:
-            continue
-        # Skip tunnel relays that are not capture-ready so clients only dial
-        # stable hops (healthy Reality path). Exits / non-delegated stay.
-        if not _relay_ok_for_client(wg):
-            continue
-        native_ok = bool(
-            xray_native_wg_enabled(wg.wireguard) and settings.get("private_key")
-        )
-        # Xray apps import Finalmask JSON, not wireguard:// / plain WG.
-        emit_direct = not (prefer_xray_native and native_ok)
-        if emit_direct:
-            for variant in ("plain", "awg"):
-                try:
-                    if not user_config(settings, wg, variant=variant):
+    with GetDB() as db:
+        for wg in wg_nodes:
+            if not wg.wireguard:
+                continue
+            # Skip tunnel relays that are not capture-ready so clients only dial
+            # stable hops (healthy Reality path). Exits / non-delegated stay.
+            if not _relay_ok_for_client(wg, db=db):
+                continue
+            native_ok = bool(
+                xray_native_wg_enabled(wg.wireguard) and settings.get("private_key")
+            )
+            # Xray apps import Finalmask JSON, not wireguard:// / plain WG.
+            emit_direct = not (prefer_xray_native and native_ok)
+            if emit_direct:
+                for variant in ("plain", "awg"):
+                    try:
+                        if not user_config(settings, wg, variant=variant):
+                            continue
+                        endpoints = node_host_endpoints(wg, variant=variant)
+                    except Exception:
                         continue
-                    endpoints = node_host_endpoints(wg, variant=variant)
-                except Exception:
-                    continue
-                if not endpoints:
-                    continue
-                addr = settings.get("awg_address" if variant == "awg" else "address") or ""
-                for i, ep in enumerate(endpoints):
-                    host, port_str = ep.rsplit(":", 1)
-                    # Strip IPv6 brackets from host for outbound JSON fields.
-                    host_clean = host[1:-1] if host.startswith("[") and host.endswith("]") else host
-                    proto = "AmneziaWG" if variant == "awg" else "WireGuard"
-                    tag = node_config_remark(
-                        wg, proto, host_index=i, include_node_name=True,
-                    )
-                    exports.append((variant, tag, wg, settings, host_clean, int(port_str), addr, None))
-        if native_ok:
-            # Prefer Hosts / plain endpoint host; dial the user's sticky shard port.
-            # Always emit even when plain/awg .conf can't be built so Finalmask
-            # reaches the v2ray-json subscription.
-            try:
-                plain_eps = node_host_endpoints(wg, variant="plain")
-            except Exception:
-                plain_eps = []
-            shard_port = finalmask_client_port(wg.wireguard, settings)
-            if not plain_eps:
+                    if not endpoints:
+                        continue
+                    addr = settings.get("awg_address" if variant == "awg" else "address") or ""
+                    for i, ep in enumerate(endpoints):
+                        host, port_str = ep.rsplit(":", 1)
+                        # Strip IPv6 brackets from host for outbound JSON fields.
+                        host_clean = host[1:-1] if host.startswith("[") and host.endswith("]") else host
+                        proto = "AmneziaWG" if variant == "awg" else "WireGuard"
+                        tag = node_config_remark(
+                            wg, proto, host_index=i, include_node_name=True,
+                        )
+                        exports.append((variant, tag, wg, settings, host_clean, int(port_str), addr, None))
+            if native_ok:
+                # Prefer Hosts / plain endpoint host; dial the user's sticky shard port.
+                # Always emit even when plain/awg .conf can't be built so Finalmask
+                # reaches the v2ray-json subscription.
                 try:
-                    plain_eps = [node_endpoint(wg, variant="plain")]
+                    plain_eps = node_host_endpoints(wg, variant="plain")
                 except Exception:
-                    plain_eps = [f"{wg.address}:{shard_port}"]
-            host = plain_eps[0].rsplit(":", 1)[0]
-            host_clean = host[1:-1] if host.startswith("[") and host.endswith("]") else host
-            addr = settings.get("address") or settings.get("awg_address") or ""
-            if addr:
-                exports.append((
-                    "xray_native",
-                    node_config_remark(wg, "WireGuard", include_node_name=True),
-                    wg,
-                    settings,
-                    host_clean,
-                    shard_port,
-                    addr,
-                    wg.wireguard.xray_wg_noise or DEFAULT_NOISE_SETTINGS,
-                ))
-            elif prefer_xray_native and emit_direct is False:
-                # Finalmask preferred but no client address yet — nothing to emit.
-                pass
+                    plain_eps = []
+                shard_port = finalmask_client_port(wg.wireguard, settings)
+                if not plain_eps:
+                    try:
+                        plain_eps = [node_endpoint(wg, variant="plain")]
+                    except Exception:
+                        plain_eps = [f"{wg.address}:{shard_port}"]
+                host = plain_eps[0].rsplit(":", 1)[0]
+                host_clean = host[1:-1] if host.startswith("[") and host.endswith("]") else host
+                addr = settings.get("address") or settings.get("awg_address") or ""
+                if addr:
+                    exports.append((
+                        "xray_native",
+                        node_config_remark(wg, "WireGuard", include_node_name=True),
+                        wg,
+                        settings,
+                        host_clean,
+                        shard_port,
+                        addr,
+                        wg.wireguard.xray_wg_noise or DEFAULT_NOISE_SETTINGS,
+                    ))
+                elif prefer_xray_native and emit_direct is False:
+                    # Finalmask preferred but no client address yet — nothing to emit.
+                    pass
     return exports
 
 

@@ -30,9 +30,12 @@ __all__ = [
     "scope_users_query",
     "scope_nodes_query",
     "get_branding",
+    "get_admin_branding",
     "set_branding",
     "resolve_branding",
+    "branding_for_admin",
     "branding_for_user",
+    "branding_scope_admin_id",
     "subscription_brand_title",
     "tenant_owned_node_ids",
     "ensure_reseller_tenants",
@@ -172,11 +175,44 @@ def tenant_owned_node_ids(db: Session, tenant_id: int) -> set:
 # --------------------------------------------------------------------------- #
 # Branding
 # --------------------------------------------------------------------------- #
+def branding_scope_admin_id(db: Session, admin) -> Optional[int]:
+    """Return admin.id when branding must be isolated from the tenant owner.
+
+    Sub-resellers (``parent_admin_id`` set) get their own branding row so
+    title/domain/sub path edits never overwrite the parent reseller.
+    Tenant owners keep writing the tenant-default row (``admin_id IS NULL``).
+    """
+    if admin is None or getattr(admin, "is_sudo", False):
+        return None
+    row = admin
+    if not isinstance(admin, Admin):
+        row = db.query(Admin).filter(Admin.username == getattr(admin, "username", None)).first()
+    if row is None:
+        return None
+    if getattr(row, "parent_admin_id", None):
+        return int(row.id)
+    # Also isolate non-owner admins that share a tenant (legacy edge cases).
+    if row.tenant_id is not None:
+        tenant = get_tenant(db, row.tenant_id)
+        if tenant and tenant.owner_admin_id and int(tenant.owner_admin_id) != int(row.id):
+            return int(row.id)
+    return None
+
+
 def get_branding(db: Session, tenant_id: Optional[int]) -> Optional[BrandingSettings]:
+    """Tenant-default branding row (``admin_id IS NULL``)."""
+    q = db.query(BrandingSettings).filter(BrandingSettings.admin_id.is_(None))
+    if tenant_id is None:
+        q = q.filter(BrandingSettings.tenant_id.is_(None))
+    else:
+        q = q.filter(BrandingSettings.tenant_id == tenant_id)
+    return q.first()
+
+
+def get_admin_branding(db: Session, admin_id: int) -> Optional[BrandingSettings]:
     return (
         db.query(BrandingSettings)
-        .filter(BrandingSettings.tenant_id.is_(None) if tenant_id is None
-                else BrandingSettings.tenant_id == tenant_id)
+        .filter(BrandingSettings.admin_id == int(admin_id))
         .first()
     )
 
@@ -186,14 +222,21 @@ def set_branding(
     tenant_id: Optional[int],
     *,
     allow_global: bool = False,
+    admin_id: Optional[int] = None,
     **fields,
 ) -> BrandingSettings:
-    if tenant_id is None and not allow_global:
+    if tenant_id is None and not allow_global and admin_id is None:
         raise ValueError("Cannot write global branding without allow_global=True")
-    row = get_branding(db, tenant_id)
-    if row is None:
-        row = BrandingSettings(tenant_id=tenant_id)
-        db.add(row)
+    if admin_id is not None:
+        row = get_admin_branding(db, admin_id)
+        if row is None:
+            row = BrandingSettings(tenant_id=tenant_id, admin_id=int(admin_id))
+            db.add(row)
+    else:
+        row = get_branding(db, tenant_id)
+        if row is None:
+            row = BrandingSettings(tenant_id=tenant_id, admin_id=None)
+            db.add(row)
 
     # Validate subscription listen port before commit so a VPN-port clash
     # (e.g. 2082 Reality) never leaves branding stuck on a broken SSL URL.
@@ -232,7 +275,7 @@ def set_branding(
         try:
             from app.tenant.subscription_domain import sync_branding_subscription_domain
 
-            sync_branding_subscription_domain(db, tenant_id)
+            sync_branding_subscription_domain(db, tenant_id, admin_id=admin_id)
         except ValueError:
             raise
         except Exception:
@@ -257,14 +300,15 @@ def _branding_dict(row: Optional[BrandingSettings]) -> dict:
     }
 
 
-def resolve_branding(db: Session, tenant_id: Optional[int]) -> dict:
-    """Resolve effective branding: tenant value -> global default -> env/app default.
-
-    Returns a plain dict suitable for the dashboard theme and subscription
-    headers. Never returns None values for the core fields.
-    """
+def resolve_branding(
+    db: Session,
+    tenant_id: Optional[int],
+    *,
+    admin_id: Optional[int] = None,
+) -> dict:
+    """Resolve branding: admin overlay -> tenant -> global -> env defaults."""
     from app import PRODUCT_NAME
-    from config import PANEL_DEFAULT_LANG, PANEL_TITLE, PRIMARY_COLOR, SUB_PROFILE_TITLE, SUB_SUPPORT_URL
+    from config import PANEL_TITLE, PRIMARY_COLOR, SUB_PROFILE_TITLE, SUB_SUPPORT_URL
 
     base = {
         "panel_title": PANEL_TITLE or PRODUCT_NAME,
@@ -282,6 +326,8 @@ def resolve_branding(db: Session, tenant_id: Optional[int]) -> dict:
     layers = [_branding_dict(get_branding(db, None))]
     if tenant_id is not None:
         layers.append(_branding_dict(get_branding(db, tenant_id)))
+    if admin_id is not None:
+        layers.append(_branding_dict(get_admin_branding(db, admin_id)))
 
     for layer in layers:
         for key, value in layer.items():
@@ -294,15 +340,24 @@ def resolve_branding(db: Session, tenant_id: Optional[int]) -> dict:
     return base
 
 
+def branding_for_admin(db: Session, admin) -> dict:
+    """Resolve branding for a logged-in admin (sub-reseller aware)."""
+    tenant_id = admin_tenant_id(db, admin)
+    scope_id = branding_scope_admin_id(db, admin)
+    return resolve_branding(db, tenant_id, admin_id=scope_id)
+
+
 def branding_for_user(db: Session, dbuser) -> dict:
-    """Resolve branding for a subscription user via their owning admin's tenant."""
+    """Resolve branding for a subscription user via their owning admin."""
     tenant_id = None
+    scope_admin_id = None
     admin_id = getattr(dbuser, "admin_id", None)
     if admin_id is not None:
         admin = db.query(Admin).filter(Admin.id == admin_id).first()
         if admin is not None:
             tenant_id = admin.tenant_id
-    return resolve_branding(db, tenant_id)
+            scope_admin_id = branding_scope_admin_id(db, admin)
+    return resolve_branding(db, tenant_id, admin_id=scope_admin_id)
 
 
 def subscription_brand_title(branding: dict) -> str:

@@ -471,10 +471,12 @@ class Node(Base):
     xray_config_override = Column(Text, nullable=True, default=None)
     # Per-node Cloudflare WARP exit (independent of master routing).
     # When enabled, build_node_xray_config injects the WARP outbound for
-    # ``warp_tag`` (default ``warp``) and sets catch-all routing to it.
-    # When disabled, inherited master WARP outbounds/rules are stripped to DIRECT.
+    # Per-node Cloudflare WARP exit:
+    # ``warp_enabled`` + ``warp_mode`` (full = catch-all, sensitive = Google/YT/AI only).
+    # ``warp_tag`` may be a single tag or comma-separated tags for load-balancing.
     warp_enabled = Column(Boolean, nullable=False, server_default=text("false"), default=False)
-    warp_tag = Column(String(64), nullable=True, default=None)
+    warp_tag = Column(String(512), nullable=True, default=None)
+    warp_mode = Column(String(16), nullable=False, server_default=text("'full'"), default="full")
     status = Column(Enum(NodeStatus), nullable=False, default=NodeStatus.connecting)
     last_status_change = Column(DateTime, default=datetime.utcnow)
     message = Column(String(1024), nullable=True)
@@ -1224,27 +1226,34 @@ class Tenant(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     admins = relationship("Admin", back_populates="tenant", foreign_keys="Admin.tenant_id")
+    # Tenant-default brand only (admin_id IS NULL). Sub-reseller rows are
+    # loaded via BrandingSettings.admin_id, not this relationship.
     branding = relationship(
         "BrandingSettings",
         back_populates="tenant",
         uselist=False,
+        primaryjoin="and_(Tenant.id==BrandingSettings.tenant_id, BrandingSettings.admin_id.is_(None))",
         cascade="all, delete-orphan",
     )
 
 
 class BrandingSettings(Base):
-    """Per-tenant white-label appearance (logo, colours, titles, support link).
+    """White-label appearance (logo, colours, titles, support link, sub domain).
 
-    A row with ``tenant_id = NULL`` is the platform-wide default brand.
+    - ``tenant_id = NULL`` and ``admin_id = NULL``: platform-wide default
+    - ``tenant_id`` set, ``admin_id = NULL``: tenant owner (top-level reseller)
+    - ``admin_id`` set: sub-reseller override (must not share the owner's row)
     """
 
     __tablename__ = "branding_settings"
-    __table_args__ = (
-        UniqueConstraint("tenant_id", name="uq_branding_tenant"),
-    )
+    # Uniqueness is enforced by partial indexes in migration gg77bb88cc99
+    # (tenant default vs per-admin rows).
 
     id = Column(Integer, primary_key=True)
     tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=True, index=True)
+    admin_id = Column(
+        Integer, ForeignKey("admins.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     panel_title = Column(String(128), nullable=True)
     logo_url = Column(String(512), nullable=True)
     favicon_url = Column(String(512), nullable=True)
@@ -1260,6 +1269,7 @@ class BrandingSettings(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     tenant = relationship("Tenant", back_populates="branding")
+    admin = relationship("Admin", foreign_keys=[admin_id])
 
 
 class Tunnel(Base):

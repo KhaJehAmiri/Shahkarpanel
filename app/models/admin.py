@@ -36,6 +36,8 @@ class Admin(BaseModel):
     max_nodes: Optional[int] = None
     tenant_id: Optional[int] = None
     parent_admin_id: Optional[int] = None
+    # Populated by sudo list endpoints for sub-resellers (not a DB column).
+    parent_admin_username: Optional[str] = None
     commission_percent: int = 0
     # Populated by sudo list endpoints (not a DB column).
     wallet_balance: Optional[int] = None

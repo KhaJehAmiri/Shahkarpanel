@@ -671,11 +671,25 @@ def list_traffic_packages(
     return list_packages(db, enabled_only=enabled_only)
 
 
+def _assert_can_price_reseller(db: Session, actor: Admin, target) -> None:
+    """Sudo may price any reseller; a parent may only price their sub-resellers."""
+    if getattr(actor, "is_sudo", False):
+        return
+    actor_row = crud.get_admin(db, actor.username)
+    if actor_row is None:
+        raise HTTPException(status_code=403, detail="Not allowed")
+    if getattr(target, "parent_admin_id", None) != actor_row.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the parent reseller can set pricing for this sub-reseller",
+        )
+
+
 @router.get("/reseller-pricing/{username}", response_model=ResellerPricingResponse)
 def get_reseller_traffic_pricing(
     username: str,
     db: Session = Depends(get_db),
-    _: Admin = Depends(Admin.check_sudo_admin),
+    admin: Admin = Depends(require_permission("billing:read")),
 ):
     _require_billing_enabled()
     from app.billing.traffic_packages import get_reseller_pricing
@@ -683,6 +697,7 @@ def get_reseller_traffic_pricing(
     target = crud.get_admin(db, username)
     if target is None or target.is_sudo:
         raise HTTPException(status_code=404, detail="Reseller not found")
+    _assert_can_price_reseller(db, admin, target)
     return get_reseller_pricing(db, target)
 
 
@@ -691,7 +706,7 @@ def put_reseller_traffic_pricing(
     username: str,
     body: ResellerPricingUpdate,
     db: Session = Depends(get_db),
-    _: Admin = Depends(Admin.check_sudo_admin),
+    admin: Admin = Depends(require_permission("billing:write")),
 ):
     _require_billing_enabled()
     from app.billing.traffic_packages import TrafficPackageError, set_reseller_pricing
@@ -699,6 +714,7 @@ def put_reseller_traffic_pricing(
     target = crud.get_admin(db, username)
     if target is None or target.is_sudo:
         raise HTTPException(status_code=404, detail="Reseller not found")
+    _assert_can_price_reseller(db, admin, target)
 
     dumped = body.model_dump(exclude_unset=True)
     clear_usage_rate = "usage_rate_per_gb" in dumped and dumped["usage_rate_per_gb"] is None
@@ -717,6 +733,8 @@ def put_reseller_traffic_pricing(
             clear_usage_rate=clear_usage_rate,
             packages=packages,
             tariffs=tariffs,
+            # Parent cannot price a child below master catalog / platform rate.
+            enforce_master_floor=not bool(getattr(admin, "is_sudo", False)),
         )
     except TrafficPackageError as exc:
         raise _map_package_error(exc) from exc
@@ -985,7 +1003,7 @@ def complete_wallet_payment(
     if intent.provider == "card":
         raise HTTPException(
             status_code=400,
-            detail="Card top-ups must be submitted for review, then approved by the platform owner",
+            detail="Card top-ups must be submitted for review, then approved by the payee",
         )
     if intent.provider == "demo":
         from app import platform_settings as ps
@@ -1070,16 +1088,20 @@ def select_wallet_topup_card(
     db: Session = Depends(get_db),
     admin: Admin = Depends(require_permission("billing:read")),
 ):
-    """Switch which platform card a pending top-up should use (before receipt submit)."""
+    """Switch which card a pending top-up should use (before receipt submit)."""
     _require_billing_enabled()
-    from app.billing.providers import list_platform_cards, public_card_payload
+    from app.billing.providers import list_topup_cards_for_admin, public_card_payload
 
     intent = get_intent_for_admin(db, payment_id, _admin_id(db, admin))
     if intent.kind != "topup":
         raise HTTPException(status_code=400, detail="Not a top-up payment")
     intent = set_payment_card(db, intent, body.card_id)
     extra = intent.extra or {}
-    cards = [PaymentCardOut(**public_card_payload(c)) for c in list_platform_cards()]
+    payer = crud.get_admin_by_id(db, intent.admin_id) if intent.admin_id else None
+    cards = [
+        PaymentCardOut(**public_card_payload(c))
+        for c in list_topup_cards_for_admin(db, payer)
+    ]
     return PaymentCreateResponse(
         payment_id=intent.id,
         kind=intent.kind,
@@ -1149,9 +1171,15 @@ def portal_payment_receipt(
     scope = dbadmin if dbadmin is not None else admin
     intent = get_intent_for_admin_or_sudo(db, payment_id, scope)
     if intent.kind == "topup" and not getattr(scope, "is_sudo", False):
-        # Reseller may download their own top-up receipt; others cannot.
+        # Reseller may download their own top-up receipt; parent may download
+        # a sub-reseller's top-up receipt for review.
         if intent.admin_id != getattr(scope, "id", None):
-            raise HTTPException(status_code=404, detail="Payment not found")
+            payer = crud.get_admin_by_id(db, intent.admin_id) if intent.admin_id else None
+            if (
+                payer is None
+                or getattr(payer, "parent_admin_id", None) != getattr(scope, "id", None)
+            ):
+                raise HTTPException(status_code=404, detail="Payment not found")
     extra = intent.extra or {}
     rel = extra.get("receipt_relpath")
     if not rel:

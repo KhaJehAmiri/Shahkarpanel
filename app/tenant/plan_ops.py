@@ -1,4 +1,9 @@
-"""Commercial plan scoping per reseller workspace."""
+"""Commercial plan scoping per reseller workspace.
+
+Each reseller / sub-reseller owns an isolated catalog via ``Plan.owner_admin_id``.
+Sharing a ``tenant_id`` with a parent must NOT expose or allow mutating the
+parent's plans (same isolation model as branding ``admin_id``).
+"""
 from typing import List, Optional, Tuple
 
 from fastapi import HTTPException
@@ -9,7 +14,7 @@ from app.tenant import admin_tenant_id
 
 
 def reseller_plan_scope(db: Session, admin) -> Tuple[Optional[int], Optional[int]]:
-    """Return (tenant_id, owner_admin_id) for plan ownership checks."""
+    """Return (tenant_id, owner_admin_id) for plan ownership stamps/checks."""
     if getattr(admin, "is_sudo", False):
         return None, None
     dbadmin = db.query(Admin).filter(Admin.username == admin.username).first()
@@ -26,19 +31,16 @@ def scope_plans_query(
     owner_admin_id: Optional[int],
     sudo: bool = False,
 ) -> Query:
-    """Limit a Plan query to a reseller catalog. Sudo sees everything."""
+    """Limit a Plan query to one reseller's catalog. Sudo sees everything.
+
+    Non-sudo: ``owner_admin_id`` only — never OR with ``tenant_id``, so
+    sub-resellers cannot see or edit the parent catalog.
+    """
     if sudo:
         return query
-    clauses = []
-    if tenant_id is not None:
-        clauses.append(Plan.tenant_id == tenant_id)
-    if owner_admin_id is not None:
-        clauses.append(Plan.owner_admin_id == owner_admin_id)
-    if not clauses:
+    if owner_admin_id is None:
         return query.filter(False)
-    from sqlalchemy import or_
-
-    return query.filter(or_(*clauses))
+    return query.filter(Plan.owner_admin_id == owner_admin_id)
 
 
 def get_scoped_plans(
@@ -90,22 +92,16 @@ def get_plans_for_user_reseller(
 ) -> List[Plan]:
     """Plans visible to an end-user via their owning reseller only.
 
-    Reseller catalogs are isolated from the global (sudo) catalog so customers
-    of a نماینده never see platform plans or pricing.
+    Isolated per ``owner_admin_id`` so a sub-reseller's customers never see
+    the parent catalog (and vice versa).
     """
     dbadmin = db.query(Admin).filter(Admin.id == admin_id).first()
     if dbadmin is None:
         return []
-    tenant_id = dbadmin.tenant_id
-    q = db.query(Plan)
+    q = db.query(Plan).filter(Plan.owner_admin_id == admin_id)
     if enabled_only:
         q = q.filter(Plan.enabled.is_(True))
-    clauses = [Plan.owner_admin_id == admin_id]
-    if tenant_id is not None:
-        clauses.append(Plan.tenant_id == tenant_id)
-    from sqlalchemy import or_
-
-    plans = q.filter(or_(*clauses)).order_by(Plan.id).all()
+    plans = q.order_by(Plan.id).all()
     # Wholesale tariffs are never sold to end customers.
     try:
         from app.billing.unlimited_create import get_configured_unlimited_plan_ids
@@ -145,27 +141,16 @@ def plan_available_for_portal_user(db: Session, dbuser, plan: Plan) -> bool:
     # Platform-owned users (no reseller): global catalog only.
     if not admin_id:
         return plan.tenant_id is None and plan.owner_admin_id is None
-    dbadmin = db.query(Admin).filter(Admin.id == admin_id).first()
-    if dbadmin is None:
-        return False
-    if plan.owner_admin_id == admin_id:
-        return True
-    if dbadmin.tenant_id is not None and plan.tenant_id == dbadmin.tenant_id:
-        return True
-    return False
+    return plan.owner_admin_id == admin_id
 
 
 def assert_plan_accessible(db: Session, admin, plan: Plan) -> None:
     if getattr(admin, "is_sudo", False):
         return
-    tenant_id, owner_admin_id = reseller_plan_scope(db, admin)
-    ok = False
-    if tenant_id is not None and plan.tenant_id == tenant_id:
-        ok = True
+    _, owner_admin_id = reseller_plan_scope(db, admin)
     if owner_admin_id is not None and plan.owner_admin_id == owner_admin_id:
-        ok = True
-    if not ok:
-        raise HTTPException(status_code=403, detail="Plan not in your catalog")
+        return
+    raise HTTPException(status_code=403, detail="Plan not in your catalog")
 
 
 def assert_plan_for_user(db: Session, user_admin_id: Optional[int], plan: Plan) -> None:
@@ -183,16 +168,9 @@ def assert_plan_for_user(db: Session, user_admin_id: Optional[int], plan: Plan) 
         if plan.tenant_id is None and plan.owner_admin_id is None:
             return
         raise HTTPException(status_code=403, detail="Plan not available for this user")
-    dbadmin = db.query(Admin).filter(Admin.id == user_admin_id).first()
-    if dbadmin is None:
-        raise HTTPException(status_code=400, detail="User has no owning reseller")
-    ok = False
-    if dbadmin.tenant_id is not None and plan.tenant_id == dbadmin.tenant_id:
-        ok = True
     if plan.owner_admin_id == user_admin_id:
-        ok = True
-    if not ok:
-        raise HTTPException(status_code=403, detail="Plan not available for this user")
+        return
+    raise HTTPException(status_code=403, detail="Plan not available for this user")
 
 
 def plan_name_taken(
@@ -203,13 +181,14 @@ def plan_name_taken(
     owner_admin_id: Optional[int],
     exclude_id: Optional[int] = None,
 ) -> bool:
+    """Name uniqueness is per owner catalog (not shared across the tenant)."""
     q = db.query(Plan).filter(Plan.name == name)
-    if tenant_id is None:
-        q = q.filter(Plan.tenant_id.is_(None))
-    else:
-        q = q.filter(Plan.tenant_id == tenant_id)
     if owner_admin_id is None:
         q = q.filter(Plan.owner_admin_id.is_(None))
+        if tenant_id is None:
+            q = q.filter(Plan.tenant_id.is_(None))
+        else:
+            q = q.filter(Plan.tenant_id == tenant_id)
     else:
         q = q.filter(Plan.owner_admin_id == owner_admin_id)
     if exclude_id is not None:

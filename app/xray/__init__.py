@@ -1,5 +1,6 @@
 from random import randint
 from typing import TYPE_CHECKING, Dict, Sequence
+import time
 
 import commentjson
 import json
@@ -18,6 +19,11 @@ from xray_api import exceptions, types
 from xray_api import exceptions as exc
 
 core = XRayCore(XRAY_EXECUTABLE_PATH, XRAY_ASSETS_PATH)
+
+# Subscription workers keep an in-memory hosts copy; without a TTL, DB edits
+# (or updates applied in another worker) stay invisible until process restart.
+_HOSTS_CACHE_TTL_SEC = 30.0
+_hosts_loaded_at: float = 0.0
 
 
 def _load_xray_config(api_port: int) -> XRayConfig:
@@ -62,15 +68,18 @@ _config_loaded_mtime: float = (
 
 def refresh_for_subscription() -> None:
     """Reload Xray JSON (when changed on disk) and hosts from DB for client exports."""
-    global config, _config_loaded_mtime
+    global config, _config_loaded_mtime, _hosts_loaded_at
     path = Path(XRAY_JSON)
     mtime = path.stat().st_mtime if path.is_file() else 0.0
     if mtime > _config_loaded_mtime:
         config = _load_xray_config(config.api_port)
         _config_loaded_mtime = mtime
         hosts.clear()
-    if not hosts:
+        _hosts_loaded_at = 0.0
+    now = time.monotonic()
+    if not hosts or (now - _hosts_loaded_at) >= _HOSTS_CACHE_TTL_SEC:
         hosts.update()
+        _hosts_loaded_at = now
 
 api = XRayAPI(config.api_host, config.api_port)
 

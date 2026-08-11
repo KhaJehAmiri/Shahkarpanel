@@ -211,7 +211,9 @@ def get_users_stats(api: XRayAPI):
         params = defaultdict(int)
         up_params = defaultdict(int)
         down_params = defaultdict(int)
-        for stat in filter(attrgetter('value'), api.get_users_stats(reset=True, timeout=30)):
+        # Keep timeout short so one hung node cannot pin the usage job
+        # (max_instances=1) long enough for Overview online_users to hit 0.
+        for stat in filter(attrgetter('value'), api.get_users_stats(reset=True, timeout=4)):
             uid = stat.name.split('.', 1)[0]
             params[uid] += stat.value
             # Preserve the up/down split (Xray reports uplink/downlink per user)
@@ -234,6 +236,18 @@ def get_users_stats(api: XRayAPI):
     except xray_exc.XrayError as exc:
         logger.warning("get_users_stats failed: %s", exc)
         return None
+
+
+def bump_users_online_at(uids) -> int:
+    """Set ``online_at=now`` for billable users. Returns rows touched.
+
+    The authoritative writer is the presence tracker's own thread
+    (``app.presence``); this job only adds the users it happened to bill this
+    tick, so the counter never depends on billing I/O completing.
+    """
+    from app.presence import mark_online
+
+    return mark_online(uids)
 
 
 def _params_from_xray_transfer(transfer: dict) -> list:
@@ -691,7 +705,7 @@ def collect_user_usage_params() -> tuple:
         }
         for node_id, future in futures.items():
             try:
-                api_params[node_id] = future.result(timeout=35) or []
+                api_params[node_id] = future.result(timeout=12) or []
             except Exception as exc:
                 logger.warning("get_users_stats timed out/failed for node %s: %s", node_id, exc)
                 api_params[node_id] = []
@@ -793,6 +807,12 @@ def record_protocol_breakdown(
 def record_user_usages():
     api_params, usage_coefficient, protocol_breakdown = collect_user_usage_params()
     uids = {int(p["uid"]) for params in api_params.values() for p in params}
+    # Presence first, before any billing write can stall this tick. This is a
+    # secondary source: app.presence keeps online_at fresh on its own thread.
+    try:
+        bump_users_online_at(uids)
+    except Exception:
+        logger.exception("online_at bump failed")
     if uids:
         from app.quota import enforce_disconnect_for_non_billable
 
@@ -888,3 +908,6 @@ scheduler.add_job(run_if_leader(record_user_usages), 'interval',
 scheduler.add_job(run_if_leader(record_node_usages), 'interval',
                   seconds=JOB_RECORD_NODE_USAGES_INTERVAL,
                   coalesce=True, max_instances=1)
+# online_at is refreshed by app.presence on a dedicated thread — deliberately
+# not a scheduler job, so a pool starved by hung node RPCs cannot zero the
+# Overview online counter.

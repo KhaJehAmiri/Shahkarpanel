@@ -10,13 +10,17 @@ def fetch_remote_tls_status(node_object, certificate_path: str) -> Dict[str, Any
     if node_object is None:
         return {"present": False, "trusted": False}
     try:
-        if hasattr(node_object, "make_request"):
+        from app.singbox.transport import _declares
+
+        if _declares(node_object, "make_request"):
             return node_object.make_request(
                 "/singbox/tls/status",
                 10,
                 certificate_path=certificate_path,
             ) or {"present": False, "trusted": False}
-        if hasattr(node_object, "remote"):
+        # Declaration lookup: a plain ``hasattr`` would invoke the ``remote``
+        # property and dial the node just to test for the attribute.
+        if _declares(node_object, "remote"):
             import json
 
             raw = node_object.remote.singbox_tls_status(certificate_path)

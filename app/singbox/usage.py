@@ -95,7 +95,6 @@ def collect_singbox_usage_params(db=None) -> Tuple[Dict[int, List[dict]], Dict[i
 
     DB work finishes before node RPCs so hung transfers cannot idle-in-transaction.
     """
-    from concurrent.futures import ThreadPoolExecutor
 
     def _plan(session):
         sb_nodes = crud.get_singbox_nodes(session)
@@ -126,14 +125,12 @@ def collect_singbox_usage_params(db=None) -> Tuple[Dict[int, List[dict]], Dict[i
         client = client_for_node(_node_object(plan["id"], connect=False))
         if client is None:
             continue
-        pool = ThreadPoolExecutor(max_workers=1)
         try:
-            transfer = pool.submit(client.transfer).result(timeout=8)
+            # ``RPyCSingBoxClient.transfer`` never dials; a dead channel is {}.
+            transfer = client.transfer()
         except Exception as exc:
             logger.warning("sing-box transfer read from node %s failed: %s", plan["id"], exc)
             transfer = None
-        finally:
-            pool.shutdown(wait=False, cancel_futures=True)
         if not transfer:
             continue
         deltas_by_node[plan["id"]] = _interval_bytes(transfer)

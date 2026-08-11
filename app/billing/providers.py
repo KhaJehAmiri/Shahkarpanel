@@ -161,6 +161,30 @@ def list_cards_for_admin(dbadmin, *, include_disabled: bool = False) -> List[dic
     return cards if include_disabled else enabled_payment_cards(cards)
 
 
+def resolve_topup_payee(db, payer) -> Optional[object]:
+    """Who receives a wallet top-up for ``payer``.
+
+    - Sub-reseller (``parent_admin_id`` set) → parent reseller
+    - Top-level reseller → ``None`` (platform / master cards)
+    """
+    if payer is None:
+        return None
+    parent_id = getattr(payer, "parent_admin_id", None)
+    if not parent_id:
+        return None
+    from app.db.models import Admin
+
+    return db.query(Admin).filter(Admin.id == int(parent_id)).first()
+
+
+def list_topup_cards_for_admin(db, dbadmin, *, include_disabled: bool = False) -> List[dict]:
+    """Cards shown on wallet top-up: parent cards for sub-resellers, else platform."""
+    payee = resolve_topup_payee(db, dbadmin)
+    if payee is not None:
+        return list_cards_for_admin(payee, include_disabled=include_disabled)
+    return list_platform_cards(include_disabled=include_disabled)
+
+
 def save_platform_cards(enabled: bool, cards: List[dict]) -> List[dict]:
     """Persist platform cards + legacy scalar mirror of the first enabled (or first) card."""
     normalized = normalize_payment_cards(cards)
@@ -212,8 +236,9 @@ class PaymentProvider:
 class CardProvider(PaymentProvider):
     """Card-to-card transfer — user pays offline; owning admin/reseller confirms.
 
-    Portal purchases use the owning admin's card. Reseller wallet top-ups use
-    the platform (master) card so money lands with the owner who credits wallets.
+    Portal purchases use the owning admin's card. Wallet top-ups:
+    - Top-level reseller → platform (master) card
+    - Sub-reseller → parent reseller's card
     """
 
     name = "card"
@@ -226,17 +251,24 @@ class CardProvider(PaymentProvider):
         kind = getattr(intent, "kind", None) or ""
         extra = dict(intent.extra or {})
         prefer_id = (extra.get("card_id") or "").strip() or None
+        db = object_session(intent)
+        dbadmin = None
+        if db is not None and getattr(intent, "admin_id", None):
+            dbadmin = db.query(Admin).filter(Admin.id == intent.admin_id).first()
         if kind == "topup":
-            cards = list_platform_cards()
+            cards = list_topup_cards_for_admin(db, dbadmin) if db is not None else list_platform_cards()
             card = pick_payment_card(cards, prefer_id)
             if not card:
+                payee = resolve_topup_payee(db, dbadmin) if db is not None else None
+                if payee is not None:
+                    raise ValueError("Parent reseller card payment is not configured")
                 raise ValueError("Platform card payment is not configured")
-            instructions = "Transfer to the platform card and submit the receipt for review."
+            payee = resolve_topup_payee(db, dbadmin) if db is not None else None
+            if payee is not None:
+                instructions = "Transfer to the reseller card and submit the receipt for review."
+            else:
+                instructions = "Transfer to the platform card and submit the receipt for review."
         else:
-            db = object_session(intent)
-            dbadmin = None
-            if db is not None and getattr(intent, "admin_id", None):
-                dbadmin = db.query(Admin).filter(Admin.id == intent.admin_id).first()
             cards = list_cards_for_admin(dbadmin)
             card = pick_payment_card(cards, prefer_id)
             if not card:
@@ -646,12 +678,31 @@ def card_payment_enabled() -> bool:
 
 
 def topup_providers_for_admin(dbadmin) -> List[str]:
-    """Self-service wallet top-up methods for a reseller (gateway + platform card).
+    """Self-service wallet top-up methods for a reseller.
 
-    Platform gateways (CentralPay / Stripe) are offered for wallet top-up when
-    configured — the reseller is paying the platform owner. Demo is never listed
-    unless ``payment.demo_enabled`` is explicitly on.
+    - Top-level reseller: platform gateways + platform card (pays the master).
+    - Sub-reseller: only the parent reseller's card (pays the parent). Gateways
+      stay platform-scoped and are not offered to sub-resellers.
     """
+    if dbadmin is not None and getattr(dbadmin, "parent_admin_id", None):
+        from sqlalchemy.orm import object_session
+
+        from app.db.models import Admin
+
+        db = object_session(dbadmin)
+        if db is None:
+            # Detached row — load parent cards via a short-lived session.
+            from app.db import GetDB
+
+            with GetDB() as session:
+                payer = session.query(Admin).filter(Admin.id == int(dbadmin.id)).first()
+                if list_topup_cards_for_admin(session, payer):
+                    return [CardProvider.name]
+            return []
+        if list_topup_cards_for_admin(db, dbadmin):
+            return [CardProvider.name]
+        return []
+
     providers = list(gateway_providers())
     if list_platform_cards():
         providers = providers + [CardProvider.name]

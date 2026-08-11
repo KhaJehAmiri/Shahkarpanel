@@ -1,15 +1,12 @@
-// Client-app catalog for the public subscription page. Each app exposes a
-// deep-link builder (custom URL scheme) so users can one-tap import their
-// subscription URL, plus per-platform store/download links.
+// Client-app catalog for the public subscription page.
+// Primary (all platforms): Karing — https://karing.app/en/cooperation/scheme
+// Servers page also offers Hiddify, V2Box, Happ.
 
 import {
-  clashVergeSubScheme,
+  happSubScheme,
   hiddifySubScheme,
-  nekoSubScheme,
-  shadowrocketSubScheme,
-  streisandSubScheme,
+  karingSubScheme,
   v2boxSubScheme,
-  v2rayNgSubScheme,
 } from "./deepLink";
 
 export type Platform = "android" | "ios" | "windows" | "macos" | "linux";
@@ -33,28 +30,43 @@ export interface ClientApp {
   short: string;
   color: string;
   platforms: Platform[];
-  buildScheme: (subUrl: string, opts?: { name?: string }) => string;
+  buildScheme: (
+    subUrl: string,
+    opts?: { name?: string; ispName?: string; ispUrl?: string; ispFaq?: string },
+  ) => string;
   download?: Partial<Record<Platform, string>>;
 }
 
+/** Shown under the primary app on the Servers tab (not on Import). */
+export const SERVER_SECONDARY_APP_IDS = ["hiddify", "v2box", "happ"] as const;
+
+const KARING_DOWNLOAD = {
+  ios: "https://apps.apple.com/app/karing/id6472431552",
+  macos: "https://apps.apple.com/app/karing/id6472431552",
+  // Direct APK (arm64) — not the GitHub releases HTML page.
+  android:
+    "https://github.com/KaringX/karing/releases/download/v1.2.23.2606/karing_1.2.23.2606_android_arm64-v8a.apk",
+  windows:
+    "https://github.com/KaringX/karing/releases/download/v1.2.23.2606/karing_1.2.23.2606_windows_x64.exe",
+  linux:
+    "https://github.com/KaringX/karing/releases/download/v1.2.23.2606/karing_1.2.23.2606_linux_amd64.deb",
+} as const;
+
 const APPS: ClientApp[] = [
   {
-    id: "v2rayng",
-    name: "v2rayNG",
-    short: "V2",
-    color: "#1f6feb",
-    platforms: ["android"],
-    buildScheme: (url, o) => v2rayNgSubScheme(url, o?.name),
-    download: { android: "https://github.com/2dust/v2rayNG/releases" },
-  },
-  {
-    id: "nekobox",
-    name: "NekoBox",
-    short: "NB",
-    color: "#ec4899",
-    platforms: ["android"],
-    buildScheme: (url, o) => nekoSubScheme(url, o?.name),
-    download: { android: "https://github.com/MatsuriDayo/NekoBoxForAndroid/releases" },
+    id: "karing",
+    name: "Karing",
+    short: "Ka",
+    color: "#2563eb",
+    platforms: ["android", "ios", "windows", "macos", "linux"],
+    buildScheme: (url, o) =>
+      karingSubScheme(url, {
+        name: o?.name,
+        ispName: o?.ispName,
+        ispUrl: o?.ispUrl,
+        ispFaq: o?.ispFaq,
+      }),
+    download: { ...KARING_DOWNLOAD },
   },
   {
     id: "hiddify",
@@ -72,58 +84,45 @@ const APPS: ClientApp[] = [
     },
   },
   {
-    id: "streisand",
-    name: "Streisand",
-    short: "St",
-    color: "#0ea5e9",
-    platforms: ["ios", "macos"],
-    buildScheme: (url, o) => streisandSubScheme(url, o?.name),
-    download: { ios: "https://apps.apple.com/app/streisand/id6450534064" },
-  },
-  {
-    id: "shadowrocket",
-    name: "Shadowrocket",
-    short: "SR",
-    color: "#6366f1",
-    platforms: ["ios", "macos"],
-    buildScheme: (url) => shadowrocketSubScheme(url),
-    download: { ios: "https://apps.apple.com/app/shadowrocket/id932747118" },
-  },
-  {
     id: "v2box",
     name: "V2Box",
     short: "VB",
     color: "#10b981",
     platforms: ["ios", "macos"],
     buildScheme: (url, o) => v2boxSubScheme(url, o?.name),
-    download: { ios: "https://apps.apple.com/app/v2box-v2ray-client/id6446814690" },
-  },
-  {
-    id: "v2rayn",
-    name: "v2rayN",
-    short: "VN",
-    color: "#2563eb",
-    platforms: ["windows"],
-    buildScheme: (url) => url,
-    download: { windows: "https://github.com/2dust/v2rayN/releases" },
-  },
-  {
-    id: "clash-verge",
-    name: "Clash Verge",
-    short: "CV",
-    color: "#0891b2",
-    platforms: ["windows", "macos", "linux"],
-    buildScheme: (url) => clashVergeSubScheme(url),
     download: {
-      windows: "https://github.com/clash-verge-rev/clash-verge-rev/releases",
-      macos: "https://github.com/clash-verge-rev/clash-verge-rev/releases",
-      linux: "https://github.com/clash-verge-rev/clash-verge-rev/releases",
+      ios: "https://apps.apple.com/app/v2box-v2ray-client/id6446814690",
+      macos: "https://apps.apple.com/app/v2box-v2ray-client/id6446814690",
+    },
+  },
+  {
+    id: "happ",
+    name: "Happ",
+    short: "Hp",
+    color: "#f59e0b",
+    platforms: ["android", "ios", "windows", "macos", "linux"],
+    // Official: happ://add/<plain-url> — do NOT urlencode or base64 the URL.
+    buildScheme: (url) => happSubScheme(url),
+    download: {
+      android: "https://github.com/Happ-proxy/happ-android/releases/latest/download/Happ.apk",
+      ios: "https://apps.apple.com/app/happ-proxy-utility/id6504287215",
+      macos: "https://apps.apple.com/app/happ-proxy-utility/id6504287215",
+      windows: "https://github.com/Happ-proxy/happ-desktop/releases/latest/download/setup-Happ.x64.exe",
+      linux: "https://github.com/Happ-proxy/happ-desktop/releases/latest",
     },
   },
 ];
 
 export function appsFor(platform: Platform): ClientApp[] {
   return APPS.filter((a) => a.platforms.includes(platform));
+}
+
+/** Secondary clients for the Servers tab (Hiddify / V2Box / Happ). */
+export function serverSecondaryApps(platform: Platform): ClientApp[] {
+  const order = SERVER_SECONDARY_APP_IDS as readonly string[];
+  return appsFor(platform)
+    .filter((a) => a.id !== "karing" && order.includes(a.id))
+    .sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
 }
 
 export function detectPlatform(ua: string): Platform {

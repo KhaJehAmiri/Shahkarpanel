@@ -12,7 +12,9 @@ import yaml
 from app.subscription.guards import BlockReason
 from config import (
     SUB_BLOCKED_DATA_LIMIT_MESSAGE,
+    SUB_BLOCKED_DEVICE_LIMIT_MESSAGE,
     SUB_BLOCKED_EXPIRED_MESSAGE,
+    SUB_BLOCKED_FAMILY_SCHEDULE_MESSAGE,
     SUB_BLOCKED_INACTIVE_MESSAGE,
 )
 
@@ -34,11 +36,26 @@ _PLACEHOLDER_CIPHER = "aes-256-gcm"
 _PLACEHOLDER_PASSWORD = "blocked"
 
 
-def blocked_message(block_reason: BlockReason | None) -> str:
+def blocked_message(
+    block_reason: BlockReason | None,
+    *,
+    override: str | None = None,
+    minutes_left: int | None = None,
+) -> str:
+    if override:
+        return override
     if block_reason == "data_limit":
         return SUB_BLOCKED_DATA_LIMIT_MESSAGE
     if block_reason == "expired":
         return SUB_BLOCKED_EXPIRED_MESSAGE
+    if block_reason == "family_schedule":
+        return SUB_BLOCKED_FAMILY_SCHEDULE_MESSAGE
+    if block_reason == "device_limit":
+        mins = int(minutes_left or 30)
+        try:
+            return SUB_BLOCKED_DEVICE_LIMIT_MESSAGE.format(minutes=mins)
+        except Exception:
+            return f"{SUB_BLOCKED_DEVICE_LIMIT_MESSAGE} ({mins} دقیقه)"
     return SUB_BLOCKED_INACTIVE_MESSAGE
 
 
@@ -46,9 +63,48 @@ def _safe_proxy_name(message: str) -> str:
     return message.replace(",", "،").replace("\n", " ").strip() or "Subscription inactive"
 
 
+def generate_blocked_subscription(
+    *,
+    block_reason: BlockReason | None,
+    config_format: ConfigFormat,
+    as_base64: bool = False,
+    reverse: bool = False,
+    message_override: str | None = None,
+    minutes_left: int | None = None,
+) -> str:
+    """Build a valid client subscription body with a non-working message placeholder."""
+    message = _safe_proxy_name(
+        blocked_message(
+            block_reason,
+            override=message_override,
+            minutes_left=minutes_left,
+        )
+    )
+    builders = {
+        "v2ray": lambda: _blocked_v2ray_share_link_msg(message),
+        "v2ray-json": lambda: _blocked_v2ray_json_msg(message),
+        "clash-meta": lambda: _blocked_clash_yaml_msg(message, meta=True),
+        "clash": lambda: _blocked_clash_yaml_msg(message, meta=False),
+        "sing-box": lambda: _blocked_singbox_msg(message),
+        "outline": lambda: _blocked_outline_msg(message),
+        "surge": lambda: _blocked_surge_msg(message),
+        "loon": lambda: _blocked_loon_msg(message),
+        "quantumult": lambda: _blocked_quantumult_msg(message),
+    }
+    conf = builders[config_format]()
+    if reverse and config_format == "v2ray":
+        pass  # single placeholder line
+    if as_base64:
+        conf = base64.b64encode(conf.encode()).decode()
+    return conf
+
+
 def blocked_v2ray_share_link(block_reason: BlockReason | None) -> str:
+    return _blocked_v2ray_share_link_msg(_safe_proxy_name(blocked_message(block_reason)))
+
+
+def _blocked_v2ray_share_link_msg(message: str) -> str:
     """Single ss:// line — remark (fragment) is the user-visible message."""
-    message = _safe_proxy_name(blocked_message(block_reason))
     cred = base64.urlsafe_b64encode(
         f"{_PLACEHOLDER_CIPHER}:{_PLACEHOLDER_PASSWORD}".encode()
     ).decode().rstrip("=")
@@ -56,7 +112,10 @@ def blocked_v2ray_share_link(block_reason: BlockReason | None) -> str:
 
 
 def _blocked_v2ray_json(block_reason: BlockReason | None) -> str:
-    message = _safe_proxy_name(blocked_message(block_reason))
+    return _blocked_v2ray_json_msg(_safe_proxy_name(blocked_message(block_reason)))
+
+
+def _blocked_v2ray_json_msg(message: str) -> str:
     entry = {
         "remarks": message,
         "log": {"loglevel": "warning"},
@@ -93,7 +152,12 @@ def _blocked_v2ray_json(block_reason: BlockReason | None) -> str:
 
 
 def _blocked_clash_yaml(block_reason: BlockReason | None, *, meta: bool) -> str:
-    message = _safe_proxy_name(blocked_message(block_reason))
+    return _blocked_clash_yaml_msg(
+        _safe_proxy_name(blocked_message(block_reason)), meta=meta
+    )
+
+
+def _blocked_clash_yaml_msg(message: str, *, meta: bool) -> str:
     doc = {
         "mixed-port": 7890,
         "mode": "Rule",
@@ -124,7 +188,10 @@ def _blocked_clash_yaml(block_reason: BlockReason | None, *, meta: bool) -> str:
 
 
 def _blocked_singbox(block_reason: BlockReason | None) -> str:
-    message = _safe_proxy_name(blocked_message(block_reason))
+    return _blocked_singbox_msg(_safe_proxy_name(blocked_message(block_reason)))
+
+
+def _blocked_singbox_msg(message: str) -> str:
     tag = message[:64]
     doc = {
         "log": {"level": "info"},
@@ -151,7 +218,10 @@ def _blocked_singbox(block_reason: BlockReason | None) -> str:
 
 
 def _blocked_outline(block_reason: BlockReason | None) -> str:
-    message = _safe_proxy_name(blocked_message(block_reason))
+    return _blocked_outline_msg(_safe_proxy_name(blocked_message(block_reason)))
+
+
+def _blocked_outline_msg(message: str) -> str:
     return json.dumps(
         {
             message: {
@@ -166,8 +236,7 @@ def _blocked_outline(block_reason: BlockReason | None) -> str:
     )
 
 
-def _blocked_surge_line(block_reason: BlockReason | None) -> str:
-    message = _safe_proxy_name(blocked_message(block_reason))
+def _blocked_surge_line_msg(message: str) -> str:
     safe = message.replace(",", "，")
     return (
         f"{safe} = ss, {_PLACEHOLDER_HOST}, {_PLACEHOLDER_PORT}, "
@@ -175,19 +244,34 @@ def _blocked_surge_line(block_reason: BlockReason | None) -> str:
     )
 
 
+def _blocked_surge_line(block_reason: BlockReason | None) -> str:
+    return _blocked_surge_line_msg(_safe_proxy_name(blocked_message(block_reason)))
+
+
 def _blocked_surge(block_reason: BlockReason | None) -> str:
-    line = _blocked_surge_line(block_reason)
+    return _blocked_surge_msg(_safe_proxy_name(blocked_message(block_reason)))
+
+
+def _blocked_surge_msg(message: str) -> str:
+    line = _blocked_surge_line_msg(message)
     return f"#!MANAGED-CONFIG interval=86400\n\n[Proxy]\n{line}\n"
 
 
 def _blocked_loon(block_reason: BlockReason | None) -> str:
-    line = _blocked_surge_line(block_reason)
+    return _blocked_loon_msg(_safe_proxy_name(blocked_message(block_reason)))
+
+
+def _blocked_loon_msg(message: str) -> str:
+    line = _blocked_surge_line_msg(message)
     return f"[Proxy]\n{line}\n"
 
 
 def _blocked_quantumult(block_reason: BlockReason | None) -> str:
+    return _blocked_quantumult_msg(_safe_proxy_name(blocked_message(block_reason)))
+
+
+def _blocked_quantumult_msg(message: str) -> str:
     """Quantumult X reads vmess:// lines; ps field is the visible name."""
-    message = _safe_proxy_name(blocked_message(block_reason))
     payload = base64.b64encode(
         json.dumps(
             {
@@ -207,30 +291,3 @@ def _blocked_quantumult(block_reason: BlockReason | None) -> str:
         ).encode()
     ).decode()
     return f"vmess://{payload}\n"
-
-
-def generate_blocked_subscription(
-    *,
-    block_reason: BlockReason | None,
-    config_format: ConfigFormat,
-    as_base64: bool = False,
-    reverse: bool = False,
-) -> str:
-    """Build a valid client subscription body with a non-working message placeholder."""
-    builders = {
-        "v2ray": lambda: blocked_v2ray_share_link(block_reason),
-        "v2ray-json": lambda: _blocked_v2ray_json(block_reason),
-        "clash-meta": lambda: _blocked_clash_yaml(block_reason, meta=True),
-        "clash": lambda: _blocked_clash_yaml(block_reason, meta=False),
-        "sing-box": lambda: _blocked_singbox(block_reason),
-        "outline": lambda: _blocked_outline(block_reason),
-        "surge": lambda: _blocked_surge(block_reason),
-        "loon": lambda: _blocked_loon(block_reason),
-        "quantumult": lambda: _blocked_quantumult(block_reason),
-    }
-    conf = builders[config_format]()
-    if reverse and config_format == "v2ray":
-        pass  # single placeholder line
-    if as_base64:
-        conf = base64.b64encode(conf.encode()).decode()
-    return conf

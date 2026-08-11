@@ -114,13 +114,15 @@ def _subscription_response_headers(
     endpoint=None,
     branding: dict | None = None,
 ) -> dict:
+    from urllib.parse import quote
+
     from app.tenant import subscription_brand_title
 
     branding = branding or {}
     brand = subscription_brand_title(branding) or None
     support = (branding.get("support_url") or SUB_SUPPORT_URL) or ""
     pub_url = public_subscription_url(user, request, request_token=req_token, endpoint=endpoint)
-    return {
+    headers = {
         "content-disposition": f'attachment; filename="{user.username}"',
         "profile-web-page-url": pub_url,
         "support-url": support,
@@ -129,6 +131,99 @@ def _subscription_response_headers(
         "subscription-userinfo": format_subscription_userinfo(user),
         **NO_STORE_HEADERS,
     }
+    # Karing ISP menu — https://karing.app/en/cooperation/menu
+    # Non-ASCII isp-name must be urlencoded; scheme params also use these.
+    isp_name = (brand or "Shahkar").strip() or "Shahkar"
+    headers["isp-name"] = quote(isp_name, safe="")
+    if pub_url:
+        headers["isp-url"] = pub_url
+    if support:
+        headers["isp-faq"] = support
+    return headers
+
+
+def _merge_device_policy_access(
+    db: Session,
+    dbuser: User,
+    request: Request,
+    access: dict,
+    *,
+    enforce: bool = True,
+) -> dict:
+    """Apply device fingerprint / 30‑min lockout on top of quota/status access.
+
+    When locked (or a second device triggers lockout), configs are hidden and
+    ``block_reason=device_limit`` with a Persian message for clients.
+    """
+    if not access.get("config_available"):
+        return access
+
+    from app.utils.device_limit import (
+        apply_subscription_device_policy,
+        extract_request_hwid,
+        get_device_lockout_remaining,
+        record_and_check_device_limit,
+    )
+
+    ua = request.headers.get("user-agent") or ""
+    client_ip = _sub_client_ip(request)
+    hwid = extract_request_hwid(request)
+
+    if not enforce:
+        # Browser /info: track fingerprint only. Never start a lockout from the
+        # page view or a single live Xray probe — that falsely locked brand-new
+        # accounts and same-phone IP churn. Real multi-device enforcement is:
+        # subscription fetch (new platform slot) + background live streak job.
+        remaining = get_device_lockout_remaining(dbuser)
+        if remaining is None:
+            record_and_check_device_limit(
+                db, dbuser, client_ip, user_agent=ua, hwid=hwid, enforce=False
+            )
+            return access
+
+        from app.utils.device_limit import (
+            format_device_lockout_report,
+            get_device_lockout_evidence,
+        )
+
+        minutes_left = max(1, (remaining + 59) // 60)
+        evidence = get_device_lockout_evidence(dbuser)
+        return {
+            "config_available": False,
+            "block_reason": "device_limit",
+            "minutes_left": minutes_left,
+            "lockout_seconds_left": int(remaining),
+            "block_message": format_device_lockout_report(
+                dbuser, minutes_left=minutes_left, evidence=evidence
+            ),
+            "blocked_devices": evidence,
+        }
+
+    policy = apply_subscription_device_policy(
+        db, dbuser, client_ip, user_agent=ua, hwid=hwid
+    )
+    if not policy:
+        return access
+    return {
+        "config_available": False,
+        "block_reason": "device_limit",
+        "minutes_left": policy.get("minutes_left"),
+        "lockout_seconds_left": policy.get("lockout_seconds_left"),
+        "block_message": policy.get("message"),
+        "blocked_devices": policy.get("blocked_devices") or [],
+    }
+
+
+def _blocked_profile_title(access: dict) -> str:
+    msg = access.get("block_message")
+    if msg:
+        return encode_title(msg)
+    return encode_title(
+        blocked_message(
+            access.get("block_reason"),
+            minutes_left=access.get("minutes_left"),
+        )
+    )
 
 
 def _resolve_subscription_body(
@@ -141,6 +236,7 @@ def _resolve_subscription_body(
     profile_web_page_url: str = "",
     branding: dict | None = None,
     exclude_protocols: set[str] | None = None,
+    access: dict | None = None,
 ) -> tuple[str, dict]:
     """Return subscription body plus access metadata (for blocked profile title)."""
     from app.tenant import subscription_brand_title
@@ -148,13 +244,15 @@ def _resolve_subscription_body(
     branding = branding or {}
     brand = subscription_brand_title(branding) or None
     support = branding.get("support_url")
-    access = subscription_access(user)
+    access = access if access is not None else subscription_access(user)
     if not access["config_available"]:
         conf = generate_blocked_subscription(
             block_reason=access["block_reason"],
             config_format=config_format,
             as_base64=as_base64,
             reverse=reverse,
+            message_override=access.get("block_message"),
+            minutes_left=access.get("minutes_left"),
         )
     else:
         conf = generate_subscription(
@@ -184,6 +282,7 @@ def _v2ray_json_response(
     reverse: bool = False,
     inbound_filter: str | None = None,
     branding: dict | None = None,
+    access: dict | None = None,
 ) -> Response:
     conf, access = _resolve_subscription_body(
         user,
@@ -193,9 +292,10 @@ def _v2ray_json_response(
         inbound_filter=inbound_filter,
         profile_web_page_url=response_headers.get("profile-web-page-url", ""),
         branding=branding,
+        access=access,
     )
     if not access["config_available"]:
-        response_headers["profile-title"] = encode_title(blocked_message(access["block_reason"]))
+        response_headers["profile-title"] = _blocked_profile_title(access)
     return Response(content=conf, media_type="application/json", headers=response_headers)
 
 
@@ -206,6 +306,7 @@ def _v2ray_base64_response(
     inbound_filter: str | None = None,
     branding: dict | None = None,
     exclude_protocols: set[str] | None = None,
+    access: dict | None = None,
 ) -> Response:
     conf, access = _resolve_subscription_body(
         user,
@@ -216,9 +317,10 @@ def _v2ray_base64_response(
         profile_web_page_url=response_headers.get("profile-web-page-url", ""),
         branding=branding,
         exclude_protocols=exclude_protocols,
+        access=access,
     )
     if not access["config_available"]:
-        response_headers["profile-title"] = encode_title(blocked_message(access["block_reason"]))
+        response_headers["profile-title"] = _blocked_profile_title(access)
     return Response(content=conf, media_type="text/plain", headers=response_headers)
 
 
@@ -239,7 +341,7 @@ def _sub_client_ip(request: Request) -> str:
 # UAs up front so they always get their config, regardless of Accept header.
 _KNOWN_CLIENT_UA_RE = re.compile(
     r'^(Surge|Loon|Quantumult|Quantumult%20X|[Cc]lash-verge|[Cc]lash[-\.]?[Mm]eta|'
-    r'[Ff][Ll][Cc]lash|[Mm]ihomo|[Cc]lash|[Ss]tash|HiddifyNextX|[Vv]2[Bb]ox|'
+    r'[Ff][Ll][Cc]lash|[Mm]ihomo|[Cc]lash|[Ss]tash|HiddifyNext|Hiddify/|[Vv]2[Bb]ox|'
     r'v2rayN/|v2rayNG/|Happ/)'
 )
 
@@ -247,10 +349,9 @@ _KNOWN_CLIENT_UA_RE = re.compile(
 def _enforce_export_guards(db: Session, dbuser, request: Request) -> None:
     """Session-limit gate for routes that hand back connection material.
 
-    Device limits are enforced **after** a real VPN connection (usage job /
-    live Xray online IPs), not here. Blocking on subscription import made
-    ``device_limit=1`` accounts fail to update when the phone changed IP or
-    the user opened a second client — before they ever connected.
+    Concurrent device caps are applied via :func:`_merge_device_policy_access`
+    (fingerprint / HWID + 30‑minute config lockout) and live Xray kicks —
+    not a hard 403 here, so clients still receive a blocked placeholder body.
     """
     from app.utils.session_limit import check_session_limit, touch_online
 
@@ -266,6 +367,34 @@ def _enforce_export_guards(db: Session, dbuser, request: Request) -> None:
             raise
     if not is_browser:
         touch_online(db, dbuser)
+
+
+def _ensure_device_export_allowed(db: Session, dbuser, request: Request) -> None:
+    """Block WG/sing-box material downloads during a device-limit lockout."""
+    from app.utils.device_limit import (
+        apply_subscription_device_policy,
+        extract_request_hwid,
+        get_device_lockout_remaining,
+    )
+
+    remaining = get_device_lockout_remaining(dbuser)
+    if remaining is None:
+        policy = apply_subscription_device_policy(
+            db,
+            dbuser,
+            _sub_client_ip(request),
+            user_agent=request.headers.get("user-agent") or "",
+            hwid=extract_request_hwid(request),
+        )
+        if not policy:
+            return
+        detail = policy.get("message") or "Device limit — configs hidden temporarily"
+    else:
+        from app.utils.device_limit import format_device_lockout_report
+
+        minutes_left = max(1, (remaining + 59) // 60)
+        detail = format_device_lockout_report(dbuser, minutes_left=minutes_left)
+    raise HTTPException(status_code=403, detail=detail)
 
 
 def _proxy_settings(dbuser, proxy_type: ProxyTypes) -> dict | None:
@@ -498,48 +627,23 @@ def _browser_subscribe_redirect_url(
     endpoint_host: str | None = None,
     path_prefix: str | None = None,
 ) -> str:
-    """Send browser users to the panel HTTPS vhost (443), not the legacy sub port.
+    """Send browsers to the Next.js subscribe UI on the *same* host:port.
 
-    Prefer the subscription endpoint's configured host so p2/p3 never bounce
-    onto the default panel vhost (srw1) when SNI/Host is wrong.
-    Only absolute-redirect to :443 when that host already has a LE cert;
-    otherwise keep a same-host relative/legacy URL so nginx won't fall through
-    to another domain's certificate.
+    Always use a relative URL so users on ``:2096`` (legacy sub links) stay on
+    that listener. Absolute redirects to bare ``https://host/subscribe`` (443)
+    break clients that can reach 2096 but not 443, and race with nginx 301s that
+    strip the port. Nginx on the legacy port must proxy ``/subscribe/``,
+    ``/_next/``, and ``/sub-assets/`` (see edge_proxy legacy site render).
 
     ``path_prefix`` is passed as ``?path=`` so the Next.js page fetches
     ``/{path}/{token}/info`` (e.g. ``info`` for migrated 3x-ui panels) instead
     of hardcoding ``/sub/``.
     """
-    host_hdr = (request.headers.get("host") or "").strip().lower()
-    req_host = host_hdr.split(":")[0] if host_hdr else ""
-    host_name = (endpoint_host or "").strip().lower().split(":")[0] or req_host
-    port: int | None = None
-    if ":" in host_hdr:
-        port_str = host_hdr.rsplit(":", 1)[-1]
-        if port_str.isdigit():
-            port = int(port_str)
-    elif listen_port:
-        port = int(listen_port)
-
-    ssl_ready = False
-    if host_name:
-        try:
-            from app.services.edge_proxy import subscription_domain_ssl_status
-
-            ssl_ready = bool(subscription_domain_ssl_status(host_name).get("https_ready"))
-        except Exception:
-            ssl_ready = False
-
+    del listen_port, endpoint_host  # same-origin relative redirect; unused
     prefix = (path_prefix or "").strip().strip("/")
     qs = f"token={token}"
     if prefix:
         qs += f"&path={prefix}"
-
-    if host_name and ssl_ready:
-        return f"https://{host_name}/subscribe/?{qs}"
-    if host_name and port and port not in (80, 443):
-        # Stay on the legacy sub listener until Enable SSL has issued a cert.
-        return f"https://{host_name}:{port}/subscribe/?{qs}"
     return f"/subscribe/?{qs}"
 
 
@@ -594,6 +698,7 @@ def user_subscription(
     if access["config_available"]:
         ensure_subscription_config_allowed(user)
         _enforce_export_guards(db, dbuser, request)
+    access = _merge_device_policy_access(db, dbuser, request, access, enforce=True)
 
     crud.update_user_sub(db, dbuser, user_agent)
     req_token = request.path_params.get("token", "")
@@ -602,7 +707,7 @@ def user_subscription(
         user, request, req_token, endpoint=endpoint, branding=branding
     )
     if not access["config_available"]:
-        response_headers["profile-title"] = encode_title(blocked_message(access["block_reason"]))
+        response_headers["profile-title"] = _blocked_profile_title(access)
 
     def _format_response(config_format: str, media_type: str, *, as_base64: bool = False, reverse: bool = False):
         conf, _ = _resolve_subscription_body(
@@ -613,6 +718,7 @@ def user_subscription(
             inbound_filter=inbound_filter,
             profile_web_page_url=response_headers.get("profile-web-page-url", ""),
             branding=branding,
+            access=access,
         )
         return Response(content=conf, media_type=media_type, headers=response_headers)
 
@@ -640,9 +746,14 @@ def user_subscription(
     elif re.match(r'^([Cc]lash|[Ss]tash)', user_agent):
         return _format_response("clash", "text/yaml")
 
-    elif re.match(r'^HiddifyNextX', user_agent):
-        return _v2ray_json_response(
-            user, response_headers, inbound_filter=inbound_filter, branding=branding
+    elif re.match(r'^(HiddifyNext|Hiddify/)', user_agent):
+        # Hiddify mobile (esp. iOS 4.x) often fails hard on full sing-box JSON
+        # templates (TUN/DNS schema → local core crash → Connection refused on
+        # 127.0.0.1). Keep the classic base64 share-link list for the main sub
+        # URL. Clients that need native AnyTLS should use /sub/<token>/sing-box
+        # or /clash-meta explicitly (subscribe page Hiddify tile already does).
+        return _v2ray_base64_response(
+            user, response_headers, inbound_filter=inbound_filter, branding=branding, access=access
         )
 
     elif re.match(r'^[Vv]2[Bb]ox', user_agent):
@@ -657,53 +768,54 @@ def user_subscription(
             inbound_filter=inbound_filter,
             branding=branding,
             exclude_protocols={"hysteria2"},
+            access=access,
         )
 
     elif re.match(r'^v2rayN/(\d+\.\d+)', user_agent):
         version_str = re.match(r'^v2rayN/(\d+\.\d+)', user_agent).group(1)
         if LooseVersion(version_str) >= LooseVersion("6.40"):
             return _v2ray_json_response(
-                user, response_headers, inbound_filter=inbound_filter, branding=branding
+                user, response_headers, inbound_filter=inbound_filter, branding=branding, access=access
             )
         if USE_CUSTOM_JSON_DEFAULT or USE_CUSTOM_JSON_FOR_V2RAYN:
             return _v2ray_json_response(
-                user, response_headers, inbound_filter=inbound_filter, branding=branding
+                user, response_headers, inbound_filter=inbound_filter, branding=branding, access=access
             )
         return _v2ray_base64_response(
-            user, response_headers, inbound_filter=inbound_filter, branding=branding
+            user, response_headers, inbound_filter=inbound_filter, branding=branding, access=access
         )
 
     elif re.match(r'^v2rayNG/(\d+\.\d+\.\d+)', user_agent):
         version_str = re.match(r'^v2rayNG/(\d+\.\d+\.\d+)', user_agent).group(1)
         if LooseVersion(version_str) >= LooseVersion("1.8.29"):
             return _v2ray_json_response(
-                user, response_headers, inbound_filter=inbound_filter, branding=branding
+                user, response_headers, inbound_filter=inbound_filter, branding=branding, access=access
             )
         if LooseVersion(version_str) >= LooseVersion("1.8.18"):
             return _v2ray_json_response(
-                user, response_headers, reverse=True, inbound_filter=inbound_filter, branding=branding
+                user, response_headers, reverse=True, inbound_filter=inbound_filter, branding=branding, access=access
             )
         return _v2ray_base64_response(
-            user, response_headers, inbound_filter=inbound_filter, branding=branding
+            user, response_headers, inbound_filter=inbound_filter, branding=branding, access=access
         )
 
     elif re.match(r'^Happ/(\d+\.\d+\.\d+)', user_agent):
         version_str = re.match(r'^Happ/(\d+\.\d+\.\d+)', user_agent).group(1)
         if LooseVersion(version_str) >= LooseVersion("1.63.1"):
             return _v2ray_json_response(
-                user, response_headers, inbound_filter=inbound_filter, branding=branding
+                user, response_headers, inbound_filter=inbound_filter, branding=branding, access=access
             )
         if USE_CUSTOM_JSON_DEFAULT or USE_CUSTOM_JSON_FOR_HAPP:
             return _v2ray_json_response(
-                user, response_headers, inbound_filter=inbound_filter, branding=branding
+                user, response_headers, inbound_filter=inbound_filter, branding=branding, access=access
             )
         return _v2ray_base64_response(
-            user, response_headers, inbound_filter=inbound_filter, branding=branding
+            user, response_headers, inbound_filter=inbound_filter, branding=branding, access=access
         )
 
     else:
         return _v2ray_base64_response(
-            user, response_headers, inbound_filter=inbound_filter, branding=branding
+            user, response_headers, inbound_filter=inbound_filter, branding=branding, access=access
         )
 
 
@@ -721,11 +833,16 @@ def user_subscription_info(
     user = UserResponse.model_validate(dbuser, context={"skip_default_links": True})
     payload = user.model_dump()
     access = subscription_access(user)
+    # /info is often opened in a browser — honor an existing lockout and hide
+    # links, but do not start a new lockout from a page view alone.
+    access = _merge_device_policy_access(db, dbuser, request, access, enforce=False)
     req_token = request.path_params.get("token", "")
     pub_url = public_subscription_url(
         user, request, request_token=req_token, endpoint=sub_ctx.endpoint
     )
     payload.update(access)
+    if access.get("blocked_devices") is not None:
+        payload["blocked_devices"] = access.get("blocked_devices") or []
     from app.subscription.userinfo import format_subscription_profile_title, subscription_client_import_url
     from app.tenant import subscription_brand_title
     from app.utils.device_limit import account_is_online, count_online_devices
@@ -756,19 +873,27 @@ def user_subscription_info(
         payload["subscription_url"] = ""
         payload["public_subscription_url"] = ""
         payload["client_subscription_url"] = ""
-        payload["subscription_profile_title"] = ""
+        # Keep the lockout text visible in the subscribe UI profile title.
+        if access.get("block_reason") == "device_limit" and access.get("block_message"):
+            payload["subscription_profile_title"] = access["block_message"]
+        else:
+            payload["subscription_profile_title"] = blocked_message(
+                access.get("block_reason"),
+                minutes_left=access.get("minutes_left"),
+            )
     else:
         payload["subscription_url"] = pub_url
-        from app.subscription.share import collect_v2ray_share_links
-
-        payload["links"] = collect_v2ray_share_links(
-            user, inbound_filter=sub_ctx.inbound_filter, reverse=False
-        )
         from app.subscription.share import collect_v2ray_share_link_items
 
+        # Build structured items once; derive plain URLs (avoid double Xray+unified walk).
         payload["link_items"] = collect_v2ray_share_link_items(
             user, inbound_filter=sub_ctx.inbound_filter, reverse=False
         )
+        payload["links"] = [
+            str(it.get("link") or "")
+            for it in (payload["link_items"] or [])
+            if isinstance(it, dict) and it.get("link")
+        ]
         _attach_subscription_share_links(db, dbuser, payload)
     return SubscriptionUserResponse.model_validate(payload)
 
@@ -821,6 +946,7 @@ def user_wireguard_prepare(
     """
     ensure_subscription_config_allowed(dbuser)
     _enforce_export_guards(db, dbuser, request)
+    _ensure_device_export_allowed(db, dbuser, request)
 
     settings = _wireguard_user_settings(dbuser)
     if not settings:
@@ -866,6 +992,7 @@ def user_subscription_wireguard(
     disabled / limited / expired user does not receive a working config."""
     ensure_subscription_config_allowed(dbuser)
     _enforce_export_guards(db, dbuser, request)
+    _ensure_device_export_allowed(db, dbuser, request)
 
     settings = _wireguard_user_settings(dbuser)
     if not settings:
@@ -994,6 +1121,7 @@ def user_subscription_hysteria2(
     """Return a ``hysteria2://`` share link for the user."""
     ensure_subscription_config_allowed(dbuser)
     _enforce_export_guards(db, dbuser, request)
+    _ensure_device_export_allowed(db, dbuser, request)
     settings = _proxy_settings(dbuser, ProxyTypes.Hysteria2)
     if not settings:
         raise HTTPException(status_code=404, detail="No Hysteria2 configuration for this user")
@@ -1034,6 +1162,7 @@ def user_subscription_tuic(
     """Return a ``tuic://`` share link for the user."""
     ensure_subscription_config_allowed(dbuser)
     _enforce_export_guards(db, dbuser, request)
+    _ensure_device_export_allowed(db, dbuser, request)
     settings = _proxy_settings(dbuser, ProxyTypes.TUIC)
     if not settings:
         raise HTTPException(status_code=404, detail="No TUIC configuration for this user")
@@ -1074,6 +1203,7 @@ def user_subscription_anytls(
     """Return an ``anytls://`` share link for the user."""
     ensure_subscription_config_allowed(dbuser)
     _enforce_export_guards(db, dbuser, request)
+    _ensure_device_export_allowed(db, dbuser, request)
     settings = _proxy_settings(dbuser, ProxyTypes.AnyTLS)
     if not settings:
         raise HTTPException(status_code=404, detail="No AnyTLS configuration for this user")
@@ -1119,6 +1249,7 @@ def user_subscription_with_client_type(
     if access["config_available"]:
         ensure_subscription_config_allowed(user)
         _enforce_export_guards(db, dbuser, request)
+    access = _merge_device_policy_access(db, dbuser, request, access, enforce=True)
 
     req_token = request.path_params.get("token", "")
     branding = _subscription_branding(db, dbuser)
@@ -1126,7 +1257,7 @@ def user_subscription_with_client_type(
         user, request, req_token, endpoint=sub_ctx.endpoint, branding=branding
     )
     if not access["config_available"]:
-        response_headers["profile-title"] = encode_title(blocked_message(access["block_reason"]))
+        response_headers["profile-title"] = _blocked_profile_title(access)
 
     config = client_config.get(client_type)
     if not config:
@@ -1139,6 +1270,7 @@ def user_subscription_with_client_type(
         inbound_filter=sub_ctx.inbound_filter,
         profile_web_page_url=response_headers.get("profile-web-page-url", ""),
         branding=branding,
+        access=access,
     )
 
     return Response(content=conf, media_type=config["media_type"], headers=response_headers)

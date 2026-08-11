@@ -24,7 +24,7 @@ from app.dependencies import (
 from app.subscription.endpoint_resolver import SubscriptionRequestContext
 from app.db import crud, get_db
 from app.db.models import User
-from app.login_limit import enforce_login_rate_limit
+from app.login_limit import clear_login_failures, enforce_login_rate_limit, record_login_failure
 from app.models.portal_user import (
     PortalAccountCreateBody,
     PortalAccountRenewBody,
@@ -177,12 +177,7 @@ def _account_summary(dbuser: User, *, owner: User) -> PortalAccountSummary:
 
 
 def _resolve_support_url(db: Session, dbuser: User) -> Optional[str]:
-    tenant_id = None
-    if dbuser.admin_id:
-        dbadmin = crud.get_admin_by_id(db, dbuser.admin_id)
-        if dbadmin:
-            tenant_id = dbadmin.tenant_id
-    branding = tenant_svc.resolve_branding(db, tenant_id)
+    branding = tenant_svc.branding_for_user(db, dbuser)
     url = (branding or {}).get("support_url") or None
     return url if url else None
 
@@ -202,11 +197,13 @@ def portal_token(
     )
     dbuser = crud.verify_portal_user(db, form_data.username, form_data.password)
     if not dbuser:
+        record_login_failure(request, window_seconds=LOGIN_MAX_WINDOW_SECONDS)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    clear_login_failures(request)
     return PortalToken(access_token=create_portal_token(dbuser.username))
 
 
@@ -690,12 +687,7 @@ def portal_branding(
     """Branding for the end-user portal (resolved via owning reseller)."""
     from app import platform_settings
 
-    tenant_id = None
-    if dbuser.admin_id:
-        dbadmin = crud.get_admin_by_id(db, dbuser.admin_id)
-        if dbadmin:
-            tenant_id = dbadmin.tenant_id
-    branding = dict(tenant_svc.resolve_branding(db, tenant_id))
+    branding = dict(tenant_svc.branding_for_user(db, dbuser))
     # The portal renders plan prices; tell it what label to use ("تومان", "USD", …).
     branding["currency_label"] = platform_settings.get_setting("billing.currency_label") or ""
     return branding
@@ -1015,12 +1007,7 @@ def portal_configs(
     from app.subscription.userinfo import subscription_client_import_url
     from app.tenant import subscription_brand_title
 
-    tenant_id = None
-    if dbuser.admin_id:
-        dbadmin = crud.get_admin_by_id(db, dbuser.admin_id)
-        if dbadmin:
-            tenant_id = dbadmin.tenant_id
-    branding = tenant_svc.resolve_branding(db, tenant_id)
+    branding = tenant_svc.branding_for_user(db, dbuser)
     brand = subscription_brand_title(branding) or None
     client_url = subscription_client_import_url(pub_url, user, brand=brand) if pub_url else ""
 

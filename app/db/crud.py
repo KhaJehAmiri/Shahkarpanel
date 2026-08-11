@@ -1340,8 +1340,21 @@ def update_user_sub(db: Session, dbuser: User, user_agent: str) -> User:
     Returns:
         User: The updated user object.
     """
+    # Client apps re-fetch the same token in bursts. Writing sub_updated_at on
+    # every hit serializes those requests on the users-row lock and turns a
+    # 50ms render into multi-second waits. Skip when we already recorded a
+    # fetch moments ago with the same UA.
+    ua = (user_agent or "")[:512] or None
+    last = getattr(dbuser, "sub_updated_at", None)
+    if (
+        last is not None
+        and (datetime.utcnow() - last).total_seconds() < 30
+        and (dbuser.sub_last_user_agent or None) == ua
+    ):
+        return dbuser
+
     dbuser.sub_updated_at = datetime.utcnow()
-    dbuser.sub_last_user_agent = user_agent
+    dbuser.sub_last_user_agent = ua
 
     db.commit()
     db.refresh(dbuser)
@@ -2334,6 +2347,12 @@ def update_node(db: Session, dbnode: Node, modify: NodeModify) -> Node:
         tag = str(modify.warp_tag).strip() or None
         dbnode.warp_tag = tag
 
+    if getattr(modify, "warp_mode", None) is not None:
+        mode = str(modify.warp_mode or "").strip().lower() or "full"
+        if mode not in ("full", "sensitive"):
+            mode = "full"
+        dbnode.warp_mode = mode
+
     db.commit()
     db.refresh(dbnode)
     return dbnode
@@ -3051,9 +3070,10 @@ def list_usernames_by_stat(
 
 def count_online_users(db: Session, minutes: int = None, admin: Admin = None):
     """Count users online *now*: those whose ``online_at`` falls within the last
-    ``minutes`` (defaults to ``ONLINE_WINDOW_MINUTES``). ``online_at`` is bumped
-    both by real traffic (5s usage job) and by subscription refresh. Only
-    billable statuses (active / on_hold) are counted."""
+    ``minutes`` (defaults to ``ONLINE_WINDOW_MINUTES``). ``online_at`` is kept
+    fresh by the presence tracker (``app/presence.py``, own thread), and also by
+    the usage job and subscription refresh. Only billable statuses
+    (active / on_hold) are counted."""
     from config import ONLINE_WINDOW_MINUTES
 
     window = ONLINE_WINDOW_MINUTES if minutes is None else minutes

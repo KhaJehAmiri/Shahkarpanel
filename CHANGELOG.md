@@ -2,6 +2,98 @@
 
 ## Unreleased
 
+## 0.22.81 — 2026-08-08
+
+### Digicdn panel responsiveness: fail-fast Xray node RPCs
+
+- Root cause of dashboard freezes: thousands of ``AlterInbound`` /
+  ``remove_inbound_user`` gRPC calls to relay/exit nodes (often via Iran SSH
+  control tunnels) waiting for ``Deadline Exceeded``, plus fleet bandwidth
+  sampling every 2s across all nodes — starving the single uvicorn worker.
+- Cap concurrent node Proxyman RPCs, shorten alter timeouts (~2.5s), swallow
+  ``TimeoutError`` without traceback storms, cool down slow nodes on bandwidth
+  polls, and sample fleet bandwidth every 5s with 1.5s RPC timeout.
+- Defaults: ``CORE_HEALTH_API_TIMEOUT=3``, presence query timeout 2s.
+
+## 0.22.80 — 2026-08-08
+
+### Sensitive WARP configs were not actually on the exit cores
+
+- Previous enable/restart calls used ``@threaded_function`` from short-lived ``docker exec`` processes, so daemon threads died before Xray on the exits received WARP outbounds (live cores only had DIRECT/BLOCK).
+- Synced a real config push to exit agents; verified ``outbound>>>warp``…``warp-5`` via Xray stats API.
+- Domain list is explicit-first (Gemini/AI Studio/NotebookLM/…) with geosite packs in separate rules.
+
+## 0.22.79 — 2026-08-08
+
+### Sensitive WARP actually matches Gemini on relay→exit path
+
+- Enable ``routeOnly`` sniffing on ``tunnel-*-exit`` inbounds so SNI/Host is visible to routing (without this, domain→WARP rules never fired for tunnelled users).
+- Expand sensitive domain list with the full Gemini / AI Studio / NotebookLM set (plus ``domain:google.com`` / ``clients6.google.com``), not only a short Gemini hostname list.
+
+## 0.22.78 — 2026-08-08
+
+### Sensitive WARP exit (same configs, Google/YouTube/AI only)
+
+- Nodes can run WARP in **`sensitive`** mode: only Google, YouTube and major AI domains leave via Cloudflare WARP. Everything else stays on the normal DIRECT exit. Client subscription links do not change.
+- Multiple WARP accounts per node (`warp,warp-2,…`) load-balance via an Xray balancer in sensitive mode.
+- Legacy **`full`** mode (all traffic via WARP) remains available. Panel tunnel-exit and kernel panel-WARP catch-all apply only to full mode; sensitive relays get domain split on the panel core instead.
+
+## 0.22.60 — 2026-08-06
+
+### Concurrent subscription fetches no longer serialize on a user-row lock
+
+- Every `/sub/...` hit wrote `users.sub_updated_at` / `sub_last_user_agent` and committed. When many clients (or one app retrying) hit the same token together, Postgres row locks queued those commits and TTFB jumped to several seconds even though rendering itself was ~50ms.
+- The write is now skipped when the same user-agent was recorded within the last 30 seconds.
+
+## 0.22.59 — 2026-08-06
+
+### Subscription import storms stay fast
+
+- Concurrent subscription renders were sharing the GIL on a heavy Python path and each hop opened its own DB session for relay health; under many simultaneous imports TTFB climbed to multi-seconds even after the RPyC hang was fixed.
+- WireGuard export filtering now uses one shared DB session, and `generate_subscription` caches the rendered body for 20 seconds per user/format so client re-fetches hit memory instead of re-rendering.
+
+## 0.22.58 — 2026-08-06
+
+### Subscriptions stay fast even when a relay is unreachable
+
+- Usage collectors (Finalmask / sing-box) were dialling every node on every tick via `node.remote` → `connect()`, and `hasattr(remote, …)` took the node lock with no timeout. One dead relay (wir1) left hundreds of ThreadPool workers and their database sessions piled up — subscription requests then waited on the exhausted pool and looked "stuck" or extremely slow.
+- RPyC fast-fail methods now time out on the lock and never dial when the channel is already down. Usage paths use `try_remote()` / live-channel checks. Sing-box user-change sync is single-flight and releases the DB session before any node RPC.
+
+## 0.22.57 — 2026-08-06
+
+### A relay only runs the inbounds it was actually given
+
+- A *disabled* Xray binding is now respected as an explicit "no". The host-derived fallback added in 0.22.53 only applies to nodes that were never given Xray services at all; an admin switching `xray-inbound-in1` off was being overruled by the hosts pointing at that server, which is how four WireGuard relays ended up trying to bind a port their `socat` forwarder already owned.
+
+## 0.22.56 — 2026-08-06
+
+### A contested port no longer takes a node's whole core down
+
+- Deriving a node's inbounds from the hosts that point at it (0.22.53) assumed the advertised address is served by the node's own Xray. On relay servers the client port is frequently forwarded to the panel by `socat`, so Xray hit `bind: address already in use` and refused to start at all — the node also lost its tunnel capture, WireGuard and Hysteria2 endpoints, and dropped out of every subscription.
+- A failed bind is now taken as the answer: the panel records the port as owned by another process, rebuilds that node's config without the inbound, and retries. Nodes that really do serve the inbound (the 0.22.53 case) are unaffected, since their bind succeeds.
+
+## 0.22.55 — 2026-08-06
+
+### Subscriptions no longer hang behind an unreachable relay
+
+- Rendering a subscription probed every tunnel relay's Xray over RPyC (`relay_tunnel_xray_ready` → `get_version()`). One unreachable relay blocked each request thread until the connect timed out, so request threads and their database sessions piled up until the whole API — subscriptions included — stopped answering.
+- The readiness check now takes a `probe` flag; subscription rendering answers from the health checker's last verdict instead of opening node sessions. Health checks and WireGuard sync keep probing.
+- The sing-box transport picked its client with `hasattr(node, "remote")`, which runs the property getter and therefore dials the node just to test for the attribute. It now inspects the declaration, and `sync_node` skips nodes whose control channel is down — one dead sing-box node no longer parks a thread (and its database session) per user change.
+
+## 0.22.54 — 2026-08-06
+
+### Subscription fetch no longer fails on long User-Agents
+
+- `users.sub_last_user_agent` was still `varchar(64)` on Postgres (the 2023 widening ran for MySQL only), so a subscription request from a browser or a client with a long User-Agent ended in a 500 instead of the user's configs.
+- Widened the column to match the model and truncate the value before storing it.
+
+## 0.22.53 — 2026-08-06
+
+### Nodes keep the inbounds their hosts advertise
+
+- A node without an explicit Xray service binding is no longer assumed to be an inbound-less relay. Since 0.22.36 that assumption stripped every product inbound from such nodes, so the VLESS listener vanished the next time their core was restarted.
+- With no binding, the enabled subscription hosts now decide: a node that clients are told to dial for an inbound is given that inbound (and only that one), so WireGuard-only relays stay slim.
+
 ## 0.22.41 — 2026-08-05
 
 ### Faster order approve / reject

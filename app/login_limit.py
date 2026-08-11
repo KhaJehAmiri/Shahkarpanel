@@ -1,4 +1,6 @@
-"""Rate limit unauthenticated admin login attempts by IP."""
+"""Rate limit unauthenticated login attempts by real client IP."""
+from __future__ import annotations
+
 import ipaddress
 import threading
 import time
@@ -30,6 +32,30 @@ def _redis_client():
     except Exception:
         _redis = None
     return _redis
+
+
+def get_request_client_ip(request: Request) -> str:
+    """Client IP for rate limits — must use proxy headers behind nginx.
+
+    Using bare ``request.client.host`` keys every browser behind the reverse
+    proxy to the same docker/bridge address, so one shared bucket of 10 tries
+    locks out the whole panel (``429 Too many login attempts``).
+    """
+    forwarded = request.headers.get("X-Forwarded-For") or request.headers.get("x-forwarded-for")
+    if forwarded:
+        first = forwarded.split(",")[0].strip()
+        if first:
+            return first
+    real = (request.headers.get("X-Real-IP") or request.headers.get("x-real-ip") or "").strip()
+    if real:
+        return real
+    if request.client and request.client.host:
+        return request.client.host
+    return "unknown"
+
+
+def _redis_key(ip: str) -> str:
+    return f"shahkar:login:{ip}"
 
 
 def _ip_in_allowlist(ip: str, allowlist: Sequence[str]) -> bool:
@@ -69,16 +95,20 @@ def enforce_login_rate_limit(
     max_attempts: int = 10,
     window_seconds: int = 900,
 ) -> None:
-    ip = request.client.host if request.client else "unknown"
+    """Raise 429 when this client IP already burned its failed-login budget.
+
+    Does **not** increment — call :func:`record_login_failure` after a bad
+    password so successful logins never lock the office/CGNAT IP.
+    """
+    ip = get_request_client_ip(request)
     now = time.time()
     r = _redis_client()
     if r is not None:
-        key = f"shahkar:login:{ip}"
+        key = _redis_key(ip)
         try:
-            count = r.incr(key)
-            if count == 1:
-                r.expire(key, window_seconds)
-            if count > max_attempts:
+            raw = r.get(key)
+            count = int(raw or 0)
+            if count >= max_attempts:
                 raise HTTPException(status_code=429, detail="Too many login attempts")
         except HTTPException:
             raise
@@ -88,7 +118,44 @@ def enforce_login_rate_limit(
             return
     with _lock:
         recent = [t for t in _attempts[ip] if now - t < window_seconds]
+        _attempts[ip] = recent
         if len(recent) >= max_attempts:
             raise HTTPException(status_code=429, detail="Too many login attempts")
+
+
+def record_login_failure(
+    request: Request,
+    *,
+    window_seconds: int = 900,
+) -> None:
+    """Count one failed login toward the IP budget."""
+    ip = get_request_client_ip(request)
+    now = time.time()
+    r = _redis_client()
+    if r is not None:
+        key = _redis_key(ip)
+        try:
+            count = r.incr(key)
+            if count == 1:
+                r.expire(key, window_seconds)
+        except Exception:
+            pass
+        else:
+            return
+    with _lock:
+        recent = [t for t in _attempts[ip] if now - t < window_seconds]
         recent.append(now)
         _attempts[ip] = recent
+
+
+def clear_login_failures(request: Request) -> None:
+    """Reset the failed-login counter after a successful authentication."""
+    ip = get_request_client_ip(request)
+    r = _redis_client()
+    if r is not None:
+        try:
+            r.delete(_redis_key(ip))
+        except Exception:
+            pass
+    with _lock:
+        _attempts.pop(ip, None)

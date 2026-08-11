@@ -28,7 +28,13 @@ def _panel_exit_warp_nodes(db) -> list:
 
     index = _tunnel_relay_index(db)
     nodes = db.query(models.Node).filter(models.Node.warp_enabled.is_(True)).all()
-    return [n for n in nodes if int(n.id) in index.panel_exit_relays]
+    # Kernel WG catch-all cannot do domain split — only full-mode relays.
+    return [
+        n
+        for n in nodes
+        if int(n.id) in index.panel_exit_relays
+        and str(getattr(n, "warp_mode", None) or "full").strip().lower() != "sensitive"
+    ]
 
 
 def _collect_subnets(nodes) -> list[str]:
@@ -43,8 +49,10 @@ def _collect_subnets(nodes) -> list[str]:
 
 
 def _pick_warp_tag(nodes) -> str:
+    from app.xray.warp_routing import primary_warp_tag
+
     for n in nodes:
-        return (getattr(n, "warp_tag", None) or "warp").strip() or "warp"
+        return primary_warp_tag(getattr(n, "warp_tag", None))
     return "warp"
 
 

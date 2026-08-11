@@ -3,6 +3,12 @@ services:
   shahkar:
     build: .
     restart: always
+    # Panel holds many RPyC/node sockets + temp files; default soft 1024
+    # exhausts (Errno 24) and marks nodes error. Match host-capable ceiling.
+    ulimits:
+      nofile:
+        soft: 1048576
+        hard: 1048576
     stop_grace_period: 5s
     env_file:
       - .env

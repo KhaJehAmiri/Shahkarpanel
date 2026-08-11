@@ -225,6 +225,7 @@ def public_branding(
     """Resolve effective branding for the dashboard/subscription. Public: no auth
     so the login page and subscription pages can theme themselves."""
     tenant_id = None
+    admin_id = None
     host = (domain or (request.headers.get("host") or "").split(":")[0] or "").strip().lower()
     if tenant:
         t = tenant_svc.get_tenant_by_slug(db, tenant)
@@ -236,8 +237,12 @@ def public_branding(
             .filter(BrandingSettings.domain == host)
             .first()
         )
-        tenant_id = row.tenant_id if row else None
-    return BrandingResponse(**tenant_svc.resolve_branding(db, tenant_id))
+        if row:
+            tenant_id = row.tenant_id
+            admin_id = row.admin_id
+    return BrandingResponse(
+        **tenant_svc.resolve_branding(db, tenant_id, admin_id=admin_id)
+    )
 
 
 @router.get("/branding/mine", response_model=BrandingResponse)
@@ -246,8 +251,7 @@ def my_branding(
     admin: Admin = Depends(require_permission("system:read")),
 ):
     _require_white_label_enabled()
-    tenant_id = tenant_svc.admin_tenant_id(db, admin)
-    return BrandingResponse(**tenant_svc.resolve_branding(db, tenant_id))
+    return BrandingResponse(**tenant_svc.branding_for_admin(db, admin))
 
 
 @router.get("/branding/subscription-ports")
@@ -285,8 +289,7 @@ def my_branding_subscription_ssl(
     )
     from app.tenant.subscription_domain import domain_from_branding
 
-    tenant_id = tenant_svc.admin_tenant_id(db, admin)
-    branding = tenant_svc.resolve_branding(db, tenant_id)
+    branding = tenant_svc.branding_for_admin(db, admin)
     host = domain_from_branding(branding)
     if not host:
         return {
@@ -317,8 +320,7 @@ def enable_my_branding_subscription_ssl(
     )
     from app.tenant.subscription_domain import domain_from_branding
 
-    tenant_id = tenant_svc.admin_tenant_id(db, admin)
-    branding = tenant_svc.resolve_branding(db, tenant_id)
+    branding = tenant_svc.branding_for_admin(db, admin)
     host = domain_from_branding(branding)
     if not host:
         raise HTTPException(status_code=400, detail="No branding domain configured")
@@ -333,8 +335,10 @@ def update_my_branding(
     db: Session = Depends(get_db),
     admin: Admin = Depends(require_permission("users:write")),
 ):
-    """A reseller edits their own tenant's brand; the sudo owner edits the
-    global default (tenant_id = None)."""
+    """Reseller edits their brand; sub-resellers write an isolated admin-scoped row.
+
+    The sudo owner edits the global default (tenant_id = None).
+    """
     _require_white_label_enabled()
     tenant_id = tenant_svc.admin_tenant_id(db, admin)
     if not admin.is_sudo and tenant_id is None:
@@ -342,11 +346,13 @@ def update_my_branding(
             status_code=400,
             detail="Reseller has no tenant — contact the platform owner",
         )
+    scope_admin_id = tenant_svc.branding_scope_admin_id(db, admin)
     try:
         tenant_svc.set_branding(
             db,
             tenant_id,
             allow_global=bool(admin.is_sudo and tenant_id is None),
+            admin_id=scope_admin_id,
             **body.model_dump(exclude_unset=True),
         )
     except Exception as exc:
@@ -357,11 +363,9 @@ def update_my_branding(
         if isinstance(exc, ValueError):
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         raise
-    branding = BrandingResponse(**tenant_svc.resolve_branding(db, tenant_id))
+    branding = BrandingResponse(**tenant_svc.branding_for_admin(db, admin))
     # Surface a sample subscription base for the UI.
     domain = (branding.domain or "").strip()
     if domain:
-        from config import XRAY_SUBSCRIPTION_PATH
-
         branding.panel_url = branding.panel_url or f"https://{domain}"
     return branding

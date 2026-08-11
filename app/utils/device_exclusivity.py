@@ -289,14 +289,20 @@ def apply_protocol_holds(
 
 
 def kick_excess_xray_ips(dbuser: User) -> None:
-    """Best-effort: reset Xray sessions when live online IP count exceeds limit."""
+    """Best-effort: reset Xray sessions when live online IP count exceeds limit.
+
+    Only applies when ``device_limit`` is explicitly set. Unlimited accounts must
+    never be treated as cap=1 — that caused mass one-minute disconnect loops.
+    """
     if is_protocol_held(dbuser, PROTO_XRAY):
         return
     limit = getattr(dbuser, "device_limit", None)
     try:
-        cap = int(limit) if limit is not None and int(limit) > 0 else 1
+        if limit is None or int(limit) <= 0:
+            return
+        cap = int(limit)
     except (TypeError, ValueError):
-        cap = 1
+        return
     try:
         from app.utils.device_limit import _xray_online_device_count
 
@@ -344,9 +350,20 @@ def enforce_device_exclusivity(
         )
         previous: Dict[int, Optional[dict]] = {}
         changed: List[User] = []
+        _lockout_keys = (
+            "device_lockout_until",
+            "device_lockout_reason",
+            "device_lockout_evidence",
+        )
         for dbuser in held_users:
+            raw = dbuser.device_conn_hold if isinstance(dbuser.device_conn_hold, dict) else {}
+            # Preserve subscription device-limit lockouts; only strip legacy
+            # protocol-family hold fields (winner/held/…).
+            preserved = {k: raw[k] for k in _lockout_keys if k in raw}
+            if set(raw.keys()) <= set(_lockout_keys):
+                continue
             previous[int(dbuser.id)] = get_hold(dbuser)
-            dbuser.device_conn_hold = None
+            dbuser.device_conn_hold = preserved or None
             changed.append(dbuser)
         if changed:
             db.commit()

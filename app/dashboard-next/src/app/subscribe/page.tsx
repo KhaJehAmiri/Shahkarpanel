@@ -8,7 +8,7 @@ import { SubAppTile } from "@/components/subscribe/SubAppTile";
 import { SubWgAppTile } from "@/components/subscribe/SubWgAppTile";
 import { SubQuicAppTile } from "@/components/subscribe/SubQuicAppTile";
 import { QR } from "@/components/QR";
-import { PLATFORMS, type Platform, type ClientApp, appsFor, detectPlatform } from "@/lib/apps";
+import { PLATFORMS, type Platform, type ClientApp, appsFor, detectPlatform, serverSecondaryApps } from "@/lib/apps";
 import { wgAppsFor } from "@/lib/wg-apps";
 import { quicAppsFor, type QuicProtocol } from "@/lib/quic-apps";
 import { copyToClipboard } from "@/lib/clipboard";
@@ -17,6 +17,16 @@ import { SUB_LANGS, SubLang, detectSubLang, rememberSubLang, t as subT } from "@
 import { resolveClientImportUrl, resolvePublicSubUrl, resolveSingboxSubUrl, resolveWgUrl } from "@/lib/subscribe-url";
 import { applySubTheme, detectSubTheme, type SubTheme } from "@/lib/sub-theme";
 import { openDeepLink } from "@/lib/deepLink";
+
+function formatCountdown(totalSec: number): string {
+  const s = Math.max(0, Math.floor(totalSec));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  if (h > 0) return `${pad(h)}:${pad(m)}:${pad(sec)}`;
+  return `${pad(m)}:${pad(sec)}`;
+}
 
 interface LinkItem {
   link: string;
@@ -44,6 +54,19 @@ interface SubInfo {
   proxies?: Record<string, unknown>;
   config_available?: boolean;
   block_reason?: string | null;
+  block_message?: string | null;
+  minutes_left?: number | null;
+  lockout_seconds_left?: number | null;
+  blocked_devices?: Array<{
+    platform?: string;
+    platform_fa?: string;
+    platform_en?: string;
+    ip?: string;
+    app?: string;
+    user_agent?: string;
+    seen_at?: string;
+    seen_at_display?: string;
+  }>;
   public_subscription_url?: string;
   client_subscription_url?: string;
   subscription_profile_title?: string;
@@ -89,6 +112,75 @@ interface SubInfo {
     tuic_available?: boolean;
     anytls_available?: boolean;
   }>;
+}
+
+function DeviceLockoutCard({
+  lang,
+  rtl,
+  secondsLeft,
+  devices,
+  onExpired,
+}: {
+  lang: SubLang;
+  rtl: boolean;
+  secondsLeft: number;
+  devices: NonNullable<SubInfo["blocked_devices"]>;
+  onExpired: () => void;
+}) {
+  const [left, setLeft] = useState(() => Math.max(0, Math.floor(secondsLeft)));
+  const expiredRef = useRef(false);
+
+  useEffect(() => {
+    setLeft(Math.max(0, Math.floor(secondsLeft)));
+    expiredRef.current = false;
+  }, [secondsLeft]);
+
+  useEffect(() => {
+    if (left <= 0) return;
+    const id = window.setInterval(() => {
+      setLeft((prev) => Math.max(0, prev - 1));
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [secondsLeft]);
+
+  useEffect(() => {
+    if (left > 0 || expiredRef.current) return;
+    expiredRef.current = true;
+    onExpired();
+  }, [left, onExpired]);
+
+  const labels = devices
+    .map((d) => (lang === "fa" ? d.platform_fa || d.platform : d.platform_en || d.platform) || "")
+    .filter(Boolean)
+    .filter((v, i, a) => a.indexOf(v) === i)
+    .slice(0, 4);
+
+  return (
+    <section className="s-lockout" role="alert" dir={rtl ? "rtl" : "ltr"}>
+      <div className="s-lockout-head">
+        <span className="s-lockout-badge">{subT(lang, "deviceLimitBannerTitle")}</span>
+        <p className="s-lockout-title">{subT(lang, "deviceLimitBannerBody")}</p>
+      </div>
+      <div className="s-lockout-timer" aria-live="polite">
+        <span className="s-lockout-timer-label">
+          {left > 0 ? subT(lang, "deviceLimitTimerLabel") : subT(lang, "deviceLimitUnlocking")}
+        </span>
+        <span className={`s-lockout-digits${left <= 0 ? " done" : ""}`}>
+          {formatCountdown(left)}
+        </span>
+      </div>
+      {labels.length > 0 && (
+        <div className="s-lockout-devices">
+          <span className="s-lockout-devices-label">{subT(lang, "deviceLimitSeen")}</span>
+          <div className="s-lockout-chips">
+            {labels.map((name) => (
+              <span key={name} className="s-lockout-chip">{name}</span>
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
+  );
 }
 
 type ConfigEntry = {
@@ -357,18 +449,8 @@ function formatOnline(
 
 function recommendedApp(platform: Platform, apps: ClientApp[]): ClientApp | null {
   if (!apps.length) return null;
-  const order: Record<Platform, string[]> = {
-    android: ["v2rayng", "hiddify", "nekobox"],
-    ios: ["streisand", "v2box", "hiddify"],
-    windows: ["hiddify", "v2rayn", "clash-verge"],
-    macos: ["hiddify", "streisand", "v2box"],
-    linux: ["hiddify", "clash-verge"],
-  };
-  for (const id of order[platform]) {
-    const hit = apps.find((a) => a.id === id);
-    if (hit) return hit;
-  }
-  return apps[0];
+  const hit = apps.find((a) => a.id === "karing");
+  return hit || apps[0];
 }
 
 /** Which app catalog belongs to a config protocol. */
@@ -385,6 +467,69 @@ function platformLabel(lang: SubLang, id: Platform): string {
     id === "windows" ? "platformWindows" :
     id === "macos" ? "platformMacos" : "platformLinux";
   return subT(lang, key);
+}
+
+function platformShort(id: Platform): string {
+  if (id === "android") return "Android";
+  if (id === "ios") return "iOS";
+  if (id === "windows") return "Win";
+  if (id === "macos") return "Mac";
+  return "Linux";
+}
+
+function isDirectInstallFile(url: string): boolean {
+  return /\.(apk|exe|dmg|deb|rpm|zip|msi|appimage)(\?|$)/i.test(url);
+}
+
+/** Compact OS chips beside the recommended-app card (auto-detect + manual override). */
+function PlatformChips({
+  lang,
+  platform,
+  onChange,
+}: {
+  lang: SubLang;
+  platform: Platform;
+  onChange: (p: Platform) => void;
+}) {
+  return (
+    <div className="s-os-rail" role="group" aria-label={subT(lang, "yourPhone")}>
+      {PLATFORMS.map((p) => (
+        <button
+          key={p.id}
+          type="button"
+          className={`s-os-chip${platform === p.id ? " on" : ""}`}
+          aria-pressed={platform === p.id}
+          title={platformLabel(lang, p.id)}
+          onClick={() => onChange(p.id)}
+        >
+          {platformShort(p.id)}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function InstallAppLink({
+  href,
+  label,
+  className = "sub-btn-action",
+}: {
+  href: string;
+  label: string;
+  className?: string;
+}) {
+  const direct = isDirectInstallFile(href);
+  return (
+    <a
+      href={href}
+      className={className}
+      {...(direct
+        ? { download: true, rel: "noopener" }
+        : { target: "_blank", rel: "noopener noreferrer" })}
+    >
+      {label}
+    </a>
+  );
 }
 
 const PROTO_ORDER = [
@@ -541,8 +686,14 @@ function SubscribeBody() {
     setToken(tok);
     setPlatform(detectPlatform(typeof navigator !== "undefined" ? navigator.userAgent : ""));
     loadInfo(tok);
-    loadDailyUsage(tok);
-  }, [loadInfo, loadDailyUsage]);
+  }, [loadInfo]);
+
+  // Usage chart/sparkline: fetch after /info so it never competes on first paint.
+  useEffect(() => {
+    if (!token || !info) return;
+    if (dailyUsage.length || usageLoading) return;
+    loadDailyUsage(token);
+  }, [token, info, dailyUsage.length, usageLoading, loadDailyUsage]);
 
   const subUrl = useMemo(() => resolvePublicSubUrl(info, token, apiPrefix), [info, token, apiPrefix]);
   const importUrl = useMemo(
@@ -937,15 +1088,18 @@ function SubscribeBody() {
 
   const proxyApps = appsFor(platform);
   const primaryApp = recommendedApp(platform, proxyApps);
-  const otherApps = proxyApps.filter((a) => a.id !== primaryApp?.id);
+  // Servers tab: Hiddify / V2Box / Happ under the primary (Karing).
+  const otherApps = serverSecondaryApps(platform);
   // Official WireGuard + AmneziaWG only (skip duplicate store variants).
   const wgApps = wgAppsFor(platform).filter((a) => a.id === "wireguard" || a.id === "amneziawg");
-  const quicApps = quicAppsFor(
+  const quicAppsAll = quicAppsFor(
     platform,
     protoFilter === "hysteria2" || protoFilter === "tuic" || protoFilter === "anytls"
       ? [protoFilter as QuicProtocol]
       : ["hysteria2", "tuic", "anytls"],
   );
+  const quicPrimary = quicAppsAll.find((a) => a.id === "karing") || quicAppsAll[0] || null;
+  const quicOthers = quicAppsAll.filter((a) => a.id !== quicPrimary?.id);
   const appsKind = protoFilter !== "all" ? appsKindForProto(protoFilter) : null;
   const singboxSubUrl = resolveSingboxSubUrl(subUrl);
   const protocolShareUrl =
@@ -957,24 +1111,17 @@ function SubscribeBody() {
     || importUrl
     || "";
   const pasteFallback = (n: string) => subT(lang, "pasteFallback").replace("{app}", n);
+  const ispImportOpts = {
+    name: profileTitle,
+    ispName: info?.branding?.panel_title?.trim() || "Shahkar",
+    ispUrl: (info?.public_subscription_url || importUrl || "").replace(/#.*$/, ""),
+    ispFaq: info?.branding?.support_url?.trim() || undefined,
+  };
 
   async function connectPrimary() {
     if (!primaryApp || !importUrl) return;
     setBusyConnect(true);
-    const deepLink = primaryApp.buildScheme(importUrl, { name: profileTitle });
-    const copyFirst = platform === "macos" || platform === "ios" || primaryApp.id === "hiddify" || primaryApp.id === "streisand";
-    if (copyFirst) {
-      const ok = await copyToClipboard(importUrl);
-      if (!ok) { showToast(subT(lang, "noAppResponse"), "error"); setBusyConnect(false); return; }
-      showToast(
-        primaryApp.id === "streisand"
-          ? subT(lang, "streisandHint")
-          : subT(lang, "clipboardHint").replace("{app}", primaryApp.name),
-      );
-      try { openDeepLink(deepLink); } catch { /* */ }
-      setTimeout(() => setBusyConnect(false), 500);
-      return;
-    }
+    const deepLink = primaryApp.buildScheme(importUrl, ispImportOpts);
     let blurred = false;
     const onBlur = () => { blurred = true; };
     window.addEventListener("blur", onBlur, { once: true });
@@ -1376,43 +1523,31 @@ function SubscribeBody() {
             </div>
             <div className="s-panel-body">
               <p className="s-hint">{subT(lang, "protoAppsHint")}</p>
-              <div className="s-apps-grid">
-                <div>
-                  <p className="s-label">{subT(lang, "yourPhone")}</p>
-                  <div className="s-devices" role="group" aria-label={subT(lang, "yourPhone")}>
-                    {PLATFORMS.map((p) => (
-                      <button
-                        key={p.id}
-                        type="button"
-                        className={platform === p.id ? "on" : ""}
-                        aria-pressed={platform === p.id}
-                        onClick={() => setPlatform(p.id)}
-                      >
-                        {platformLabel(lang, p.id)}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div>
+              <div className="s-apps-block">
                   {appsKind === "proxy" && primaryApp && importUrl ? (
-                    <div className="s-apps-block">
-                      <div className="s-app s-app-primary">
-                        <div className="s-app-ico" style={{ background: primaryApp.color }}>{primaryApp.short}</div>
-                        <div className="s-app-meta">
-                          <div className="s-app-name">{primaryApp.name}</div>
-                          <div className="s-app-tag">{subT(lang, "recommended")}</div>
-                          <div className="s-app-actions">
-                            {primaryApp.download?.[platform] && (
-                              <a href={primaryApp.download[platform]} target="_blank" rel="noopener noreferrer" className="sub-btn-action">
-                                {subT(lang, "downloadApp")}
-                              </a>
-                            )}
-                            <button type="button" className="sub-btn-action sub-btn-action-main" disabled={busyConnect} onClick={connectPrimary}>
-                              {busyConnect ? "…" : subT(lang, "importApp")}
-                            </button>
+                    <>
+                      <div className="s-primary-row">
+                        <div className="s-app s-app-primary">
+                          <div className="s-app-ico" style={{ background: primaryApp.color }}>{primaryApp.short}</div>
+                          <div className="s-app-meta">
+                            <div className="s-app-name">{primaryApp.name}</div>
+                            <div className="s-app-tag">{subT(lang, "recommended")}</div>
+                            <div className="s-app-actions">
+                              {primaryApp.download?.[platform] && (
+                                <InstallAppLink
+                                  href={primaryApp.download[platform]!}
+                                  label={subT(lang, "downloadApp")}
+                                />
+                              )}
+                              <button type="button" className="sub-btn-action sub-btn-action-main" disabled={busyConnect} onClick={connectPrimary}>
+                                {busyConnect ? "…" : subT(lang, "importApp")}
+                              </button>
+                            </div>
                           </div>
                         </div>
+                        <PlatformChips lang={lang} platform={platform} onChange={setPlatform} />
                       </div>
+                      <p className="s-hint s-os-hint">{subT(lang, "platformAutoHint")}</p>
                       {otherApps.length > 0 && (
                         <div className="s-more-apps">
                           <p className="s-label">{subT(lang, "otherApps")}</p>
@@ -1434,39 +1569,79 @@ function SubscribeBody() {
                           ))}
                         </div>
                       )}
-                    </div>
+                    </>
                   ) : null}
 
                   {appsKind === "wireguard" && wgApps.length > 0 ? (
-                    <div className="s-apps-block">
-                      <div className="s-more-apps">
-                        {wgApps.map((a) => (
-                          <SubWgAppTile key={a.id} app={a} platform={platform} downloadLabel={subT(lang, "downloadApp")} />
-                        ))}
-                      </div>
+                    <div className="s-more-apps">
+                      {wgApps.map((a) => (
+                        <SubWgAppTile key={a.id} app={a} platform={platform} downloadLabel={subT(lang, "downloadApp")} />
+                      ))}
                     </div>
                   ) : null}
 
-                  {appsKind === "quic" && protocolShareUrl ? (
-                    <div className="s-apps-block">
-                      <div className="s-more-apps">
-                        {quicApps.map((a) => (
-                          <SubQuicAppTile
-                            key={a.id}
-                            app={a}
-                            platform={platform}
-                            shareUrl={protocolShareUrl}
-                            singboxSubUrl={singboxSubUrl}
-                            importLabel={subT(lang, "importApp")}
-                            downloadLabel={subT(lang, "downloadApp")}
-                            pasteFallback={pasteFallback}
-                            clipboardHint={subT(lang, "clipboardHint")}
-                            noResponse={subT(lang, "noAppResponse")}
-                            onToast={showToast}
-                          />
-                        ))}
-                      </div>
-                    </div>
+                  {appsKind === "quic" && (quicPrimary || quicOthers.length) && (protocolShareUrl || singboxSubUrl) ? (
+                    <>
+                      {quicPrimary ? (
+                        <>
+                          <div className="s-primary-row">
+                            <div className="s-app s-app-primary">
+                              <div className="s-app-ico" style={{ background: quicPrimary.color }}>{quicPrimary.short}</div>
+                              <div className="s-app-meta">
+                                <div className="s-app-name">{quicPrimary.name}</div>
+                                <div className="s-app-tag">{subT(lang, "recommended")}</div>
+                                <div className="s-app-actions">
+                                  {quicPrimary.download?.[platform] && (
+                                    <InstallAppLink
+                                      href={quicPrimary.download[platform]!}
+                                      label={subT(lang, "downloadApp")}
+                                    />
+                                  )}
+                                  <button
+                                    type="button"
+                                    className="sub-btn-action sub-btn-action-main"
+                                    disabled={busyConnect}
+                                    onClick={() => {
+                                      const url = (quicPrimary.importViaSingboxSub && singboxSubUrl) ? singboxSubUrl : (protocolShareUrl || singboxSubUrl);
+                                      if (!url) return;
+                                      setBusyConnect(true);
+                                      try {
+                                        openDeepLink(quicPrimary.buildScheme(url, { ...ispImportOpts, singboxSubUrl }));
+                                      } catch { /* */ }
+                                      setTimeout(() => setBusyConnect(false), 900);
+                                    }}
+                                  >
+                                    {busyConnect ? "…" : subT(lang, "importApp")}
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                            <PlatformChips lang={lang} platform={platform} onChange={setPlatform} />
+                          </div>
+                          <p className="s-hint s-os-hint">{subT(lang, "platformAutoHint")}</p>
+                        </>
+                      ) : null}
+                      {quicOthers.length > 0 && (
+                        <div className="s-more-apps">
+                          <p className="s-label">{subT(lang, "otherApps")}</p>
+                          {quicOthers.map((a) => (
+                            <SubQuicAppTile
+                              key={a.id}
+                              app={a}
+                              platform={platform}
+                              shareUrl={protocolShareUrl || singboxSubUrl}
+                              singboxSubUrl={singboxSubUrl}
+                              importLabel={subT(lang, "importApp")}
+                              downloadLabel={subT(lang, "downloadApp")}
+                              pasteFallback={pasteFallback}
+                              clipboardHint={subT(lang, "clipboardHint")}
+                              noResponse={subT(lang, "noAppResponse")}
+                              onToast={showToast}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </>
                   ) : null}
 
                   {appsKind === "proxy" && !importUrl ? (
@@ -1475,10 +1650,9 @@ function SubscribeBody() {
                   {appsKind === "wireguard" && !wgApps.length ? (
                     <p className="s-empty">{subT(lang, "noConfigs")}</p>
                   ) : null}
-                  {appsKind === "quic" && !quicApps.length ? (
+                  {appsKind === "quic" && !quicPrimary && !quicOthers.length ? (
                     <p className="s-empty">{subT(lang, "noConfigs")}</p>
                   ) : null}
-                </div>
               </div>
             </div>
           </section>
@@ -1489,13 +1663,46 @@ function SubscribeBody() {
     </div>
   );
 
-  const importPanel = importUrl ? (
+  const importPanel = importUrl && primaryApp ? (
     <section className="s-panel s-import-panel">
       <div className="s-import-bar">
         <div>
           <h2 className="s-panel-title">{subT(lang, "sectionImport")}</h2>
           <p className="s-hint" style={{ marginTop: 8 }}>{subT(lang, "sectionImportHint")}</p>
         </div>
+      </div>
+      <div className="s-panel-body" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <div className="s-apps-block">
+          <div className="s-primary-row">
+            <div className="s-app s-app-primary">
+              <div className="s-app-ico" style={{ background: primaryApp.color }}>{primaryApp.short}</div>
+              <div className="s-app-meta">
+                <div className="s-app-name">{primaryApp.name}</div>
+                <div className="s-app-tag">{subT(lang, "recommended")}</div>
+                <p className="s-hint" style={{ margin: "4px 0 0" }}>{subT(lang, "recommendedWhy")}</p>
+                <div className="s-app-actions">
+                  {primaryApp.download?.[platform] && (
+                    <InstallAppLink
+                      href={primaryApp.download[platform]!}
+                      label={subT(lang, "installApp")}
+                    />
+                  )}
+                  <button
+                    type="button"
+                    className="sub-btn-action sub-btn-action-main"
+                    disabled={busyConnect}
+                    onClick={connectPrimary}
+                  >
+                    {busyConnect ? "…" : subT(lang, "importApp")}
+                  </button>
+                </div>
+              </div>
+            </div>
+            <PlatformChips lang={lang} platform={platform} onChange={setPlatform} />
+          </div>
+          <p className="s-hint s-os-hint">{subT(lang, "platformAutoHint")}</p>
+        </div>
+
         <div className="s-linkblock">
           <p className="s-label">{subT(lang, "oneLink")}</p>
           <div className="s-linkrow">
@@ -1515,13 +1722,32 @@ function SubscribeBody() {
           </div>
           <p className="s-hint">{subT(lang, "afterCopyApps")}</p>
         </div>
-      </div>
-      <div className="s-panel-body s-import-qr">
+
         <div className="s-qr" style={{ width: "100%" }}>
           <div className="s-qr-frame">
             <QR value={importUrl} size={180} />
           </div>
           <span className="s-qr-hint">{subT(lang, "oneLinkHint")}</span>
+        </div>
+      </div>
+    </section>
+  ) : importUrl ? (
+    <section className="s-panel s-import-panel">
+      <div className="s-import-bar">
+        <div>
+          <h2 className="s-panel-title">{subT(lang, "sectionImport")}</h2>
+          <p className="s-hint" style={{ marginTop: 8 }}>{subT(lang, "sectionImportHint")}</p>
+        </div>
+        <div className="s-linkblock">
+          <p className="s-label">{subT(lang, "oneLink")}</p>
+          <div className="s-linkrow">
+            <button type="button" className="s-linkin" dir="ltr" title={importUrl} onClick={() => void copyValue(importUrl)}>
+              <span className="s-linkin-text">{importUrl}</span>
+            </button>
+            <button type="button" className="s-linkbtn" onClick={() => void copyValue(importUrl)}>
+              {copied ? subT(lang, "copied") : subT(lang, "copy")}
+            </button>
+          </div>
         </div>
       </div>
     </section>
@@ -1542,7 +1768,21 @@ function SubscribeBody() {
     >
       <div className={`s-view ${view === "overview" ? "on" : ""}`}>
         {overviewInfo}
-        {!configAvailable && (
+        {!configAvailable && blockReason === "device_limit" ? (
+          <DeviceLockoutCard
+            lang={lang}
+            rtl={rtl}
+            secondsLeft={
+              typeof info?.lockout_seconds_left === "number" && info.lockout_seconds_left > 0
+                ? info.lockout_seconds_left
+                : Math.max(0, Math.round((info?.minutes_left || 30) * 60))
+            }
+            devices={info?.blocked_devices || []}
+            onExpired={() => {
+              if (token) loadInfo(token);
+            }}
+          />
+        ) : !configAvailable ? (
           <section className="s-alert" role="alert" style={{ marginTop: 10 }}>
             <p className="s-title">
               {blockReason === "data_limit" ? subT(lang, "quotaBannerTitle") :
@@ -1552,10 +1792,10 @@ function SubscribeBody() {
             <p className="s-muted">
               {blockReason === "data_limit" ? subT(lang, "quotaBannerBody") :
                blockReason === "expired" ? subT(lang, "expiredBannerBody") :
-               subT(lang, "inactiveBannerBody")}
+               (info?.block_message || subT(lang, "inactiveBannerBody"))}
             </p>
           </section>
-        )}
+        ) : null}
       </div>
 
       {configAvailable && (

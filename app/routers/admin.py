@@ -8,7 +8,12 @@ from sqlalchemy.exc import IntegrityError
 from app import xray
 from app.db import Session, crud, get_db
 from app.dependencies import get_admin_by_username, validate_admin
-from app.login_limit import enforce_admin_ip_allowlist, enforce_login_rate_limit
+from app.login_limit import (
+    clear_login_failures,
+    enforce_admin_ip_allowlist,
+    enforce_login_rate_limit,
+    record_login_failure,
+)
 from app.models.admin import Admin, AdminCreate, AdminModify, AdminRefreshBody, Token
 from app.utils import report, responses
 from app.utils.jwt import admin_token_bundle, get_admin_refresh_payload
@@ -52,6 +57,7 @@ async def admin_token(
 
     dbadmin = validate_admin(db, form_data.username, form_data.password)
     if not dbadmin:
+        record_login_failure(request, window_seconds=LOGIN_MAX_WINDOW_SECONDS)
         report.login(form_data.username, "🔒", client_ip, False)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -68,12 +74,14 @@ async def admin_token(
         form = await request.form()
         otp = (form.get("otp") or form.get("totp") or form.get("code") or "").strip()
         if not otp:
+            record_login_failure(request, window_seconds=LOGIN_MAX_WINDOW_SECONDS)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Two-factor authentication code required",
                 headers={"WWW-Authenticate": "Bearer", "X-2FA-Required": "true"},
             )
         if not totp.verify(stored.totp_secret, otp):
+            record_login_failure(request, window_seconds=LOGIN_MAX_WINDOW_SECONDS)
             report.login(form_data.username, "🔒", client_ip, False)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -81,6 +89,7 @@ async def admin_token(
                 headers={"WWW-Authenticate": "Bearer", "X-2FA-Required": "true"},
             )
 
+    clear_login_failures(request)
     if client_ip not in LOGIN_NOTIFY_WHITE_LIST:
         report.login(form_data.username, "🔒", client_ip, True)
 
@@ -400,11 +409,30 @@ def get_admins(
         .group_by(User.admin_id)
         .all()
     )
+    parent_ids = {
+        int(row.parent_admin_id)
+        for row in rows
+        if getattr(row, "parent_admin_id", None)
+    }
+    parent_names: dict = {}
+    if parent_ids:
+        from app.db.models import Admin as AdminRow
+
+        parent_names = {
+            int(r.id): r.username
+            for r in db.query(AdminRow)
+            .filter(AdminRow.id.in_(list(parent_ids)))
+            .all()
+        }
+
     out: List[Admin] = []
     for row in rows:
         item = Admin.model_validate(row)
         item.users_count = int(user_counts.get(row.id, 0) or 0)
         item.online_users = int(online_counts.get(row.id, 0) or 0)
+        pid = getattr(row, "parent_admin_id", None)
+        if pid:
+            item.parent_admin_username = parent_names.get(int(pid))
         if feature_flags.is_enabled("billing") and not row.is_sudo:
             try:
                 item.wallet_balance = billing.get_or_create_wallet(db, row.id).balance

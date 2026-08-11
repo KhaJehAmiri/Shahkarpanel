@@ -23,7 +23,7 @@ from app import feature_flags
 from app import logger
 from app.db import Session, crud, get_db
 from app.db.models import ClientDevice, ClientProbe, ClientTelemetry, Node, User
-from app.login_limit import enforce_login_rate_limit
+from app.login_limit import clear_login_failures, enforce_login_rate_limit, record_login_failure
 from app.models.node import NodeStatus
 from app.models.user import UserResponse
 from app.utils import responses
@@ -165,11 +165,13 @@ def app_login(body: LoginBody, request: Request, db: Session = Depends(get_db)):
     )
     dbuser = crud.verify_portal_user(db, body.username, body.password)
     if not dbuser:
+        record_login_failure(request, window_seconds=LOGIN_MAX_WINDOW_SECONDS)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    clear_login_failures(request)
     return TokenResponse(
         access_token=create_app_access_token(dbuser.username),
         refresh_token=create_app_refresh_token(dbuser.username),

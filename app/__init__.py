@@ -48,7 +48,19 @@ app = FastAPI(
 )
 
 scheduler = BackgroundScheduler(
-    {"apscheduler.job_defaults.max_instances": 20}, timezone="UTC"
+    {
+        "apscheduler.job_defaults.max_instances": 20,
+        # APScheduler's default pool is 10 threads. A handful of jobs blocked on
+        # an unresponsive node (RPyC round trips under a node lock) used to
+        # occupy all of them, after which unrelated jobs were only ever logged
+        # as "run time was missed". Size the pool well above the job count so
+        # one bad node cannot stall the rest of the panel.
+        "apscheduler.executors.default": {
+            "class": "apscheduler.executors.pool:ThreadPoolExecutor",
+            "max_workers": "40",
+        },
+    },
+    timezone="UTC",
 )
 logger = logging.getLogger("uvicorn.error")
 
@@ -141,6 +153,14 @@ def on_startup():
         ha_start()
     except Exception:
         logger.exception("Failed to start HA leader election")
+    # Own thread, started before the scheduler: the online counter must not
+    # depend on job-pool availability (see app/presence.py).
+    try:
+        from app.presence import start_presence_worker
+
+        start_presence_worker()
+    except Exception:
+        logger.exception("Failed to start online presence tracker")
 
     # Non-critical work: do not block uvicorn from accepting HTTP (otherwise
     # nginx sits on connection-refused for up to proxy_connect_timeout).
@@ -200,6 +220,12 @@ def on_startup():
 @app.on_event("shutdown")
 def on_shutdown():
     scheduler.shutdown()
+    try:
+        from app.presence import stop_presence_worker
+
+        stop_presence_worker()
+    except Exception:
+        pass
     try:
         from app.ha import stop as ha_stop
         ha_stop()

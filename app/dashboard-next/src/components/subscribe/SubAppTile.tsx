@@ -23,9 +23,9 @@ export function SubAppTile({
   app, platform, subUrl, profileName = "Shahkar", importLabel, downloadLabel, pasteFallback, streisandHint, clipboardHint, noResponse, onToast,
 }: Props) {
   const [busy, setBusy] = useState(false);
+  const copyFirst = platform === "macos" || platform === "ios" || app.id === "hiddify";
   const deepLink = app.buildScheme(subUrl, { name: profileName });
   const dl = app.download?.[platform];
-  const copyFirst = platform === "macos" || platform === "ios" || app.id === "hiddify";
 
   async function importInApp() {
     if (!subUrl) return;

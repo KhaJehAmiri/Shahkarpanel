@@ -319,6 +319,14 @@ SUB_BLOCKED_INACTIVE_MESSAGE = config(
     "SUB_BLOCKED_INACTIVE_MESSAGE",
     default="❌ حساب غیرفعال است — با پشتیبانی تماس بگیرید",
 )
+SUB_BLOCKED_DEVICE_LIMIT_MESSAGE = config(
+    "SUB_BLOCKED_DEVICE_LIMIT_MESSAGE",
+    default="📱 محدودیت دستگاه — اتصال روی دستگاه دوم شناسایی شد. کانفیگ‌ها به مدت {minutes} دقیقه مخفی هستند",
+)
+SUB_BLOCKED_FAMILY_SCHEDULE_MESSAGE = config(
+    "SUB_BLOCKED_FAMILY_SCHEDULE_MESSAGE",
+    default="👨‍👩‍👧 Family Guard — خارج از ساعت مجاز یا سقف روزانه",
+)
 
 USERS_AUTODELETE_DAYS = config("USERS_AUTODELETE_DAYS", default=-1, cast=int)
 USER_AUTODELETE_INCLUDE_LIMITED_ACCOUNTS = config("USER_AUTODELETE_INCLUDE_LIMITED_ACCOUNTS", default=False, cast=bool)
@@ -411,8 +419,8 @@ JOB_CORE_HEALTH_CHECK_INTERVAL = config("JOB_CORE_HEALTH_CHECK_INTERVAL", cast=i
 #   CORE_HEALTH_API_RETRIES           — extra in-tick retries after the first miss
 #   CORE_HEALTH_API_FAILURE_THRESHOLD — consecutive failed ticks before restart
 #                                       (1 restores the old restart-on-first-miss)
-CORE_HEALTH_API_TIMEOUT = config("CORE_HEALTH_API_TIMEOUT", cast=int, default=5)
-CORE_HEALTH_API_RETRIES = config("CORE_HEALTH_API_RETRIES", cast=int, default=2)
+CORE_HEALTH_API_TIMEOUT = config("CORE_HEALTH_API_TIMEOUT", cast=int, default=3)
+CORE_HEALTH_API_RETRIES = config("CORE_HEALTH_API_RETRIES", cast=int, default=1)
 CORE_HEALTH_API_FAILURE_THRESHOLD = config("CORE_HEALTH_API_FAILURE_THRESHOLD", cast=int, default=3)
 
 # Every core restart is a brief all-user outage between the old process dying and
@@ -429,10 +437,18 @@ JOB_CORE_USER_RECONCILE_INTERVAL = config("JOB_CORE_USER_RECONCILE_INTERVAL", ca
 JOB_AWG_FLUSH_STALE_PEERS = config("JOB_AWG_FLUSH_STALE_PEERS", cast=bool, default=False)
 JOB_RECORD_NODE_USAGES_INTERVAL = config("JOB_RECORD_NODE_USAGES_INTERVAL", cast=int, default=30)
 JOB_RECORD_USER_USAGES_INTERVAL = config("JOB_RECORD_USER_USAGES_INTERVAL", cast=int, default=15)
-# "Online now" window: a user counts as online if their ``online_at`` (bumped by
-# the 5s usage job on real traffic, and by subscription refresh) is within this
-# many minutes. Kept short so the count reflects who is actually connected.
+# "Online now" window: a user counts as online if their ``online_at`` is within
+# this many minutes. The presence tracker polls every core several times per
+# window and re-writes the whole window on each tick (see app/presence.py), so
+# one minute here is a true "online right now" without losing anyone to a missed
+# poll. Raise it only if you want the number to include recently-idle clients.
 ONLINE_WINDOW_MINUTES = config("ONLINE_WINDOW_MINUTES", cast=int, default=1)
+# Presence tracker: how often each core's per-user traffic counters are polled,
+# and the per-core gRPC deadline. The interval is additionally capped at a
+# quarter of the online window. It runs on its own thread, so this is
+# independent of every job interval.
+ONLINE_PRESENCE_INTERVAL = config("ONLINE_PRESENCE_INTERVAL", cast=int, default=15)
+ONLINE_PRESENCE_QUERY_TIMEOUT = config("ONLINE_PRESENCE_QUERY_TIMEOUT", cast=int, default=2)
 # Fail-closed: after this many blind usage cycles, disconnect all active users on local inbounds.
 # 0 disables mass disconnect (logging only). Default 6 cycles ≈ 30s at 5s interval.
 BILLING_BLIND_DISCONNECT_CYCLES = config("BILLING_BLIND_DISCONNECT_CYCLES", cast=int, default=6)

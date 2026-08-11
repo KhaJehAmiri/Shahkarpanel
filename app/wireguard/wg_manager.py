@@ -31,6 +31,27 @@ BASE_LISTEN_PORT = 51820
 SERVED_STATUSES = (UserStatus.active, UserStatus.on_hold)
 
 
+def _env_int(name: str, default: int) -> int:
+    import os
+
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return int(default)
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return int(default)
+
+
+# Kernel WG: keep a moderate per-iface cap and open more interfaces when full.
+MAX_PEERS_PER_KERNEL_IFACE = _env_int("WG_MAX_PEERS_PER_INTERFACE", 4094)
+# Finalmask-only nodes (plain_enabled=False): WgInterface is the address
+# authority only — Xray shards peers at FINALMASK_MAX_PEERS_PER_INBOUND.
+# The old 4094 cap made Iran relays show FULL at ~16k users while the
+# subnet (/15+) and Finalmask shards still had massive headroom.
+MAX_PEERS_PER_FINALMASK_IFACE = _env_int("WG_MAX_PEERS_FINALMASK_IFACE", 500_000)
+
+
 class WireGuardAutoScaleError(Exception):
     pass
 
@@ -46,15 +67,20 @@ def _reserved_interface_names(cfg) -> set:
     return names
 
 
-def _max_peers_for_subnet(subnet: str) -> int:
+def _max_peers_for_subnet(subnet: str, cfg=None) -> int:
     """Fill the configured subnet before opening another address space."""
     from app.wireguard.capacity import usable_peer_slots
+    from app.wireguard.sync import plain_wg_enabled
 
     usable = usable_peer_slots(subnet)
     if usable <= 0:
         return DEFAULT_MAX_PEERS
-    # Cap so a /16 does not create a single multi-million peer interface.
-    return max(DEFAULT_MAX_PEERS, min(usable, 4094))
+    # Finalmask-only: allow the full subnet (capped) so relays are not marked
+    # FULL long before IP/Finalmask capacity is exhausted.
+    if cfg is not None and not plain_wg_enabled(cfg):
+        return max(DEFAULT_MAX_PEERS, min(usable, MAX_PEERS_PER_FINALMASK_IFACE))
+    # Kernel WG: cap so a /16 does not create a single multi-million peer iface.
+    return max(DEFAULT_MAX_PEERS, min(usable, MAX_PEERS_PER_KERNEL_IFACE))
 
 
 def _subnet_for_slot(slot: int, cfg=None) -> str:
@@ -182,7 +208,7 @@ def bootstrap_legacy_interfaces(db: Session, dbnode: Node) -> None:
         private_key=cfg.private_key,
         public_key=cfg.public_key,
         peer_count=0,
-        max_peers=_max_peers_for_subnet(cfg.subnet),
+        max_peers=_max_peers_for_subnet(cfg.subnet, cfg),
         slot_index=slot,
         created_at=datetime.utcnow(),
     )
@@ -288,7 +314,10 @@ def _widen_fleet_plain_subnet(db: Session, iface: WgInterface, need: int) -> str
 
     for row in db.query(WgInterface).filter(WgInterface.subnet == current).all():
         row.subnet = widened
-        row.max_peers = _max_peers_for_subnet(widened)
+        node = db.query(Node).filter(Node.id == row.node_id).first()
+        row.max_peers = _max_peers_for_subnet(
+            widened, node.wireguard if node is not None else None
+        )
 
     for node in db.query(Node).all():
         cfg = node.wireguard
@@ -366,7 +395,7 @@ def create_interface(
         private_key=priv,
         public_key=pub,
         peer_count=0,
-        max_peers=_max_peers_for_subnet(subnet),
+        max_peers=_max_peers_for_subnet(subnet, cfg),
         slot_index=slot,
         created_at=datetime.utcnow(),
     )
@@ -410,7 +439,23 @@ def _find_or_create_interface(
     iface = _find_interface_with_capacity(db, dbnode.id)
     if iface is not None:
         return iface
-    # Prefer any interface with capacity on other WG nodes before opening a slot.
+    # This node is full — open a new slot HERE. Do NOT spill to other nodes
+    # first: that filled every relay's wg0 to the artificial 4094 cap while
+    # exits still had space, made relays look "FULL", and parked Iran users'
+    # home interface on an exit. Extra slots on Finalmask-only nodes are
+    # DB metadata (kernel provision skipped when plain is off).
+    try:
+        return create_interface(
+            db,
+            dbnode,
+            provision_on_node=provision_on_node,
+            commit=commit,
+        )
+    except Exception:
+        logger.exception(
+            "Failed creating new WG interface on node %s; falling back to fleet capacity",
+            getattr(dbnode, "id", None),
+        )
     any_cap = (
         db.query(WgInterface)
         .filter(WgInterface.peer_count < WgInterface.max_peers)
@@ -420,12 +465,44 @@ def _find_or_create_interface(
     )
     if any_cap is not None:
         return any_cap
-    return create_interface(
-        db,
-        dbnode,
-        provision_on_node=provision_on_node,
-        commit=commit,
+    raise WireGuardAutoScaleError(
+        f"no WireGuard capacity on node {getattr(dbnode, 'id', None)} and fleet is full"
     )
+
+
+def reconcile_peer_counts(db: Session) -> int:
+    """Reset cached ``peer_count`` from real ``wg_peers`` rows; refresh max_peers.
+
+    Drift (e.g. 4094 cached vs 4087 real) marks interfaces FULL and blocks
+    assign long before the subnet is exhausted.
+    """
+    from sqlalchemy import func
+
+    fixed = 0
+    counts = {
+        int(iface_id): int(cnt)
+        for iface_id, cnt in db.query(WgPeer.interface_id, func.count(WgPeer.id))
+        .group_by(WgPeer.interface_id)
+        .all()
+    }
+    for iface in db.query(WgInterface).all():
+        real = counts.get(int(iface.id), 0)
+        node = db.query(Node).filter(Node.id == iface.node_id).first()
+        cfg = node.wireguard if node is not None else None
+        want_max = _max_peers_for_subnet(iface.subnet, cfg)
+        changed = False
+        if int(iface.peer_count or 0) != real:
+            iface.peer_count = real
+            changed = True
+        if int(iface.max_peers or 0) != int(want_max):
+            iface.max_peers = int(want_max)
+            changed = True
+        if changed:
+            fixed += 1
+    if fixed:
+        db.flush()
+        logger.info("Reconciled peer_count/max_peers on %s WG interface(s)", fixed)
+    return fixed
 
 
 def _endpoint(dbnode: Node, iface: WgInterface) -> str:
@@ -839,13 +916,14 @@ def ensure_all_peers(db: Session) -> int:
                 if iface.subnet != cfg.subnet:
                     old = iface.subnet
                     iface.subnet = cfg.subnet
-                    iface.max_peers = _max_peers_for_subnet(cfg.subnet)
+                    iface.max_peers = _max_peers_for_subnet(cfg.subnet, cfg)
                     logger.info(
                         "Synced iface %s subnet %s → %s from node cfg",
                         iface.name,
                         old,
                         cfg.subnet,
                     )
+        reconcile_peer_counts(db)
         db.flush()
     except Exception:
         logger.exception("ensure_all_peers capacity pre-widen failed")

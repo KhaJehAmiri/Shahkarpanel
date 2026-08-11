@@ -955,26 +955,34 @@ def set_node_warp(
     db: Session = Depends(get_db),
     _: Admin = Depends(require_permission("nodes:provision")),
 ):
-    """Enable/disable Cloudflare WARP as this node's default Xray exit.
+    """Enable/disable Cloudflare WARP exit for this node.
 
-    Requires a registered WARP account (Outbounds → WARP) for the chosen tag.
+    ``mode=sensitive`` (default for new enables): only location-sensitive
+    domains (Google/YouTube/AI) exit via WARP — same client configs.
+    ``mode=full``: legacy catch-all WARP exit.
+    ``tag`` may list multiple accounts: ``warp,warp-2,warp-3``.
     """
     from app.utils import warp as warp_util
-    from app.xray.warp_routing import WARP_NESTED_CLIENT_MTU
+    from app.xray.warp_routing import WARP_NESTED_CLIENT_MTU, parse_warp_tags
 
     tag = (body.tag or "warp").strip() or "warp"
+    mode = str(body.mode or "sensitive").strip().lower()
+    if mode not in ("full", "sensitive"):
+        mode = "sensitive"
+    tags = parse_warp_tags(tag)
     if body.enabled:
-        account = warp_util.get_warp(tag)
-        if not account or not account.get("outbound"):
+        missing = [t for t in tags if not (warp_util.get_warp(t) or {}).get("outbound")]
+        if missing:
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"No WARP account for tag '{tag}'. "
-                    "Register one under Core → Outbounds → WARP first."
+                    f"No WARP account for tag(s): {', '.join(missing)}. "
+                    "Register under Core → Outbounds → WARP first."
                 ),
             )
     dbnode.warp_enabled = bool(body.enabled)
-    dbnode.warp_tag = tag
+    dbnode.warp_tag = ",".join(tags)
+    dbnode.warp_mode = mode
 
     # Nested WG inside WARP cannot keep MTU 1420 — large HTTPS packets black-hole
     # while Cloudflare IP checks (small) still succeed. Cap when enabling.
@@ -1010,9 +1018,10 @@ def set_node_warp(
     if dbnode.status != NodeStatus.disabled:
         bg.add_task(_apply_warp_runtime, dbnode.id)
     logger.info(
-        'Node "%s" WARP %s (tag=%s)',
+        'Node "%s" WARP %s (mode=%s tag=%s)',
         dbnode.name,
         "enabled" if dbnode.warp_enabled else "disabled",
+        dbnode.warp_mode or "full",
         dbnode.warp_tag or "warp",
     )
     return NodeResponse.model_validate(dbnode)

@@ -104,14 +104,23 @@ xr_bw.last_perf_counter = None
 xr_bw_ready = False
 # How many Xray APIs contributed to the last successful fleet sample (panel=1).
 xr_bw_sources = 0
+# Skip nodes that recently Deadline-Exceeded so the 2–5s bandwidth tick does
+# not keep hammering slow Iran control-tunnel paths.
+_xr_bw_fail_until: dict = {}
+_XR_BW_FAIL_COOLDOWN = 45.0
+_XR_BW_RPC_TIMEOUT = 1.5
+_XR_BW_FUTURE_TIMEOUT = 2.0
 
 
 def _live_xray_apis() -> dict:
     """Panel Xray API plus every connected node that has a live Stats API."""
     from app import xray
 
+    now = time.monotonic()
     apis = {None: xray.api}
     for node_id, node in list(getattr(xray, "nodes", {}).items()):
+        if now < float(_xr_bw_fail_until.get(node_id, 0.0) or 0.0):
+            continue
         try:
             if getattr(node, "has_live_api", None) and node.has_live_api():
                 apis[node_id] = node.api
@@ -122,7 +131,7 @@ def _live_xray_apis() -> dict:
     return {nid: api for nid, api in apis.items() if api is not None}
 
 
-def _sum_link_counters(api, *, prefer_inbound: bool = True) -> tuple[int, int]:
+def _sum_link_counters(api, *, prefer_inbound: bool = True, node_id=None) -> tuple[int, int]:
     """Return (uplink, downlink) cumulative bytes on one core.
 
     Prefer inbound counters (stable; not reset by usage jobs). Fall back to
@@ -139,15 +148,20 @@ def _sum_link_counters(api, *, prefer_inbound: bool = True) -> tuple[int, int]:
                 down += int(stat.value)
         return up, down
 
-    if prefer_inbound:
-        try:
-            up, down = _sum(api.get_inbounds_stats(reset=False, timeout=3))
-            if up or down:
-                return up, down
-        except Exception:
-            pass
-    up, down = _sum(api.get_outbounds_stats(reset=False, timeout=3))
-    return up, down
+    try:
+        if prefer_inbound:
+            try:
+                up, down = _sum(api.get_inbounds_stats(reset=False, timeout=_XR_BW_RPC_TIMEOUT))
+                if up or down:
+                    return up, down
+            except Exception:
+                pass
+        up, down = _sum(api.get_outbounds_stats(reset=False, timeout=_XR_BW_RPC_TIMEOUT))
+        return up, down
+    except Exception:
+        if node_id is not None:
+            _xr_bw_fail_until[node_id] = time.monotonic() + _XR_BW_FAIL_COOLDOWN
+        raise
 
 
 def _sample_xray_inbound_rates() -> None:
@@ -170,23 +184,26 @@ def _sample_xray_inbound_rates() -> None:
 
         total_up = total_down = 0
         ok = 0
-        workers = min(16, max(1, len(apis)))
+        workers = min(8, max(1, len(apis)))
         # Do NOT use ``with ThreadPoolExecutor``: after ``future.result(timeout=…)``
         # the context manager still ``shutdown(wait=True)``, so one hung node RPC
-        # blocks the 2s bandwidth job forever (max_instances=1 → Overview freeze).
+        # blocks the bandwidth job forever (max_instances=1 → Overview freeze).
         executor = ThreadPoolExecutor(max_workers=workers)
         try:
             futures = {
-                nid: executor.submit(_sum_link_counters, api)
+                nid: executor.submit(_sum_link_counters, api, node_id=nid)
                 for nid, api in apis.items()
             }
-            for _nid, fut in futures.items():
+            for nid, fut in futures.items():
                 try:
-                    up, down = fut.result(timeout=4)
+                    up, down = fut.result(timeout=_XR_BW_FUTURE_TIMEOUT)
                     total_up += up
                     total_down += down
                     ok += 1
+                    _xr_bw_fail_until.pop(nid, None)
                 except Exception:
+                    if nid is not None:
+                        _xr_bw_fail_until[nid] = time.monotonic() + _XR_BW_FAIL_COOLDOWN
                     continue
         finally:
             executor.shutdown(wait=False, cancel_futures=True)
@@ -256,8 +273,9 @@ def _nic_io_totals() -> tuple[int, int, int, int]:
     return io.bytes_sent, io.bytes_recv, io.packets_sent, io.packets_recv
 
 
-# sample time is 2 seconds, values lower than this may not produce good results
-@scheduler.scheduled_job("interval", seconds=2, coalesce=True, max_instances=1)
+# sample time is 5 seconds (was 2): digicdn's 14 tunneled nodes cannot answer
+# Stats RPC that often without starving the API worker.
+@scheduler.scheduled_job("interval", seconds=5, coalesce=True, max_instances=1)
 def record_realtime_bandwidth() -> None:
     global rt_bw
     last_perf_counter = rt_bw.last_perf_counter

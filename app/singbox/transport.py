@@ -61,8 +61,22 @@ class RPyCSingBoxClient:
         self._node.remote.singbox_apply_json(json.dumps(plain, separators=(",", ":")))
 
     def transfer(self, timeout: int = 10) -> dict:
+        # Never dial from the usage tick — a dead channel returns empty and
+        # the health checker reconnects. Dialling here used to spawn one
+        # ThreadPool worker per node per tick that then sat forever on
+        # ``node.remote`` → ``connect()``.
+        try_remote = getattr(self._node, "try_remote", None)
+        if callable(try_remote):
+            remote = try_remote()
+            if remote is None:
+                return {}
+        else:
+            # Fakes / REST-shaped objects expose ``remote`` as a plain attr.
+            remote = getattr(self._node, "remote", None)
+            if remote is None:
+                return {}
         try:
-            raw = self._node.remote.singbox_transfer() or {}
+            raw = remote.singbox_transfer() or {}
         except Exception:
             return {}
         if isinstance(raw, str):
@@ -82,11 +96,23 @@ class RPyCSingBoxClient:
 
 def client_for_node(node) -> Optional[object]:
     """Return a sing-box client for an already-connected node object, or
-    ``None`` if the node speaks neither transport."""
+    ``None`` if the node speaks neither transport.
+
+    Probe the *class*, not the instance: on an RPyC node ``remote`` is a
+    property whose getter takes the connection lock and calls ``connect()``,
+    so asking an unreachable node whether it *has* the attribute dials it and
+    blocks the caller for the whole connect. Mirrors
+    ``app.wireguard.transport.client_for_node``.
+    """
     if node is None:
         return None
-    if hasattr(node, "make_request"):
+    if _declares(node, "make_request"):
         return RESTSingBoxClient(node)
-    if hasattr(node, "remote"):
+    if _declares(node, "remote"):
         return RPyCSingBoxClient(node)
     return None
+
+
+def _declares(node, name: str) -> bool:
+    """Attribute presence without running a property getter."""
+    return hasattr(type(node), name) or name in getattr(node, "__dict__", {})

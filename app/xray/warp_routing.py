@@ -42,6 +42,105 @@ WARP_DEFAULT_RULE: dict[str, Any] = {
     "outboundTag": "warp",
 }
 
+# Marker on domain→WARP rules / balancer so rebuilds can strip them cleanly.
+SENSITIVE_WARP_MARK = "_nxSensitiveWarp"
+SENSITIVE_WARP_BALANCER_TAG = "warp-sensitive-lb"
+
+# Server-side split: only location-sensitive services exit via WARP.
+# Same inbound/configs for users — Xray routing picks the path by SNI/domain.
+# Prefer explicit ``domain:`` entries (always work). geosite tags are best-effort
+# extras when geosite.dat is present on the node.
+SENSITIVE_WARP_DOMAINS: list[str] = [
+    # Prefer explicit domains — always work even if geosite.dat is old/minimal.
+    # geosite tags are appended as separate rules so a missing tag cannot
+    # invalidate the whole domain list.
+    "domain:googleapis.com",
+    "domain:gstatic.com",
+    "domain:googleusercontent.com",
+    "domain:googlevideo.com",
+    "domain:ytimg.com",
+    "domain:ggpht.com",
+    "domain:youtu.be",
+    "domain:youtube.com",
+    "domain:google.com",
+    "domain:accounts.google.com",
+    "domain:play.google.com",
+    "domain:clients6.google.com",
+    # Gemini / Bard / AI Studio / NotebookLM
+    "domain:gemini.google.com",
+    "domain:gemini.google",
+    "domain:gemini.gstatic.com",
+    "domain:bard.google.com",
+    "domain:aistudio.google.com",
+    "domain:ai.google.dev",
+    "domain:ai.studio",
+    "domain:makersuite.google.com",
+    "domain:generativelanguage.googleapis.com",
+    "domain:aisandbox-pa.googleapis.com",
+    "domain:aicode.googleapis.com",
+    "domain:aida.googleapis.com",
+    "domain:cloudaicompanion.googleapis.com",
+    "domain:cloudcode-pa.googleapis.com",
+    "domain:daily-cloudcode-pa.googleapis.com",
+    "domain:notebooklm.googleapis.com",
+    "domain:notebooklm-pa.googleapis.com",
+    "domain:notebooklm.google.com",
+    "domain:notebooklm.google",
+    "domain:notebook.google.com",
+    "domain:alkalimakersuite-pa.clients6.google.com",
+    "domain:alkalicore-pa.clients6.google.com",
+    "domain:webchannel-alkalimakersuite-pa.clients6.google.com",
+    "domain:robinfrontend-pa.googleapis.com",
+    "domain:proactivebackend-pa.googleapis.com",
+    "domain:geller-pa.googleapis.com",
+    "domain:deepmind.com",
+    "domain:deepmind.google",
+    "domain:generativeai.google",
+    "domain:labs.google",
+    "domain:labs.google.com",
+    "domain:jules.google",
+    "domain:jules.google.com",
+    "domain:flow.google",
+    "domain:opal.google",
+    "domain:opal.google.com",
+    "domain:stitch.withgoogle.com",
+    # Other location-sensitive AI
+    "domain:chatgpt.com",
+    "domain:openai.com",
+    "domain:api.openai.com",
+    "domain:claude.ai",
+    "domain:anthropic.com",
+    "domain:api.anthropic.com",
+]
+
+# Optional geosite packs (separate rules; skipped harmlessly if dat lacks them
+# only when Xray still accepts unknown codes — keep to widely-present names).
+SENSITIVE_WARP_GEOSITES: list[str] = [
+    "geosite:google",
+    "geosite:youtube",
+    "geosite:openai",
+]
+
+_SENSITIVE_DOMAIN_CHUNK = 48
+
+
+def parse_warp_tags(raw: str | None) -> list[str]:
+    """Parse ``warp`` or ``warp,warp-2,warp-3`` into a de-duplicated tag list."""
+    text = str(raw or "").strip() or "warp"
+    tags: list[str] = []
+    seen: set[str] = set()
+    for part in text.replace(";", ",").split(","):
+        tag = part.strip()
+        if not tag or tag in seen:
+            continue
+        seen.add(tag)
+        tags.append(tag)
+    return tags or ["warp"]
+
+
+def primary_warp_tag(raw: str | None) -> str:
+    return parse_warp_tags(raw)[0]
+
 # Client WG MTU when the node exits via WARP (outer tunnel is 1280).
 WARP_NESTED_CLIENT_MTU = 1280
 WARP_OUTBOUND_MTU = 1280
@@ -296,6 +395,7 @@ def strip_warp_from_config(
         return rewrite_missing_warp_routes(data)
 
     data["outbounds"] = [o for o in outbounds if str(o.get("tag") or "") not in remove_tags]
+    data = strip_sensitive_warp_routing(data)
     data = rewrite_missing_warp_routes(data, missing_tags=remove_tags)
     return data
 
@@ -456,12 +556,211 @@ def apply_warp_safe_routing(payload: dict[str, Any]) -> dict[str, Any]:
     if not _has_dns_direct_rule(rules):
         rules.insert(insert_at, dict(WARP_DNS_DIRECT_RULE))
 
+    # Never add a catch-all→WARP when sensitive split rules are active — that
+    # would send all traffic through WARP and defeat the split.
+    has_sensitive = any(
+        isinstance(r, dict) and r.get(SENSITIVE_WARP_MARK) for r in rules
+    )
     first_tag = str(outbounds[0].get("tag") or "") if outbounds else ""
     primary = str(warp_obs[0].get("tag") or "warp")
-    if first_tag == primary and not _has_warp_default_rule(rules, primary):
+    if (
+        not has_sensitive
+        and first_tag == primary
+        and not _has_warp_default_rule(rules, primary)
+    ):
         rule = dict(WARP_DEFAULT_RULE)
         rule["outboundTag"] = primary
         rules.append(rule)
 
     routing["rules"] = _dedupe_rules(rules)
+    return data
+
+
+def strip_sensitive_warp_routing(payload: dict[str, Any]) -> dict[str, Any]:
+    """Remove sensitive-split domain rules and the dedicated balancer."""
+    data = deepcopy(payload)
+    routing = data.get("routing")
+    if isinstance(routing, dict):
+        rules = [
+            r
+            for r in list(routing.get("rules") or [])
+            if not (isinstance(r, dict) and r.get(SENSITIVE_WARP_MARK))
+        ]
+        routing["rules"] = rules
+        balancers = [
+            b
+            for b in list(routing.get("balancers") or [])
+            if not (
+                isinstance(b, dict)
+                and (
+                    b.get(SENSITIVE_WARP_MARK)
+                    or str(b.get("tag") or "") == SENSITIVE_WARP_BALANCER_TAG
+                )
+            )
+        ]
+        if balancers:
+            routing["balancers"] = balancers
+        else:
+            routing.pop("balancers", None)
+    return data
+
+
+def _sensitive_domain_rules(target: dict[str, Any]) -> list[dict[str, Any]]:
+    """Build chunked domain rules pointing at outboundTag or balancerTag."""
+    rules: list[dict[str, Any]] = []
+    domains = list(SENSITIVE_WARP_DOMAINS)
+    for i in range(0, len(domains), _SENSITIVE_DOMAIN_CHUNK):
+        part = domains[i : i + _SENSITIVE_DOMAIN_CHUNK]
+        rule: dict[str, Any] = {
+            "type": "field",
+            "domain": part,
+            SENSITIVE_WARP_MARK: True,
+        }
+        rule.update(target)
+        rules.append(rule)
+    # One geosite per rule so a missing pack cannot void explicit domains.
+    for g in SENSITIVE_WARP_GEOSITES:
+        rule = {
+            "type": "field",
+            "domain": [g],
+            SENSITIVE_WARP_MARK: True,
+        }
+        rule.update(target)
+        rules.append(rule)
+    return rules
+
+
+def ensure_tunnel_exit_sniffing(payload: dict[str, Any]) -> dict[str, Any]:
+    """Enable routeOnly sniffing on tunnel-*-exit inbounds.
+
+    Relay→exit traffic lands on these inbounds. Without TLS/HTTP sniffing,
+    domain→WARP rules never match and Gemini/YouTube stay on the raw exit IP.
+    """
+    data = payload if isinstance(payload, dict) else dict(payload)
+    sniff = {
+        "enabled": True,
+        "destOverride": ["http", "tls", "quic"],
+        "routeOnly": True,
+    }
+    changed = False
+    inbounds = list(data.get("inbounds") or [])
+    for ib in inbounds:
+        if not isinstance(ib, dict):
+            continue
+        tag = str(ib.get("tag") or "")
+        if not (tag.startswith("tunnel-") and tag.endswith("-exit")):
+            continue
+        cur = ib.get("sniffing")
+        if cur != sniff:
+            ib["sniffing"] = dict(sniff)
+            changed = True
+    if changed:
+        data["inbounds"] = inbounds
+    return data
+
+
+def ensure_warp_sensitive_exit(
+    payload: dict[str, Any],
+    outbounds: Sequence[dict[str, Any]],
+) -> dict[str, Any]:
+    """Install one or more WARP outbounds and route only sensitive domains to them.
+
+    Default exit stays ``DIRECT`` (or whatever non-WARP path the node already
+    uses). Multiple outbounds get an Xray balancer (``random``) for load-share.
+    """
+    data = strip_sensitive_warp_routing(deepcopy(payload))
+    prepared: list[dict[str, Any]] = []
+    tags: list[str] = []
+    for raw in outbounds:
+        if not isinstance(raw, dict):
+            continue
+        ob = deepcopy(raw)
+        tag = str(ob.get("tag") or "").strip()
+        if not tag:
+            continue
+        ob["tag"] = tag
+        _ensure_warp_outbound_settings(ob)
+        prepared.append(ob)
+        tags.append(tag)
+    if not prepared:
+        return data
+
+    existing = list(data.get("outbounds") or [])
+    drop = set(tags) | {SENSITIVE_WARP_BALANCER_TAG}
+    drop |= {str(o.get("tag") or "") for o in _warp_outbounds(existing)}
+    merged = [o for o in existing if str(o.get("tag") or "") not in drop]
+    merged.extend(prepared)
+    data["outbounds"] = merged
+
+    data = apply_warp_safe_routing(data)
+    data = strip_sensitive_warp_routing(data)
+    data = ensure_tunnel_exit_sniffing(data)
+
+    routing = data.setdefault("routing", {"domainStrategy": "AsIs", "rules": []})
+    # AsIs + sniffing: match SNI/Host without forcing DNS on every flow.
+    routing["domainStrategy"] = "AsIs"
+
+    rules = [
+        r
+        for r in list(routing.get("rules") or [])
+        if not (
+            is_warp_tag(str(r.get("outboundTag") or ""))
+            and _is_catch_all_network_rule(r)
+        )
+    ]
+
+    if len(tags) == 1:
+        target: dict[str, Any] = {"outboundTag": tags[0]}
+        routing.pop("balancers", None)
+    else:
+        balancers = [
+            b
+            for b in list(routing.get("balancers") or [])
+            if str(b.get("tag") or "") != SENSITIVE_WARP_BALANCER_TAG
+            and not (isinstance(b, dict) and b.get(SENSITIVE_WARP_MARK))
+        ]
+        # Do not put custom marker fields on balancers — some Xray builds are
+        # strict about balancer JSON shape.
+        balancers.append(
+            {
+                "tag": SENSITIVE_WARP_BALANCER_TAG,
+                "selector": tags,
+                "strategy": {"type": "random"},
+            }
+        )
+        routing["balancers"] = balancers
+        target = {"balancerTag": SENSITIVE_WARP_BALANCER_TAG}
+
+    sensitive_rules = _sensitive_domain_rules(target)
+
+    front: list[dict[str, Any]] = []
+    rest: list[dict[str, Any]] = []
+    for r in rules:
+        ot = str(r.get("outboundTag") or "")
+        if ot == "DIRECT" and (
+            (
+                isinstance(r.get("domain"), list)
+                and any(
+                    DEFAULT_WARP_ENDPOINT_HOST in str(d)
+                    for d in (r.get("domain") or [])
+                )
+            )
+            or (
+                isinstance(r.get("ip"), list)
+                and any("geoip:private" in str(i) for i in (r.get("ip") or []))
+            )
+            or (str(r.get("port") or "") == "53")
+        ):
+            front.append(r)
+        else:
+            rest.append(r)
+
+    if not _has_warp_bypass(front + rest):
+        front.insert(0, dict(WARP_BYPASS_RULE))
+    if not _has_private_direct_rule(front + rest):
+        front.append(dict(WARP_PRIVATE_DIRECT_RULE))
+    if not _has_dns_direct_rule(front + rest):
+        front.append(dict(WARP_DNS_DIRECT_RULE))
+
+    routing["rules"] = _dedupe_rules(front + sensitive_rules + rest)
     return data

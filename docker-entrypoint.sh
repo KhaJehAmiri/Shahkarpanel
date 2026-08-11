@@ -180,6 +180,9 @@ fix_docker_socket_group() {
 start_panel_process() {
   cd /code
   run_migrations_if_needed
+  # Soft nofile often stays 1024 even when compose raises the hard limit
+  # (runuser). Without this, RPyC/node sessions hit Errno 24 and mark nodes error.
+  ulimit -n 1048576 2>/dev/null || ulimit -n 65536 2>/dev/null || true
   exec python main.py
 }
 

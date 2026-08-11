@@ -50,11 +50,24 @@ def inject_warp_tproxy_inbound(
     payload: dict[str, Any],
     node_id: int,
     outbound_tag: str,
+    *,
+    catch_all: bool = True,
 ) -> dict[str, Any]:
-    """Ensure dokodemo inbound + inbound→WARP rule exist."""
+    """Ensure dokodemo inbound exists; optionally pin all TPROXY traffic to WARP.
+
+    When ``catch_all=False`` (sensitive split mode), dokodemo gets sniffing and
+    unmatched TPROXY flows fall through to ``DIRECT`` so only domain rules send
+    Google/YouTube/AI via WARP.
+    """
     data = deepcopy(payload)
     tag = warp_tproxy_inbound_tag(node_id)
     inbound = build_warp_tproxy_dokodemo(node_id)
+    if not catch_all:
+        inbound["sniffing"] = {
+            "enabled": True,
+            "destOverride": ["http", "tls", "quic"],
+            "routeOnly": True,
+        }
     inbounds = [ib for ib in list(data.get("inbounds") or []) if not (
         isinstance(ib, dict) and ib.get("tag") == tag
     )]
@@ -69,11 +82,19 @@ def inject_warp_tproxy_inbound(
             and tag in (r.get("inboundTag") or [])
         )
     ]
-    rules.insert(0, {
-        "type": "field",
-        "inboundTag": [tag],
-        "outboundTag": outbound_tag,
-    })
+    if catch_all:
+        rules.insert(0, {
+            "type": "field",
+            "inboundTag": [tag],
+            "outboundTag": outbound_tag,
+        })
+    else:
+        # Fallback after global sensitive domain→WARP rules (matched first).
+        rules.append({
+            "type": "field",
+            "inboundTag": [tag],
+            "outboundTag": "DIRECT",
+        })
     routing["rules"] = rules
     return data
 

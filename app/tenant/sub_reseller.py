@@ -137,14 +137,12 @@ def onboarding_status(db: Session, admin) -> dict:
         return {"show_wizard": False, "completed": True, "steps": {}}
 
     completed = feature_flags.is_enabled("reseller_onboarding_completed", admin_id=dbadmin.id)
-    branding = tenant_svc.resolve_branding(db, dbadmin.tenant_id)
+    branding = tenant_svc.branding_for_admin(db, dbadmin)
     has_branding = bool(branding.get("panel_title") and branding["panel_title"] != "Shahkar")
-    from sqlalchemy import or_
-
-    plan_filters = [Plan.owner_admin_id == dbadmin.id]
-    if dbadmin.tenant_id is not None:
-        plan_filters.append(Plan.tenant_id == dbadmin.tenant_id)
-    has_plan = db.query(Plan).filter(or_(*plan_filters)).first() is not None
+    # Own catalog only — never count the parent tenant's shared plans.
+    has_plan = (
+        db.query(Plan).filter(Plan.owner_admin_id == dbadmin.id).first() is not None
+    )
     has_user = db.query(User).filter(User.admin_id == dbadmin.id).count() > 0
     storefront_ready = bool(
         getattr(dbadmin, "invite_code", None)

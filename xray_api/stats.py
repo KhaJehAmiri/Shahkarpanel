@@ -84,7 +84,10 @@ class Stats(XRayBase):
         for stat in r.stat:
             parts = stat.name.split(">>>")
             # traffic: user>>>email>>>traffic>>>uplink  (4)
-            # online:  user>>>email>>>online            (3)
+            # 3-part names (e.g. user>>>email>>>online) are tolerated, but note
+            # that QueryStats only ever returns counters: the online map is not
+            # part of this response on any core version we ship. Presence is
+            # derived from counter deltas instead (see app/presence.py).
             if len(parts) == 4:
                 type_, name, _, link = parts
             elif len(parts) == 3:

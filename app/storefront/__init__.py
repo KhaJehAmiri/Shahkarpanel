@@ -15,7 +15,7 @@ from app.db import crud
 from app.db.models import Admin, BrandingSettings, Plan, ResellerApplication, Tenant
 from app.models.admin import AdminCreate
 from app.models.user import USERNAME_REGEXP, UserCreate, UserStatusCreate
-from app.tenant import plan_ops, resolve_branding
+from app.tenant import branding_scope_admin_id, plan_ops, resolve_branding
 from app.tenant.sub_reseller import create_sub_reseller
 from app.utils.jwt import create_portal_token
 
@@ -79,6 +79,7 @@ def resolve_context(
         ctx_sudo_invite = None
 
     # Invite already pinned the context — don't override with slug/host.
+    branding_admin_id: Optional[int] = None
     if via != "invite":
         if owner is None and slug:
             tenant_row = db.query(Tenant).filter(Tenant.slug == slug).first()
@@ -89,15 +90,25 @@ def resolve_context(
             via = "slug"
 
         if owner is None and host:
-            row = db.query(BrandingSettings).filter(BrandingSettings.domain == host).first()
+            row = (
+                db.query(BrandingSettings)
+                .filter(BrandingSettings.domain == host)
+                .first()
+            )
             if row and row.tenant_id is not None:
                 tenant_row = db.query(Tenant).filter(Tenant.id == row.tenant_id).first()
-                if tenant_row and tenant_row.owner_admin_id:
+                # Sub-reseller domain → that admin; tenant default → owner.
+                if getattr(row, "admin_id", None):
+                    owner = crud.get_admin_by_id(db, int(row.admin_id))
+                    branding_admin_id = int(row.admin_id)
+                elif tenant_row and tenant_row.owner_admin_id:
                     owner = crud.get_admin_by_id(db, tenant_row.owner_admin_id)
-                    via = "domain"
+                via = "domain"
 
     tenant_id = tenant_row.id if tenant_row else (owner.tenant_id if owner else None)
-    branding = resolve_branding(db, tenant_id)
+    if branding_admin_id is None and owner is not None:
+        branding_admin_id = branding_scope_admin_id(db, owner)
+    branding = resolve_branding(db, tenant_id, admin_id=branding_admin_id)
 
     platform_on = _platform_storefront_on()
     platform_signup = bool(ps.get_bool("storefront.public_signup_enabled", True))
@@ -510,12 +521,23 @@ def mine_storefront(db: Session, admin: Admin) -> Dict[str, Any]:
     from app import tenant as tenant_svc
 
     tenant_id = tenant_svc.admin_tenant_id(db, row) if hasattr(tenant_svc, "admin_tenant_id") else row.tenant_id
-    branding = resolve_branding(db, tenant_id)
+    scope_admin_id = branding_scope_admin_id(db, row)
+    branding = resolve_branding(db, tenant_id, admin_id=scope_admin_id)
     slug = None
     if row.tenant_id:
         t = db.query(Tenant).filter(Tenant.id == row.tenant_id).first()
         slug = t.slug if t else None
     platform_on = _platform_storefront_on()
+    # Sub-resellers share the parent tenant slug — pin public links to their
+    # invite code (and custom domain when set) so the store is theirs alone.
+    is_sub = bool(getattr(row, "parent_admin_id", None))
+    custom_domain = (branding.get("domain") or "").strip()
+    if is_sub:
+        landing = f"https://{custom_domain}/" if custom_domain else f"/register/?ref={code}"
+        register = f"https://{custom_domain}/register/?ref={code}" if custom_domain else f"/register/?ref={code}"
+    else:
+        landing = f"/t/{slug}/" if slug else "/"
+        register = f"/register/?tenant={slug}" if slug else "/register/"
     return {
         "invite_code": code,
         "public_signup_enabled": bool(row.public_signup_enabled),
@@ -531,8 +553,8 @@ def mine_storefront(db: Session, admin: Admin) -> Dict[str, Any]:
         and bool(ps.get_bool("storefront.reseller_apply_enabled", True))
         and bool(row.reseller_apply_enabled),
         "links": {
-            "landing": f"/t/{slug}/" if slug else "/",
-            "register": f"/register/?tenant={slug}" if slug else "/register/",
+            "landing": landing,
+            "register": register,
             "become_reseller": f"/become-reseller/?ref={code}",
             "portal": "/portal/",
         },

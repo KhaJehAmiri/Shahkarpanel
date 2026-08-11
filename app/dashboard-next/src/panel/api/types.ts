@@ -195,6 +195,7 @@ export interface NodeItem {
   core_kind?: string;
   warp_enabled?: boolean;
   warp_tag?: string | null;
+  warp_mode?: string | null;
   provision_status?: string | null;
   provision_message?: string | null;
   provision_progress?: number | null;

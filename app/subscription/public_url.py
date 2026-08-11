@@ -250,24 +250,30 @@ def public_subscription_url(
             # Reseller branding domain wins for their users' share links.
             try:
                 from app.tenant.subscription_domain import (
+                    branding_admin_id_for_user,
                     get_reseller_subscription_endpoint,
                     tenant_id_for_user,
                 )
 
                 tid = tenant_id_for_user(db, user)
-                brand_ep = get_reseller_subscription_endpoint(db, tid)
+                brand_ep = get_reseller_subscription_endpoint(
+                    db, tid, admin_id=branding_admin_id_for_user(db, user)
+                )
             except Exception:
                 brand_ep = None
     elif ep is None:
         with GetDB() as db:
             try:
                 from app.tenant.subscription_domain import (
+                    branding_admin_id_for_user,
                     get_reseller_subscription_endpoint,
                     tenant_id_for_user,
                 )
 
                 tid = tenant_id_for_user(db, user)
-                brand_ep = get_reseller_subscription_endpoint(db, tid)
+                brand_ep = get_reseller_subscription_endpoint(
+                    db, tid, admin_id=branding_admin_id_for_user(db, user)
+                )
             except Exception:
                 brand_ep = None
 
@@ -370,11 +376,16 @@ def list_user_subscription_urls(user: "UserResponse", request: Optional[Request]
         brand_ep = None
         try:
             from app.tenant.subscription_domain import (
+                branding_admin_id_for_user,
                 get_reseller_subscription_endpoint,
                 tenant_id_for_user,
             )
 
-            brand_ep = get_reseller_subscription_endpoint(db, tenant_id_for_user(db, user))
+            brand_ep = get_reseller_subscription_endpoint(
+                db,
+                tenant_id_for_user(db, user),
+                admin_id=branding_admin_id_for_user(db, user),
+            )
         except Exception:
             brand_ep = None
 

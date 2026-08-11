@@ -422,8 +422,38 @@ def panel_exit_ready_for_node(db, node_id: int) -> bool:
     return ready
 
 
+_DEGRADED_TOKENS = (
+    "degraded",
+    "xray down",
+    "xray core not running",
+    "failed to connect",
+    "not connected",
+    "connect backoff",
+    "backoff",
+)
+
+
+def _node_row_healthy(db, node_id: int) -> bool:
+    """Last known node health from the DB — no network I/O."""
+    from app.db.models import Node as _Node
+    from app.models.node import NodeStatus
+
+    try:
+        row = (
+            db.query(_Node.message, _Node.status)
+            .filter(_Node.id == int(node_id))
+            .first()
+        )
+    except Exception:
+        return False
+    if not row or row[1] != NodeStatus.connected:
+        return False
+    msg = str(row[0] or "").lower()
+    return not any(tok in msg for tok in _DEGRADED_TOKENS)
+
+
 def relay_tunnel_xray_ready(
-    node_object, *, db=None, node_id: Optional[int] = None
+    node_object, *, db=None, node_id: Optional[int] = None, probe: bool = True
 ) -> bool:
     """True when a relay node's Xray core is up and can carry tunnel traffic.
 
@@ -434,19 +464,29 @@ def relay_tunnel_xray_ready(
     readiness when applicable) is enough. Requiring capture_active in that
     case permanently reported "tunnel not running" even when Finalmask was
     correctly pinned to ``tunnel-*-out``.
+
+    ``probe=False`` answers from state the panel already holds. Callers that
+    serve HTTP requests must use it: the probe below opens an RPyC session
+    under the node lock, and one unreachable relay then blocks every request
+    thread that renders a subscription until the connect times out.
     """
     if not node_object:
         return False
     node_alive = bool(getattr(node_object, "started", False))
-    if not node_alive:
+    if not node_alive and probe:
         # ``connected`` only means the RPyC control channel is up — not that
-        # Xray is listening. Always probe the remote core so health-check
-        # does not skip reconnect while UDP is down, or reconnect while UDP
-        # is already up.
+        # Xray is listening. Probe the remote core so health-check does not
+        # skip reconnect while UDP is down, or reconnect while UDP is already
+        # up.
         try:
             node_alive = bool(node_object.get_version())
         except Exception:
             node_alive = False
+    elif not node_alive and node_id is not None and db is not None:
+        # No probe allowed: trust the health checker's last verdict rather than
+        # dropping a working relay from every client's subscription just
+        # because this process rebuilt the RPyC session.
+        node_alive = _node_row_healthy(db, node_id)
     if not node_alive:
         return False
 
@@ -471,18 +511,7 @@ def relay_tunnel_xray_ready(
 
                 row = db.query(_Node.message, _Node.status).filter(_Node.id == int(node_id)).first()
                 msg = (str(row[0] or "") if row else "").lower()
-                degraded = any(
-                    tok in msg
-                    for tok in (
-                        "degraded",
-                        "xray down",
-                        "xray core not running",
-                        "failed to connect",
-                        "not connected",
-                        "connect backoff",
-                        "backoff",
-                    )
-                )
+                degraded = any(tok in msg for tok in _DEGRADED_TOKENS)
                 if not degraded:
                     setattr(node_object, "wg_tunnel_capture_active", True)
                     try:

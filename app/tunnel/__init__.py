@@ -431,6 +431,13 @@ def build_exit_inbound(tunnel) -> Dict:
             "decryption": "none",
         },
         "streamSettings": _stream_settings(transport, params, server_side=True),
+        # Required for exit-side domain routing (e.g. sensitive WARP split).
+        # routeOnly keeps the destination IP; only routing sees the sniffed SNI.
+        "sniffing": {
+            "enabled": True,
+            "destOverride": ["http", "tls", "quic"],
+            "routeOnly": True,
+        },
     }
 
 

@@ -40,6 +40,34 @@ export function clashVergeSubScheme(subUrl: string): string {
   return `clash-verge://install-config?url=${enc(subUrl)}`;
 }
 
+/**
+ * Official Karing scheme — https://karing.app/en/cooperation/scheme
+ * All query values must be urlencoded. Optional ISP fields show in Settings → ISP.
+ */
+export function karingSubScheme(
+  subUrl: string,
+  opts?: { name?: string; ispName?: string; ispUrl?: string; ispFaq?: string },
+): string {
+  const bare = subUrl.replace(/#.*$/, "");
+  const parts = [
+    `url=${enc(bare)}`,
+    `name=${enc(opts?.name || "Shahkar")}`,
+  ];
+  if (opts?.ispName) parts.push(`isp-name=${enc(opts.ispName)}`);
+  if (opts?.ispUrl) parts.push(`isp-url=${enc(opts.ispUrl)}`);
+  if (opts?.ispFaq) parts.push(`isp-faq=${enc(opts.ispFaq)}`);
+  return `karing://install-config?${parts.join("&")}`;
+}
+
+/**
+ * Happ plain subscription deep link — https://www.happ.su/main/faq/adding-configuration-subscription
+ * URL after add/ must be plain (no encodeURIComponent / no base64).
+ */
+export function happSubScheme(subUrl: string): string {
+  const bare = subUrl.replace(/#.*$/, "");
+  return `happ://add/${bare}`;
+}
+
 /** Open a custom URL scheme from a user gesture (mobile-friendly). */
 export function openDeepLink(href: string): void {
   try {

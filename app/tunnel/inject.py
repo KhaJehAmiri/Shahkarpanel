@@ -291,10 +291,21 @@ def _apply_panel_exit_routing(config, db, exit_tunnels: List) -> dict:
     relay dials ``127.0.0.1:<wg_port>`` on this host after Reality decrypt — that
     destination is private and was blackholed unless we pin localhost to DIRECT
     *before* the private-IP block (WARP-on and WARP-off alike).
+
+    WARP modes on the relay:
+    - ``full``: pin the rest of ``tunnel-*-exit`` traffic to WARP (legacy).
+    - ``sensitive``: do not catch-all pin; install domain→WARP split on the
+      panel so only Google/YouTube/AI leave via WARP (same client configs).
     """
     from app.db.models import Node
     from app.utils import warp as warp_util
-    from app.xray.warp_routing import ensure_warp_exit, is_warp_tag
+    from app.xray.warp_routing import (
+        ensure_warp_exit,
+        ensure_warp_sensitive_exit,
+        is_warp_tag,
+        parse_warp_tags,
+        primary_warp_tag,
+    )
 
     result = config if isinstance(config, dict) else dict(config)
     exit_tags = {f"tunnel-{t.id}-exit" for t in exit_tunnels}
@@ -310,11 +321,13 @@ def _apply_panel_exit_routing(config, db, exit_tunnels: List) -> dict:
     routing = result.setdefault("routing", {})
     rules = [r for r in list(routing.get("rules") or []) if not _is_exit_route(r)]
 
-    warp_by_tag: dict[str, dict] = {}
+    full_warp_by_tag: dict[str, dict] = {}
+    sensitive_outbounds: list[dict] = []
+    sensitive_tags_seen: set[str] = set()
     pins: list[dict] = []
+
     for t in exit_tunnels:
         exit_tag = f"tunnel-{t.id}-exit"
-        # Always first: WG handshakes to host loopback must not hit geoip:private→BLOCK.
         pins.append(
             {
                 "type": "field",
@@ -330,8 +343,36 @@ def _apply_panel_exit_routing(config, db, exit_tunnels: List) -> dict:
         relay = db.query(Node).filter(Node.id == int(relay_id)).first()
         if relay is None or not bool(getattr(relay, "warp_enabled", False)):
             continue
-        tag = (getattr(relay, "warp_tag", None) or "warp").strip() or "warp"
-        if tag not in warp_by_tag:
+
+        mode = str(getattr(relay, "warp_mode", None) or "full").strip().lower()
+        tags = parse_warp_tags(getattr(relay, "warp_tag", None))
+
+        if mode == "sensitive":
+            for tag in tags:
+                if tag in sensitive_tags_seen:
+                    continue
+                account = warp_util.get_warp(tag)
+                outbound = (account or {}).get("outbound") if account else None
+                if not isinstance(outbound, dict):
+                    logger.warning(
+                        "Tunnel %s: relay %s sensitive WARP tag %s missing; skip",
+                        t.id,
+                        relay_id,
+                        tag,
+                    )
+                    continue
+                sensitive_tags_seen.add(tag)
+                sensitive_outbounds.append(outbound)
+            logger.info(
+                "Panel tunnel exit %s → sensitive WARP split (relay %s tags=%s)",
+                exit_tag,
+                relay_id,
+                ",".join(tags),
+            )
+            continue
+
+        tag = primary_warp_tag(getattr(relay, "warp_tag", None))
+        if tag not in full_warp_by_tag:
             account = warp_util.get_warp(tag)
             outbound = (account or {}).get("outbound") if account else None
             if not isinstance(outbound, dict):
@@ -342,7 +383,7 @@ def _apply_panel_exit_routing(config, db, exit_tunnels: List) -> dict:
                     tag,
                 )
                 continue
-            warp_by_tag[tag] = outbound
+            full_warp_by_tag[tag] = outbound
 
         pins.append(
             {
@@ -358,13 +399,12 @@ def _apply_panel_exit_routing(config, db, exit_tunnels: List) -> dict:
             relay_id,
         )
 
-    if not warp_by_tag:
-        routing["rules"] = pins + rules
-        result["routing"] = routing
-        return result
+    if sensitive_outbounds:
+        result = ensure_warp_sensitive_exit(result, sensitive_outbounds)
 
-    for tag, outbound in warp_by_tag.items():
-        result = ensure_warp_exit(result, outbound, as_default_exit=False)
+    if full_warp_by_tag:
+        for tag, outbound in full_warp_by_tag.items():
+            result = ensure_warp_exit(result, outbound, as_default_exit=False)
 
     routing = result.setdefault("routing", {})
     merged = [r for r in list(routing.get("rules") or []) if not _is_exit_route(r)]
@@ -372,7 +412,7 @@ def _apply_panel_exit_routing(config, db, exit_tunnels: List) -> dict:
     result["routing"] = routing
 
     present = {str(o.get("tag") or "") for o in (result.get("outbounds") or [])}
-    for tag, outbound in warp_by_tag.items():
+    for tag, outbound in full_warp_by_tag.items():
         if tag not in present and is_warp_tag(tag):
             result = ensure_warp_exit(result, outbound, as_default_exit=False)
             routing = result.setdefault("routing", {})

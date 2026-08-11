@@ -96,6 +96,35 @@ def get_system_stats(
     )
 
 
+@router.get("/system/online-presence", responses={403: responses._403})
+def get_online_presence(
+    db: Session = Depends(get_db), _: Admin = Depends(Admin.check_sudo_admin)
+) -> dict:
+    """Diagnostics for the "online now" counter.
+
+    ``tracker.age`` is the seconds since the presence thread last ran; anything
+    much above ``tracker.interval`` means the counter is going stale and the
+    thread (not a scheduler job) is the thing to look at.
+    """
+    from datetime import datetime
+
+    from sqlalchemy import func
+
+    from app.db.models import User
+    from app.presence import presence_health
+    from config import ONLINE_WINDOW_MINUTES
+
+    latest = db.query(func.max(User.online_at)).scalar()
+    return {
+        "tracker": presence_health(),
+        "window_minutes": ONLINE_WINDOW_MINUTES,
+        "online_users": crud.count_online_users(db),
+        "last_seen_seconds_ago": (
+            round((datetime.utcnow() - latest).total_seconds(), 1) if latest else None
+        ),
+    }
+
+
 @router.get("/inbounds")
 def get_inbounds(admin: Admin = Depends(Admin.get_current)) -> Dict[str, List[dict]]:
     """Retrieve inbound configurations grouped by protocol.

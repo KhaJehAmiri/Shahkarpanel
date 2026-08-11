@@ -315,7 +315,8 @@ def notify_card_payment_submitted(db: Session, intent) -> None:
     """Push notify who must review this card payment.
 
     - Portal purchase/renew: owning reseller (or sudos when owner is sudo).
-    - Wallet top-up: all platform sudos (never the reseller who submitted).
+    - Wallet top-up: parent reseller for sub-resellers; platform sudos for
+      top-level resellers (never the reseller who submitted).
     """
     from app.db.models import Admin
 
@@ -323,11 +324,15 @@ def notify_card_payment_submitted(db: Session, intent) -> None:
         targets: Set[int] = set()
         kind = getattr(intent, "kind", None) or ""
         if kind == "topup":
-            for row in db.query(Admin.id).filter(Admin.is_sudo.is_(True)).all():
-                targets.add(int(row[0] if isinstance(row, tuple) else row.id))
             owner = None
             if getattr(intent, "admin_id", None):
                 owner = db.query(Admin).filter(Admin.id == int(intent.admin_id)).first()
+            parent_id = getattr(owner, "parent_admin_id", None) if owner is not None else None
+            if parent_id:
+                targets.add(int(parent_id))
+            else:
+                for row in db.query(Admin.id).filter(Admin.is_sudo.is_(True)).all():
+                    targets.add(int(row[0] if isinstance(row, tuple) else row.id))
             amount = int(intent.amount or 0)
             who = (owner.username if owner else None) or f"#{intent.id}"
             title = "شارژ کیف‌پول نماینده"

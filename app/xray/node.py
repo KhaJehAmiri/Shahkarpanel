@@ -3,6 +3,7 @@ import os
 import socket
 import re
 import ssl
+import struct
 import tempfile
 import threading
 import time
@@ -29,6 +30,33 @@ from xray_api import XRay as XRayAPI
 # health tick restarted Xray again — a restart loop that dropped every session
 # on the node every couple of minutes while Xray was in fact running fine.
 NODE_API_READY_TIMEOUT = float(os.environ.get("NODE_API_READY_TIMEOUT", "30"))
+
+# Upper bound for a single blocking send on an RPyC channel. Without it, a node
+# that stops draining our socket (dead peer with no RST, saturated tunnel)
+# leaves ``SSLSocket.send`` blocking forever *while holding the node lock*, and
+# every usage / health / sync job that touches that node piles up behind it
+# until the panel looks frozen. Reads keep RPyC's own ``sync_request_timeout``.
+NODE_RPYC_SEND_TIMEOUT = float(os.environ.get("NODE_RPYC_SEND_TIMEOUT", "60"))
+
+
+def _bound_channel_sends(conn, seconds: float = NODE_RPYC_SEND_TIMEOUT) -> None:
+    """Apply ``SO_SNDTIMEO`` to an RPyC connection's socket (best effort)."""
+    if seconds <= 0:
+        return
+    try:
+        sock = conn._channel.stream.sock
+    except Exception:
+        return
+    whole = int(seconds)
+    micro = int((seconds - whole) * 1_000_000)
+    try:
+        sock.setsockopt(
+            socket.SOL_SOCKET,
+            socket.SO_SNDTIMEO,
+            struct.pack("@ll", whole, micro),
+        )
+    except Exception:
+        pass
 
 
 def _pem_peer_cert(address: str, port: int, timeout: float = 5.0) -> str:
@@ -425,38 +453,44 @@ class _LockedRemoteRoot:
         "xray_users_transfer",
         "channel_ping",
         "wg_sync_status_json",
+        "singbox_transfer",
+        "fetch_xray_version",
     })
     _FAST_FAIL_TIMEOUT_SEC = 2.0
 
     def __getattr__(self, name):
         node = object.__getattribute__(self, "_node")
-        with node._lock:
-            conn = getattr(node, "connection", None)
-            if conn is None or getattr(conn, "closed", True):
-                node.connect()
-            if not hasattr(node.connection.root, name):
-                raise AttributeError(name)
-
         fast = name in _LockedRemoteRoot._FAST_FAIL_METHODS
 
+        # Do not probe attribute existence under the lock. ``hasattr(root, name)``
+        # is itself an RPyC round-trip; on a stuck peer it held the lock for the
+        # full sync_request_timeout and parked every usage / sing-box / sub
+        # worker behind it. Missing methods raise AttributeError on the call.
+
         def _locked_call(*args, **kwargs):
-            timeout = _LockedRemoteRoot._FAST_FAIL_TIMEOUT_SEC if fast else None
-            acquired = node._lock.acquire(timeout=timeout) if timeout is not None else True
-            if timeout is not None:
-                if not acquired:
+            call_timeout = _LockedRemoteRoot._FAST_FAIL_TIMEOUT_SEC if fast else None
+            if call_timeout is not None:
+                got = node._lock.acquire(timeout=call_timeout)
+                if not got:
                     raise TimeoutError(
                         f"node RPyC busy (skipped fast call {name})"
                     )
             else:
-                node._lock.acquire()
-                acquired = True
+                # Operational calls (start/apply) still need the lock, but must
+                # not wait forever behind a wedged peer — 30s is enough for a
+                # healthy hand-off and short enough that orphaned threads die.
+                got = node._lock.acquire(timeout=30.0)
+                if not got:
+                    raise TimeoutError(f"node RPyC busy (skipped call {name})")
             try:
                 conn = getattr(node, "connection", None)
                 if conn is None or getattr(conn, "closed", True):
+                    if fast:
+                        raise ConnectionError("node RPyC not connected")
                     node.connect()
                 return getattr(node.connection.root, name)(*args, **kwargs)
             finally:
-                if acquired:
+                if got:
                     node._lock.release()
 
         return _locked_call
@@ -632,6 +666,7 @@ class RPyCXRayNode:
                         keepalive=True,
                         config={"sync_request_timeout": 15},
                     )
+                    _bound_channel_sends(conn)
                     self._verify_channel(conn)
                     self.connection = conn
                     if stale_conn is not None and stale_conn is not conn:
@@ -689,13 +724,32 @@ class RPyCXRayNode:
         conn = getattr(self, "connection", None)
         return conn is not None and not getattr(conn, "closed", True)
 
+    def has_live_rpyc(self) -> bool:
+        """True when the control channel is already open — never dials."""
+        conn = getattr(self, "connection", None)
+        return conn is not None and not getattr(conn, "closed", True)
+
+    def try_remote(self):
+        """``LockedRemoteRoot`` only if already connected; never dials."""
+        if not self.has_live_rpyc():
+            return None
+        return _LockedRemoteRoot(self)
+
     @property
     def remote(self):
-        with self._lock:
+        # Timed lock: a hung peer must not park every usage/sub thread forever
+        # behind ``connect()``. Callers that only need a live channel should
+        # prefer ``try_remote()``.
+        acquired = self._lock.acquire(timeout=2.0)
+        if not acquired:
+            raise TimeoutError("node RPyC busy (remote)")
+        try:
             conn = getattr(self, "connection", None)
             if conn is None or getattr(conn, "closed", True):
                 self.connect()
             return _LockedRemoteRoot(self)
+        finally:
+            self._lock.release()
 
     @property
     def api(self):

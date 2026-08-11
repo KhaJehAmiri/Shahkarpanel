@@ -7,12 +7,16 @@ from fastapi import HTTPException
 
 from app.models.user import UserResponse, UserStatus
 
-BlockReason = Literal["inactive", "data_limit", "expired", "family_schedule"]
+BlockReason = Literal[
+    "inactive", "data_limit", "expired", "family_schedule", "device_limit"
+]
 
 
-class SubscriptionAccess(TypedDict):
+class SubscriptionAccess(TypedDict, total=False):
     config_available: bool
     block_reason: Optional[BlockReason]
+    block_message: Optional[str]
+    minutes_left: Optional[int]
 
 
 def _family_schedule_blocks(user: UserResponse) -> bool:

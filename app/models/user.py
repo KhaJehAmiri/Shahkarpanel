@@ -544,6 +544,10 @@ class SubscriptionUserResponse(UserResponse):
     auto_delete_in_days: int | None = Field(None, exclude=True)
     config_available: bool = True
     block_reason: str | None = None
+    block_message: str | None = None
+    minutes_left: int | None = None
+    lockout_seconds_left: int | None = None
+    blocked_devices: List[dict] = []
     public_subscription_url: str | None = None
     subscription_urls: List[dict] = []
     hysteria2_link: str | None = None

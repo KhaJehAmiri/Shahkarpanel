@@ -11,13 +11,24 @@ type WarpStore = {
   accounts?: Record<string, { tag?: string }>;
 };
 
+type WarpMode = "sensitive" | "full";
+
+function parseTags(raw: string | null | undefined, fallback: string): string[] {
+  const parts = String(raw || "")
+    .split(/[,;]/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return parts.length ? parts : [fallback];
+}
+
 export const NodeWarpSection: FC = () => {
   const { t } = useTranslation();
   const toast = useToast();
   const nodes = useFetch<NodeItem[]>(() => api.get("/nodes"), []);
   const warp = useFetch<WarpStore>(() => api.get("/core/warp"), []);
   const [busyId, setBusyId] = useState<number | null>(null);
-  const [draftTag, setDraftTag] = useState<Record<number, string>>({});
+  const [draftTags, setDraftTags] = useState<Record<number, string[]>>({});
+  const [draftMode, setDraftMode] = useState<Record<number, WarpMode>>({});
 
   const tags = useMemo(() => {
     const keys = Object.keys(warp.data?.accounts || {});
@@ -26,20 +37,27 @@ export const NodeWarpSection: FC = () => {
   }, [warp.data]);
 
   const eligibleNodes = useMemo(() => {
-    // WARP is injected via build_node_xray_config, which also runs on
-    // wireguard-core nodes that still host an Xray agent (e.g. xray_wg).
     return (nodes.data || []).filter((n) => n.status !== "disabled");
   }, [nodes.data]);
 
-  const tagFor = (n: NodeItem) => draftTag[n.id] || n.warp_tag || tags[0] || "warp";
+  const tagsFor = (n: NodeItem) =>
+    draftTags[n.id] || parseTags(n.warp_tag, tags[0] || "warp");
+  const modeFor = (n: NodeItem): WarpMode =>
+    draftMode[n.id] || (n.warp_mode === "full" ? "full" : "sensitive");
 
-  const apply = async (node: NodeItem, enabled: boolean, tag: string) => {
+  const apply = async (
+    node: NodeItem,
+    enabled: boolean,
+    selected: string[],
+    mode: WarpMode,
+  ) => {
+    const tag = (selected.length ? selected : [tags[0] || "warp"]).join(",");
     setBusyId(node.id);
     try {
-      await api.put(`/node/${node.id}/warp`, { enabled, tag });
+      await api.put(`/node/${node.id}/warp`, { enabled, tag, mode });
       toast.push(
         enabled
-          ? t("warp.nodeEnabled", { name: node.name, tag })
+          ? t("warp.nodeEnabled", { name: node.name, tag, mode })
           : t("warp.nodeDisabled", { name: node.name }),
         "success",
       );
@@ -51,9 +69,25 @@ export const NodeWarpSection: FC = () => {
     }
   };
 
+  const toggleTag = (node: NodeItem, tag: string, mode: WarpMode, enabled: boolean) => {
+    const current = tagsFor(node);
+    const next = current.includes(tag)
+      ? current.filter((x) => x !== tag)
+      : [...current, tag];
+    const resolved = next.length ? next : [tag];
+    setDraftTags((prev) => ({ ...prev, [node.id]: resolved }));
+    if (enabled) void apply(node, true, resolved, mode);
+  };
+
   const kindLabel = (n: NodeItem) => {
     const kind = n.core_kind || "xray";
     return kind === "wireguard" ? "WireGuard + Xray" : "Xray";
+  };
+
+  const statusPill = (n: NodeItem) => {
+    if (!n.warp_enabled) return <Pill tone="default">{t("warp.nodeOff")}</Pill>;
+    if (n.warp_mode === "full") return <Pill tone="warn" dot>{t("warp.modeFullShort")}</Pill>;
+    return <Pill tone="ok" dot>{t("warp.modeSensitiveShort")}</Pill>;
   };
 
   return (
@@ -79,6 +113,7 @@ export const NodeWarpSection: FC = () => {
                 <tr>
                   <th>{t("common.name")}</th>
                   <th>{t("common.status")}</th>
+                  <th>{t("warp.modeLabel")}</th>
                   <th>{t("warp.newTag")}</th>
                   <th className="sk-actions">{t("common.actions")}</th>
                 </tr>
@@ -86,7 +121,8 @@ export const NodeWarpSection: FC = () => {
               <tbody>
                 {eligibleNodes.map((n) => {
                   const enabled = Boolean(n.warp_enabled);
-                  const tag = tagFor(n);
+                  const selected = tagsFor(n);
+                  const mode = modeFor(n);
                   const busy = busyId === n.id;
                   return (
                     <tr key={n.id}>
@@ -96,31 +132,65 @@ export const NodeWarpSection: FC = () => {
                           <span className="sk-proto-name-sub">{kindLabel(n)}</span>
                         </div>
                       </td>
-                      <td>
-                        {enabled ? (
-                          <Pill tone="ok" dot>{t("warp.nodeOn")}</Pill>
-                        ) : (
-                          <Pill tone="default">{t("warp.nodeOff")}</Pill>
-                        )}
-                      </td>
-                      <td style={{ minWidth: 140 }}>
+                      <td>{statusPill(n)}</td>
+                      <td style={{ minWidth: 150 }}>
                         <Select
-                          value={tag}
-                          disabled={busy || !tags.length}
+                          value={mode}
+                          disabled={busy}
                           onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
-                            const next = e.target.value;
-                            setDraftTag((prev) => ({ ...prev, [n.id]: next }));
-                            if (enabled) void apply(n, true, next);
+                            const next = e.target.value as WarpMode;
+                            setDraftMode((prev) => ({ ...prev, [n.id]: next }));
+                            if (enabled) void apply(n, true, selected, next);
                           }}
                         >
-                          {tags.map((tg) => (
-                            <option key={tg} value={tg}>{tg}</option>
-                          ))}
+                          <option value="sensitive">{t("warp.modeSensitive")}</option>
+                          <option value="full">{t("warp.modeFull")}</option>
                         </Select>
+                      </td>
+                      <td style={{ minWidth: 180 }}>
+                        {mode === "sensitive" && tags.length > 1 ? (
+                          <div className="sk-stack" style={{ gap: 4 }}>
+                            {tags.map((tg) => (
+                              <label
+                                key={tg}
+                                style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 12 }}
+                              >
+                                <input
+                                  type="checkbox"
+                                  disabled={busy}
+                                  checked={selected.includes(tg)}
+                                  onChange={() => toggleTag(n, tg, mode, enabled)}
+                                />
+                                {tg}
+                              </label>
+                            ))}
+                            <div className="sk-faint" style={{ fontSize: 11 }}>
+                              {t("warp.multiTagHint")}
+                            </div>
+                          </div>
+                        ) : (
+                          <Select
+                            value={selected[0] || tags[0]}
+                            disabled={busy || !tags.length}
+                            onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
+                              const next = [e.target.value];
+                              setDraftTags((prev) => ({ ...prev, [n.id]: next }));
+                              if (enabled) void apply(n, true, next, mode);
+                            }}
+                          >
+                            {tags.map((tg) => (
+                              <option key={tg} value={tg}>{tg}</option>
+                            ))}
+                          </Select>
+                        )}
                       </td>
                       <td className="sk-actions">
                         {enabled ? (
-                          <Button size="sm" disabled={busy} onClick={() => void apply(n, false, tag)}>
+                          <Button
+                            size="sm"
+                            disabled={busy}
+                            onClick={() => void apply(n, false, selected, mode)}
+                          >
                             {t("common.disable")}
                           </Button>
                         ) : (
@@ -128,7 +198,7 @@ export const NodeWarpSection: FC = () => {
                             size="sm"
                             variant="primary"
                             disabled={busy || !Object.keys(warp.data?.accounts || {}).length}
-                            onClick={() => void apply(n, true, tag)}
+                            onClick={() => void apply(n, true, selected, mode)}
                           >
                             {t("warp.enableOnNode")}
                           </Button>

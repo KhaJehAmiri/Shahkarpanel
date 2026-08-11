@@ -31,7 +31,17 @@ _RESERVED_SUB_PATHS = frozenset({
 })
 
 
-def reseller_endpoint_slug(tenant_id: Optional[int]) -> str:
+def reseller_endpoint_slug(
+    tenant_id: Optional[int],
+    admin_id: Optional[int] = None,
+) -> str:
+    """Slug for a reseller subscription endpoint.
+
+    Sub-resellers get ``reseller-a{admin_id}`` so their domain/path never
+    overwrites the tenant owner's ``reseller-{tenant_id}`` endpoint.
+    """
+    if admin_id is not None:
+        return f"reseller-a{int(admin_id)}"
     if tenant_id is None:
         return "branding-global"
     return f"reseller-{int(tenant_id)}"
@@ -352,7 +362,15 @@ def sample_subscription_url(
 def get_reseller_subscription_endpoint(
     db: Session,
     tenant_id: Optional[int],
+    admin_id: Optional[int] = None,
 ) -> Optional[SubscriptionEndpoint]:
+    """Prefer the admin-scoped endpoint, then fall back to the tenant owner."""
+    if admin_id is not None:
+        ep = crud.get_subscription_endpoint_by_slug(
+            db, reseller_endpoint_slug(tenant_id, admin_id=admin_id)
+        )
+        if ep and ep.enabled and (ep.host or "").strip():
+            return ep
     ep = crud.get_subscription_endpoint_by_slug(db, reseller_endpoint_slug(tenant_id))
     if ep and ep.enabled and (ep.host or "").strip():
         return ep
@@ -370,6 +388,26 @@ def tenant_id_for_user(db: Session, user: "UserResponse | User") -> Optional[int
     return getattr(admin, "tenant_id", None) if admin else None
 
 
+def admin_id_for_user(db: Session, user: "UserResponse | User") -> Optional[int]:
+    """Owning admin id for subscription branding / endpoint resolution."""
+    admin_id = getattr(user, "admin_id", None)
+    if admin_id is None and getattr(user, "username", None):
+        row = crud.get_user(db, user.username)
+        admin_id = getattr(row, "admin_id", None) if row else None
+    return int(admin_id) if admin_id is not None else None
+
+
+def branding_admin_id_for_user(db: Session, user: "UserResponse | User") -> Optional[int]:
+    """Admin id used for isolated branding (sub-reseller), else None."""
+    from app.tenant import branding_scope_admin_id
+
+    admin_id = admin_id_for_user(db, user)
+    if admin_id is None:
+        return None
+    admin = db.query(Admin).filter(Admin.id == admin_id).first()
+    return branding_scope_admin_id(db, admin)
+
+
 def ensure_reseller_subscription_endpoint(
     db: Session,
     tenant_id: Optional[int],
@@ -377,10 +415,11 @@ def ensure_reseller_subscription_endpoint(
     *,
     sub_path: Optional[str] = None,
     sub_port: Optional[int] = None,
+    admin_id: Optional[int] = None,
 ) -> Optional[SubscriptionEndpoint]:
     """Create/update/disable the subscription endpoint for a branding domain."""
     host = _normalize_domain(domain)
-    slug = reseller_endpoint_slug(tenant_id)
+    slug = reseller_endpoint_slug(tenant_id, admin_id=admin_id)
     ep = crud.get_subscription_endpoint_by_slug(db, slug)
     default = crud.get_default_subscription_endpoint(db)
     default_path = (
@@ -494,16 +533,22 @@ def ensure_reseller_subscription_endpoint(
 def sync_branding_subscription_domain(
     db: Session,
     tenant_id: Optional[int],
+    *,
+    admin_id: Optional[int] = None,
 ) -> Optional[SubscriptionEndpoint]:
-    row = (
-        db.query(BrandingSettings)
-        .filter(
-            BrandingSettings.tenant_id.is_(None)
-            if tenant_id is None
-            else BrandingSettings.tenant_id == tenant_id
+    if admin_id is not None:
+        row = (
+            db.query(BrandingSettings)
+            .filter(BrandingSettings.admin_id == int(admin_id))
+            .first()
         )
-        .first()
-    )
+    else:
+        q = db.query(BrandingSettings).filter(BrandingSettings.admin_id.is_(None))
+        if tenant_id is None:
+            q = q.filter(BrandingSettings.tenant_id.is_(None))
+        else:
+            q = q.filter(BrandingSettings.tenant_id == tenant_id)
+        row = q.first()
     return ensure_reseller_subscription_endpoint(
         db,
         tenant_id,
@@ -513,4 +558,5 @@ def sync_branding_subscription_domain(
         domain_from_branding(row, allow_panel_url=False),
         sub_path=getattr(row, "sub_path", None) if row else None,
         sub_port=getattr(row, "sub_port", None) if row else None,
+        admin_id=admin_id,
     )

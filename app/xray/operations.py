@@ -728,7 +728,20 @@ def _connect_node_session(dbnode, node):
             dial_port=local_control,
             dial_api_port=local_api,
         )
-        tunneled.connect()
+        try:
+            tunneled.connect()
+        except Exception as tun_conn_exc:
+            try:
+                from app.control_tunnel import remember_control_tunnel_deny
+
+                remember_control_tunnel_deny(
+                    host, reason=f"tls handshake over ssh -L failed: {tun_conn_exc}"
+                )
+            except Exception:
+                pass
+            raise ConnectionError(
+                f"{direct_exc}. Control tunnel TLS failed: {tun_conn_exc}"
+            ) from direct_exc
         return tunneled
 
 
@@ -809,6 +822,14 @@ def _force_control_tunnel_session(
         tunneled.connect()
     except Exception as exc:
         logger.debug("Control tunnel connect failed for node %s: %s", dbnode.id, exc)
+        try:
+            from app.control_tunnel import remember_control_tunnel_deny
+
+            remember_control_tunnel_deny(
+                host, reason=f"tls handshake over ssh -L failed: {exc}"
+            )
+        except Exception:
+            pass
         return None
     logger.info(
         "Node %s: using SSH control tunnel 127.0.0.1:%s (host %s) — %s",

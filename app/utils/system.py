@@ -36,8 +36,39 @@ class DiskStat():
     free: int
 
 
+# Cached CPU sample. ``psutil.cpu_percent(interval=None)`` is a process-global
+# delta since the *last* call — concurrent /system, Telegram, and Overview polls
+# steal each other's windows and Overview can show 0% (first call) or noisy
+# spikes that do not match ``top`` / ``htop``. A single background sampler keeps
+# the gauge aligned with real host utilization.
+_cpu_cached_percent: float = 0.0
+_cpu_cached_cores: int = 0
+_cpu_sampler_primed: bool = False
+
+
+def _sample_cpu_percent() -> float:
+    """Update and return system-wide CPU utilization (0–100)."""
+    global _cpu_cached_percent, _cpu_cached_cores, _cpu_sampler_primed
+    cores = psutil.cpu_count() or 1
+    _cpu_cached_cores = int(cores)
+    if not _cpu_sampler_primed:
+        # Discard the mandatory meaningless first reading, then take a real sample.
+        psutil.cpu_percent(interval=None)
+        _cpu_cached_percent = float(psutil.cpu_percent(interval=0.25))
+        _cpu_sampler_primed = True
+    else:
+        _cpu_cached_percent = float(psutil.cpu_percent(interval=None))
+    return _cpu_cached_percent
+
+
 def cpu_usage() -> CPUStat:
-    return CPUStat(cores=psutil.cpu_count(), percent=psutil.cpu_percent())
+    """Return last sampled CPU % (panel host). Prefer cache; sample once if cold."""
+    if not _cpu_sampler_primed:
+        _sample_cpu_percent()
+    return CPUStat(
+        cores=_cpu_cached_cores or (psutil.cpu_count() or 1),
+        percent=float(_cpu_cached_percent),
+    )
 
 
 def memory_usage() -> MemoryStat:
@@ -278,6 +309,11 @@ def _nic_io_totals() -> tuple[int, int, int, int]:
 @scheduler.scheduled_job("interval", seconds=5, coalesce=True, max_instances=1)
 def record_realtime_bandwidth() -> None:
     global rt_bw
+    # Keep CPU gauge fresh on the same tick so Overview matches host top/htop.
+    try:
+        _sample_cpu_percent()
+    except Exception:
+        pass
     last_perf_counter = rt_bw.last_perf_counter
     sent, recv, pkts_sent, pkts_recv = _nic_io_totals()
     now = time.perf_counter()

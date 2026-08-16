@@ -273,11 +273,9 @@ def create_account_from_plan(
 
     logger = logging.getLogger("uvicorn.error")
 
-    username = (username or "").strip().lower()
-    if len(username) < 3 or len(username) > 32:
-        raise HTTPException(status_code=400, detail="Username must be 3–32 characters")
-    if crud.get_user(db, username):
-        raise HTTPException(status_code=409, detail="Username already exists")
+    from app.portal.username_check import require_available_portal_username
+
+    username = require_available_portal_username(db, username)
 
     proxies, inbounds = _protocol_blueprint_from_owner(owner)
     expire = compute_fresh_expire(plan)

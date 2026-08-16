@@ -64,6 +64,16 @@ _VPN_CLIENT_UA_RE = re.compile(
     r"mihomo|FLClash",
     re.I,
 )
+# Chat apps / crawlers fetch the sub URL for link previews — NOT a real VPN client.
+# Counting WhatsApp as "other" falsely locked 1-device accounts after sharing the link.
+_LINK_PREVIEW_UA_RE = re.compile(
+    r"WhatsApp|TelegramBot|Telegram|facebookexternalhit|Facebot|Twitterbot|"
+    r"Slackbot|Discordbot|LinkedInBot|SkypeUriPreview|Viber|Line/|"
+    r"Googlebot|bingbot|Baiduspider|YandexBot|Applebot|DuckDuckBot|"
+    r"preview|crawler|spider|bot/|"
+    r"^(got|curl|wget|python-requests|axios|Go-http-client|Java/)",
+    re.I,
+)
 
 
 def _is_browser_ua(user_agent: str = "") -> bool:
@@ -73,6 +83,16 @@ def _is_browser_ua(user_agent: str = "") -> bool:
     if _VPN_CLIENT_UA_RE.search(ua):
         return False
     return True
+
+
+def _is_link_preview_ua(user_agent: str = "") -> bool:
+    """True for messengers/crawlers that must never occupy a device slot."""
+    ua = (user_agent or "").strip()
+    if not ua:
+        return False
+    if _VPN_CLIENT_UA_RE.search(ua):
+        return False
+    return bool(_LINK_PREVIEW_UA_RE.search(ua))
 
 
 def _parse_ips(raw: Optional[str]) -> dict[str, Any]:
@@ -247,8 +267,10 @@ def _active_platform_slots(
     """
     slots: set[str] = set()
     for key, value in ips.items():
-        if isinstance(value, dict) and _is_browser_ua(str(value.get("ua") or "")):
-            continue
+        if isinstance(value, dict):
+            ua = str(value.get("ua") or "")
+            if _is_browser_ua(ua) or _is_link_preview_ua(ua):
+                continue
         if not _entry_is_active(value, now, window):
             # Legacy bare-IP keys.
             if (
@@ -714,6 +736,9 @@ def record_and_check_device_limit(
     # Opening the subscribe web UI (PC or phone browser) must not create a
     # platform slot — that was locking brand-new accounts on first app import.
     if _is_browser_ua(ua):
+        return
+    # WhatsApp/Telegram/etc. link-preview fetches are not VPN clients.
+    if _is_link_preview_ua(ua):
         return
     if _is_infrastructure_ip(client_ip) and not hw and not ua:
         return

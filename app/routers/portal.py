@@ -272,6 +272,18 @@ def portal_me(
     return _portal_profile(dbuser, support_url=_resolve_support_url(db, dbuser))
 
 
+@router.get("/username-check")
+def portal_username_check(
+    username: str = "",
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_portal_user),
+):
+    """Live check for buy-new-account username (format + taken)."""
+    from app.portal.username_check import check_portal_username
+
+    return check_portal_username(db, username)
+
+
 @router.get("/plans", response_model=List[PortalPlan])
 def portal_plans(
     db: Session = Depends(get_db),

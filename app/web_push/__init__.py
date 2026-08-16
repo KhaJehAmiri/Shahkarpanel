@@ -160,30 +160,91 @@ def delete_subscription(db: Session, *, admin_id: int, endpoint: str) -> bool:
 
 
 def _send_one(sub, payload: dict, vapid_claims: dict, vapid_private: str) -> str:
-    """Return 'ok', 'gone', or 'error'."""
+    """Return 'ok', 'gone', or 'error'.
+
+    TTL is 7 days so offline / Doze phones still receive after the panel has
+    been closed for a day. Urgency=high asks the push service to wake the device.
+    Apple rejects some Topic values (``BadWebPushTopic``); we retry without Topic.
+    """
+    import re
+    import time
+    from urllib.parse import urlparse
+
     from pywebpush import WebPushException, webpush
 
+    endpoint = getattr(sub, "endpoint", "") or ""
+    host = ""
+    aud = ""
     try:
-        webpush(
-            subscription_info={
-                "endpoint": sub.endpoint,
-                "keys": {"p256dh": sub.p256dh, "auth": sub.auth},
-            },
-            data=json.dumps(payload, ensure_ascii=False),
-            vapid_private_key=vapid_private,
-            vapid_claims=vapid_claims,
-            ttl=60 * 60 * 12,
-        )
-        return "ok"
-    except WebPushException as exc:
-        status = getattr(getattr(exc, "response", None), "status_code", None)
-        log.warning("web push failed admin=%s status=%s: %s", sub.admin_id, status, exc)
-        if status in (404, 410):
-            return "gone"
-        return "error"
-    except Exception as exc:
-        log.warning("web push error admin=%s: %s", sub.admin_id, exc)
-        return "error"
+        parsed = urlparse(endpoint)
+        host = (parsed.netloc or "").lower()
+        if parsed.scheme and parsed.netloc:
+            aud = f"{parsed.scheme}://{parsed.netloc}"
+    except Exception:
+        aud = ""
+
+    base_claims = dict(vapid_claims or {})
+    if aud and "aud" not in base_claims:
+        base_claims["aud"] = aud
+
+    # Apple often returns BadWebPushTopic even for "valid" topics — skip Topic there.
+    # Other push services can still use a sanitized Topic for collapse.
+    is_apple = "apple.com" in host or "push.apple.com" in host
+    attempts = [{"headers": {"Urgency": "high"}, "claims": base_claims}]
+    if not is_apple:
+        raw_tag = str((payload or {}).get("tag") or "skpush")
+        topic = re.sub(r"[^A-Za-z0-9._-]", "", raw_tag)[:32] or "skpush"
+        attempts.insert(0, {"headers": {"Urgency": "high", "Topic": topic}, "claims": base_claims})
+    attempts.append({"headers": None, "claims": base_claims})
+    last_exc = None
+    for attempt, opts in enumerate(attempts):
+        try:
+            webpush(
+                subscription_info={
+                    "endpoint": sub.endpoint,
+                    "keys": {"p256dh": sub.p256dh, "auth": sub.auth},
+                },
+                data=json.dumps(payload, ensure_ascii=False),
+                vapid_private_key=vapid_private,
+                vapid_claims=dict(opts["claims"]),
+                ttl=60 * 60 * 24 * 7,
+                headers=opts["headers"],
+                timeout=15,
+            )
+            return "ok"
+        except WebPushException as exc:
+            last_exc = exc
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            body = ""
+            try:
+                body = (exc.response.text or "")[:240] if exc.response is not None else ""
+            except Exception:
+                body = ""
+            log.warning(
+                "web push failed admin=%s status=%s attempt=%s body=%s",
+                sub.admin_id,
+                status,
+                attempt + 1,
+                body or exc,
+            )
+            if status in (404, 410):
+                return "gone"
+            # Stale Mozilla/Apple auth often comes back as 401/403 — drop the row.
+            if status in (401, 403) and attempt == len(attempts) - 1:
+                return "gone"
+            time.sleep(0.25 * (attempt + 1))
+        except Exception as exc:
+            last_exc = exc
+            log.warning(
+                "web push error admin=%s attempt=%s: %s",
+                sub.admin_id,
+                attempt + 1,
+                exc,
+            )
+            time.sleep(0.25 * (attempt + 1))
+    if last_exc is not None:
+        log.warning("web push gave up admin=%s: %s", sub.admin_id, last_exc)
+    return "error"
 
 
 def panel_url(route: str = "billing", query: str = "") -> str:
@@ -372,6 +433,53 @@ def notify_card_payment_submitted(db: Session, intent) -> None:
         )
     except Exception as exc:
         log.warning("card payment push notify failed: %s", exc)
+
+
+def schedule_notify_card_payment(intent_id: int) -> None:
+    """Fire card-payment push in a daemon thread with retries.
+
+    Must not run inside the HTTP request: pywebpush latency / FCM blips used to
+    swallow the notify under ``except: pass`` before the phone ever woke up.
+    """
+    import threading
+    import time
+
+    def _run() -> None:
+        from app.db import GetDB
+        from app.db.models import PaymentIntent
+
+        for attempt in range(4):
+            try:
+                with GetDB() as db:
+                    intent = (
+                        db.query(PaymentIntent)
+                        .filter(PaymentIntent.id == int(intent_id))
+                        .first()
+                    )
+                    if intent is None:
+                        return
+                    notify_card_payment_submitted(db, intent)
+                    try:
+                        from app.portal_push import notify_portal_payment
+
+                        notify_portal_payment(db, intent, event="submitted")
+                    except Exception as exc:
+                        log.warning("portal push after card submit failed: %s", exc)
+                return
+            except Exception as exc:
+                log.warning(
+                    "schedule_notify_card_payment attempt=%s id=%s: %s",
+                    attempt + 1,
+                    intent_id,
+                    exc,
+                )
+                time.sleep(1.2 * (attempt + 1))
+
+    threading.Thread(
+        target=_run,
+        name=f"webpush-card-{intent_id}",
+        daemon=True,
+    ).start()
 
 
 def notify_topup_result(

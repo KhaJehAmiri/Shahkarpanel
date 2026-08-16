@@ -6,6 +6,7 @@ and dials ``127.0.0.1`` instead. Client traffic still uses ``provision_host``.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shutil
@@ -69,22 +70,89 @@ def dial_endpoints(node_id: int) -> Optional[Tuple[str, int, int]]:
         return ("127.0.0.1", tun.local_control, tun.local_api)
 
 
+def _deny_file_path():
+    try:
+        from app.provisioning.node_ssh import DEFAULT_SECRETS_DIR, _secrets_dirs
+
+        for directory in _secrets_dirs():
+            path = directory / "control_tunnel_deny.json"
+            if path.is_file():
+                return path
+        return DEFAULT_SECRETS_DIR / "control_tunnel_deny.json"
+    except Exception:
+        return None
+
+
+def _load_denied_hosts() -> set[str]:
+    """Operator deny list: env ``SHAHKAR_CONTROL_TUNNEL_DENY`` + secrets JSON.
+
+    No hostnames/IPs belong in code. On some Iran paths ``ssh -L`` accepts TCP
+    but the TLS handshake hangs; those hosts should be listed in env or
+    ``control_tunnel_deny.json`` (and are also learned automatically).
+    """
+    raw = os.environ.get("SHAHKAR_CONTROL_TUNNEL_DENY", "")
+    deny = {h.strip().lower() for h in raw.split(",") if h.strip()}
+    path = _deny_file_path()
+    if path is None or not path.is_file():
+        return deny
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return deny
+    if isinstance(data, dict):
+        hosts = data.get("hosts") or data.get("deny") or list(data.keys())
+    elif isinstance(data, list):
+        hosts = data
+    else:
+        hosts = []
+    for host in hosts:
+        h = str(host or "").strip().lower()
+        if h:
+            deny.add(h)
+    return deny
+
+
 def _tunnel_denied(host: str) -> bool:
-    """Hosts where SSH local-forward breaks TLS (direct path still works)."""
+    """True when SSH local-forward must not be used for this host."""
     host = (host or "").strip().lower()
     if not host:
         return False
-    raw = os.environ.get("SHAHKAR_CONTROL_TUNNEL_DENY", "")
-    deny = {h.strip().lower() for h in raw.split(",") if h.strip()}
-    # Measured 2026-08-02 on panel 107: ``ssh -L …:62050`` to wir2 accepts TCP
-    # but TLS handshake hangs; direct ``wir2.serverab.ir:62050`` completes in ~0.1s.
-    # Forcing the control tunnel left the node stuck in SSL timeout / connecting.
-    deny.add("wir2.serverab.ir")
-    # wir1: same TLS-over-ssh-forward hang; direct :62050 handshakes fine.
-    # Large-config pushes must stay on the direct path (with slim relay configs).
-    deny.add("wir1.serverad.ir")
-    deny.add("37.32.40.53")
-    return host in deny
+    return host in _load_denied_hosts()
+
+
+def remember_control_tunnel_deny(host: str, *, reason: str = "") -> None:
+    """Persist a host that cannot use SSH local-forward (direct path instead)."""
+    host = (host or "").strip().lower()
+    if not host or host in ("127.0.0.1", "localhost", "::1"):
+        return
+    path = _deny_file_path()
+    if path is None:
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data: dict = {"hosts": []}
+        if path.is_file():
+            try:
+                loaded = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict) and isinstance(loaded.get("hosts"), list):
+                    data = loaded
+                elif isinstance(loaded, list):
+                    data = {"hosts": loaded}
+            except (OSError, ValueError, TypeError):
+                pass
+        hosts = [str(h).strip().lower() for h in (data.get("hosts") or []) if str(h).strip()]
+        if host in hosts:
+            return
+        hosts.append(host)
+        data["hosts"] = sorted(set(hosts))
+        if reason:
+            notes = data.setdefault("notes", {})
+            if isinstance(notes, dict):
+                notes[host] = reason
+        path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        logger.info("Control-tunnel deny learned for %s (%s)", host, reason or "tls-over-ssh-forward failed")
+    except OSError:
+        pass
 
 
 def has_ssh_for_host(host: str) -> bool:
@@ -220,6 +288,8 @@ def ensure_node_tunnel(
     if host in ("127.0.0.1", "localhost", "::1"):
         # Already dialing loopback — nothing to tunnel.
         return remote_port, remote_api_port
+    if _tunnel_denied(host):
+        raise TunnelError(f"SSH control tunnel disabled for {host} (direct path required)")
 
     lc, la = local_ports(node_id)
     with _lock:

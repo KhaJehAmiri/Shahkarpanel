@@ -1,5 +1,6 @@
 /* Shahkar admin / reseller service worker — PWA + Web Push + app icon badge */
-const CACHE = "sk-shell-v3";
+const CACHE = "sk-shell-v4";
+const PUSH_META = "sk-push-meta-v1";
 const PRECACHE = [
   "/brand/pwa-192.png",
   "/brand/pwa-512.png",
@@ -178,5 +179,74 @@ self.addEventListener("message", (event) => {
     event.waitUntil(applyAppBadge(n));
   } else if (msg.type === "sk-clear-badge" && msg.allowClear === true) {
     event.waitUntil(applyAppBadge(0));
+  } else if (msg.type === "sk-push-meta" && msg.meta) {
+    event.waitUntil(
+      caches.open(PUSH_META).then((cache) =>
+        cache.put(
+          "/meta",
+          new Response(JSON.stringify(msg.meta), {
+            headers: { "Content-Type": "application/json" },
+          }),
+        ),
+      ),
+    );
   }
+});
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+/** Browser rotated the push endpoint while the panel was closed — re-register. */
+self.addEventListener("pushsubscriptionchange", (event) => {
+  event.waitUntil(
+    (async () => {
+      const clients = await self.clients.matchAll({
+        type: "window",
+        includeUncontrolled: true,
+      });
+      for (const client of clients) {
+        try {
+          client.postMessage({ type: "sk-push-resubscribe" });
+        } catch (_) {}
+      }
+
+      let meta = null;
+      try {
+        const cache = await caches.open(PUSH_META);
+        const res = await cache.match("/meta");
+        if (res) meta = await res.json();
+      } catch (_) {}
+      if (!meta || !meta.vapidPublicKey || !meta.accessToken || !meta.apiBase) return;
+
+      try {
+        const sub = await self.registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(meta.vapidPublicKey),
+        });
+        const json = sub.toJSON();
+        if (!json.endpoint || !json.keys || !json.keys.p256dh || !json.keys.auth) return;
+        const base = String(meta.apiBase).replace(/\/?$/, "/");
+        await fetch(`${base}push/subscribe`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${meta.accessToken}`,
+          },
+          body: JSON.stringify({
+            endpoint: json.endpoint,
+            keys: json.keys,
+            expirationTime: json.expirationTime ?? null,
+          }),
+        });
+      } catch (_) {
+        /* open panel later will re-subscribe */
+      }
+    })(),
+  );
 });

@@ -583,9 +583,9 @@ export function PortalProvider({ children }: { children: ReactNode }) {
   };
 
   const createFreeAccount = async (planId: number) => {
-    const uname = newUsername.trim();
-    if (uname.length < 3) {
-      showToast(pt(lang, "newUsername"));
+    const uname = newUsername.trim().toLowerCase();
+    if (!/^[a-z0-9_]{3,32}$/.test(uname)) {
+      showToast(pt(lang, "usernameInvalid"));
       return;
     }
     setBusy(true);
@@ -596,7 +596,10 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       setShopStep("mode");
       await refreshAfterAccountChange(uname);
     } catch (err: unknown) {
-      showToast(err instanceof Error ? err.message : pt(lang, "error"));
+      const msg = err instanceof Error ? err.message : pt(lang, "error");
+      if (/already exists|taken/i.test(msg)) showToast(pt(lang, "usernameTaken"));
+      else if (/3 to 32|a-z|underscore|invalid/i.test(msg)) showToast(pt(lang, "usernameInvalid"));
+      else showToast(msg);
     } finally {
       setBusy(false);
     }
@@ -621,9 +624,27 @@ export function PortalProvider({ children }: { children: ReactNode }) {
   const payPlan = async (planId: number, planName?: string) => {
     const isBuy = shopMode === "buy";
     const targetRenew = renewUsername || activeUsername;
-    if (isBuy && newUsername.trim().length < 3) {
-      showToast(pt(lang, "newUsername"));
-      return;
+    if (isBuy) {
+      const uname = newUsername.trim().toLowerCase();
+      if (!/^[a-z0-9_]{3,32}$/.test(uname)) {
+        showToast(pt(lang, "usernameInvalid"));
+        return;
+      }
+      try {
+        const check = await portalGet<{ valid: boolean; available: boolean; reason?: string | null }>(
+          `/portal/username-check?username=${encodeURIComponent(uname)}`,
+        );
+        if (!check.valid) {
+          showToast(pt(lang, check.reason === "too_short" ? "usernameTooShort" : "usernameInvalid"));
+          return;
+        }
+        if (!check.available) {
+          showToast(pt(lang, "usernameTaken"));
+          return;
+        }
+      } catch {
+        /* fall through — API create_payment also validates */
+      }
     }
     if (!isBuy && !targetRenew) {
       showToast(pt(lang, "selectAccount"));

@@ -372,11 +372,10 @@ def create_portal_payment(
     extra["expires_at"] = portal_payment_expires_at().isoformat() + "Z"
 
     if action == "purchase":
-        username = (new_username or "").strip().lower()
-        if len(username) < 3:
-            raise HTTPException(status_code=400, detail="New username required (3–32 chars)")
-        if crud.get_user(db, username):
-            raise HTTPException(status_code=409, detail="Username already exists")
+        from app.portal.username_check import require_available_portal_username
+
+        # Validate format + uniqueness before checkout so approve cannot fail later.
+        username = require_available_portal_username(db, new_username)
         # Refuse before the customer pays; the cap must never eat a paid intent.
         assert_can_add_account(db, dbuser)
         extra["new_username"] = username
@@ -491,15 +490,9 @@ def submit_card_payment(
     db.commit()
     db.refresh(intent)
     try:
-        from app.web_push import notify_card_payment_submitted
+        from app.web_push import schedule_notify_card_payment
 
-        notify_card_payment_submitted(db, intent)
-    except Exception:
-        pass
-    try:
-        from app.portal_push import notify_portal_payment
-
-        notify_portal_payment(db, intent, event="submitted")
+        schedule_notify_card_payment(int(intent.id))
     except Exception:
         pass
     return intent

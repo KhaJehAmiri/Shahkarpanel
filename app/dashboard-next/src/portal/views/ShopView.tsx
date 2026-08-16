@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronLeft, ChevronRight, PackagePlus, RefreshCw } from "lucide-react";
 import { bytes } from "@/lib/format";
+import { portalGet } from "@/lib/portal-api";
 import { PortalLang, pt } from "@/lib/portal-i18n";
 import { usePortal } from "../PortalContext";
 import type { CardCheckout, ShopStep } from "../types";
@@ -293,12 +294,54 @@ export function ShopView() {
     [plans, selectedPlanId],
   );
 
+  const [unameStatus, setUnameStatus] = useState<
+    "idle" | "checking" | "ok" | "invalid" | "taken" | "short"
+  >("idle");
+
   useEffect(() => {
     setSelectedPlanId(null);
   }, [shopStep, shopMode]);
 
+  useEffect(() => {
+    if (shopMode !== "buy") {
+      setUnameStatus("idle");
+      return;
+    }
+    const u = newUsername.trim().toLowerCase();
+    if (!u) {
+      setUnameStatus("idle");
+      return;
+    }
+    if (u.length < 3) {
+      setUnameStatus("short");
+      return;
+    }
+    if (!/^[a-z0-9_]{3,32}$/.test(u)) {
+      setUnameStatus("invalid");
+      return;
+    }
+    setUnameStatus("checking");
+    const t = window.setTimeout(() => {
+      portalGet<{ valid: boolean; available: boolean; reason?: string | null }>(
+        `/portal/username-check?username=${encodeURIComponent(u)}`,
+      )
+        .then((r) => {
+          if (newUsername.trim().toLowerCase() !== u) return;
+          if (!r.valid) setUnameStatus(r.reason === "too_short" ? "short" : "invalid");
+          else if (!r.available) setUnameStatus("taken");
+          else setUnameStatus("ok");
+        })
+        .catch(() => {
+          if (newUsername.trim().toLowerCase() === u) setUnameStatus("idle");
+        });
+    }, 350);
+    return () => window.clearTimeout(t);
+  }, [newUsername, shopMode]);
+
   const canContinueMode =
-    shopMode === "buy" ? newUsername.trim().length >= 3 : Boolean(renewUsername || activeUsername);
+    shopMode === "buy"
+      ? unameStatus === "ok"
+      : Boolean(renewUsername || activeUsername);
 
   // Free plans and wallet-billed renewals need no gateway/card at all, so an
   // empty method list must not disable the whole shop.
@@ -307,7 +350,9 @@ export function ShopView() {
     Boolean(selectedPlan) &&
     !busy &&
     !(needsCheckout && payMethods.length === 0 && shopMode === "buy") &&
-    (shopMode === "buy" ? newUsername.trim().length >= 3 : Boolean(renewUsername || activeUsername));
+    (shopMode === "buy"
+      ? unameStatus === "ok"
+      : Boolean(renewUsername || activeUsername));
 
   const contextHint =
     shopMode === "buy" ? pt(lang, "shopBuyCallout") : pt(lang, "shopRenewCallout");
@@ -418,13 +463,31 @@ export function ShopView() {
                 <label htmlFor="shop-new-user">{pt(lang, "newUsername")}</label>
                 <input
                   id="shop-new-user"
-                  className="p-input"
+                  className={`p-input${unameStatus === "invalid" || unameStatus === "taken" || unameStatus === "short" ? " is-invalid" : ""}${unameStatus === "ok" ? " is-ok" : ""}`}
                   dir="ltr"
                   autoComplete="username"
                   value={newUsername}
-                  onChange={(e) => setNewUsername(e.target.value.toLowerCase())}
+                  onChange={(e) => setNewUsername(e.target.value.toLowerCase().replace(/\s+/g, ""))}
                   placeholder={pt(lang, "username")}
+                  aria-invalid={unameStatus === "invalid" || unameStatus === "taken" || unameStatus === "short"}
+                  aria-describedby="shop-new-user-hint"
                 />
+                <p
+                  id="shop-new-user-hint"
+                  className={`p-shop-uname-hint${unameStatus === "ok" ? " is-ok" : ""}${(unameStatus === "invalid" || unameStatus === "taken" || unameStatus === "short") ? " is-err" : ""}`}
+                >
+                  {unameStatus === "checking"
+                    ? pt(lang, "usernameChecking")
+                    : unameStatus === "short"
+                      ? pt(lang, "usernameTooShort")
+                      : unameStatus === "invalid"
+                        ? pt(lang, "usernameInvalid")
+                        : unameStatus === "taken"
+                          ? pt(lang, "usernameTaken")
+                          : unameStatus === "ok"
+                            ? pt(lang, "usernameAvailable")
+                            : pt(lang, "usernameRules")}
+                </p>
               </div>
             ) : (
               <div className="p-field p-shop-field">

@@ -1489,6 +1489,31 @@ html.p-portal-lock .portal-theme.p-app-shell {
   max-width: none;
 }
 
+.p-shop-uname-hint {
+  margin: 8px 0 0;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--p-muted);
+}
+
+.p-shop-uname-hint.is-err {
+  color: #e35d6a;
+  font-weight: 600;
+}
+
+.p-shop-uname-hint.is-ok {
+  color: #2f9e6b;
+  font-weight: 600;
+}
+
+.p-input.is-invalid {
+  border-color: #e35d6a !important;
+}
+
+.p-input.is-ok {
+  border-color: #2f9e6b !important;
+}
+
 .p-shop-accounts {
   display: flex;
   flex-wrap: wrap;

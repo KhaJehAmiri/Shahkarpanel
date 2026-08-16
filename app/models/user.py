@@ -21,7 +21,10 @@ from app.subscription.share import generate_v2ray_links
 from app.utils.jwt import create_subscription_token
 from config import XRAY_SUBSCRIPTION_PATH, XRAY_SUBSCRIPTION_URL_PREFIX
 
-USERNAME_REGEXP = re.compile(r"^(?=\w{3,32}\b)[a-zA-Z0-9-_@.]+(?:_[a-zA-Z0-9-_@.]+)*$")
+# Keep in sync with portal live check + error copy shown to users.
+# Allow A–Z: EMG / 3x-ui imports keep mixed-case usernames (e.g. emg1_PUnm…).
+# Dots and other punctuation stay rejected (portal purchase safety).
+USERNAME_REGEXP = re.compile(r"^[a-zA-Z0-9_]{3,32}$")
 
 
 class ReminderType(str, Enum):
@@ -143,7 +146,7 @@ class User(BaseModel):
     def validate_username(cls, v):
         if not USERNAME_REGEXP.match(v):
             raise ValueError(
-                "Username only can be 3 to 32 characters and contain a-z, 0-9, and underscores in between."
+                "Username only can be 3 to 32 characters and contain a-z, A-Z, 0-9, and underscores."
             )
         return v
 

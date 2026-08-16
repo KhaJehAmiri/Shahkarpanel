@@ -117,27 +117,54 @@ def clear_portal_unread(db: Session, user_id: int) -> int:
 
 
 def _send_one(sub, payload: dict, vapid_claims: dict, vapid_private: str) -> str:
+    import re
+    import time
+    from urllib.parse import urlparse
+
     from pywebpush import WebPushException, webpush
 
+    raw_tag = str((payload or {}).get("tag") or "portal")
+    topic = re.sub(r"[^A-Za-z0-9._-]", "", raw_tag)[:32] or "portal"
+    aud = ""
     try:
-        webpush(
-            subscription_info={
-                "endpoint": sub.endpoint,
-                "keys": {"p256dh": sub.p256dh, "auth": sub.auth},
-            },
-            data=json.dumps(payload, ensure_ascii=False),
-            vapid_private_key=vapid_private,
-            vapid_claims=vapid_claims,
-            ttl=60 * 60 * 12,
-        )
-        return "ok"
-    except WebPushException as exc:
-        status = getattr(getattr(exc, "response", None), "status_code", None)
-        if status in (404, 410):
-            return "gone"
-        return "error"
+        parsed = urlparse(sub.endpoint or "")
+        if parsed.scheme and parsed.netloc:
+            aud = f"{parsed.scheme}://{parsed.netloc}"
     except Exception:
-        return "error"
+        pass
+    claims = dict(vapid_claims or {})
+    if aud and "aud" not in claims:
+        claims["aud"] = aud
+
+    for headers in (
+        {"Urgency": "high", "Topic": topic},
+        {"Urgency": "high"},
+        None,
+    ):
+        try:
+            webpush(
+                subscription_info={
+                    "endpoint": sub.endpoint,
+                    "keys": {"p256dh": sub.p256dh, "auth": sub.auth},
+                },
+                data=json.dumps(payload, ensure_ascii=False),
+                vapid_private_key=vapid_private,
+                vapid_claims=dict(claims),
+                ttl=60 * 60 * 24 * 7,
+                headers=headers,
+                timeout=15,
+            )
+            return "ok"
+        except WebPushException as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            if status in (404, 410):
+                return "gone"
+            if status in (401, 403) and headers is None:
+                return "gone"
+            time.sleep(0.25)
+        except Exception:
+            time.sleep(0.25)
+    return "error"
 
 
 def send_to_user_ids(

@@ -130,6 +130,24 @@ export async function subscribeWebPush(): Promise<boolean> {
     keys: json.keys,
     expirationTime: json.expirationTime ?? null,
   });
+  // Keep credentials in the SW cache so pushsubscriptionchange can refresh
+  // the endpoint even while the panel stays closed.
+  try {
+    const token = localStorage.getItem("nx_token");
+    const apiBase =
+      (typeof process !== "undefined" && process.env.NEXT_PUBLIC_BASE_API) || "/api/";
+    reg.active?.postMessage({
+      type: "sk-push-meta",
+      meta: {
+        vapidPublicKey: publicKey,
+        accessToken: token || "",
+        apiBase,
+        savedAt: Date.now(),
+      },
+    });
+  } catch {
+    /* ignore */
+  }
   void syncAdminAppBadge();
   return true;
 }
@@ -176,21 +194,36 @@ export function bindAdminBadgeLifecycle(): () => void {
   const sync = () => {
     void syncAdminAppBadge();
   };
+  const resub = () => {
+    if (Notification.permission === "granted") {
+      void subscribeWebPush().catch(() => undefined);
+    }
+  };
   sync();
+  resub();
   const onVis = () => {
-    if (document.visibilityState === "visible") sync();
+    if (document.visibilityState === "visible") {
+      sync();
+      resub();
+    }
   };
   document.addEventListener("visibilitychange", onVis);
   window.addEventListener("focus", sync);
+  window.addEventListener("focus", resub);
   const onMsg = (event: MessageEvent) => {
     if (event.data?.type === "sk-push-opened") sync();
+    if (event.data?.type === "sk-push-resubscribe") resub();
   };
   navigator.serviceWorker?.addEventListener?.("message", onMsg as EventListener);
   const t = window.setInterval(sync, 60_000);
+  // Re-upsert push subscription periodically so Apple/FCM endpoint stays fresh.
+  const tSub = window.setInterval(resub, 6 * 60 * 60 * 1000);
   return () => {
     document.removeEventListener("visibilitychange", onVis);
     window.removeEventListener("focus", sync);
+    window.removeEventListener("focus", resub);
     navigator.serviceWorker?.removeEventListener?.("message", onMsg as EventListener);
     window.clearInterval(t);
+    window.clearInterval(tSub);
   };
 }

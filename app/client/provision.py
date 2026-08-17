@@ -1,6 +1,8 @@
 """Auto-provision proxy types required by the SigmaGuard client API."""
 from typing import Iterable
 
+from sqlalchemy.exc import IntegrityError
+
 from app import feature_flags
 from app.db.models import Proxy, User
 from app.models.proxy import ProxySettings, ProxyTypes
@@ -48,6 +50,12 @@ def ensure_app_proxies(db, dbuser: User) -> bool:
         )
         changed = True
     if changed:
-        db.commit()
-        db.refresh(dbuser)
+        try:
+            db.commit()
+            db.refresh(dbuser)
+        except IntegrityError:
+            # Concurrent enable already inserted the same (user, type).
+            db.rollback()
+            db.refresh(dbuser)
+            return False
     return changed

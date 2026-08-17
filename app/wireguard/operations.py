@@ -325,6 +325,9 @@ def collect_wg_peers_uncached(db) -> List[WGUserPeer]:
 
     from app.wireguard.finalmask_shard import user_finalmask_slot
 
+    from app.db.models import WgPeer
+    from app.db.proxy_dedupe import choose_canonical_proxy
+
     peers: List[WGUserPeer] = []
     proxies = (
         db.query(Proxy)
@@ -332,7 +335,17 @@ def collect_wg_peers_uncached(db) -> List[WGUserPeer]:
         .filter(Proxy.type == ProxyTypes.WireGuard)
         .all()
     )
+    peer_keys = {
+        uid: (pub or "").strip()
+        for uid, pub in db.query(WgPeer.user_id, WgPeer.public_key).all()
+    }
+    by_user: dict = {}
     for proxy in proxies:
+        by_user.setdefault(proxy.user_id, []).append(proxy)
+    for user_id, rows in by_user.items():
+        proxy = choose_canonical_proxy(rows, wg_public_key=peer_keys.get(user_id))
+        if proxy is None:
+            continue
         settings = proxy.settings or {}
         public_key = settings.get("public_key")
         if not public_key:

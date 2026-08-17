@@ -516,7 +516,13 @@ class UserResponse(User):
     @field_validator("proxies", mode="before")
     def validate_proxies(cls, v, values, **kwargs):
         if isinstance(v, list):
-            v = {p.type: p.settings for p in v}
+            # Highest id wins so a leftover duplicate cannot hide the row
+            # subscription / .conf already exported.
+            ordered = sorted(
+                v,
+                key=lambda p: int(getattr(p, "id", 0) or 0),
+            )
+            v = {p.type: p.settings for p in ordered}
         return super().validate_proxies(v, values, **kwargs)
 
     @field_validator("used_traffic", "used_traffic_up", "used_traffic_down", "overage_traffic", "lifetime_used_traffic", mode='before')
@@ -608,7 +614,8 @@ class UserListItem(BaseModel):
     def proxies_dict(cls, v):
         if isinstance(v, list):
             out: Dict[str, Any] = {}
-            for proxy in v:
+            ordered = sorted(v, key=lambda p: int(getattr(p, "id", 0) or 0))
+            for proxy in ordered:
                 key = proxy.type.value if hasattr(proxy.type, "value") else str(proxy.type)
                 settings = proxy.settings
                 out[key] = settings if isinstance(settings, dict) else dict(settings or {})

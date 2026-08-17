@@ -330,6 +330,9 @@ class UserUsageResetLogs(Base):
 
 class Proxy(Base):
     __tablename__ = "proxies"
+    __table_args__ = (
+        UniqueConstraint("user_id", "type", name="uq_proxies_user_id_type"),
+    )
 
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), index=True)

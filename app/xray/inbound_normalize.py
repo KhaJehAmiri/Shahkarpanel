@@ -106,9 +106,70 @@ def _normalize_reality_settings(rs: Dict[str, Any]) -> bool:
     return changed
 
 
+def _xhttp_host_empty(xh: Dict[str, Any]) -> bool:
+    host = xh.get("host")
+    if host in (None, "", [], {}):
+        return True
+    if isinstance(host, list) and not any(str(x).strip() for x in host):
+        return True
+    if isinstance(host, str) and not host.strip():
+        return True
+    return False
+
+
+def _sni_hint_from_stream(stream: Dict[str, Any]) -> str | None:
+    rs = stream.get("realitySettings")
+    if isinstance(rs, dict):
+        names = rs.get("serverNames") or rs.get("serverName")
+        if isinstance(names, list):
+            for name in names:
+                sni = str(name or "").strip()
+                if sni:
+                    return sni
+        sni = str(names or "").strip()
+        if sni:
+            return sni
+    tls = stream.get("tlsSettings")
+    if isinstance(tls, dict):
+        sni = str(tls.get("serverName") or "").strip()
+        if sni:
+            return sni
+    return None
+
+
+def _normalize_xhttp_client_compat(stream: Dict[str, Any]) -> bool:
+    """``packet-up`` with an empty host only works if the client also uses
+    ``packet-up``. Stock clients send ``mode=auto`` and fail. Server ``auto``
+    accepts every XHTTP mode, so it is the compatible default when host is
+    missing. Also copy SNI into host so the HTTP request has a Host header.
+    """
+    net = str(stream.get("network") or "").lower()
+    if net not in ("xhttp", "splithttp"):
+        return False
+    key = "xhttpSettings" if isinstance(stream.get("xhttpSettings"), dict) else (
+        "splithttpSettings" if isinstance(stream.get("splithttpSettings"), dict) else None
+    )
+    if key is None:
+        return False
+    xh = stream[key]
+    changed = False
+    mode = str(xh.get("mode") or "auto").strip().lower()
+    if mode == "packet-up" and _xhttp_host_empty(xh):
+        xh["mode"] = "auto"
+        changed = True
+    if _xhttp_host_empty(xh):
+        hint = _sni_hint_from_stream(stream)
+        if hint:
+            xh["host"] = hint
+            changed = True
+    return changed
+
+
 def _normalize_inbound_stream(stream: Dict[str, Any]) -> bool:
     changed = False
     if migrate_legacy_quic_stream_settings(stream):
+        changed = True
+    if _normalize_xhttp_client_compat(stream):
         changed = True
     tls = stream.get("tlsSettings")
     if isinstance(tls, dict) and _normalize_tls_ech_fields(tls):

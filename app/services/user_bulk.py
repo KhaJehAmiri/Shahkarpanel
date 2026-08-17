@@ -883,10 +883,10 @@ class BulkEnableWireGuardResult(BaseModel):
 
 
 def _proxy_for_type(user: User, proxy_type: ProxyTypes) -> Optional[Proxy]:
-    for proxy in user.proxies or []:
-        if proxy.type == proxy_type:
-            return proxy
-    return None
+    from app.db.proxy_dedupe import choose_canonical_proxy
+
+    matches = [p for p in (user.proxies or []) if p.type == proxy_type]
+    return choose_canonical_proxy(matches)
 
 
 def _wg_labels(settings: Optional[dict]) -> List[str]:

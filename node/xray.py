@@ -19,8 +19,22 @@ def _stdin_xray_cmd_prefix(executable_path: str) -> list[str]:
     return [executable_path, "run", "-config", "stdin:"]
 
 
-def _find_stdin_xray_pids_via_proc(executable_path: str) -> list[int]:
-    prefix = _stdin_xray_cmd_prefix(executable_path)
+def _decode_proc_argv(raw: bytes) -> list[str]:
+    argv = raw.split(b"\0")
+    if argv and argv[-1] == b"":
+        argv.pop()
+    return [part.decode(errors="replace") for part in argv]
+
+
+def _is_xray_run_argv(argv: list[str], executable_path: str) -> bool:
+    if len(argv) < 2 or argv[1] != "run":
+        return False
+    exe = argv[0]
+    want_base = os.path.basename(executable_path) or "xray"
+    return exe == executable_path or os.path.basename(exe) == want_base
+
+
+def _find_xray_run_pids_via_proc(executable_path: str) -> list[int]:
     pids: list[int] = []
     try:
         proc_entries = os.listdir("/proc")
@@ -36,12 +50,23 @@ def _find_stdin_xray_pids_via_proc(executable_path: str) -> list[int]:
             continue
         if not raw:
             continue
-        argv = raw.split(b"\0")
-        if argv and argv[-1] == b"":
-            argv.pop()
-        decoded = [part.decode(errors="replace") for part in argv[: len(prefix)]]
-        if decoded == prefix:
+        argv = _decode_proc_argv(raw)
+        if _is_xray_run_argv(argv, executable_path):
             pids.append(int(entry))
+    return pids
+
+
+def _find_stdin_xray_pids_via_proc(executable_path: str) -> list[int]:
+    prefix = _stdin_xray_cmd_prefix(executable_path)
+    pids: list[int] = []
+    for pid in _find_xray_run_pids_via_proc(executable_path):
+        try:
+            with open(f"/proc/{pid}/cmdline", "rb") as fh:
+                argv = _decode_proc_argv(fh.read())
+        except OSError:
+            continue
+        if argv[: len(prefix)] == prefix:
+            pids.append(pid)
     return pids
 
 
@@ -62,6 +87,17 @@ def find_stdin_xray_pids(executable_path: str) -> list[int]:
         if line.strip().isdigit():
             pids.append(int(line.strip()))
     return pids
+
+
+def find_xray_run_pids(executable_path: str) -> list[int]:
+    """Return PIDs of any ``xray run …`` (stdin *or* file config).
+
+    A leftover ``xray run -c /var/lib/shahkarnode/xray.json`` on the same
+    UDP ports as the panel-managed stdin core makes Finalmask/Reality bind
+    fail or split traffic. ``/proc`` is the source of truth so a Python
+    helper whose cmdline mentions xray is not matched.
+    """
+    return _find_xray_run_pids_via_proc(executable_path)
 
 
 def _terminate_pids(pids: list[int], *, wait_sec: float = 5.0) -> None:
@@ -95,8 +131,10 @@ def _terminate_pids(pids: list[int], *, wait_sec: float = 5.0) -> None:
 
 
 def _kill_stale_stdin_xray(executable_path: str, keep_pid: int | None = None) -> None:
-    """Ensure no orphan ``xray run -config stdin`` survives a restart."""
-    pids = find_stdin_xray_pids(executable_path)
+    """Ensure no orphan Xray (stdin *or* file-config) survives a restart."""
+    pids = find_xray_run_pids(executable_path)
+    # Also catch stdin-only matches if /proc walk missed a path spelling.
+    pids.extend(find_stdin_xray_pids(executable_path))
     targets = [pid for pid in pids if not (keep_pid and pid == keep_pid)]
     _terminate_pids(targets)
 

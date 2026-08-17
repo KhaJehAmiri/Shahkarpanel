@@ -47,7 +47,6 @@ def provision_and_sync_wireguard_user(
 
 def _provision_and_sync(user_id: int, *, immediate: bool) -> bool:
     from app.db import GetDB, crud
-    from app.db.models import Proxy
     from app.models.proxy import ProxyTypes
     from app.models.user import UserStatus
     from app.wireguard.finalmask_reload import (
@@ -63,11 +62,9 @@ def _provision_and_sync(user_id: int, *, immediate: bool) -> bool:
         if dbuser is None:
             return False
 
-        proxy = (
-            db.query(Proxy)
-            .filter(Proxy.user_id == user_id, Proxy.type == ProxyTypes.WireGuard)
-            .first()
-        )
+        from app.db.proxy_dedupe import get_user_proxy
+
+        proxy = get_user_proxy(db, user_id, ProxyTypes.WireGuard)
         if proxy is None:
             return False
 

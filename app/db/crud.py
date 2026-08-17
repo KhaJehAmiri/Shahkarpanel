@@ -912,15 +912,21 @@ def update_user(
     Returns:
         User: The updated user object.
     """
+    from app.db.proxy_dedupe import get_user_proxy
     from app.models.proxy import apply_proxy_patch
 
     needs_disconnect = False
     added_proxies: Dict[ProxyTypes, Proxy] = {}
     if modify.proxies:
         for proxy_type, patch in modify.proxies.items():
-            dbproxy = db.query(Proxy) \
-                .where(Proxy.user == dbuser, Proxy.type == proxy_type) \
-                .first()
+            dbproxy = get_user_proxy(db, dbuser.id, proxy_type) if dbuser.id else None
+            if dbproxy is None:
+                dbproxy = (
+                    db.query(Proxy)
+                    .where(Proxy.user == dbuser, Proxy.type == proxy_type)
+                    .order_by(Proxy.id.desc())
+                    .first()
+                )
             if dbproxy:
                 dbproxy.settings = apply_proxy_patch(proxy_type, dbproxy.settings, patch)
             else:

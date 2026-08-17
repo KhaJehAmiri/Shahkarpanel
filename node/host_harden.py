@@ -5,6 +5,7 @@ Does not restrict egress (clients need full outbound); content blocks live in Xr
 """
 from __future__ import annotations
 
+import glob
 import logging
 import os
 import shutil
@@ -90,6 +91,67 @@ def ensure_fail2ban_ssh() -> bool:
         return False
 
 
+_LEFTOVER_UNIT_GLOBS = (
+    "backhaul-iran*.service",
+    "backhaul_premium*.service",
+    "backhaul-core*.service",
+)
+_SYSLOG_TRUNCATE_BYTES = 1_073_741_824  # 1 GiB
+
+
+def _iter_leftover_units() -> List[str]:
+    found: List[str] = []
+    for pattern in _LEFTOVER_UNIT_GLOBS:
+        found.extend(glob.glob(f"/etc/systemd/system/{pattern}"))
+        found.extend(glob.glob(f"/lib/systemd/system/{pattern}"))
+        found.extend(glob.glob(f"/usr/lib/systemd/system/{pattern}"))
+    # Unique basenames — systemctl wants the unit name, not the path.
+    names = []
+    seen = set()
+    for path in found:
+        name = os.path.basename(path)
+        if name in seen:
+            continue
+        seen.add(name)
+        names.append(name)
+    return names
+
+
+def cleanup_leftover_vendor_services() -> dict:
+    """Stop leftover backhaul-core leftovers that fill disk on reused VPS images.
+
+    Panel tunnels are Xray Reality, not ``/root/backhaul-core``. A previous
+    product left ``backhaul-iran*.service`` running and grew ``/var/log/syslog``
+    to tens of gigabytes until the node went read-only.
+    """
+    result = {"stopped": [], "truncated_logs": False}
+    units = _iter_leftover_units()
+    leftover_dir = os.path.isdir("/root/backhaul-core")
+    if not units and not leftover_dir:
+        return result
+    if not shutil.which("systemctl"):
+        return result
+    for unit in units:
+        stop = _run(["systemctl", "disable", "--now", unit], check=False)
+        if stop.returncode == 0:
+            result["stopped"].append(unit)
+            logger.warning("disabled leftover vendor unit %s", unit)
+        else:
+            _run(["systemctl", "stop", unit], check=False)
+            _run(["systemctl", "disable", unit], check=False)
+            result["stopped"].append(unit)
+    syslog = "/var/log/syslog"
+    try:
+        if result["stopped"] and os.path.isfile(syslog) and os.path.getsize(syslog) >= _SYSLOG_TRUNCATE_BYTES:
+            with open(syslog, "w", encoding="utf-8"):
+                pass
+            result["truncated_logs"] = True
+            logger.warning("truncated %s after leftover backhaul cleanup", syslog)
+    except OSError as exc:
+        logger.warning("syslog truncate skipped: %s", exc)
+    return result
+
+
 def harden_host_firewall(
     *,
     tcp_ports: Optional[Sequence[int]] = None,
@@ -106,8 +168,13 @@ def harden_host_firewall(
         "ssh_port": _ssh_port(),
         "tcp_ports": [],
         "udp_ports": [],
+        "leftover": {},
         "error": None,
     }
+    try:
+        result["leftover"] = cleanup_leftover_vendor_services()
+    except Exception as exc:
+        logger.warning("leftover vendor cleanup: %s", exc)
     tcp: Set[int] = {int(p) for p in (tcp_ports or []) if int(p) > 0}
     udp: Set[int] = {int(p) for p in (udp_ports or []) if int(p) > 0}
     ssh = result["ssh_port"]

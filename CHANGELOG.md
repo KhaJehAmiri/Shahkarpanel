@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.22.83 — 2026-08-18
+
+### Stop recurring WireGuard / Xray / Alembic outages
+
+- One WireGuard proxy row per user: unique ``(user_id, type)``, canonical key matching ``wg_peers``, so subscription and Finalmask cannot export different keys.
+- Quarantine leftover Alembic copies (``b-*.py``) before upgrade so a backup file cannot crash-loop the panel.
+- Node agent kills every extra ``xray run`` (file config and stdin) and disables leftover ``backhaul-iran*`` / ``backhaul_premium`` units that fill disk on reused VPS images.
+- XHTTP ``packet-up`` with an empty host normalizes to ``auto`` and copies SNI into Host so stock clients connect.
+
 ## 0.22.81 — 2026-08-08
 
 ### Digicdn panel responsiveness: fail-fast Xray node RPCs

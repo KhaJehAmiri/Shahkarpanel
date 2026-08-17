@@ -139,11 +139,9 @@ def _normalize_allowed(address: str) -> str:
 
 
 def _get_wg_proxy(db: Session, user_id: int) -> Optional[Proxy]:
-    return (
-        db.query(Proxy)
-        .filter(Proxy.user_id == user_id, Proxy.type == ProxyTypes.WireGuard)
-        .first()
-    )
+    from app.db.proxy_dedupe import get_user_proxy
+
+    return get_user_proxy(db, user_id, ProxyTypes.WireGuard)
 
 
 def _ensure_proxy_keys(db: Session, proxy: Proxy) -> dict:

@@ -89,6 +89,11 @@ fix_runtime_permissions() {
 # Compare DB stamp to ``ALEMBIC_HEAD`` (no Alembic ScriptDirectory import).
 run_migrations_if_needed() {
   cd /code
+  # Quarantine leftover ``b-*.py`` / copy-of revision files *before* Alembic
+  # builds ScriptDirectory — a duplicate revision id exits 255 and docker
+  # restart-loops the panel.
+  python /code/app/db/migrations/guard_revisions.py /code/app/db/migrations/versions \
+    || { echo "alembic: revision guard failed"; exit 1; }
   if python - <<'PY'
 import os
 import sys

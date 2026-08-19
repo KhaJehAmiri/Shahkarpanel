@@ -643,6 +643,18 @@
     "provisionFailed": "Remote install failed. Check SSH credentials, firewall, and that the server is reachable.",
     "provisionFailedShort": "Install failed",
     "controlTunneled": "Control: tunneled",
+    "converge": "Синхронизировать",
+    "converging": "Синхронизация запланирована",
+    "lastAck": "Последний ACK",
+    "peers": "Пиры",
+    "status": {
+      "connected": "Подключён",
+      "connecting": "Подключение",
+      "syncing": "Синхронизация",
+      "drifted": "Расхождение",
+      "error": "Ошибка",
+      "disabled": "Отключён"
+    },
     "provisionStep": {
       "queued": "Queued",
       "ssh": "Connecting SSH",

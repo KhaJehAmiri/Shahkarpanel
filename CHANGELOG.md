@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.22.84 — 2026-08-20
+
+### Split API/worker and make Overview CPU/RAM live
+
+- HTTP API and control-plane worker are separate compose services so dashboard requests never wait on node RPC or local Xray.
+- Overview gauges read host ``/proc`` every 250ms in an isolated process: RAM is Total−Available (same as ``free`` / htop); CPU is a 1s ``/proc/stat`` window.
+- Live WebSocket ticks; fleet bandwidth uses per-source deltas so one node timeout cannot pin Overall Speed at 0 B/s.
+- Postgres remains source of truth: user-sync outbox and node desired/reported; health uses the newest stamp and a longer stale ACK.
+- Panel local Xray gets the same sensitive WARP split; API inbound is pinned so ``geoip:private → DIRECT`` cannot steal gRPC.
+- Skip rebuilding the ~27k-user core config on health restart when runtime policy is already injected.
+
 ## 0.22.83 — 2026-08-18
 
 ### Stop recurring WireGuard / Xray / Alembic outages

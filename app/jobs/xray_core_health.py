@@ -12,3 +12,4 @@ _mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
 
 core_health_check = _mod.core_health_check
+start_core = _mod.start_core

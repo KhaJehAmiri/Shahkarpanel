@@ -97,6 +97,20 @@ def _singbox_inbound_tags(spec: dict) -> List[str]:
     ]
 
 
+def _with_sniff_route(rules: List[dict]) -> List[dict]:
+    """Prepend a 1.12 sniff action so SNI is visible before SOCKS/Xray.
+
+    Hysteria2/TUIC DNS often turns dest into an IP; sniff restores the
+    hostname so the exit's domain→WARP list can match (same as VLESS).
+    """
+    cleaned = [
+        r
+        for r in rules
+        if not (isinstance(r, dict) and r.get("action") == "sniff")
+    ]
+    return [{"action": "sniff", "timeout": "1s"}] + cleaned
+
+
 def apply_singbox_endpoint_tunnels(spec: dict, node_id: Optional[int]) -> dict:
     """Return a copy of ``spec`` with relay tunnel outbounds/routes for ``node_id``."""
     from app.db import GetDB
@@ -161,7 +175,7 @@ def apply_singbox_endpoint_tunnels(spec: dict, node_id: Optional[int]) -> dict:
                 return result
 
             result["tunnel_outbounds"] = outbounds
-            result["tunnel_route_rules"] = rules
+            result["tunnel_route_rules"] = _with_sniff_route(rules)
             result["tunnel_route_final"] = primary_outbound
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning(
@@ -178,3 +192,62 @@ def _endpoint_address(db, node_id: Optional[int]) -> Optional[str]:
     from app.tunnel.inject import _endpoint_address as xray_endpoint_address
 
     return xray_endpoint_address(db, node_id)
+
+
+def apply_singbox_warp_bridge(spec: dict, node_id: Optional[int]) -> dict:
+    """On WARP-enabled exits, send sing-box through Xray SOCKS for domain split.
+
+    Relays already pin ``tunnel_route_final`` at the Reality hop — leave those
+    alone; WARP split runs on the exit after the tunnel.
+    """
+    if node_id is None:
+        return spec
+    if spec.get("tunnel_route_final") and spec.get("tunnel_route_final") != "direct":
+        return spec
+
+    from app.db import GetDB, crud
+    from app.xray.warp_routing import singbox_warp_socks_port
+
+    try:
+        with GetDB() as db:
+            node = crud.get_node_by_id(db, int(node_id))
+            if node is None or not bool(getattr(node, "warp_enabled", False)):
+                return spec
+    except Exception:
+        return spec
+
+    result = dict(spec)
+    tag = "xray-warp-split"
+    port = singbox_warp_socks_port(int(node_id))
+    outbounds = [
+        ob
+        for ob in list(result.get("tunnel_outbounds") or [])
+        if not (isinstance(ob, dict) and ob.get("tag") == tag)
+    ]
+    outbounds.append(
+        {
+            "type": "socks",
+            "tag": tag,
+            "server": "127.0.0.1",
+            "server_port": port,
+            "version": "5",
+        }
+    )
+    inbound_tags = _singbox_inbound_tags(result)
+    rules = [
+        r
+        for r in list(result.get("tunnel_route_rules") or [])
+        if not (isinstance(r, dict) and r.get("outbound") == tag)
+    ]
+    if inbound_tags:
+        rules.append(
+            {
+                "inbound": list(inbound_tags),
+                "action": "route",
+                "outbound": tag,
+            }
+        )
+    result["tunnel_outbounds"] = outbounds
+    result["tunnel_route_rules"] = _with_sniff_route(rules)
+    result["tunnel_route_final"] = tag
+    return result

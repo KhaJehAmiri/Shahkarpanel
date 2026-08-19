@@ -634,8 +634,6 @@ def _xray_online_device_count(dbuser: User) -> Optional[int]:
     best = 0
     got_any = False
     try:
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-
         from app import xray
 
         apis = []
@@ -655,28 +653,21 @@ def _xray_online_device_count(dbuser: User) -> Optional[int]:
             except Exception:
                 return None
 
-        # Bound wall time: don't wait on every dead node serially.
-        pool = ThreadPoolExecutor(max_workers=min(8, len(apis)))
-        try:
-            futs = [pool.submit(_one, api) for api in apis]
-            try:
-                for fut in as_completed(futs, timeout=_ONLINE_COUNT_WALL_TIMEOUT):
-                    try:
-                        n = fut.result()
-                    except Exception:
-                        continue
-                    if n is None:
-                        continue
-                    got_any = True
-                    if n > best:
-                        best = n
-            except TimeoutError:
-                pass
-        finally:
-            try:
-                pool.shutdown(wait=False, cancel_futures=True)
-            except TypeError:
-                pool.shutdown(wait=False)
+        from app.utils.concurrency import map_rpc
+
+        indexed = {i: api for i, api in enumerate(apis)}
+        results = map_rpc(
+            lambda _i, api: _one(api),
+            indexed,
+            timeout=_ONLINE_COUNT_WALL_TIMEOUT,
+            default=None,
+        )
+        for n in results.values():
+            if n is None:
+                continue
+            got_any = True
+            if n > best:
+                best = n
     except Exception:
         _ONLINE_COUNT_CACHE[uid] = (now, None)
         return None

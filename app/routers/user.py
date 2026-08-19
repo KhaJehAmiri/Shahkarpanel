@@ -59,6 +59,23 @@ def _user_response(dbuser: User, *, share_links: bool = False) -> UserResponse:
         logger.exception("Failed to enrich share links for user %s", user.username)
     return user
 
+
+def _enqueue_user_apply(db: Session, dbuser: User, action: str) -> None:
+    """Persist WG identity if needed, then a durable outbox row + worker wake."""
+    from app.sync.outbox import schedule_user_sync
+    from app.wireguard.instant_sync import provision_and_sync_wireguard_user
+
+    if action in ("add", "protocol_change"):
+        try:
+            provision_and_sync_wireguard_user(int(dbuser.id), push=False)
+            db.refresh(dbuser)
+        except Exception:
+            logger.exception(
+                "WG provision before outbox failed for %s", getattr(dbuser, "username", "?")
+            )
+    schedule_user_sync(db, dbuser, action)
+
+
 router = APIRouter(tags=["User"], prefix="/api", responses={401: responses._401})
 
 
@@ -279,8 +296,8 @@ def add_user(
             source="auto-balance",
         )
 
-    bg.add_task(xray.operations.add_user, dbuser=dbuser)
-    user = _user_response(dbuser)
+    _enqueue_user_apply(db, dbuser, "add")
+    user = _user_response(dbuser, share_links=True)
     report.user_created(user=user, user_id=dbuser.id, by=admin, user_admin=dbuser.admin)
     logger.info(
         'New user "%s" added (panel=%s)',
@@ -385,8 +402,8 @@ def add_user_from_template(
             source="auto-balance",
         )
 
-    bg.add_task(xray.operations.add_user, dbuser=dbuser)
-    user = _user_response(dbuser)
+    _enqueue_user_apply(db, dbuser, "add")
+    user = _user_response(dbuser, share_links=True)
     report.user_created(user=user, user_id=dbuser.id, by=admin, user_admin=dbuser.admin)
     logger.info(
         'New user "%s" added from template %s (panel=%s)',
@@ -500,7 +517,10 @@ def bulk_users_from_template(
         mark_users_tariff_charged(db, created, tariff_plan)
 
     if created:
-        bg.add_task(xray.operations.sync_core_users_async)
+        for uname in created:
+            dbu = crud.get_user(db, uname)
+            if dbu is not None:
+                _enqueue_user_apply(db, dbu, "add")
 
     logger.info("Bulk template %s: created %s users", body.template_id, len(created))
     return {"created": len(created), "usernames": created, "errors": errors}
@@ -670,6 +690,7 @@ def bulk_native_protocol(
     if body.action == BulkNativeAction.enable:
         _ensure_protocol_enabled(_native_proxy_type(body.protocol), db)
     try:
+        body.wait_sync = True
         return apply_bulk_native_protocol(db, body, admin=admin)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -876,8 +897,6 @@ def modify_user(
             raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
     old_status = dbuser.status
-    old_speed_up = dbuser.speed_limit_up
-    old_speed_down = dbuser.speed_limit_down
     dbuser = crud.update_user(db, dbuser, modified_user)
 
     if modify_tariff is not None:
@@ -899,34 +918,17 @@ def modify_user(
         mark_user_tariff_charged(dbuser, modify_tariff)
         db.commit()
 
-    user = _user_response(dbuser)
-
-    speed_changed = (
-        dbuser.speed_limit_up != old_speed_up or dbuser.speed_limit_down != old_speed_down
-    )
-
-    status_changed = user.status != old_status
-    if user.status in [UserStatus.active, UserStatus.on_hold]:
-        # Disable removes the user from main core + nodes via hot API. Re-enable
-        # must push Xray accounts (VLESS/VMess/…) back to both — WireGuard/
-        # Finalmask alone is not enough. ``update_user`` hot-adds main core and
-        # nodes; otherwise fall back to debounced core sync (e.g. speed change).
-        if status_changed:
-            bg.add_task(xray.operations.update_user, dbuser)
-        else:
-            bg.add_task(xray.operations.sync_core_users_async, full=speed_changed)
-        # Kernel WG + Finalmask must converge on enable/status flips, not only
-        # when speed limits change (otherwise Finalmask keeps disabled peers).
-        if speed_changed or status_changed:
-            from app.singbox.operations import sync_user_change
-            from app.wireguard.instant_sync import schedule_provision_and_sync_wireguard_user
-            from app.wireguard.operations import sync_user_change as wg_sync_user_change
-            bg.add_task(sync_user_change)
-            # Instant WG IP + Finalmask push (status enable / recreate path).
-            bg.add_task(schedule_provision_and_sync_wireguard_user, dbuser.id)
-            bg.add_task(wg_sync_user_change)
+    status_changed = dbuser.status != old_status
+    if dbuser.status in [UserStatus.active, UserStatus.on_hold]:
+        _enqueue_user_apply(
+            db,
+            dbuser,
+            "add" if status_changed else "protocol_change",
+        )
     else:
-        xray.operations.remove_user_immediate(dbuser)
+        _enqueue_user_apply(db, dbuser, "disable")
+
+    user = _user_response(dbuser, share_links=True)
 
     bg.add_task(report.user_updated, user=user, user_admin=dbuser.admin, by=admin)
 
@@ -958,8 +960,10 @@ def remove_user(
     """Remove a user"""
     username = dbuser.username
     user_admin = Admin.model_validate(dbuser.admin) if dbuser.admin else None
+    from app.sync.outbox import snapshot_user, schedule_user_sync
+
+    schedule_user_sync(db, dbuser, "delete", payload=snapshot_user(dbuser))
     crud.remove_user(db, dbuser)
-    bg.add_task(xray.operations.remove_user, dbuser=dbuser)
 
     bg.add_task(
         report.user_deleted, username=username, user_admin=user_admin, by=admin
@@ -978,12 +982,10 @@ def reset_user_data_usage(
 ):
     """Reset user data usage"""
     dbuser = crud.reset_user_data_usage(db=db, dbuser=dbuser)
-    if dbuser.status == UserStatus.active:
-        bg.add_task(xray.operations.sync_core_users_async)
-    elif dbuser.status == UserStatus.on_hold:
-        bg.add_task(xray.operations.sync_core_users_async)
+    if dbuser.status in (UserStatus.active, UserStatus.on_hold):
+        _enqueue_user_apply(db, dbuser, "quota_cap")
 
-    user = _user_response(dbuser)
+    user = _user_response(dbuser, share_links=True)
     bg.add_task(
         report.user_data_usage_reset, user=user, user_admin=dbuser.admin, by=admin
     )
@@ -1016,7 +1018,7 @@ def revoke_user_subscription(
     dbuser = crud.revoke_user_sub(db=db, dbuser=dbuser)
 
     if dbuser.status in [UserStatus.active, UserStatus.on_hold]:
-        bg.add_task(xray.operations.propagate_user_credential_revoke, dbuser=dbuser)
+        _enqueue_user_apply(db, dbuser, "protocol_change")
     user = _user_response(dbuser)
     bg.add_task(
         report.user_subscription_revoked, user=user, user_admin=dbuser.admin, by=admin
@@ -1116,11 +1118,10 @@ def reset_users_data_usage(
     """Reset all users data usage"""
     dbadmin = crud.get_admin(db, admin.username)
     crud.reset_all_users_data_usage(db=db, admin=dbadmin)
-    startup_config = xray.config.include_db_users()
-    xray.core.restart(startup_config)
-    for node_id, node in list(xray.nodes.items()):
-        if node.connected:
-            xray.operations.restart_node(node_id, startup_config)
+    # Limited accounts become active again; apply on the worker, never here.
+    from app.sync.wake import request_fleet_resync
+
+    request_fleet_resync()
     return {"detail": "Users successfully reset."}
 
 
@@ -1191,7 +1192,7 @@ def apply_plan_to_user_endpoint(
     mark_order_applied(db, order)
 
     if dbrow.status in (UserStatus.active, UserStatus.on_hold):
-        xray.operations.sync_core_users()
+        _enqueue_user_apply(db, dbrow, "add")
 
     logger.info(f'User "{dbrow.username}" renewed via plan "{plan.name}" by {admin.username}')
     return _user_response(dbrow)
@@ -1217,7 +1218,7 @@ def active_next_plan(
         )
 
     if dbuser.status in [UserStatus.active, UserStatus.on_hold]:
-        bg.add_task(xray.operations.add_user, dbuser=dbuser)
+        _enqueue_user_apply(db, dbuser, "add")
 
     user = _user_response(dbuser)
     bg.add_task(

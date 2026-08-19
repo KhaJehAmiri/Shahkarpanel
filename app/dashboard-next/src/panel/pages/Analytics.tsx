@@ -53,7 +53,7 @@ export const Analytics: FC<{ embedded?: boolean }> = ({ embedded }) => {
   );
 };
 
-type RoutedNode = { id: number; name: string; region?: string | null; latency_ms?: number | null; status: string };
+type RoutedNode = { id: number; name: string; region?: string | null; latency_ms?: number | null; status: string; health_status?: string };
 
 type ProtocolUsageRow = { protocol: string; used_traffic: number };
 
@@ -143,7 +143,7 @@ const SmartRoutingCard: FC = () => {
                     <td style={{ fontWeight: 600 }}>{n.name}</td>
                     <td>{n.region || "—"}</td>
                     <td>{n.latency_ms != null ? `${n.latency_ms.toFixed(0)} ms` : "—"}</td>
-                    <td><Pill tone={statusTone(n.status)} dot>{n.status}</Pill></td>
+                    <td><Pill tone={statusTone(n.health_status || n.status)} dot>{n.health_status || n.status}</Pill></td>
                   </tr>
                 ))}
               </tbody>

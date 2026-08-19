@@ -431,12 +431,13 @@ def build_exit_inbound(tunnel) -> Dict:
             "decryption": "none",
         },
         "streamSettings": _stream_settings(transport, params, server_side=True),
-        # Required for exit-side domain routing (e.g. sensitive WARP split).
-        # routeOnly keeps the destination IP; only routing sees the sniffed SNI.
+        # Rewrite dest to sniffed SNI so domain→WARP matches when the inner
+        # request is an IP (WireGuard / sing-box). routeOnly left Gemini on
+        # DIRECT on Xray 26.x.
         "sniffing": {
             "enabled": True,
             "destOverride": ["http", "tls", "quic"],
-            "routeOnly": True,
+            "routeOnly": False,
         },
     }
 
@@ -503,7 +504,14 @@ def build_singbox_bridge_socks_inbound(tunnel) -> Dict:
         "port": singbox_socks_port(tunnel),
         "protocol": "socks",
         "settings": {"auth": "noauth", "udp": True},
-        "sniffing": {"enabled": False},
+        # Rewrite dest to SNI so the exit's domain→WARP rules match. The
+        # inboundTag→tunnel rule still pins this hop; sniffing must not be
+        # routeOnly or Gemini stays an IP and skips WARP on the exit.
+        "sniffing": {
+            "enabled": True,
+            "destOverride": ["http", "tls", "quic"],
+            "routeOnly": False,
+        },
     }
 
 

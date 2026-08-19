@@ -263,6 +263,19 @@ def disconnect_users_everywhere(
     if not users:
         return False
 
+    from app.runtime_role import owns_control_plane
+
+    if not owns_control_plane():
+        from app.sync.outbox import schedule_user_sync_by_id, snapshot_user
+
+        for dbuser in users:
+            schedule_user_sync_by_id(
+                getattr(dbuser, "id", None),
+                "disable",
+                payload=snapshot_user(dbuser),
+            )
+        return True
+
     hot_ok = False
     try:
         from app.xray.serving import hot_disconnect_users

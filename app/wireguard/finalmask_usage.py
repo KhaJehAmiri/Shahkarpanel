@@ -20,7 +20,6 @@ from __future__ import annotations
 import json
 import logging
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional, Tuple
 
 from app.db import GetDB, crud
@@ -258,23 +257,24 @@ def collect_finalmask_usage_params(db=None) -> Tuple[Dict[int, List[dict]], Dict
             return node_id, {}, float(plan["coefficient"])
         return node_id, _tracker.deltas(node_id, transfer), float(plan["coefficient"])
 
-    executor = ThreadPoolExecutor(max_workers=min(8, max(1, len(plans))))
-    try:
-        futures = [executor.submit(_one, plan) for plan in plans]
-        for fut in futures:
-            try:
-                node_id, email_deltas, coef = fut.result(timeout=8)
-            except Exception as exc:
-                logger.warning("Finalmask usage node poll failed: %s", exc)
-                continue
-            coefficient[node_id] = coef
-            if email_deltas:
-                deltas_by_node[node_id] = email_deltas
-    finally:
-        # wait=True: workers now fail-fast via try_remote, so this returns
-        # quickly. wait=False used to orphan hundreds of threads stuck on
-        # ``node.remote`` → ``connect()``.
-        executor.shutdown(wait=True, cancel_futures=True)
+    from app.utils.concurrency import map_rpc
+
+    def _run(_nid, plan: dict):
+        return _one(plan)
+
+    indexed = {int(plan["id"]): plan for plan in plans}
+    results = map_rpc(_run, indexed, timeout=8, default=None)
+    for node_id, result in results.items():
+        if not result:
+            continue
+        try:
+            nid, email_deltas, coef = result
+        except Exception as exc:
+            logger.warning("Finalmask usage node poll failed: %s", exc)
+            continue
+        coefficient[nid] = coef
+        if email_deltas:
+            deltas_by_node[nid] = email_deltas
 
     return build_finalmask_usage_params(deltas_by_node), coefficient
 

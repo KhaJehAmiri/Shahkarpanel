@@ -227,6 +227,7 @@ def apply_node_warp_policy(cfg, dbnode):
     - ``warp_enabled=True`` + ``warp_mode=sensitive``: only Google/YouTube/AI
       domains exit via WARP (optionally load-balanced across comma-separated
       ``warp_tag`` accounts). Same client configs/inbounds — no new links.
+      Domain set includes Google/YouTube/Gemini/Flow Labs, OpenAI/Claude, and Spotify.
     """
     from app.services.warp_tproxy import (
         inject_warp_tproxy_inbound,
@@ -236,10 +237,13 @@ def apply_node_warp_policy(cfg, dbnode):
     )
     from app.utils import warp as warp_util
     from app.xray.warp_routing import (
+        ensure_tunnel_exit_sniffing,
         ensure_warp_exit,
         ensure_warp_sensitive_exit,
+        inject_singbox_warp_inbound,
         parse_warp_tags,
         primary_warp_tag,
+        refresh_sensitive_quic_block,
         strip_warp_from_config,
     )
 
@@ -279,6 +283,9 @@ def apply_node_warp_policy(cfg, dbnode):
                 cleaned = inject_warp_tproxy_inbound(
                     cleaned, node_id, primary, catch_all=False
                 )
+                cleaned = inject_singbox_warp_inbound(cleaned, node_id)
+                cleaned = ensure_tunnel_exit_sniffing(cleaned)
+                cleaned = refresh_sensitive_quic_block(cleaned)
         else:
             # Full catch-all: use the first available account as default exit.
             primary_ob = outbounds[0]
@@ -293,6 +300,7 @@ def apply_node_warp_policy(cfg, dbnode):
                 if not (isinstance(wg_out, str) and wg_out.startswith("tunnel-")):
                     cleaned = retarget_xray_wg_to_warp(cleaned, node_id, primary)
                 cleaned = inject_warp_tproxy_inbound(cleaned, node_id, primary)
+                cleaned = inject_singbox_warp_inbound(cleaned, node_id)
         if missing:
             from app import logger
 

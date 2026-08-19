@@ -41,6 +41,10 @@ def reschedule_xray_auto_upgrade_job() -> None:
 
 @app.on_event("startup")
 def schedule_xray_auto_upgrade() -> None:
+    from app.runtime_role import owns_control_plane
+
+    if not owns_control_plane():
+        return
     cfg = xray_auto_upgrade_config()
     if not cfg["enabled"]:
         logger.info("xray auto-upgrade disabled (XRAY_AUTO_UPGRADE_ENABLED=false)")

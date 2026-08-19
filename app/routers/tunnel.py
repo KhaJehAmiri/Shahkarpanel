@@ -215,9 +215,34 @@ def _revert_unused_node_roles(
                 node.role = "direct"
 
 
+def _node_endpoint_state(db: Session, node_id: int) -> tuple[bool, object | None]:
+    """Live RPyC session wins; API-only overlays Postgres ``nodes.status``.
+
+    The HTTP process has ``xray.nodes == {}``, so dashboard health used to
+    report every hop disconnected even when the worker already had them
+    connected and the exit listen port was answering TCP.
+    """
+    live = None
+    try:
+        live = xray.nodes.get(node_id)
+    except Exception:
+        live = None
+    if live is not None:
+        return bool(getattr(live, "connected", False)), live
+    row = db.query(Node).filter(Node.id == int(node_id)).first()
+    if row is None:
+        return False, None
+    status = getattr(row.status, "value", row.status)
+    return str(status or "") == "connected", None
+
+
 def _restart_endpoint(db: Session, node_id: Optional[int]):
     """Re-push config to an endpoint so its tunnel fragments take effect."""
     if node_id is None:
+        from app.runtime_role import delegate_to_worker
+
+        if delegate_to_worker("restart_core"):
+            return
         try:
             xray.core.restart(xray.config.include_db_users())
         except Exception as exc:  # pragma: no cover - defensive
@@ -256,6 +281,11 @@ def _restart_endpoint(db: Session, node_id: Optional[int]):
 def _wait_endpoint_ready(db: Session, node_id: Optional[int], *, timeout: float = 45.0) -> bool:
     """Wait for async connect/restart to finish so health is not checked too early."""
     import time
+
+    from app.runtime_role import owns_control_plane
+
+    if not owns_control_plane():
+        return False
 
     if node_id is None:
         deadline = time.time() + min(timeout, 15.0)
@@ -297,7 +327,9 @@ def _tcp_reachable(address: str, port: int, timeout: float = 3.0) -> bool:
 def _tunnel_health(db: Session, tunnel: Tunnel) -> dict:
     """Verify both ends look alive after an apply.
 
-    - node endpoints must be connected in the live xray registry;
+    - node endpoints must be connected in the live xray registry (worker),
+      or ``nodes.status=connected`` in Postgres when this process has no
+      sessions (API);
     - the relay must be able to reach the exit's tunnel ``target_port``
       (the exit inbound binds there — not ``listen_port``).
     """
@@ -313,8 +345,7 @@ def _tunnel_health(db: Session, tunnel: Tunnel) -> dict:
                 continue
             checks[label] = {"kind": "panel", "connected": True}
         else:
-            node = xray.nodes.get(node_id)
-            connected = bool(node is not None and getattr(node, "connected", False))
+            connected, live = _node_endpoint_state(db, node_id)
             entry = {
                 "kind": "node",
                 "node_id": node_id,
@@ -323,12 +354,14 @@ def _tunnel_health(db: Session, tunnel: Tunnel) -> dict:
             # Relays that delegate WG into dokodemo must still have capture up.
             # Without this, keep-live / native fallback leaves health "green"
             # while the Reality hop is actually dead until manual Apply.
-            if label == "relay" and connected:
+            # Capture is only knowable from the worker's live session — on the
+            # API, missing capture must not flip the hop to down.
+            if label == "relay" and connected and live is not None:
                 try:
                     from app.tunnel.relay import node_delegates_wireguard_to_tunnel
 
                     if node_delegates_wireguard_to_tunnel(db, int(node_id)):
-                        capture = bool(getattr(node, "wg_tunnel_capture_active", False))
+                        capture = bool(getattr(live, "wg_tunnel_capture_active", False))
                         entry["capture_active"] = capture
                         if not capture:
                             entry["tunnel_ready"] = False
@@ -380,6 +413,19 @@ def _apply_tunnel(db: Session, tunnel: Tunnel, health: bool = True) -> dict:
         db.commit()
         db.refresh(tunnel)
     _exit_address(db, tunnel.exit_node_id)  # validate reachability first
+    from app.runtime_role import delegate_to_worker
+
+    if delegate_to_worker("apply_tunnel", str(int(tunnel.id))):
+        result = {
+            "applied": "pending",
+            "hops": tunnel_svc.tunnel_hops(tunnel),
+            "relay": "panel" if tunnel.relay_node_id is None else tunnel.relay_node_id,
+            "transit": tunnel.intermediate_node_id,
+            "exit": "panel" if tunnel.exit_node_id is None else tunnel.exit_node_id,
+        }
+        if health:
+            result["health"] = _tunnel_health(db, tunnel)
+        return result
     # Exit (and transit) must be listening before the relay dials them —
     # especially important for node→node where there is no panel core in between.
     # ``intermediate_node_id is None`` means "no transit", NOT "panel is transit".

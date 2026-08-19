@@ -661,118 +661,112 @@ class XRayConfig(dict):
                 if row.inbound_tag and row.inbound_tag not in entry[3]:
                     entry[3].append(row.inbound_tag)
 
-            # Per-user Xray policy levels (stats only — speed is enforced via tier ports + tc).
-            policy_levels = config.get("policy", {}).get("levels") or {}
-            for uid, (up, down) in user_speed.items():
-                if not up and not down:
+        # End the streaming transaction before building the multi-MB config.
+        # Holding FETCH FORWARD across client injection used to leave
+        # ``idle in transaction`` sessions that exhausted the API pool.
+
+        policy_levels = config.get("policy", {}).get("levels") or {}
+        for uid, (up, down) in user_speed.items():
+            if not up and not down:
+                continue
+            level = str((uid % 9000) + 100)
+            policy_levels[level] = {
+                "statsUserUplink": True,
+                "statsUserDownlink": True,
+                "statsUserOnline": True,
+            }
+        if policy_levels:
+            config.setdefault("policy", {})["levels"] = policy_levels
+
+        for proxy_type, rows in grouped_data.items():
+            inbounds = self.inbounds_by_protocol.get(proxy_type)
+            if not inbounds:
+                continue
+
+            for inbound in inbounds:
+                inbound_cfg = config.get_inbound(inbound['tag'])
+                if not inbound_cfg:
                     continue
-                level = str((uid % 9000) + 100)
-                policy_levels[level] = {
-                    "statsUserUplink": True,
-                    "statsUserDownlink": True,
-                    "statsUserOnline": True,
-                }
-            if policy_levels:
-                config.setdefault("policy", {})["levels"] = policy_levels
+                clients = inbound_cfg['settings']['clients']
 
-            for proxy_type, rows in grouped_data.items():
+                for row in rows:
+                    user_id, username, settings, excluded_inbound_tags = row
 
-                inbounds = self.inbounds_by_protocol.get(proxy_type)
-                if not inbounds:
-                    continue
-
-                for inbound in inbounds:
-                    inbound_cfg = config.get_inbound(inbound['tag'])
-                    if not inbound_cfg:
-                        # inbounds_by_protocol drifted from the actual config
-                        # (tag not present) — nothing to attach clients to.
+                    if excluded_inbound_tags and inbound['tag'] in excluded_inbound_tags:
                         continue
-                    clients = inbound_cfg['settings']['clients']
 
-                    for row in rows:
-                        user_id, username, settings, excluded_inbound_tags = row
+                    client = {
+                        "email": f"{user_id}.{username}",
+                        **settings
+                    }
+                    if inbound['protocol'] == ProxyTypes.Trojan.value:
+                        client.pop('flow', None)
+                    elif inbound['protocol'] == ProxyTypes.VLESS.value:
+                        client['flow'] = effective_vless_flow(client.get('flow'), inbound)
+                    up, down = user_speed.get(user_id, (None, None))
+                    if up or down:
+                        client["level"] = (user_id % 9000) + 100
 
-                        if excluded_inbound_tags and inbound['tag'] in excluded_inbound_tags:
+                    if inbound['protocol'] == ProxyTypes.Shadowsocks.value:
+                        from xray_api.types.account import is_ss2022
+                        raw_in = config.get_inbound(inbound['tag']) or {}
+                        in_method = (
+                            (raw_in.get('settings') or {}).get('method')
+                            or inbound.get('ss_method')
+                            or ''
+                        )
+                        user_method = settings.get('method') or ''
+                        in_is_2022 = is_ss2022(in_method)
+                        user_is_2022 = is_ss2022(user_method)
+                        if in_is_2022 != user_is_2022:
                             continue
+                        if in_is_2022:
+                            client.pop('method', None)
 
-                        client = {
-                            "email": f"{user_id}.{username}",
-                            **settings
-                        }
-                        # Xray 26+ rejects flow on Trojan inbounds entirely.
-                        if inbound['protocol'] == ProxyTypes.Trojan.value:
-                            client.pop('flow', None)
-                        elif inbound['protocol'] == ProxyTypes.VLESS.value:
-                            client['flow'] = effective_vless_flow(client.get('flow'), inbound)
-                        up, down = user_speed.get(user_id, (None, None))
-                        if up or down:
-                            client["level"] = (user_id % 9000) + 100
-
-                        if inbound['protocol'] == ProxyTypes.Shadowsocks.value:
-                            from xray_api.types.account import is_ss2022
-                            raw_in = config.get_inbound(inbound['tag']) or {}
-                            in_method = (
-                                (raw_in.get('settings') or {}).get('method')
-                                or inbound.get('ss_method')
-                                or ''
+                    if client.get('flow') and (
+                            inbound.get('network', 'tcp') not in ('tcp', 'raw', 'kcp')
+                            or
+                            (
+                                inbound.get('network', 'tcp') in ('tcp', 'raw', 'kcp')
+                                and
+                                inbound.get('tls') not in ('tls', 'reality')
                             )
-                            user_method = settings.get('method') or ''
-                            in_is_2022 = is_ss2022(in_method)
-                            user_is_2022 = is_ss2022(user_method)
-                            # Never mix legacy SS users into a 2022 inbound (or vice versa).
-                            if in_is_2022 != user_is_2022:
-                                continue
-                            if in_is_2022:
-                                client.pop('method', None)
+                            or
+                            inbound.get('header_type') == 'http'
+                    ):
+                        del client['flow']
 
-                        # XTLS currently only supports transmission methods of TCP and mKCP
-                        if client.get('flow') and (
-                                inbound.get('network', 'tcp') not in ('tcp', 'raw', 'kcp')
-                                or
-                                (
-                                    inbound.get('network', 'tcp') in ('tcp', 'raw', 'kcp')
-                                    and
-                                    inbound.get('tls') not in ('tls', 'reality')
-                                )
-                                or
-                                inbound.get('header_type') == 'http'
-                        ):
-                            del client['flow']
+                    clients.append(client)
 
-                        clients.append(client)
+        self._inject_xray_awg_peers(config, grouped_data)
+        traffic_limits = self._apply_shadowsocks_speed_tiers(config, user_speed)
+        if traffic_limits:
+            config["traffic_limits"] = traffic_limits
 
-                self._inject_xray_awg_peers(config, grouped_data)
-                traffic_limits = self._apply_shadowsocks_speed_tiers(config, user_speed)
-                if traffic_limits:
-                    config["traffic_limits"] = traffic_limits
+        try:
+            from app.family_guard.server_routing import (
+                apply_family_guard_server_routing,
+            )
 
-            # Domain/app blocks must live on the core — plain vless:// subs
-            # cannot carry client routing rules (see family_guard.server_routing).
-            try:
-                from app.family_guard.server_routing import (
-                    apply_family_guard_server_routing,
-                )
-
+            with GetDB() as db:
                 apply_family_guard_server_routing(config, db)
-            except Exception:
-                # Never block core rebuild on Family Guard mistakes.
-                import logging
+        except Exception:
+            import logging
 
-                logging.getLogger("uvicorn.error").exception(
-                    "Family Guard server routing inject failed"
-                )
+            logging.getLogger("uvicorn.error").exception(
+                "Family Guard server routing inject failed"
+            )
 
-            # Fleet egress: BitTorrent / malware / abuse C2 / piracy hosts.
-            try:
-                from app.egress_guard import apply_egress_guard_routing
+        try:
+            from app.egress_guard import apply_egress_guard_routing
 
-                apply_egress_guard_routing(config)
-            except Exception:
-                import logging
+            apply_egress_guard_routing(config)
+        except Exception:
+            import logging
 
-                logging.getLogger("uvicorn.error").exception(
-                    "Egress Guard routing inject failed"
-                )
+            logging.getLogger("uvicorn.error").exception(
+                "Egress Guard routing inject failed"
+            )
 
         if DEBUG:
             with open('generated_config-debug.json', 'w') as f:

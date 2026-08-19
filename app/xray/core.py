@@ -241,19 +241,44 @@ class XRayCore:
     def _start_process(self, config: XRayConfig):
         """Spawn Xray after listen ports are free (caller holds lifecycle lock)."""
 
-        # The local core is the panel's own tunnel endpoint (node_id=None):
-        # fold in any tunnel fragments where the panel is the relay or exit.
-        try:
-            from app.tunnel.inject import apply_endpoint_tunnels
-            config = apply_endpoint_tunnels(config, None)
-        except Exception:
-            pass
+        # last_config already has tunnels/WARP/edge folded in. Re-running those
+        # helpers deepcopy the ~27k-user inbound map and OOM an 8Gi host
+        # on every health restart.
+        if not getattr(config, "_nx_runtime_injected", False):
+            # The local core is the panel's own tunnel endpoint (node_id=None):
+            # fold in any tunnel fragments where the panel is the relay or exit.
+            try:
+                from app.tunnel.inject import apply_endpoint_tunnels
+                config = apply_endpoint_tunnels(config, None)
+            except Exception:
+                logger.exception("apply_endpoint_tunnels failed")
 
+            # CDN / panel inbounds never see per-node WARP policy. Install the
+            # same sensitive domain split here so Google/YouTube/AI leave via WARP.
+            try:
+                from app.services.panel_warp_policy import apply_local_core_warp_policy
+                config = apply_local_core_warp_policy(config)
+            except Exception:
+                logger.exception("panel WARP policy failed")
+
+            try:
+                from app.services.edge_proxy import apply_edge_runtime_to_config
+                config = apply_edge_runtime_to_config(config)
+            except Exception:
+                logger.exception("edge runtime override failed")
+            try:
+                object.__setattr__(config, "_nx_runtime_injected", True)
+            except Exception:
+                pass
+
+        # Cheap in-place pin — also repairs last_config that already had WARP
+        # with geoip:private DIRECT sitting in front of the gRPC API inbound.
         try:
-            from app.services.edge_proxy import apply_edge_runtime_to_config
-            config = apply_edge_runtime_to_config(config)
+            from app.xray.warp_routing import pin_api_inbound_route
+
+            config = pin_api_inbound_route(config)
         except Exception:
-            logger.exception("edge runtime override failed")
+            logger.exception("pin_api_inbound_route failed")
 
         if config.get('log', {}).get('logLevel') in ('none', 'error'):
             config['log']['logLevel'] = 'warning'
@@ -284,6 +309,12 @@ class XRayCore:
         logger.warning(f"Xray core {self.version} started")
         self._clear_startup_failure()
         self.started_at = time.time()
+        try:
+            from app.sync.core_status import note_core
+
+            note_core(True, str(self.version or ""), self.started_at)
+        except Exception:
+            pass
 
         try:
             from app.billing_guard import reset_billing_guard_state
@@ -324,6 +355,12 @@ class XRayCore:
                 pass
         self.process = None
         self.started_at = None
+        try:
+            from app.sync.core_status import note_core
+
+            note_core(False)
+        except Exception:
+            pass
         logger.warning("Xray core stopped")
 
         # execute on stop functions
@@ -551,6 +588,10 @@ class XRayCore:
         return True
 
     def restart(self, config: XRayConfig, *, force: bool = False):
+        from app.runtime_role import delegate_to_worker
+
+        if delegate_to_worker("restart_core"):
+            return
         with _lifecycle_lock:
             if self.restarting is True:
                 return

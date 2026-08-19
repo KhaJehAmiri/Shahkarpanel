@@ -96,26 +96,8 @@ def _settings_key_for_subnet(cfg, subnet: str) -> str:
     return "address"
 
 
-# Serialize "read used addresses -> pick free one -> commit" per subnet.
-# Without this, two concurrent requests (e.g. two devices of the same tenant
-# fetching their subscription for the first time) can both read the same
-# "used" set before either commits, and both hand out the *same* free IP to
-# two different users (AUDIT_FINDINGS.md M1). The panel always runs as a
-# single process (see main.py: "Do NOT change workers count"), so a
-# per-subnet in-process lock fully closes the race for every deployment that
-# actually exists today; this mirrors the atomic-claim pattern already used
-# for node connect/restart (H6/H7).
-_subnet_locks_guard = threading.Lock()
-_subnet_locks: Dict[str, threading.Lock] = {}
-
-
-def _lock_for_subnet(subnet: str) -> threading.Lock:
-    with _subnet_locks_guard:
-        lock = _subnet_locks.get(subnet)
-        if lock is None:
-            lock = threading.Lock()
-            _subnet_locks[subnet] = lock
-        return lock
+# Serialize "read used addresses -> pick free one -> commit" per allocation
+# family. Must be cross-process (uvicorn workers + control-plane worker).
 
 
 def ensure_user_address(db, proxy: Proxy, subnet: str, *, cfg=None) -> Optional[str]:
@@ -141,7 +123,9 @@ def ensure_user_address(db, proxy: Proxy, subnet: str, *, cfg=None) -> Optional[
         return settings[key]
 
     # Lock by allocation family so widen+allocate stays atomic across subnet string changes.
-    with _lock_for_subnet(key):
+    from app.db.locks import exclusive
+
+    with exclusive(db, f"wg-proxy-{key}"):
         if proxy.id is not None:
             db.refresh(proxy)
         settings = dict(proxy.settings or {})
@@ -228,7 +212,9 @@ def ensure_addresses_for_subnet(
             return True
         return wg_wants_awg_address(settings) if key == "awg_address" else wg_wants_plain_address(settings)
 
-    with _lock_for_subnet(key):
+    from app.db.locks import exclusive
+
+    with exclusive(db, f"wg-proxy-{key}"):
         if cfg is not None:
             db.refresh(cfg)
             active_subnet = cfg.awg_subnet if key == "awg_address" else cfg.subnet
@@ -1017,6 +1003,10 @@ def prepare_awg_peer_for_connect(dbnode, public_key: str) -> bool:
 
 
 def sync_user_change(*, immediate: bool = False, urgent: bool = False) -> None:
+    from app.runtime_role import delegate_to_worker
+
+    if delegate_to_worker("user_change"):
+        return
     """Lifecycle hook: re-sync WG nodes after any user add/update/remove.
 
     Schedules a resumable per-node batch sync (outbox + cursor) so large fleets

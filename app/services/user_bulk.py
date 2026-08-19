@@ -274,8 +274,6 @@ def apply_bulk_inbound(
     *,
     admin: Optional[Admin] = None,
 ) -> BulkInboundResult:
-    from app import xray as xray_mod
-
     started = time.perf_counter()
     inbound = _inbound_meta(body.inbound_tag)
     proxy_type = _proxy_type_for_inbound(inbound)
@@ -301,7 +299,7 @@ def apply_bulk_inbound(
 
     applied = skipped = failed = 0
     errors: List[str] = []
-    touched_active = False
+    touched_users: List[User] = []
     now = datetime.utcnow()
 
     for user in users:
@@ -341,7 +339,7 @@ def apply_bulk_inbound(
 
             user.edit_at = now
             if user.status in (UserStatus.active, UserStatus.on_hold):
-                touched_active = True
+                touched_users.append(user)
             applied += 1
         except Exception as exc:
             failed += 1
@@ -359,12 +357,8 @@ def apply_bulk_inbound(
             db.rollback()
             raise
 
-    if applied and touched_active:
-        xray_mod.operations.schedule_core_sync()
-        try:
-            xray_mod.operations._sync_wireguard()
-        except Exception:
-            pass
+    if applied and touched_users:
+        _apply_membership(db, touched_users, "protocol_change")
 
     duration_ms = int((time.perf_counter() - started) * 1000)
     logger.info(
@@ -513,7 +507,6 @@ def bulk_create_users(
     *,
     admin: Optional[Admin] = None,
 ) -> BulkUserCreateResult:
-    from app import xray as xray_mod
     from app.routers.user import _ensure_protocol_enabled
     from app.subscription.panel_balance import (
         _PANEL_SLUG_RE,
@@ -695,17 +688,16 @@ def bulk_create_users(
         mark_users_tariff_charged(db, created, tariff_plan)
 
     if created:
+        created_users = [row[0] for row in created_rows if row[0] is not None]
         needs_full = bool(body.speed_limit_up or body.speed_limit_down)
         if needs_full:
             from app.xray.serving import force_full_core_restart
 
             force_full_core_restart()
+            _sync_after_membership_change()
         else:
-            xray_mod.operations.schedule_core_sync()
-        try:
-            xray_mod.operations._sync_wireguard()
-        except Exception:
-            pass
+            _provision_bulk_wireguard(db, created_users)
+            _apply_membership(db, created_users, "add")
 
     # Build share links without UserResponse / generate_v2ray_links (was ~100ms+/user).
     from types import SimpleNamespace
@@ -819,10 +811,10 @@ class BulkNativeProtocolRequest(BaseModel):
     usernames: List[str] = Field(default_factory=list)
     status: Optional[UserStatus] = None
     filters: Optional[UserListFilters] = None
-    # Default False: return as soon as DB commits; WG/Finalmask sync runs in
-    # the background (same pattern as bulk create). Set True only when the
-    # caller must know nodes accepted the peer set before responding.
-    wait_sync: bool = False
+    # Default True: Bulk Assign must land on live cores before the HTTP
+    # response (worker converge). API-only still delegates; it never walks
+    # ``xray.nodes``.
+    wait_sync: bool = True
 
 
 class BulkNativeProtocolPreview(BaseModel):
@@ -1052,7 +1044,7 @@ def apply_bulk_native_protocol(
     admin: Optional[Admin] = None,
 ) -> BulkNativeProtocolResult:
     """Add/remove native protocol proxy rows without wiping other protocols."""
-    from app.wireguard.converge import converge_after_bulk_native, pending_sync_meta
+    from app.wireguard.converge import pending_sync_meta, request_bulk_converge
 
     started = time.perf_counter()
     users = _iter_target_users(
@@ -1116,31 +1108,12 @@ def apply_bulk_native_protocol(
             except Exception:
                 logger.exception("bulk native: ensure_all_peers failed")
         if body.wait_sync:
-            sync_meta = converge_after_bulk_native(
+            sync_meta = request_bulk_converge(
                 protocol=body.protocol.value,
-                wait_finalmask=True,
+                wait=True,
             )
         else:
-            from app import xray as xray_mod
-
-            xray_mod.operations._sync_wireguard()
-            try:
-                from app.wireguard.finalmask_reload import schedule_finalmask_xray_reload
-
-                schedule_finalmask_xray_reload(bulk=True)
-            except Exception:
-                pass
-            try:
-                from app.singbox.operations import sync_user_change as singbox_sync
-
-                if body.protocol in (
-                    BulkNativeProtocol.hysteria2,
-                    BulkNativeProtocol.tuic,
-                    BulkNativeProtocol.anytls,
-                ):
-                    singbox_sync()
-            except Exception:
-                pass
+            request_bulk_converge(protocol=body.protocol.value, wait=False)
             sync_meta = pending_sync_meta()
 
     duration_ms = int((time.perf_counter() - started) * 1000)
@@ -1235,8 +1208,6 @@ def apply_bulk_extend(
     *,
     admin: Optional[Admin] = None,
 ) -> BulkUserActionResult:
-    from app import xray as xray_mod
-
     started = time.perf_counter()
     users = _iter_target_users(
         db,
@@ -1251,7 +1222,7 @@ def apply_bulk_extend(
     add_data = body.add_data_bytes
     applied = skipped = failed = 0
     errors: List[str] = []
-    touched_active = False
+    touched_users: List[User] = []
     edit_at = datetime.utcnow()
 
     for user in users:
@@ -1283,7 +1254,7 @@ def apply_bulk_extend(
             user.edit_at = edit_at
             db.add(user)
             if user.status in (UserStatus.active, UserStatus.on_hold):
-                touched_active = True
+                touched_users.append(user)
             applied += 1
         except Exception as exc:
             failed += 1
@@ -1294,8 +1265,8 @@ def apply_bulk_extend(
 
     if applied:
         db.commit()
-        if touched_active:
-            xray_mod.operations.schedule_core_sync()
+        if touched_users:
+            _apply_membership(db, touched_users, "add")
 
     duration_ms = int((time.perf_counter() - started) * 1000)
     logger.info(
@@ -1323,7 +1294,6 @@ def apply_bulk_reset_usage(
     *,
     admin: Optional[Admin] = None,
 ) -> BulkUserActionResult:
-    from app import xray as xray_mod
     from app.db.models import UserUsageResetLogs
 
     started = time.perf_counter()
@@ -1337,7 +1307,7 @@ def apply_bulk_reset_usage(
     )
     applied = skipped = failed = 0
     errors: List[str] = []
-    touched_active = False
+    reactivated: List[User] = []
     reset_ids: List[int] = []
 
     for user in users:
@@ -1350,6 +1320,7 @@ def apply_bulk_reset_usage(
                 used_traffic_at_reset=user.used_traffic,
             )
             db.add(usage_log)
+            was_limited = user.status == UserStatus.limited
             user.used_traffic = 0
             user.used_traffic_up = 0
             user.used_traffic_down = 0
@@ -1361,8 +1332,8 @@ def apply_bulk_reset_usage(
                 db.delete(user.next_plan)
                 user.next_plan = None
             db.add(user)
-            if user.status in (UserStatus.active, UserStatus.on_hold):
-                touched_active = True
+            if was_limited and user.status == UserStatus.active:
+                reactivated.append(user)
             applied += 1
         except Exception as exc:
             failed += 1
@@ -1381,8 +1352,8 @@ def apply_bulk_reset_usage(
                 synchronize_session=False
             )
         db.commit()
-        if touched_active:
-            xray_mod.operations.schedule_core_sync()
+        if reactivated:
+            _apply_membership(db, reactivated, "add")
 
     duration_ms = int((time.perf_counter() - started) * 1000)
     logger.info(
@@ -1402,34 +1373,107 @@ def apply_bulk_reset_usage(
     )
 
 
+_OUTBOX_HOT_LIMIT = 80
+
+
+def _enqueue_users(db: Session, users, action: str) -> None:
+    """Queue per-user hot applies (same session, one worker wake)."""
+    from app.sync.outbox import enqueue, snapshot_user, _wake
+
+    n = 0
+    for user in users:
+        if user is None or getattr(user, "id", None) is None:
+            continue
+        enqueue(
+            db,
+            user_id=int(user.id),
+            action=action,
+            payload=snapshot_user(user),
+            commit=False,
+        )
+        n += 1
+    if n:
+        db.commit()
+        _wake()
+
+
 def _sync_after_membership_change() -> None:
     """Rebuild the running data-plane after users are removed/toggled.
 
     One resync (instead of N per-user calls) keeps ``delete all`` fast even
     with thousands of users while ensuring the live cores match the DB.
+    Must run on the worker — the API process has an empty ``xray.nodes``.
     """
-    from app import xray as xray_mod
+    from app.sync.wake import request_fleet_resync
 
-    try:
-        xray_mod.operations.schedule_core_sync()
-    except Exception:
-        logger.exception("bulk: core resync failed")
-    try:
-        # Main-core hot sync does not re-add users on remote node Xray inbounds
-        # after a bulk disable→enable. Push the connected-node configs too.
-        xray_mod.operations.push_connected_nodes_config_sync()
-    except Exception:
-        logger.exception("bulk: node Xray resync failed")
-    try:
-        xray_mod.operations._sync_wireguard()
-    except Exception:
-        logger.exception("bulk: WireGuard resync failed")
-    try:
-        from app.singbox.operations import sync_user_change as singbox_sync
+    request_fleet_resync()
 
-        singbox_sync()
+
+def _apply_membership(db: Session, users, action: str) -> None:
+    """Hot-apply via outbox. Never fleet-resync: that restarts Xray nodes."""
+    live = [u for u in users if u is not None]
+    if not live:
+        return
+    _enqueue_users(db, live, action)
+
+
+def _provision_bulk_wireguard(db: Session, users) -> None:
+    """Assign WG IP + Finalmask slot in the same HTTP request as bulk create.
+
+    Outbox used to allocate identity one user at a time, then sync-flush the
+    whole dirty-shard set while holding the drain lock. Customers waited
+    minutes for a config that should exist as soon as the row is committed.
+    """
+    ids: List[int] = []
+    for user in users or []:
+        if user is None or getattr(user, "id", None) is None:
+            continue
+        has_wg = any(
+            getattr(p, "type", None) == ProxyTypes.WireGuard
+            or str(getattr(p, "type", "")).lower() == "wireguard"
+            for p in (getattr(user, "proxies", None) or [])
+        )
+        if has_wg:
+            ids.append(int(user.id))
+    if not ids:
+        return
+    try:
+        from app.wireguard.wg_manager import autoscale_enabled, ensure_all_peers
+
+        if autoscale_enabled():
+            ensure_all_peers(db)
+        else:
+            from app.wireguard.operations import ensure_plain_addresses_for_finalmask
+
+            ensure_plain_addresses_for_finalmask(db)
     except Exception:
-        logger.exception("bulk: sing-box resync failed")
+        logger.exception("bulk create: WireGuard peer provision failed")
+        return
+    try:
+        from app.db.proxy_dedupe import get_user_proxy
+        from app.wireguard.finalmask_reload import (
+            mark_finalmask_slots_dirty,
+            schedule_finalmask_xray_reload,
+        )
+        from app.wireguard.finalmask_shard import ensure_finalmask_slots, user_finalmask_slot
+
+        ensure_finalmask_slots(db)
+        slots = set()
+        for uid in ids:
+            proxy = get_user_proxy(db, uid, ProxyTypes.WireGuard)
+            if proxy is None:
+                continue
+            slots.add(user_finalmask_slot(dict(proxy.settings or {})))
+        if slots:
+            mark_finalmask_slots_dirty(slots)
+            schedule_finalmask_xray_reload(delay=0.2, bulk=True)
+            logger.info(
+                "bulk create: provisioned %s WG users slots=%s",
+                len(ids),
+                sorted(slots)[:8],
+            )
+    except Exception:
+        logger.exception("bulk create: Finalmask slot assign failed")
 
 
 # ─────────────────────────── bulk delete ───────────────────────────
@@ -1512,9 +1556,12 @@ def apply_bulk_delete(
         statuses=body.statuses,
         filters=body.filters,
     )
-    # Snapshot ids + "was any active" up front — after the first chunk commits
+    # Snapshot ids + emails up front — after the first chunk commits
     # the original ORM instances are expired/detached.
+    from app.sync.outbox import snapshot_user
+
     user_ids = [int(u.id) for u in users]
+    delete_snaps = [(int(u.id), snapshot_user(u)) for u in users]
     touched_active = any(
         u.status in (UserStatus.active, UserStatus.on_hold) for u in users
     )
@@ -1534,6 +1581,8 @@ def apply_bulk_delete(
                     pass
 
         if touched_active:
+            # Outbox rows FK to users.id, so we cannot enqueue after delete.
+            # Worker fleet resync drops the emails from live cores.
             _sync_after_membership_change()
 
     duration_ms = int((time.perf_counter() - started) * 1000)
@@ -1590,7 +1639,7 @@ def apply_bulk_status(
     now = datetime.utcnow()
     applied = skipped = failed = 0
     errors: List[str] = []
-    touched_core = False
+    touched: List[User] = []
 
     for user in users:
         try:
@@ -1602,7 +1651,7 @@ def apply_bulk_status(
                 user.status = UserStatus.disabled
                 user.online_at = None
                 if was_live:
-                    touched_core = True
+                    touched.append(user)
             else:  # enable
                 if user.status != UserStatus.disabled:
                     skipped += 1
@@ -1610,7 +1659,7 @@ def apply_bulk_status(
                 new_status = _reactivated_status(user, now_ts)
                 user.status = new_status
                 if new_status in (UserStatus.active, UserStatus.on_hold):
-                    touched_core = True
+                    touched.append(user)
 
             user.last_status_change = now
             user.edit_at = now
@@ -1623,11 +1672,11 @@ def apply_bulk_status(
                 errors.append("…")
                 break
 
-    if applied and touched_core:
+    if applied:
         db.commit()
-        _sync_after_membership_change()
-    elif applied:
-        db.commit()
+        if touched:
+            action = "disable" if body.action == BulkStatusAction.disable else "add"
+            _apply_membership(db, touched, action)
 
     duration_ms = int((time.perf_counter() - started) * 1000)
     logger.info(

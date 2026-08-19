@@ -10,6 +10,7 @@ from sqlalchemy import (
     Enum,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Table,
@@ -211,6 +212,13 @@ class User(Base):
     client_profile = Column(
         String(16), nullable=False, server_default=text("'normal'"), default="normal"
     )
+    # Fleet apply state (phase 2 outbox). live = last drain succeeded; pending
+    # means a durable row is waiting; failed/dead after retry budget.
+    sync_state = Column(
+        String(16), nullable=False, server_default=text("'live'"), default="live"
+    )
+    sync_error = Column(Text, nullable=True)
+    sync_acked_at = Column(DateTime, nullable=True)
 
     next_plan = relationship(
         "NextPlan",
@@ -266,6 +274,37 @@ class User(Base):
                 _[proxy.type].append(tag)
 
         return _
+
+
+class UserSyncOutbox(Base):
+    """Durable fleet-apply queue. Survives Docker restart; Worker drains it.
+
+    user_id is SET NULL on user delete so a delete action can still replay
+    from ``payload`` (email, pubkey, slot).
+    """
+
+    __tablename__ = "user_sync_outbox"
+    __table_args__ = (
+        Index("ix_user_sync_outbox_drain", "status", "next_retry_at"),
+        Index("ix_user_sync_outbox_user", "user_id"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    action = Column(String(32), nullable=False)
+    target = Column(String(16), nullable=False, server_default=text("'all'"), default="all")
+    node_id = Column(Integer, nullable=True)
+    shard_or_tag = Column(String(128), nullable=True)
+    payload = Column(JSON, nullable=True)
+    status = Column(String(16), nullable=False, server_default=text("'pending'"), default="pending")
+    attempts = Column(Integer, nullable=False, server_default=text("0"), default=0)
+    next_retry_at = Column(DateTime, nullable=True)
+    last_error = Column(Text, nullable=True)
+    acked_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
 excluded_inbounds_association = Table(
@@ -522,6 +561,15 @@ class Node(Base):
     capacity = Column(Integer, nullable=True)
     latency_ms = Column(Float, nullable=True)
     last_health = Column(DateTime, nullable=True)
+    last_ack_at = Column(DateTime, nullable=True, index=True)
+    reported_peer_count = Column(Integer, nullable=False, server_default=text("0"), default=0)
+    ssh_ok = Column(Boolean, nullable=True)
+    control_tunnel_ok = Column(Boolean, nullable=True)
+    last_stats_ok = Column(DateTime, nullable=True)
+    desired_fingerprint = Column(String(64), nullable=True)
+    reported_fingerprint = Column(String(64), nullable=True)
+    drift = Column(Boolean, nullable=False, server_default=text("false"), default=False)
+    drift_reason = Column(String(512), nullable=True)
     group_id = Column(Integer, ForeignKey("node_groups.id"), nullable=True, index=True)
     group = relationship("NodeGroup", back_populates="nodes")
 

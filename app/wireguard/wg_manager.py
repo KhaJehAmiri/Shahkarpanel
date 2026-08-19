@@ -333,23 +333,26 @@ def _widen_fleet_plain_subnet(db: Session, iface: WgInterface, need: int) -> str
 
 
 def _allocate_ip(db: Session, iface: WgInterface) -> str:
-    # Finalmask bakes every peer onto every Iran relay — allowedIPs must be
-    # unique fleet-wide, not merely per interface (3x-ui has one inbound).
-    used = [row.address for row in db.query(WgPeer.address).all() if row.address]
-    need = len(used) + 1
-    _widen_fleet_plain_subnet(db, iface, need)
-    db.refresh(iface)
-    allocator = WireGuardPeerIPAllocator(iface.subnet, used=used)
-    address = allocator.allocate()
-    if not address:
-        # Last resort: force another widen step past current usable count.
-        _widen_fleet_plain_subnet(db, iface, need + 256)
+    from app.db.locks import exclusive
+
+    with exclusive(db, "wg-peer-ip"):
+        # Finalmask bakes every peer onto every Iran relay — allowedIPs must be
+        # unique fleet-wide, not merely per interface (3x-ui has one inbound).
+        used = [row.address for row in db.query(WgPeer.address).all() if row.address]
+        need = len(used) + 1
+        _widen_fleet_plain_subnet(db, iface, need)
         db.refresh(iface)
         allocator = WireGuardPeerIPAllocator(iface.subnet, used=used)
         address = allocator.allocate()
-    if not address:
-        raise WireGuardAutoScaleError(f"subnet {iface.subnet} exhausted on {iface.name}")
-    return address
+        if not address:
+            # Last resort: force another widen step past current usable count.
+            _widen_fleet_plain_subnet(db, iface, need + 256)
+            db.refresh(iface)
+            allocator = WireGuardPeerIPAllocator(iface.subnet, used=used)
+            address = allocator.allocate()
+        if not address:
+            raise WireGuardAutoScaleError(f"subnet {iface.subnet} exhausted on {iface.name}")
+        return address
 
 
 def _create_interface_on_node(db: Session, dbnode: Node, iface: WgInterface) -> None:

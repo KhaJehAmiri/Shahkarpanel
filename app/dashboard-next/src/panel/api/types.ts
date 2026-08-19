@@ -57,6 +57,10 @@ export interface UserItem {
   on_hold_timeout?: string | null;
   online_at: string | null;
   online?: boolean;
+  created_at?: string | null;
+  sync_state?: string | null;
+  sync_error?: string | null;
+  sync_acked_at?: string | null;
   data_limit_reset_strategy?: string;
   note?: string;
   admin?: { username: string } | null;
@@ -201,6 +205,13 @@ export interface NodeItem {
   provision_progress?: number | null;
   provision_step?: string | null;
   control_tunneled?: boolean;
+  health_status?: string;
+  last_ack_at?: string | null;
+  last_stats_ok?: string | null;
+  reported_peer_count?: number;
+  ssh_ok?: boolean | null;
+  drift?: boolean;
+  drift_reason?: string | null;
   wireguard?: ({
     public_key?: string | null;
     endpoint?: string | null;

@@ -28,6 +28,11 @@ fix_runtime_permissions() {
     chown "$PANEL_USER:$PANEL_GROUP" /var/lib/shahkar/install-meta.json 2>/dev/null || true
     chmod 664 /var/lib/shahkar/install-meta.json 2>/dev/null || true
   fi
+  # Worker heartbeat / wake files: data dir is 755 root, so the unprivileged
+  # process cannot create them. Pre-create so healthcheck and file fallback work.
+  touch /var/lib/shahkar/worker.heartbeat /var/lib/shahkar/worker.wake 2>/dev/null || true
+  chown "$PANEL_USER:$PANEL_GROUP" /var/lib/shahkar/worker.heartbeat /var/lib/shahkar/worker.wake 2>/dev/null || true
+  chmod 664 /var/lib/shahkar/worker.heartbeat /var/lib/shahkar/worker.wake 2>/dev/null || true
   mkdir -p /var/lib/shahkar/backups
   chown -R "$PANEL_USER:$PANEL_GROUP" /var/lib/shahkar/backups 2>/dev/null || true
   mkdir -p /var/lib/shahkar/backups/migrations
@@ -58,9 +63,11 @@ fix_runtime_permissions() {
     chmod 700 /var/lib/shahkar/secrets 2>/dev/null || true
     find /var/lib/shahkar/secrets -maxdepth 1 -type f -exec chmod 600 {} + 2>/dev/null || true
   fi
-  if [ -d /code/.git ]; then
-    chown -R "$PANEL_USER:$PANEL_GROUP" /code 2>/dev/null || true
-  elif [ -f /code/.env ]; then
+  # Never `chown -R /code`. On a bind-mounted git checkout that walks tens of
+  # thousands of files on every container start and is what pegs CPU while the
+  # worker crash-loops after OOM. The process only needs to own its data dir
+  # (handled above) and optionally the env file.
+  if [ -f /code/.env ]; then
     chown "$PANEL_USER:$PANEL_GROUP" /code/.env 2>/dev/null || true
     chmod 600 /code/.env 2>/dev/null || true
   fi
@@ -191,6 +198,13 @@ start_panel_process() {
   exec python main.py
 }
 
+start_worker_process() {
+  cd /code
+  # Migrations run in the API container first (worker depends_on healthy).
+  ulimit -n 1048576 2>/dev/null || ulimit -n 65536 2>/dev/null || true
+  exec python -m app.worker
+}
+
 if [ "$(id -u)" -eq 0 ]; then
   fix_runtime_permissions
   fix_docker_socket_group || true
@@ -224,10 +238,16 @@ if [ "$(id -u)" -eq 0 ]; then
     # Re-enter this script as shahkar so migrate+main share one code path.
     exec runuser -u "$PANEL_USER" -- bash /code/docker-entrypoint.sh panel
   fi
+  if [ "${1}" = "worker" ]; then
+    exec runuser -u "$PANEL_USER" -- bash /code/docker-entrypoint.sh worker
+  fi
   exec runuser -u "$PANEL_USER" -- "$@"
 fi
 
 if [ "${1:-panel}" = "panel" ]; then
   start_panel_process
+fi
+if [ "${1}" = "worker" ]; then
+  start_worker_process
 fi
 exec "$@"

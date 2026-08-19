@@ -643,6 +643,18 @@
     "provisionFailed": "Remote install failed. Check SSH credentials, firewall, and that the server is reachable.",
     "provisionFailedShort": "Install failed",
     "controlTunneled": "Control: tunneled",
+    "converge": "收敛",
+    "converging": "已安排收敛",
+    "lastAck": "最近 ACK",
+    "peers": "对等端",
+    "status": {
+      "connected": "已连接",
+      "connecting": "连接中",
+      "syncing": "同步中",
+      "drifted": "漂移",
+      "error": "错误",
+      "disabled": "已禁用"
+    },
     "provisionStep": {
       "queued": "Queued",
       "ssh": "Connecting SSH",

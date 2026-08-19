@@ -57,6 +57,17 @@ export function relativeExpiryLabel(
   return diffSec >= 0 ? t("users.expiresIn", { value }) : t("users.expiredAgo", { value });
 }
 
+export function formatAgo(value: string | number | null | undefined): string {
+  if (value == null || value === "") return "—";
+  const d = typeof value === "number" ? new Date(value * 1000) : new Date(value);
+  if (isNaN(d.getTime())) return "—";
+  const sec = Math.max(0, Math.round((Date.now() - d.getTime()) / 1000));
+  if (sec < 45) return `${sec}s`;
+  if (sec < 3600) return `${Math.floor(sec / 60)}m`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)}h`;
+  return `${Math.floor(sec / 86400)}d`;
+}
+
 export function usagePct(used: number, limit: number | null | undefined): number {
   if (!limit) return 0;
   return Math.min(100, (used / limit) * 100);
@@ -70,12 +81,14 @@ export function statusTone(status: string): "ok" | "danger" | "warn" | "info" | 
     case "disabled":
     case "error":
       return "danger";
-    case "expired":
-    case "limited":
-      return "warn";
     case "on_hold":
     case "connecting":
+    case "syncing":
       return "info";
+    case "expired":
+    case "limited":
+    case "drifted":
+      return "warn";
     default:
       return "default";
   }

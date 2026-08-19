@@ -29,13 +29,37 @@ _load_env_file()
 
 
 SQLALCHEMY_DATABASE_URL = config("SQLALCHEMY_DATABASE_URL", default="sqlite:///db.sqlite3")
-SQLALCHEMY_POOL_SIZE = config("SQLALCHEMY_POOL_SIZE", cast=int, default=10)
+
+
+def _role() -> str:
+    return (os.environ.get("SHAHKAR_ROLE") or "all").strip().lower()
+
+
+def _default_pool_size() -> int:
+    role = _role()
+    if role == "api":
+        return 8
+    if role == "worker":
+        return 16
+    return 20
+
+
+def _default_pool_overflow() -> int:
+    role = _role()
+    if role == "api":
+        return 8
+    if role == "worker":
+        return 16
+    return 30
+
+
+SQLALCHEMY_POOL_SIZE = config("SQLALCHEMY_POOL_SIZE", cast=int, default=_default_pool_size())
 # Correctly-spelled env var, with a fallback to the historical misspelling so
 # existing .env files that set SQLIALCHEMY_MAX_OVERFLOW keep working.
 SQLALCHEMY_MAX_OVERFLOW = config(
     "SQLALCHEMY_MAX_OVERFLOW",
     cast=int,
-    default=config("SQLIALCHEMY_MAX_OVERFLOW", cast=int, default=30),
+    default=config("SQLIALCHEMY_MAX_OVERFLOW", cast=int, default=_default_pool_overflow()),
 )
 # Backwards-compatible alias for any external importers of the old name.
 SQLIALCHEMY_MAX_OVERFLOW = SQLALCHEMY_MAX_OVERFLOW
@@ -114,6 +138,10 @@ HA_INSTANCE_ID = config("HA_INSTANCE_ID", default="")
 # Seconds the leader lock is held before it must be renewed/expires.
 HA_LEADER_TTL = config("HA_LEADER_TTL", cast=int, default=15)
 
+# Process split (phase 1). ``all`` = one process (default). Compose sets
+# ``api`` on the HTTP container and ``worker`` on the control-plane container.
+SHAHKAR_ROLE = config("SHAHKAR_ROLE", default="all")
+
 # Smart routing (phase 4). Strategy used to order/select nodes for clients:
 # 'latency' | 'region' | 'load' | 'round_robin'. Gated by the 'smart_routing' flag.
 ROUTING_STRATEGY = config("ROUTING_STRATEGY", default="latency")
@@ -177,6 +205,18 @@ UVICORN_UDS = config("UVICORN_UDS", default=None)
 UVICORN_SSL_CERTFILE = config("UVICORN_SSL_CERTFILE", default=None)
 UVICORN_SSL_KEYFILE = config("UVICORN_SSL_KEYFILE", default=None)
 UVICORN_SSL_CA_TYPE = config("UVICORN_SSL_CA_TYPE", default="public").lower()
+
+
+def _default_uvicorn_workers() -> int:
+    return 2 if _role() == "api" else 1
+
+
+UVICORN_WORKERS = config("UVICORN_WORKERS", cast=int, default=_default_uvicorn_workers())
+if UVICORN_WORKERS < 1:
+    UVICORN_WORKERS = 1
+if UVICORN_WORKERS > 8:
+    UVICORN_WORKERS = 8
+
 DASHBOARD_PATH = config("DASHBOARD_PATH", default="/dashboard/")
 
 DEBUG = config("DEBUG", default=False, cast=bool)
@@ -437,16 +477,16 @@ JOB_CORE_USER_RECONCILE_INTERVAL = config("JOB_CORE_USER_RECONCILE_INTERVAL", ca
 JOB_AWG_FLUSH_STALE_PEERS = config("JOB_AWG_FLUSH_STALE_PEERS", cast=bool, default=False)
 JOB_RECORD_NODE_USAGES_INTERVAL = config("JOB_RECORD_NODE_USAGES_INTERVAL", cast=int, default=30)
 JOB_RECORD_USER_USAGES_INTERVAL = config("JOB_RECORD_USER_USAGES_INTERVAL", cast=int, default=15)
+# Drop hourly per-user usage rows older than this. 0 keeps forever (will
+# eventually pin Postgres and freeze the dashboard). 14 days is enough for
+# Overview / Analytics charts.
+JOB_USAGE_RETENTION_DAYS = config("JOB_USAGE_RETENTION_DAYS", cast=int, default=14)
 # "Online now" window: a user counts as online if their ``online_at`` is within
 # this many minutes. The presence tracker polls every core several times per
 # window and re-writes the whole window on each tick (see app/presence.py), so
 # one minute here is a true "online right now" without losing anyone to a missed
 # poll. Raise it only if you want the number to include recently-idle clients.
 ONLINE_WINDOW_MINUTES = config("ONLINE_WINDOW_MINUTES", cast=int, default=1)
-# Presence tracker: how often each core's per-user traffic counters are polled,
-# and the per-core gRPC deadline. The interval is additionally capped at a
-# quarter of the online window. It runs on its own thread, so this is
-# independent of every job interval.
 ONLINE_PRESENCE_INTERVAL = config("ONLINE_PRESENCE_INTERVAL", cast=int, default=15)
 ONLINE_PRESENCE_QUERY_TIMEOUT = config("ONLINE_PRESENCE_QUERY_TIMEOUT", cast=int, default=2)
 # Fail-closed: after this many blind usage cycles, disconnect all active users on local inbounds.

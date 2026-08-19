@@ -627,6 +627,21 @@ def get_users_count(db: Session, status: UserStatus = None, admin: Admin = None)
     return query.count()
 
 
+def get_user_status_counts(db: Session, admin: Admin = None) -> dict:
+    """One GROUP BY instead of six COUNT queries on every Overview poll."""
+    query = db.query(User.status, func.count(User.id)).group_by(User.status)
+    if admin:
+        query = query.filter(User.admin == admin)
+    by_status = {}
+    total = 0
+    for status, n in query.all():
+        key = status.value if hasattr(status, "value") else str(status)
+        count = int(n or 0)
+        by_status[key] = count
+        total += count
+    return {"total": total, "by_status": by_status}
+
+
 def create_user(
     db: Session,
     user: UserCreate,

@@ -1,5 +1,7 @@
 # Production-oriented stack: Shahkar + PostgreSQL + Redis.
 # Use with: docker compose -f docker-compose.postgres.yml up -d
+# If docker-compose.override.yml exists on the host, pass it too:
+#   docker compose -f docker-compose.postgres.yml -f docker-compose.override.yml up -d
 #
 # Set the matching values in /var/lib/shahkar/.env (runtime secrets), e.g.:
 #   SQLALCHEMY_DATABASE_URL=postgresql://shahkar:STRONG_SECRET@127.0.0.1:5432/shahkar
@@ -36,6 +38,13 @@ services:
       # docker/compose/buildx CLI ships in the image itself (see Dockerfile);
       # only the socket needs to come from the host (AUDIT_FINDINGS.md C5).
       - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      SHAHKAR_ROLE: api
+      # Two API workers ≈ 2.8Gi on a 27k-user panel — too much for an 8Gi host
+      # that also runs the Xray worker. Override with UVICORN_WORKERS=2 on bigger boxes.
+      UVICORN_WORKERS: "${UVICORN_WORKERS:-1}"
+      SQLALCHEMY_POOL_SIZE: "8"
+      SQLALCHEMY_MAX_OVERFLOW: "8"
     depends_on:
       postgres:
         condition: service_healthy
@@ -50,6 +59,52 @@ services:
       timeout: 5s
       retries: 5
       start_period: 40s
+
+  shahkar-worker:
+    build: .
+    restart: always
+    env_file:
+      - .env
+      - /var/lib/shahkar/.env
+    environment:
+      SHAHKAR_ROLE: worker
+      SQLALCHEMY_POOL_SIZE: "16"
+      SQLALCHEMY_MAX_OVERFLOW: "16"
+    command: ["worker"]
+    network_mode: host
+    pid: host
+    ulimits:
+      nofile:
+        soft: 1048576
+        hard: 1048576
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    group_add:
+      - "${DOCKER_GID:-988}"
+    volumes:
+      - /var/lib/shahkar:/var/lib/shahkar
+      - .:/code
+      - /opt/sigmaguard/wire:/opt/sigmaguard/wire:ro
+      - /etc/letsencrypt:/etc/letsencrypt
+      - /var/www/letsencrypt:/var/www/letsencrypt
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      shahkar:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python3 /code/scripts/worker_healthcheck.py
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 180s
 
   postgres:
     image: postgres:17-alpine

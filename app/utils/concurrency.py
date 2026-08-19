@@ -19,6 +19,49 @@ _NODE_ALTER_POOL = ThreadPoolExecutor(
     thread_name_prefix="node-alter",
 )
 
+# Shared fleet-RPC pool. Usage / presence / bandwidth used to construct a
+# fresh ThreadPoolExecutor every tick and ``shutdown(wait=False)``. Hung node
+# RPCs then leaked OS threads until the single uvicorn worker froze and only
+# a Docker restart recovered it.
+_NODE_RPC_WORKERS = max(4, int(os.environ.get("NODE_RPC_POOL_SIZE", "16")))
+_NODE_RPC_POOL = ThreadPoolExecutor(
+    max_workers=_NODE_RPC_WORKERS,
+    thread_name_prefix="node-rpc",
+)
+_NODE_RPC_QUEUE_CAP = Semaphore(_NODE_RPC_WORKERS * 2)
+
+
+def map_rpc(func, items: dict, timeout: float, default=None) -> dict:
+    """Run ``func(key, value)`` for each item with a hard per-future timeout.
+
+    Submits onto the process-wide pool. If the pool is saturated, the key is
+    skipped (same as a timeout) instead of queueing unbounded work.
+    """
+    if not items:
+        return {}
+    futures = {}
+    for key, value in items.items():
+        if not _NODE_RPC_QUEUE_CAP.acquire(blocking=False):
+            continue
+
+        def _run(fn=func, k=key, v=value):
+            try:
+                return fn(k, v)
+            finally:
+                _NODE_RPC_QUEUE_CAP.release()
+
+        try:
+            futures[key] = _NODE_RPC_POOL.submit(_run)
+        except RuntimeError:
+            _NODE_RPC_QUEUE_CAP.release()
+    out = {}
+    for key, fut in futures.items():
+        try:
+            out[key] = fut.result(timeout=timeout)
+        except Exception:
+            out[key] = default
+    return out
+
 
 def threaded_function(func):
     def wrapper(*args, **kwargs):

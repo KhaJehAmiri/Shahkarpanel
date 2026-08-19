@@ -55,10 +55,14 @@ def _probe_main_core_api() -> bool:
 
 
 def _health_check_config():
-    """Prefer the last booted config during bind-failure recovery — rebuilding
-    from the DB on every tick is expensive and races with in-flight migrations."""
+    """Reuse the last booted config whenever it exists.
+
+    Rebuilding via ``include_db_users()`` materializes the full ~27k-user
+    inbound map. Doing that on every health tick (or after an OOM restart)
+    doubles RSS and is what knocks an 8Gi host into a kill loop.
+    """
     last = getattr(xray.core, "last_config", None)
-    if last is not None and xray.core.startup_error and not xray.core.started:
+    if last is not None:
         return last
     return xray.config.include_db_users()
 
@@ -225,7 +229,29 @@ def _maybe_resync_wireguard(node_id: int, node, now: float) -> None:
         logger.debug("Periodic WireGuard resync for node %s skipped: %s", node_id, exc)
 
 
-def _record_node_health(node_id: int, latency_ms: float):
+def _record_node_health(node_id: int, latency_ms: float, node=None):
+    tunneled = None
+    if node is not None:
+        tunneled = bool(getattr(node, "control_tunneled", False))
+        if not tunneled:
+            try:
+                from app.control_tunnel import is_active as control_tunnel_active
+
+                tunneled = bool(control_tunnel_active(node_id))
+            except Exception:
+                tunneled = False
+    try:
+        from app.sync.node_report import record_probe
+
+        record_probe(
+            node_id,
+            latency_ms=latency_ms,
+            stats_ok=True,
+            control_tunneled=tunneled,
+        )
+        return
+    except Exception:
+        logger.debug("node report probe persist failed for %s", node_id, exc_info=True)
     try:
         with GetDB() as db:
             dbnode = crud.get_node_by_id(db, node_id)
@@ -376,17 +402,27 @@ def core_health_check():
         try:
             if is_wg_node:
                 latency_ms = _probe_wireguard_node(node_id, node, meta=node_meta)
-                _record_node_health(node_id, latency_ms)
+                _record_node_health(node_id, latency_ms, node=node)
                 _maybe_reconcile_awg_endpoints(node_id, node, now, meta=node_meta)
                 if JOB_AWG_FLUSH_STALE_PEERS:
                     _maybe_flush_awg_peers(node_id, node, now, meta=node_meta)
-                _maybe_resync_wireguard(node_id, node, now)
+                busy = False
+                try:
+                    from app.wireguard.sync_engine import is_finalmask_rpc_busy
+
+                    busy = bool(is_finalmask_rpc_busy(node_id))
+                except Exception:
+                    busy = False
+                # Resync on a channel already held by hot-replace times out
+                # the probe and then starves last_ack → UI Connecting flicker.
+                if not busy:
+                    _maybe_resync_wireguard(node_id, node, now)
             else:
                 assert node.started
                 probe_start = time.time()
                 node.api.get_sys_stats(timeout=2)
                 latency_ms = (time.time() - probe_start) * 1000
-                _record_node_health(node_id, latency_ms)
+                _record_node_health(node_id, latency_ms, node=node)
         except (ConnectionError, xray_exc.XrayError, AssertionError, TimeoutError, EOFError) as exc:
             return exc
         return None
@@ -419,6 +455,9 @@ def core_health_check():
                         from app.wireguard.sync_engine import is_finalmask_rpc_busy
 
                         if is_finalmask_rpc_busy(node_id):
+                            # Session is live and busy — keep ACK fresh so the
+                            # dashboard does not flip the node to Connecting.
+                            _record_node_health(node_id, 0.0, node=node)
                             continue
                     except Exception:
                         pass
@@ -436,7 +475,7 @@ def core_health_check():
                             node, db=db, node_id=node_id
                         )
                     if tunnel_ready:
-                        _record_node_health(node_id, 0.0)
+                        _record_node_health(node_id, 0.0, node=node)
                         continue
                 _node_restart_after[node_id] = now + _NODE_RESTART_COOLDOWN_SEC
                 if not config:
@@ -456,6 +495,7 @@ def core_health_check():
                     from app.wireguard.sync_engine import is_finalmask_rpc_busy
 
                     if is_finalmask_rpc_busy(node_id):
+                        _record_node_health(node_id, 0.0, node=node)
                         continue
                 except Exception:
                     pass
@@ -467,7 +507,7 @@ def core_health_check():
                         node, db=db, node_id=node_id
                     )
                 if tunnel_ready:
-                    _record_node_health(node_id, 0.0)
+                    _record_node_health(node_id, 0.0, node=node)
                     continue
             if not config:
                 config = _health_check_config()
@@ -493,6 +533,11 @@ def start_core():
     every client timed out. Keep boot synchronous; nginx already shows a
     restarting page during the brief downtime.
     """
+    from app.runtime_role import owns_control_plane
+
+    if not owns_control_plane():
+        logger.info("skip Xray/node boot in API process (SHAHKAR_ROLE=api)")
+        return
     if getattr(app.state, "_xray_core_boot_started", False):
         return
     app.state._xray_core_boot_started = True
@@ -541,7 +586,10 @@ def start_core():
         dbnodes = crud.get_nodes(db=db, enabled=True)
         node_ids = [dbnode.id for dbnode in dbnodes]
         for dbnode in dbnodes:
-            crud.update_node_status(db, dbnode, NodeStatus.connecting)
+            # Mass-flipping connected nodes to connecting on every worker
+            # boot is what made the whole fleet flicker after a recreate.
+            if dbnode.status != NodeStatus.connected:
+                crud.update_node_status(db, dbnode, NodeStatus.connecting)
 
     for node_id in node_ids:
         xray.operations.connect_node(node_id, config)

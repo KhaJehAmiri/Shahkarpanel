@@ -33,6 +33,47 @@ SERVER_IPV6 = get_public_ipv6()
 _SUB_CACHE_TTL_SEC = 20.0
 _SUB_CACHE_LOCK = threading.Lock()
 _SUB_CACHE: dict = {}
+
+
+def _stable_cache_part(value) -> str:
+    """JSON policies/dicts must not go into a dict key (unhashable)."""
+    if value is None:
+        return ""
+    if isinstance(value, (str, int, float, bool)):
+        return str(value)
+    try:
+        import json
+
+        return json.dumps(value, sort_keys=True, default=str, separators=(",", ":"))
+    except TypeError:
+        return str(value)
+
+
+def _subscription_cache_key(
+    user: "UserResponse",
+    config_format: str,
+    as_base64: bool,
+    reverse: bool,
+    inbound_filter: str | None,
+    exclude_protocols: set[str] | None,
+) -> tuple:
+    inbounds = getattr(user, "inbounds", None) or {}
+    proxies = getattr(user, "proxies", None) or {}
+    inbound_keys = inbounds.keys() if hasattr(inbounds, "keys") else inbounds
+    proxy_keys = proxies.keys() if hasattr(proxies, "keys") else proxies
+    return (
+        getattr(user, "id", None),
+        config_format,
+        bool(as_base64),
+        bool(reverse),
+        inbound_filter or "",
+        tuple(sorted(exclude_protocols or ())),
+        _stable_cache_part(getattr(user, "routing_preset", None)),
+        _stable_cache_part(getattr(user, "dns_policy", None)),
+        _stable_cache_part(getattr(user, "family_controls", None)),
+        tuple(sorted(str(k) for k in inbound_keys)),
+        tuple(sorted(str(k) for k in proxy_keys)),
+    )
 STATUS_EMOJIS = {
     "active": "✅",
     "expired": "⌛️",
@@ -287,19 +328,13 @@ def generate_subscription(
     re-runs the full Python render under the GIL so concurrent imports queue
     up to multi-second waits.
     """
-    cache_key = (
-        getattr(user, "id", None),
+    cache_key = _subscription_cache_key(
+        user,
         config_format,
-        bool(as_base64),
-        bool(reverse),
-        inbound_filter or "",
-        tuple(sorted(exclude_protocols or ())),
-        getattr(user, "routing_preset", None),
-        getattr(user, "dns_policy", None),
-        str(getattr(user, "family_controls", None) or ""),
-        # Invalidate when the user's proxies/inbounds change shape.
-        tuple(sorted((getattr(user, "inbounds") or {}).keys())),
-        tuple(sorted((getattr(user, "proxies") or {}).keys())),
+        as_base64,
+        reverse,
+        inbound_filter,
+        exclude_protocols,
     )
     now = time.monotonic()
     with _SUB_CACHE_LOCK:

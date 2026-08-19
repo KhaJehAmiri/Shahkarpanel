@@ -136,6 +136,18 @@ def _apply_and_restart(new_config: dict) -> bool:
     return True
 
 
+def _candidate_endpoints() -> list[tuple[str, int]]:
+    from config import WARP_CANDIDATE_ENDPOINTS
+
+    out: list[tuple[str, int]] = []
+    for ep in WARP_CANDIDATE_ENDPOINTS:
+        host, sep, port = str(ep).strip().rpartition(":")
+        if not sep or not port.isdigit():
+            continue
+        out.append((host.strip("[]"), int(port)))
+    return out
+
+
 def _remediate(tag: str) -> bool:
     config_dict = copy.deepcopy(dict(xray.config))
     outbounds = list(config_dict.get("outbounds") or [])
@@ -143,7 +155,16 @@ def _remediate(tag: str) -> bool:
     if target is None:
         return False
 
-    found = find_working_warp_endpoint(target, lambda ob: _probe(ob, outbounds))
+    def _probe_endpoint(host: str, port: int) -> bool:
+        trial = copy.deepcopy(target)
+        if not apply_warp_endpoint(trial, host, port):
+            return False
+        trial_outbounds = [
+            trial if str(o.get("tag") or "") == tag else o for o in outbounds
+        ]
+        return _probe(trial, trial_outbounds)
+
+    found = find_working_warp_endpoint(_candidate_endpoints(), _probe_endpoint)
     if found is None:
         logger.error("WARP outbound '%s' is unreachable on every known candidate endpoint", tag)
         return False

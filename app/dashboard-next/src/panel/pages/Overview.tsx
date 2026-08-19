@@ -1,4 +1,4 @@
-import { FC, ReactNode, useEffect, useMemo, useState } from "react";
+import { FC, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
@@ -7,6 +7,7 @@ import { usePanelUpdate } from "../context/UpdateContext";
 import { useApp } from "../context/AppContext";
 import { useCopilot } from "../copilot/CopilotContext";
 import { useFetch, useLiveReload, usePolling } from "../lib/useFetch";
+import { useOverviewEvents } from "../lib/useOverviewEvents";
 import { formatBytes, formatCompactAmount, formatSpeed, usagePct } from "../lib/format";
 import { PageHeader } from "../components/Shell";
 import { HealthChecklist } from "../components/HealthChecklist";
@@ -475,9 +476,14 @@ function formatUptime(seconds?: number): string {
 
 function useSeries(value: number, maxPoints = 28): number[] {
   const [series, setSeries] = useState<number[]>(() => Array.from({ length: 8 }, () => value));
+  const latest = useRef(value);
+  latest.current = value;
   useEffect(() => {
-    setSeries((prev) => [...prev.slice(-(maxPoints - 1)), Math.max(0, value)]);
-  }, [value, maxPoints]);
+    const id = window.setInterval(() => {
+      setSeries((prev) => [...prev.slice(-(maxPoints - 1)), Math.max(0, latest.current)]);
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [maxPoints]);
   return series;
 }
 
@@ -636,13 +642,16 @@ const LiveHero: FC<{
   stale?: boolean;
   xray?: number;
   os?: number;
-}> = ({ up, down, totalUp, totalDown, stale, xray, os }) => {
+  coreStarted?: boolean;
+  coreVersion?: string;
+}> = ({ up, down, totalUp, totalDown, stale, xray, os, coreStarted, coreVersion }) => {
   const { t } = useTranslation();
   const toast = useToast();
   const core = useFetch<CoreStats>(() => api.get("/core"), []);
   const [busy, setBusy] = useState(false);
-  usePolling(() => core.reload(), 15000);
-  const running = !!core.data?.started;
+  usePolling(() => core.reload(), 2000);
+  const running = coreStarted ?? !!core.data?.started;
+  const versionLabel = coreVersion || core.data?.version;
   const upSeries = useSeries(up);
   const downSeries = useSeries(down);
 
@@ -671,7 +680,7 @@ const LiveHero: FC<{
         <div className={`sk-core-chip${running ? " ok" : " danger"}`}>
           <span className="sk-core-chip-dot" />
           {running ? t("overview.coreRunning") : t("overview.coreStopped")}
-          <span className="sk-core-chip-ver">Xray {core.data?.version ? `v${core.data.version}` : "—"}</span>
+          <span className="sk-core-chip-ver">Xray {versionLabel ? `v${versionLabel}` : "—"}</span>
         </div>
       </div>
 
@@ -794,19 +803,79 @@ export const Overview: FC = () => {
   );
   const ws = workspace.data;
   const [rt, setRt] = useState<RealtimeStats | null>(null);
+  const [liveSys, setLiveSys] = useState<Partial<SystemStats> | null>(null);
+  const [coreLive, setCoreLive] = useState<{ started?: boolean; version?: string }>({});
   const [rtStale, setRtStale] = useState(false);
   const [sysFetchedAt, setSysFetchedAt] = useState(() => Date.now());
   const [, setTick] = useState(0);
 
+  const live = useOverviewEvents({
+    onNodeStatus: () => nodes.reload({ background: true }),
+  });
+
+  useEffect(() => {
+    const tick = live.tick;
+    if (!tick) return;
+    setRt({
+      online_users: tick.online_users ?? 0,
+      users_active: tick.users_active ?? 0,
+      nodes_connected: tick.nodes_connected ?? 0,
+      incoming_bandwidth_speed: tick.incoming_bandwidth_speed ?? 0,
+      outgoing_bandwidth_speed: tick.outgoing_bandwidth_speed ?? 0,
+      bandwidth_source: tick.bandwidth_source,
+      bandwidth_scope: tick.bandwidth_scope,
+    });
+    setLiveSys({
+      version: tick.version,
+      mem_total: tick.mem_total,
+      mem_used: tick.mem_used,
+      disk_total: tick.disk_total,
+      disk_used: tick.disk_used,
+      cpu_cores: tick.cpu_cores,
+      cpu_usage: tick.cpu_usage,
+      total_user: tick.total_user,
+      online_users: tick.online_users,
+      users_active: tick.users_active,
+      users_disabled: tick.users_disabled,
+      users_expired: tick.users_expired,
+      users_limited: tick.users_limited,
+      users_on_hold: tick.users_on_hold,
+      incoming_bandwidth: tick.incoming_bandwidth,
+      outgoing_bandwidth: tick.outgoing_bandwidth,
+      incoming_bandwidth_speed: tick.incoming_bandwidth_speed,
+      outgoing_bandwidth_speed: tick.outgoing_bandwidth_speed,
+      bandwidth_source: tick.bandwidth_source,
+      os_uptime: tick.os_uptime,
+      xray_uptime: tick.xray_uptime,
+      node_uptime: tick.node_uptime,
+    });
+    setCoreLive({
+      started: tick.xray_started,
+      version: tick.xray_version,
+    });
+    setSysFetchedAt(Date.now());
+    setRtStale(false);
+  }, [live.tick]);
+
+  useEffect(() => {
+    setRtStale(live.stale);
+  }, [live.stale]);
+
+  const [fallbackReady, setFallbackReady] = useState(false);
+  useEffect(() => {
+    const id = window.setTimeout(() => setFallbackReady(true), 1500);
+    return () => window.clearTimeout(id);
+  }, []);
+  const httpFallback = live.stale || (fallbackReady && !live.connected);
   usePolling(() => {
     api.get<RealtimeStats>("/analytics/realtime")
       .then((d) => { setRt(d); setRtStale(false); })
       .catch(() => setRtStale(true));
-  }, 3000);
+  }, 2000, httpFallback);
 
   usePolling(() => {
     sys.reload({ background: true });
-  }, 8000);
+  }, 5000, httpFallback);
 
   useEffect(() => {
     if (sys.data) setSysFetchedAt(Date.now());
@@ -818,20 +887,25 @@ export const Overview: FC = () => {
   }, []);
 
   useLiveReload(() => {
-    top.reload({ background: true });
-    protoUsage.reload({ background: true });
     nodes.reload({ background: true });
     inbounds.reload({ background: true });
-    nodesUsage.reload({ background: true });
     workspace.reload({ background: true });
+  }, 10000);
+
+  useLiveReload(() => {
+    top.reload({ background: true });
+    protoUsage.reload({ background: true });
+    nodesUsage.reload({ background: true });
     mrr.reload({ background: true });
     payProviders.reload({ background: true });
     allProviders.reload({ background: true });
     if (payActive) gatewayIncome.reload({ background: true });
-  }, 20000);
+  }, 60000);
 
   const { hasUpdate, check, openUpdateModal } = usePanelUpdate();
-  const s = sys.data;
+  const s = (sys.data || liveSys)
+    ? { ...(sys.data || {}), ...(liveSys || {}) } as SystemStats
+    : null;
   const elapsedSec = Math.max(0, Math.floor((Date.now() - sysFetchedAt) / 1000));
   const liveXrayUptime = s?.xray_uptime != null ? s.xray_uptime + elapsedSec : undefined;
   const liveOsUptime = s?.os_uptime != null ? s.os_uptime + elapsedSec : undefined;
@@ -984,6 +1058,8 @@ export const Overview: FC = () => {
             stale={rtStale}
             xray={liveXrayUptime}
             os={liveOsUptime}
+            coreStarted={coreLive.started}
+            coreVersion={coreLive.version}
           />
         </Section>
       )}

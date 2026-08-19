@@ -1,25 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 
 /** Rolling buffer for live sparkline charts (CPU, RAM, bandwidth). */
-export function useMetricHistory(value: number | undefined, capacity = 24, pollMs = 5000) {
+export function useMetricHistory(value: number | undefined, capacity = 32, pollMs = 250) {
   const [history, setHistory] = useState<number[]>([]);
-  const last = useRef<number | undefined>(undefined);
-
-  useEffect(() => {
-    if (value === undefined || Number.isNaN(value)) return;
-    if (last.current === value) return;
-    last.current = value;
-    setHistory((h) => [...h.slice(-(capacity - 1)), value]);
-  }, [value, capacity]);
+  const latest = useRef<number | undefined>(value);
+  latest.current = value;
 
   useEffect(() => {
     const id = setInterval(() => {
-      if (last.current !== undefined) {
-        setHistory((h) => (h.length ? h : [last.current!]));
-      }
+      const v = latest.current;
+      if (v === undefined || Number.isNaN(v)) return;
+      setHistory((h) => [...h.slice(-(capacity - 1)), v]);
     }, pollMs);
     return () => clearInterval(id);
-  }, [pollMs]);
+  }, [pollMs, capacity]);
 
   return history;
 }

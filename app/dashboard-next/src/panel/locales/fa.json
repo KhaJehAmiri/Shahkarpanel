@@ -924,6 +924,18 @@
     "provisionFailed": "نصب از راه دور ناموفق بود. SSH، فایروال و دسترسی سرور را بررسی کنید.",
     "provisionFailedShort": "نصب ناموفق",
     "controlTunneled": "کنترل: از طریق تانل",
+    "converge": "همگرا کردن",
+    "converging": "همگرایی زمان‌بندی شد",
+    "lastAck": "آخرین ACK",
+    "peers": "پیرها",
+    "status": {
+      "connected": "متصل",
+      "connecting": "در حال اتصال",
+      "syncing": "در حال همگام‌سازی",
+      "drifted": "جا مانده",
+      "error": "خطا",
+      "disabled": "غیرفعال"
+    },
     "provisionRetry": "نصب مجدد",
     "provisionRetryTitle": "نصب مجدد «{{name}}»",
     "provisionRetryHint": "رمز SSH دوباره لازم است (روی پنل ذخیره نمی‌شود). نصب از همان مرحلهٔ SSH و ساخت ایمیج دوباره شروع می‌شود.",

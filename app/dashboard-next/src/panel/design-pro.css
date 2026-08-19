@@ -1116,7 +1116,7 @@ button.sk-side-version-update:hover {
 .sk-spark-line { filter: drop-shadow(0 0 6px color-mix(in srgb, var(--sk-accent) 35%, transparent)); }
 .sk-spark-fill { opacity: 0.9; }
 
-.sk-gauge-arc { transition: stroke-dasharray 0.7s var(--sk-ease); }
+.sk-gauge-arc { transition: stroke-dasharray 0.08s linear; }
 .sk-gauge-live .sk-gauge-svg { filter: drop-shadow(0 0 10px color-mix(in srgb, var(--sk-accent) 28%, transparent)); }
 .sk-home-alive .sk-vital-cell {
   transition: background 0.25s var(--sk-ease) !important;

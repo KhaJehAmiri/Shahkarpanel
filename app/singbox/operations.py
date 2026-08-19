@@ -154,9 +154,13 @@ def sync_node(db, dbnode, *, users: Optional[List[SBUser]] = None, node_object=N
 
     spec = build_node_spec(_cfg_to_dict(cfg), users)
     try:
-        from app.tunnel.singbox_inject import apply_singbox_endpoint_tunnels
+        from app.tunnel.singbox_inject import (
+            apply_singbox_endpoint_tunnels,
+            apply_singbox_warp_bridge,
+        )
 
         spec = apply_singbox_endpoint_tunnels(spec, dbnode.id)
+        spec = apply_singbox_warp_bridge(spec, dbnode.id)
     except Exception as exc:
         logger.warning(
             "sing-box tunnel inject for node %s failed: %s",
@@ -181,9 +185,13 @@ def _sync_node_snapshot(node_id: int, cfg: dict, users: List[SBUser]) -> bool:
         return False
     spec = build_node_spec(cfg, users)
     try:
-        from app.tunnel.singbox_inject import apply_singbox_endpoint_tunnels
+        from app.tunnel.singbox_inject import (
+            apply_singbox_endpoint_tunnels,
+            apply_singbox_warp_bridge,
+        )
 
         spec = apply_singbox_endpoint_tunnels(spec, node_id)
+        spec = apply_singbox_warp_bridge(spec, node_id)
     except Exception as exc:
         logger.warning("sing-box tunnel inject for node %s failed: %s", node_id, exc)
     try:
@@ -246,6 +254,10 @@ def _run_coalesced_sb_sync() -> None:
 
 
 def sync_user_change() -> None:
+    from app.runtime_role import delegate_to_worker
+
+    if delegate_to_worker("user_change"):
+        return
     """Lifecycle hook: re-sync sing-box nodes after any user add/update/remove.
 
     Debounced + single-flight. Without this, every user mutation spawned a new

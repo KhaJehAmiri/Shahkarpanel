@@ -1,4 +1,5 @@
 from typing import Dict, List, Union
+import time
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
@@ -22,6 +23,9 @@ from app.utils.system import (
 
 router = APIRouter(tags=["System"], prefix="/api", responses={401: responses._401})
 
+_SYSTEM_STATS_TTL = 2.0
+_system_stats_cache: dict = {}
+
 
 @router.get("/system", response_model=SystemStats)
 def get_system_stats(
@@ -30,7 +34,40 @@ def get_system_stats(
 ):
     """Fetch system stats including memory, CPU, and user metrics."""
     response.headers["Cache-Control"] = "no-store"
-    import time
+    cache_key = (int(getattr(admin, "id", 0) or 0), bool(admin.is_sudo))
+    cached = _system_stats_cache.get(cache_key)
+    now = time.monotonic()
+    if cached and (now - cached[0]) < _SYSTEM_STATS_TTL:
+        return cached[1]
+
+    dbadmin: Union[Admin, None] = crud.get_admin(db, admin.username)
+    try:
+        from app.sync.live import (
+            load_snapshot,
+            scope_snapshot,
+            snapshot_fresh,
+            snapshot_to_system_stats,
+        )
+
+        snap = load_snapshot()
+        if snapshot_fresh(snap):
+            scoped = scope_snapshot(
+                snap,
+                admin=admin,
+                dbadmin=None if admin.is_sudo else dbadmin,
+                is_sudo=bool(admin.is_sudo),
+                admin_id=int(dbadmin.id) if dbadmin is not None and not admin.is_sudo else None,
+                tenant_id=(
+                    int(dbadmin.tenant_id)
+                    if dbadmin is not None and dbadmin.tenant_id is not None
+                    else getattr(admin, "tenant_id", None)
+                ),
+            )
+            stats = snapshot_to_system_stats(scoped)
+            _system_stats_cache[cache_key] = (now, stats)
+            return stats
+    except Exception:
+        pass
 
     mem = memory_usage()
     cpu = cpu_usage()
@@ -39,38 +76,16 @@ def get_system_stats(
 
     xray_started_at = getattr(xray.core, "started_at", None)
     xray_uptime = int(time.time() - xray_started_at) if xray_started_at else 0
+    # API process has an empty xray.nodes map; node_uptime comes from the
+    # worker snapshot above. Fallback stays 0 rather than walking a lie.
     node_uptime = 0
-    try:
-        for node in xray.nodes.values():
-            started_at = getattr(node, "_started_at", None)
-            if started_at:
-                node_uptime = max(node_uptime, int(time.time() - started_at))
-    except Exception:
-        node_uptime = 0
-    dbadmin: Union[Admin, None] = crud.get_admin(db, admin.username)
-
-    total_user = crud.get_users_count(db, admin=dbadmin if not admin.is_sudo else None)
-    users_active = crud.get_users_count(
-        db, status=UserStatus.active, admin=dbadmin if not admin.is_sudo else None
-    )
-    users_disabled = crud.get_users_count(
-        db, status=UserStatus.disabled, admin=dbadmin if not admin.is_sudo else None
-    )
-    users_on_hold = crud.get_users_count(
-        db, status=UserStatus.on_hold, admin=dbadmin if not admin.is_sudo else None
-    )
-    users_expired = crud.get_users_count(
-        db, status=UserStatus.expired, admin=dbadmin if not admin.is_sudo else None
-    )
-    users_limited = crud.get_users_count(
-        db, status=UserStatus.limited, admin=dbadmin if not admin.is_sudo else None
-    )
-    online_users = crud.count_online_users(
-        db, admin=dbadmin if not admin.is_sudo else None
-    )
+    scope_admin = dbadmin if not admin.is_sudo else None
+    counts = crud.get_user_status_counts(db, admin=scope_admin)
+    by_status = counts.get("by_status") or {}
+    online_users = crud.count_online_users(db, admin=scope_admin)
     realtime_bandwidth_stats = realtime_bandwidth()
 
-    return SystemStats(
+    stats = SystemStats(
         version=panel_version(),
         mem_total=mem.total,
         mem_used=mem.used,
@@ -78,22 +93,24 @@ def get_system_stats(
         disk_used=disk.used,
         cpu_cores=cpu.cores,
         cpu_usage=cpu.percent,
-        total_user=total_user,
+        total_user=counts.get("total") or 0,
         online_users=online_users,
-        users_active=users_active,
-        users_disabled=users_disabled,
-        users_expired=users_expired,
-        users_limited=users_limited,
-        users_on_hold=users_on_hold,
+        users_active=by_status.get(UserStatus.active.value, 0),
+        users_disabled=by_status.get(UserStatus.disabled.value, 0),
+        users_expired=by_status.get(UserStatus.expired.value, 0),
+        users_limited=by_status.get(UserStatus.limited.value, 0),
+        users_on_hold=by_status.get(UserStatus.on_hold.value, 0),
         incoming_bandwidth=system.uplink,
         outgoing_bandwidth=system.downlink,
-        incoming_bandwidth_speed=realtime_bandwidth_stats.incoming_bytes,
-        outgoing_bandwidth_speed=realtime_bandwidth_stats.outgoing_bytes,
+        incoming_bandwidth_speed=max(0, int(realtime_bandwidth_stats.incoming_bytes or 0)),
+        outgoing_bandwidth_speed=max(0, int(realtime_bandwidth_stats.outgoing_bytes or 0)),
         bandwidth_source=realtime_bandwidth_source(),
         os_uptime=os_uptime(),
         xray_uptime=xray_uptime,
         node_uptime=node_uptime,
     )
+    _system_stats_cache[cache_key] = (now, stats)
+    return stats
 
 
 @router.get("/system/online-presence", responses={403: responses._403})

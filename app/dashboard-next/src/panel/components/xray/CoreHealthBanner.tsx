@@ -23,7 +23,7 @@ export const CoreHealthBanner: FC<{ highlightTag?: string | null }> = ({ highlig
         .catch(() => alive && setStats(null));
     };
     load();
-    const id = window.setInterval(load, 5000);
+    const id = window.setInterval(load, 2000);
     return () => {
       alive = false;
       window.clearInterval(id);

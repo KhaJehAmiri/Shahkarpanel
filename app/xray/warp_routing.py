@@ -36,6 +36,12 @@ WARP_PRIVATE_DIRECT_RULE: dict[str, Any] = {
     "outboundTag": "DIRECT",
 }
 
+API_INBOUND_RULE: dict[str, Any] = {
+    "type": "field",
+    "inboundTag": ["API_INBOUND"],
+    "outboundTag": "API",
+}
+
 WARP_DEFAULT_RULE: dict[str, Any] = {
     "type": "field",
     "network": "tcp,udp",
@@ -45,6 +51,20 @@ WARP_DEFAULT_RULE: dict[str, Any] = {
 # Marker on domain→WARP rules / balancer so rebuilds can strip them cleanly.
 SENSITIVE_WARP_MARK = "_nxSensitiveWarp"
 SENSITIVE_WARP_BALANCER_TAG = "warp-sensitive-lb"
+# Bump when the sensitive domain/geosite lists change so keep-live reconnects
+# re-push exit cores instead of leaving stale routing on the node.
+WARP_SENSITIVE_POLICY_REV = 7
+
+# Rewrite dest to sniffed SNI/Host. ``routeOnly: true`` + ``AsIs`` on Xray 26.x
+# often leaves the destination as a raw IP, so Google/Gemini never match the
+# domain→WARP rules and stay on the datacenter IP (HTTP 403).
+SENSITIVE_WARP_SNIFFING: dict[str, Any] = {
+    "enabled": True,
+    "destOverride": ["http", "tls", "quic"],
+    "routeOnly": False,
+}
+
+SENSITIVE_WARP_QUIC_MARK = "_nxSensitiveWarpQuic"
 
 # Server-side split: only location-sensitive services exit via WARP.
 # Same inbound/configs for users — Xray routing picks the path by SNI/domain.
@@ -101,6 +121,22 @@ SENSITIVE_WARP_DOMAINS: list[str] = [
     "domain:jules.google",
     "domain:jules.google.com",
     "domain:flow.google",
+    "domain:flow.google.com",
+    "domain:flow.withgoogle.com",
+    "domain:veo.google",
+    "domain:veo.googleapis.com",
+    "domain:fx.google",
+    "domain:musicfx.google",
+    "domain:musicfx.withgoogle.com",
+    "domain:imagen.google",
+    "domain:whisk.google",
+    "domain:whisk.google.com",
+    "domain:aitestkitchen.withgoogle.com",
+    "domain:experiments.withgoogle.com",
+    "domain:flow-pa.googleapis.com",
+    "domain:labs-pa.googleapis.com",
+    "domain:fx-pa.googleapis.com",
+    "domain:alkali-pa.googleapis.com",
     "domain:opal.google",
     "domain:opal.google.com",
     "domain:stitch.withgoogle.com",
@@ -111,6 +147,14 @@ SENSITIVE_WARP_DOMAINS: list[str] = [
     "domain:claude.ai",
     "domain:anthropic.com",
     "domain:api.anthropic.com",
+    # Spotify (web + app + CDN hostnames that include "spotify")
+    "domain:spotify.com",
+    "domain:spoti.fi",
+    "domain:scdn.co",
+    "domain:pscdn.co",
+    "domain:spotifycdn.com",
+    "domain:spotifycdn.net",
+    "keyword:spotify",
 ]
 
 # Optional geosite packs (separate rules; skipped harmlessly if dat lacks them
@@ -119,6 +163,16 @@ SENSITIVE_WARP_GEOSITES: list[str] = [
     "geosite:google",
     "geosite:youtube",
     "geosite:openai",
+    "geosite:spotify",
+]
+
+# WireGuard and sing-box (Hysteria2/TUIC) almost never present a domain:
+# the OS / sing-box DNS already resolved, so dest is an IP. Domain rules
+# then never match and the flow exits DIRECT (datacenter 403) while VLESS
+# still works because the client sends the hostname in the protocol header.
+# geoip:google covers YouTube/Gemini/Google even when dest is a raw IP.
+SENSITIVE_WARP_IPS: list[str] = [
+    "geoip:google",
 ]
 
 _SENSITIVE_DOMAIN_CHUNK = 48
@@ -300,6 +354,46 @@ def _has_dns_direct_rule(rules: list[dict[str, Any]]) -> bool:
         if str(rule.get("port") or "") == "53" and "udp" in str(rule.get("network") or ""):
             return True
     return False
+
+
+def _is_api_inbound_rule(rule: dict[str, Any]) -> bool:
+    if not isinstance(rule, dict):
+        return False
+    return str(rule.get("outboundTag") or "") == "API" and "API_INBOUND" in (
+        rule.get("inboundTag") or []
+    )
+
+
+def pin_api_inbound_route(payload: dict[str, Any]) -> dict[str, Any]:
+    """Keep ``API_INBOUND → API`` ahead of ``geoip:private → DIRECT``.
+
+    WARP bootstrap inserts a private-IP DIRECT rule at the front so LAN
+    never enters the tunnel. The panel Stats/Handler gRPC inbound is
+    dokodemo to ``127.0.0.1``, which *is* private — if that DIRECT rule
+    wins, probes show ``API_INBOUND -> DIRECT``, the API socket dies, and
+    health-check restarts the core in a loop (often colliding on in2/3334).
+    """
+    data = payload if isinstance(payload, dict) else dict(payload)
+    has_api_ib = any(
+        isinstance(ib, dict) and str(ib.get("tag") or "") == "API_INBOUND"
+        for ib in (data.get("inbounds") or [])
+    )
+    routing = data.get("routing")
+    if not isinstance(routing, dict):
+        if not has_api_ib:
+            return data
+        routing = {"domainStrategy": "IPIfNonMatch", "rules": []}
+        data["routing"] = routing
+    rules = [r for r in list(routing.get("rules") or []) if isinstance(r, dict)]
+    api = [r for r in rules if _is_api_inbound_rule(r)]
+    rest = [r for r in rules if not _is_api_inbound_rule(r)]
+    if not api:
+        if not has_api_ib:
+            return data
+        api = [dict(API_INBOUND_RULE)]
+    routing["rules"] = api + rest
+    data["routing"] = routing
+    return data
 
 
 def _is_catch_all_network_rule(rule: dict[str, Any]) -> bool:
@@ -559,7 +653,17 @@ def apply_warp_safe_routing(payload: dict[str, Any]) -> dict[str, Any]:
     # Never add a catch-all→WARP when sensitive split rules are active — that
     # would send all traffic through WARP and defeat the split.
     has_sensitive = any(
-        isinstance(r, dict) and r.get(SENSITIVE_WARP_MARK) for r in rules
+        isinstance(r, dict)
+        and (
+            r.get(SENSITIVE_WARP_MARK)
+            or r.get(SENSITIVE_WARP_QUIC_MARK)
+            or str(r.get("balancerTag") or "") == SENSITIVE_WARP_BALANCER_TAG
+            or (
+                is_warp_tag(str(r.get("outboundTag") or ""))
+                and (r.get("domain") or r.get("ip"))
+            )
+        )
+        for r in rules
     )
     first_tag = str(outbounds[0].get("tag") or "") if outbounds else ""
     primary = str(warp_obs[0].get("tag") or "warp")
@@ -573,7 +677,28 @@ def apply_warp_safe_routing(payload: dict[str, Any]) -> dict[str, Any]:
         rules.append(rule)
 
     routing["rules"] = _dedupe_rules(rules)
-    return data
+    return pin_api_inbound_route(data)
+
+
+def _is_sensitive_warp_rule(rule: dict[str, Any]) -> bool:
+    if not isinstance(rule, dict):
+        return False
+    if rule.get(SENSITIVE_WARP_MARK) or rule.get(SENSITIVE_WARP_QUIC_MARK):
+        return True
+    if str(rule.get("balancerTag") or "") == SENSITIVE_WARP_BALANCER_TAG:
+        return True
+    if is_warp_tag(str(rule.get("outboundTag") or "")) and (
+        rule.get("domain") or rule.get("ip")
+    ):
+        return True
+    if (
+        str(rule.get("outboundTag") or "") == "BLOCK"
+        and str(rule.get("network") or "") == "udp"
+        and str(rule.get("port") or "") == "443"
+        and rule.get("inboundTag")
+    ):
+        return True
+    return False
 
 
 def strip_sensitive_warp_routing(payload: dict[str, Any]) -> dict[str, Any]:
@@ -584,7 +709,7 @@ def strip_sensitive_warp_routing(payload: dict[str, Any]) -> dict[str, Any]:
         rules = [
             r
             for r in list(routing.get("rules") or [])
-            if not (isinstance(r, dict) and r.get(SENSITIVE_WARP_MARK))
+            if not _is_sensitive_warp_rule(r)
         ]
         routing["rules"] = rules
         balancers = [
@@ -614,7 +739,6 @@ def _sensitive_domain_rules(target: dict[str, Any]) -> list[dict[str, Any]]:
         rule: dict[str, Any] = {
             "type": "field",
             "domain": part,
-            SENSITIVE_WARP_MARK: True,
         }
         rule.update(target)
         rules.append(rule)
@@ -623,39 +747,131 @@ def _sensitive_domain_rules(target: dict[str, Any]) -> list[dict[str, Any]]:
         rule = {
             "type": "field",
             "domain": [g],
-            SENSITIVE_WARP_MARK: True,
+        }
+        rule.update(target)
+        rules.append(rule)
+    # IP fallback so WireGuard / sing-box (dest already an IP) still hit WARP.
+    for ip in SENSITIVE_WARP_IPS:
+        rule = {
+            "type": "field",
+            "ip": [ip],
         }
         rule.update(target)
         rules.append(rule)
     return rules
 
 
-def ensure_tunnel_exit_sniffing(payload: dict[str, Any]) -> dict[str, Any]:
-    """Enable routeOnly sniffing on tunnel-*-exit inbounds.
+def _inbound_needs_sensitive_sniffing(ib: dict[str, Any]) -> bool:
+    """User-facing inbounds that must rewrite SNI so domain→WARP rules match."""
+    tag = str(ib.get("tag") or "")
+    proto = str(ib.get("protocol") or "")
+    if not tag or tag in {"API_INBOUND", "api"} or tag.upper().startswith("API"):
+        return False
+    if proto in {"blackhole", "dns"}:
+        return False
+    if proto == "wireguard" or "xray-wg-in" in tag or tag.endswith("-singbox-in"):
+        return True
+    if tag.startswith("tunnel-") and tag.endswith("-exit"):
+        return True
+    if tag.endswith("-warp-tproxy"):
+        return True
+    if tag.startswith("in"):
+        return True
+    if proto in {"vless", "vmess", "trojan", "shadowsocks", "socks", "http"}:
+        return True
+    sockopt = ((ib.get("streamSettings") or {}) if isinstance(ib.get("streamSettings"), dict) else {}).get("sockopt") or {}
+    if proto == "dokodemo-door" and str(sockopt.get("tproxy") or "").lower() == "tproxy":
+        return True
+    return False
 
-    Relay→exit traffic lands on these inbounds. Without TLS/HTTP sniffing,
-    domain→WARP rules never match and Gemini/YouTube stay on the raw exit IP.
-    """
-    data = payload if isinstance(payload, dict) else dict(payload)
-    sniff = {
-        "enabled": True,
-        "destOverride": ["http", "tls", "quic"],
-        "routeOnly": True,
-    }
-    changed = False
-    inbounds = list(data.get("inbounds") or [])
-    for ib in inbounds:
+
+def _sensitive_quic_inbound_tags(payload: dict[str, Any]) -> list[str]:
+    tags: list[str] = []
+    for ib in list(payload.get("inbounds") or []):
         if not isinstance(ib, dict):
             continue
         tag = str(ib.get("tag") or "")
-        if not (tag.startswith("tunnel-") and tag.endswith("-exit")):
+        if tag and _inbound_needs_sensitive_sniffing(ib):
+            tags.append(tag)
+    return tags
+
+
+def _ensure_block_outbound(payload: dict[str, Any]) -> None:
+    outbounds = list(payload.get("outbounds") or [])
+    if any(str(o.get("tag") or "") == "BLOCK" for o in outbounds if isinstance(o, dict)):
+        return
+    outbounds.append({"tag": "BLOCK", "protocol": "blackhole", "settings": {}})
+    payload["outbounds"] = outbounds
+
+
+def _sensitive_quic_block_rule(inbound_tags: Sequence[str]) -> dict[str, Any]:
+    """Force HTTP/2 for tunneled apps so SNI is visible and domain→WARP matches.
+
+    Chrome/YouTube/Gemini prefer QUIC; UDP/443 to an IP never matches domain
+    rules and exits DIRECT (datacenter 403). Blocking QUIC on tunnel/TPROXY
+    inbounds makes the client fall back to TCP/TLS.
+    """
+    return {
+        "type": "field",
+        "inboundTag": list(inbound_tags),
+        "network": "udp",
+        "port": "443",
+        "outboundTag": "BLOCK",
+    }
+
+
+def ensure_tunnel_exit_sniffing(payload: dict[str, Any]) -> dict[str, Any]:
+    """Enable dest-rewriting sniffing on every user inbound of a WARP exit.
+
+    Tunnel-exit, TPROXY, and public VLESS (in1/in2/in3) all see Google as an
+    IP+QUIC flow unless sniffing rewrites SNI. ``routeOnly`` left those on
+    DIRECT (datacenter 403) except the location whose clients already hit the
+    patched tunnel-exit path.
+    """
+    data = payload if isinstance(payload, dict) else dict(payload)
+    sniff = dict(SENSITIVE_WARP_SNIFFING)
+    changed = False
+    inbounds = list(data.get("inbounds") or [])
+    for ib in inbounds:
+        if not isinstance(ib, dict) or not _inbound_needs_sensitive_sniffing(ib):
             continue
-        cur = ib.get("sniffing")
-        if cur != sniff:
+        if ib.get("sniffing") != sniff:
             ib["sniffing"] = dict(sniff)
             changed = True
     if changed:
         data["inbounds"] = inbounds
+    return data
+
+
+def refresh_sensitive_quic_block(payload: dict[str, Any]) -> dict[str, Any]:
+    """Keep UDP/443 blackholed on every sniffed inbound (including TPROXY added later)."""
+    data = payload if isinstance(payload, dict) else dict(payload)
+    tags = _sensitive_quic_inbound_tags(data)
+    routing = data.get("routing")
+    if not isinstance(routing, dict):
+        routing = {"rules": []}
+        data["routing"] = routing
+    rules = [
+        r
+        for r in list(routing.get("rules") or [])
+        if not (
+            isinstance(r, dict)
+            and str(r.get("outboundTag") or "") == "BLOCK"
+            and str(r.get("network") or "") == "udp"
+            and str(r.get("port") or "") == "443"
+            and r.get("inboundTag")
+        )
+    ]
+    if tags:
+        _ensure_block_outbound(data)
+        insert_at = 0
+        for i, r in enumerate(rules):
+            if str(r.get("outboundTag") or "") == "DIRECT":
+                insert_at = i + 1
+            else:
+                break
+        rules.insert(insert_at, _sensitive_quic_block_rule(tags))
+    routing["rules"] = rules
     return data
 
 
@@ -691,14 +907,16 @@ def ensure_warp_sensitive_exit(
     merged = [o for o in existing if str(o.get("tag") or "") not in drop]
     merged.extend(prepared)
     data["outbounds"] = merged
+    _ensure_block_outbound(data)
 
+    data = apply_warp_dns_for_exit(data)
     data = apply_warp_safe_routing(data)
     data = strip_sensitive_warp_routing(data)
     data = ensure_tunnel_exit_sniffing(data)
 
-    routing = data.setdefault("routing", {"domainStrategy": "AsIs", "rules": []})
-    # AsIs + sniffing: match SNI/Host without forcing DNS on every flow.
-    routing["domainStrategy"] = "AsIs"
+    routing = data.setdefault("routing", {"domainStrategy": "IPIfNonMatch", "rules": []})
+    # IPIfNonMatch: sniffed/rewritten domains match WARP rules; unmatched IPs stay IP.
+    routing["domainStrategy"] = "IPIfNonMatch"
 
     rules = [
         r
@@ -763,4 +981,34 @@ def ensure_warp_sensitive_exit(
         front.append(dict(WARP_DNS_DIRECT_RULE))
 
     routing["rules"] = _dedupe_rules(front + sensitive_rules + rest)
+    return pin_api_inbound_route(refresh_sensitive_quic_block(data))
+
+
+def singbox_warp_socks_port(node_id: int) -> int:
+    return 23000 + (int(node_id) % 1000)
+
+
+def singbox_warp_inbound_tag(node_id: int) -> str:
+    return f"node-{int(node_id)}-singbox-in"
+
+
+def inject_singbox_warp_inbound(payload: dict[str, Any], node_id: int) -> dict[str, Any]:
+    """Local SOCKS so sing-box (Hysteria2/TUIC) uses the same Xray WARP split."""
+    data = payload if isinstance(payload, dict) else dict(payload)
+    tag = singbox_warp_inbound_tag(node_id)
+    inbound = {
+        "tag": tag,
+        "listen": "127.0.0.1",
+        "port": singbox_warp_socks_port(node_id),
+        "protocol": "socks",
+        "settings": {"udp": True, "auth": "noauth"},
+        "sniffing": dict(SENSITIVE_WARP_SNIFFING),
+    }
+    inbounds = [
+        ib
+        for ib in list(data.get("inbounds") or [])
+        if not (isinstance(ib, dict) and ib.get("tag") == tag)
+    ]
+    inbounds.append(inbound)
+    data["inbounds"] = inbounds
     return data

@@ -1,6 +1,7 @@
 """Background SSH provision jobs with progress for the nodes UI."""
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
@@ -23,6 +24,9 @@ _lock = threading.Lock()
 _jobs: Dict[str, "ProvisionJob"] = {}
 _by_node: Dict[int, str] = {}
 _extras: Dict[str, ProvisionExtras] = {}
+_REDIS_TTL = 7200
+_REDIS_JOB = "shahkar:provision:job:{}"
+_REDIS_NODE = "shahkar:provision:node:{}"
 
 
 @dataclass
@@ -37,6 +41,98 @@ class ProvisionJob:
     error: Optional[str] = None
     created_at: float = field(default_factory=time.time)
     finished_at: Optional[float] = None
+
+
+def _redis():
+    try:
+        from config import REDIS_URL
+
+        if not REDIS_URL:
+            return None
+        import redis
+
+        return redis.Redis.from_url(
+            REDIS_URL,
+            decode_responses=True,
+            socket_connect_timeout=1.0,
+            socket_timeout=1.5,
+        )
+    except Exception:
+        return None
+
+
+def _job_payload(job: "ProvisionJob") -> dict:
+    return {
+        "id": job.id,
+        "node_id": job.node_id,
+        "node_name": job.node_name,
+        "status": job.status,
+        "progress": int(job.progress or 0),
+        "step": job.step,
+        "message": job.message,
+        "error": job.error,
+        "created_at": job.created_at,
+        "finished_at": job.finished_at,
+    }
+
+
+def _job_from_payload(data: dict) -> "ProvisionJob":
+    return ProvisionJob(
+        id=str(data.get("id") or ""),
+        node_id=int(data.get("node_id") or 0),
+        node_name=str(data.get("node_name") or ""),
+        status=data.get("status") or "pending",
+        progress=int(data.get("progress") or 0),
+        step=str(data.get("step") or "queued"),
+        message=data.get("message"),
+        error=data.get("error"),
+        created_at=float(data.get("created_at") or time.time()),
+        finished_at=data.get("finished_at"),
+    )
+
+
+def _publish_job(job: "ProvisionJob") -> None:
+    """So GET /nodes on another uvicorn worker can show the progress bar."""
+    client = _redis()
+    if client is None:
+        return
+    try:
+        payload = json.dumps(_job_payload(job))
+        pipe = client.pipeline()
+        pipe.set(_REDIS_JOB.format(job.id), payload, ex=_REDIS_TTL)
+        pipe.set(_REDIS_NODE.format(int(job.node_id)), job.id, ex=_REDIS_TTL)
+        pipe.execute()
+    except Exception:
+        logger.debug("provision job redis publish failed", exc_info=True)
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+
+def _load_job_for_node(node_id: int) -> Optional["ProvisionJob"]:
+    client = _redis()
+    if client is None:
+        return None
+    try:
+        jid = client.get(_REDIS_NODE.format(int(node_id)))
+        if not jid:
+            return None
+        raw = client.get(_REDIS_JOB.format(jid))
+        if not raw:
+            return None
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            return None
+        return _job_from_payload(data)
+    except Exception:
+        return None
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
 
 
 def _clip_provision_message(message: Optional[str]) -> Optional[str]:
@@ -77,6 +173,7 @@ def _tick_progress(job: ProvisionJob, stop: threading.Event) -> None:
                 job.step = "image"
             else:
                 job.step = "agent"
+        _publish_job(job)
 
 
 def _panel_finish_registration(node_id: int) -> bool:
@@ -162,6 +259,7 @@ def _run_job(
         job.progress = 8
         job.step = "ssh"
         job.message = "Connecting over SSH…"
+    _publish_job(job)
 
     _set_node_provision(job.node_id, status="provisioning", message=job.message)
 
@@ -174,6 +272,7 @@ def _run_job(
             job.progress = 12
             job.step = "docker"
             job.message = "Installing Docker on the node…"
+        _publish_job(job)
         _set_node_provision(job.node_id, status="provisioning", message=job.message)
         provisioning.run_remote_command(
             creds,
@@ -203,6 +302,7 @@ def _run_job(
                 if force_image
                 else "Node will download agent image from GitHub…"
             )
+        _publish_job(job)
         _set_node_provision(job.node_id, status="provisioning", message=job.message)
 
         # Heavy image comes from GitHub (then Iran mirror). When force_image is
@@ -218,6 +318,7 @@ def _run_job(
             job.progress = 55
             job.step = "agent"
             job.message = "Starting node agent…"
+        _publish_job(job)
         _set_node_provision(job.node_id, status="provisioning", message=job.message)
         try:
             provisioning.run_remote_command(
@@ -236,6 +337,7 @@ def _run_job(
             with _lock:
                 job.step = "image"
                 job.message = "GitHub/mirror fetch failed — uploading image via SSH…"
+            _publish_job(job)
             _set_node_provision(job.node_id, status="provisioning", message=job.message)
             provisioning.push_agent_image_via_ssh(
                 creds,
@@ -246,6 +348,7 @@ def _run_job(
             with _lock:
                 job.step = "agent"
                 job.message = "Restarting node agent with uploaded image…"
+            _publish_job(job)
             _set_node_provision(job.node_id, status="provisioning", message=job.message)
             soft = provisioning.soft_restart_agent_command(command)
             provisioning.run_remote_command(
@@ -256,6 +359,7 @@ def _run_job(
             job.progress = 92
             job.step = "register"
             job.message = "Waiting for the agent to register…"
+        _publish_job(job)
         _set_node_provision(job.node_id, status="provisioning", message=job.message)
 
         if not _wait_registered(job.node_id, timeout=25):
@@ -277,6 +381,7 @@ def _run_job(
                 job.progress = 94
                 job.step = "post"
                 job.message = "Configuring sing-box, TLS, and tunnel…"
+            _publish_job(job)
             _set_node_provision(job.node_id, status="provisioning", message=job.message)
             try:
                 run_post_provision(job.node_id, creds, extras)
@@ -294,6 +399,7 @@ def _run_job(
             job.message = None
             job.finished_at = time.time()
             _extras.pop(job_id, None)
+        _publish_job(job)
         _set_node_provision(job.node_id, status="registered", message=None)
         try:
             from app.control_tunnel import ensure_node_tunnel
@@ -329,6 +435,7 @@ def _run_job(
             job.step = "failed"
             job.finished_at = time.time()
             _extras.pop(job_id, None)
+        _publish_job(job)
         try:
             _set_node_provision(
                 job.node_id,
@@ -364,6 +471,7 @@ def start_job(
         _by_node[node_id] = job_id
         if extras is not None:
             _extras[job_id] = extras
+    _publish_job(job)
     threading.Thread(
         target=_run_job,
         args=(job_id, creds, command, ssh_timeout, exec_timeout, force_image, use_iran_mirror),
@@ -374,13 +482,34 @@ def start_job(
 
 def get_job(job_id: str) -> Optional[ProvisionJob]:
     with _lock:
-        return _jobs.get(job_id)
+        job = _jobs.get(job_id)
+        if job is not None:
+            return job
+    client = _redis()
+    if client is None:
+        return None
+    try:
+        raw = client.get(_REDIS_JOB.format(job_id))
+        if not raw:
+            return None
+        data = json.loads(raw)
+        return _job_from_payload(data) if isinstance(data, dict) else None
+    except Exception:
+        return None
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
 
 
 def progress_for_node(node_id: int) -> Optional[ProvisionJob]:
     with _lock:
         jid = _by_node.get(node_id)
-        return _jobs.get(jid) if jid else None
+        job = _jobs.get(jid) if jid else None
+        if job is not None:
+            return job
+    return _load_job_for_node(node_id)
 
 
 def complete_for_node(node_id: int) -> None:
@@ -398,6 +527,7 @@ def complete_for_node(node_id: int) -> None:
         job.message = None
         job.finished_at = time.time()
         _by_node.pop(node_id, None)
+    _publish_job(job)
 
 
 def job_to_api(job: ProvisionJob) -> dict:

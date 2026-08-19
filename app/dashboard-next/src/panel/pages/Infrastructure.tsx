@@ -6,7 +6,7 @@ import { NodeItem, Tunnel, TunnelHealth } from "../api/types";
 import { useApp } from "../context/AppContext";
 import { useCopilot } from "../copilot/CopilotContext";
 import { useFetch, useLiveReload, usePolling } from "../lib/useFetch";
-import { statusTone } from "../lib/format";
+import { formatAgo, statusTone } from "../lib/format";
 import {
   Button, Callout, Card, CardHead, CopyField, EmptyState, Field, Input, Modal, Pager, Pill, Select, SkeletonRows, UsageBar, usePagedList, useToast,
 } from "../components/ui";
@@ -59,6 +59,14 @@ export const NodesTab: FC<{ resellerMode?: boolean }> = ({ resellerMode }) => {
     if (!confirm(t("infra.reconnectConfirm", { name: n.name }))) return;
     try { await api.post(`/node/${n.id}/reconnect`); toast.push(t("infra.reconnecting"), "success"); }
     catch (e: any) { toast.push(e.message, "error"); }
+  };
+  const converge = async (n: NodeItem) => {
+    try {
+      await api.post(`/node/${n.id}/converge`);
+      toast.push(t("infra.converging"), "success");
+    } catch (e: any) {
+      toast.push(e.message, "error");
+    }
   };
   const updateAgent = async (n: NodeItem) => {
     if (!confirm(t("infra.updateAgentConfirm", { name: n.name }))) return;
@@ -184,6 +192,14 @@ export const NodesTab: FC<{ resellerMode?: boolean }> = ({ resellerMode }) => {
                         onClick: () => setRetryNode(n),
                       });
                     }
+                    if ((n.health_status || n.status) === "drifted") {
+                      menuItems.push({
+                        id: "converge",
+                        label: t("infra.converge"),
+                        icon: <IcRefresh className="sk-ico" />,
+                        onClick: () => converge(n),
+                      });
+                    }
                     if (n.provision_status !== "provisioning") {
                       menuItems.push({
                         id: "reconnect",
@@ -231,9 +247,23 @@ export const NodesTab: FC<{ resellerMode?: boolean }> = ({ resellerMode }) => {
                             </div>
                           ) : (
                             <div className="sk-proto-name">
-                              <Pill tone={statusTone(n.status)} dot>{t(`users.status.${n.status}`, n.status)}</Pill>
+                              {(() => {
+                                const hs = n.health_status || n.status;
+                                return (
+                                  <Pill tone={statusTone(hs)} dot>{t(`infra.status.${hs}`, hs)}</Pill>
+                                );
+                              })()}
                               {n.control_tunneled ? (
                                 <span className="sk-proto-name-sub">{t("infra.controlTunneled")}</span>
+                              ) : null}
+                              {n.drift_reason ? (
+                                <span className="sk-proto-name-sub">{n.drift_reason}</span>
+                              ) : null}
+                              {n.last_ack_at ? (
+                                <span className="sk-proto-name-sub">{t("infra.lastAck")}: {formatAgo(n.last_ack_at)}</span>
+                              ) : null}
+                              {typeof n.reported_peer_count === "number" && n.reported_peer_count > 0 ? (
+                                <span className="sk-proto-name-sub">{t("infra.peers")}: {n.reported_peer_count}</span>
                               ) : null}
                               {n.message ? <span className="sk-proto-name-sub">{n.message}</span> : null}
                             </div>

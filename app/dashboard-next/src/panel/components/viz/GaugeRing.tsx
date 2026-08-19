@@ -58,7 +58,7 @@ export const GaugeRing: FC<{
           />
         </g>
         <text x="50%" y={sub ? "43%" : "50%"} textAnchor="middle" className="sk-gauge-value">
-          {Math.round(pct)}%
+          {`${pct.toFixed(1)}%`}
         </text>
         {sub ? (
           <text x="50%" y="62%" textAnchor="middle" className="sk-gauge-sub">

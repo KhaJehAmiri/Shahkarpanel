@@ -128,6 +128,37 @@ def _account_for_inbound(
     return account
 
 
+def iter_user_hot_accounts(dbuser):
+    """Yield ``(inbound_tag, account)`` for inbounds this user can hot-mutate.
+
+    SS-2022 and missing tags are skipped — those still need a config reload.
+    """
+    from app.utils.device_exclusivity import is_xray_proxy_held
+
+    if getattr(dbuser, "status", None) not in (UserStatus.active, UserStatus.on_hold):
+        return
+    proxies = _proxy_settings_map(dbuser)
+    email = f"{dbuser.id}.{dbuser.username}"
+    for proxy_type, inbound_tags in dbuser.inbounds.items():
+        pt = proxy_type.value if hasattr(proxy_type, "value") else str(proxy_type)
+        if is_xray_proxy_held(dbuser, pt):
+            continue
+        for inbound_tag in inbound_tags:
+            if not _inbound_supports_hot_sync(inbound_tag):
+                continue
+            account = _account_for_inbound(
+                proxies,
+                proxy_type,
+                inbound_tag,
+                email,
+                user_id=dbuser.id,
+                speed_limit_up=dbuser.speed_limit_up,
+                speed_limit_down=dbuser.speed_limit_down,
+            )
+            if account is not None and not getattr(account, "is_2022", False):
+                yield inbound_tag, account
+
+
 def _build_desired_by_inbound() -> dict[str, dict[str, "Account"]]:
     """Map inbound tag -> {email -> Account} for every billable user.
 
@@ -498,6 +529,10 @@ def reconcile_core_users() -> None:
 
 
 def schedule_core_sync(delay: float = _DEBOUNCE_SEC, *, full: bool = False) -> None:
+    from app.runtime_role import delegate_to_worker
+
+    if delegate_to_worker("core_sync"):
+        return
     """Debounce rapid user changes into one sync.
 
     ``full=True`` skips hot-sync and rebuilds the core from ``include_db_users()``
@@ -524,6 +559,10 @@ def schedule_core_sync(delay: float = _DEBOUNCE_SEC, *, full: bool = False) -> N
 
 def force_full_core_restart() -> None:
     """Rebuild Xray from DB immediately (policy / speed limits / SS-2022)."""
+    from app.runtime_role import delegate_to_worker
+
+    if delegate_to_worker("restart_core"):
+        return
     with _sync_lock:
         global _sync_timer
         if _sync_timer is not None:

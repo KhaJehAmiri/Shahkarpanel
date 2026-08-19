@@ -83,6 +83,20 @@ def _renew_loop() -> None:
 def start() -> None:
     """Begin participating in leader election (no-op when HA is disabled)."""
     global _renewer, _is_leader
+    try:
+        from app.runtime_role import role
+
+        current = role()
+    except Exception:
+        current = "all"
+    if current == "api":
+        _is_leader = False
+        logger.info("HA skipped in API process; singleton jobs run on the worker")
+        return
+    if current == "worker":
+        _is_leader = True
+        logger.info("worker process owns singleton jobs (HA election skipped)")
+        return
     if not (HA_ENABLED and REDIS_URL):
         _is_leader = True
         logger.info("HA disabled; this instance is the sole leader")

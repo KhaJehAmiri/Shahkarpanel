@@ -204,8 +204,11 @@ def render_config(spec: SingBoxSpec, *, include_v2ray_api: bool = True) -> dict:
         }
     tunnel_final = spec.tunnel_route_final or "direct"
     dns_servers: list = [{"type": "local", "tag": "local"}]
-    # When egress is pinned to a tunnel hop, resolve DNS through that hop so
-    # lookups cannot leak out the Iran NIC and pull traffic onto ``direct``.
+    # When egress is pinned to a tunnel hop, keep a tunneled resolver for
+    # explicit DNS queries so lookups cannot leak out the Iran NIC.
+    # Do *not* set default_domain_resolver: that pre-resolves Hysteria/TUIC
+    # destinations to IPs and Xray's domain→WARP list never matches (VLESS
+    # still works because it sends the hostname in-protocol).
     if tunnel_final != "direct":
         dns_servers.insert(
             0,
@@ -216,6 +219,15 @@ def render_config(spec: SingBoxSpec, *, include_v2ray_api: bool = True) -> dict:
                 "detour": tunnel_final,
             },
         )
+    route: dict = {
+        "rules": list(spec.tunnel_route_rules),
+        "final": tunnel_final,
+        "auto_detect_interface": False,
+    }
+    # Keep a resolver tag available for DNS queries; destinations themselves
+    # stay domains so SOCKS/Xray can apply the sensitive WARP split.
+    if tunnel_final == "direct":
+        route["default_domain_resolver"] = "local"
     return {
         "log": {"level": spec.log_level, "timestamp": True},
         "dns": {
@@ -230,14 +242,7 @@ def render_config(spec: SingBoxSpec, *, include_v2ray_api: bool = True) -> dict:
                 "tag": "direct",
             },
         ],
-        "route": {
-            "rules": list(spec.tunnel_route_rules),
-            "final": tunnel_final,
-            "auto_detect_interface": False,
-            "default_domain_resolver": (
-                "tunnel-dns" if tunnel_final != "direct" else "local"
-            ),
-        },
+        "route": route,
         "experimental": experimental,
     }
 

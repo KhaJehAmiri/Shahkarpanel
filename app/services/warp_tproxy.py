@@ -66,7 +66,7 @@ def inject_warp_tproxy_inbound(
         inbound["sniffing"] = {
             "enabled": True,
             "destOverride": ["http", "tls", "quic"],
-            "routeOnly": True,
+            "routeOnly": False,
         }
     inbounds = [ib for ib in list(data.get("inbounds") or []) if not (
         isinstance(ib, dict) and ib.get("tag") == tag

@@ -926,6 +926,18 @@
     "provisionFailed": "Remote install failed. Check SSH credentials, firewall, and that the server is reachable.",
     "provisionFailedShort": "Install failed",
     "controlTunneled": "Control: tunneled",
+    "converge": "Converge",
+    "converging": "Converge scheduled",
+    "lastAck": "Last ACK",
+    "peers": "Peers",
+    "status": {
+      "connected": "Connected",
+      "connecting": "Connecting",
+      "syncing": "Syncing",
+      "drifted": "Drifted",
+      "error": "Error",
+      "disabled": "Disabled"
+    },
     "provisionRetry": "Reinstall",
     "provisionRetryTitle": "Reinstall “{{name}}”",
     "provisionRetryHint": "SSH password is required again (not stored on the panel). Install restarts from SSH and agent image build.",

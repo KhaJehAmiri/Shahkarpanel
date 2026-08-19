@@ -47,39 +47,18 @@ def converge_after_bulk_native(
         errors: list[str] = []
         if needs_wg:
             try:
-                from app.wireguard.operations import sync_all_nodes
+                from app.wireguard.operations import sync_user_change
 
-                result["sync_nodes"] = int(sync_all_nodes() or 0)
+                # Immediate+urgent: parallel Finalmask hot-replace. Full
+                # ``sync_all_nodes()`` serialises RPyC across the fleet and
+                # made Bulk Assign appear hung while nodes sat "busy".
+                sync_user_change(immediate=True, urgent=wait_finalmask)
+                result["sync_nodes"] = 1
+                result["finalmask_reloaded"] = bool(wait_finalmask)
             except Exception as exc:
                 logger.exception("Bulk WireGuard converge failed")
                 errors.append(f"wireguard: {exc}")
                 result["sync_ok"] = False
-
-            # Always push Finalmask after membership changes — even when kernel
-            # sync failed. Prod nodes are Finalmask-only; skipping this left
-            # bulk-assigned users with DB proxies but no live clients.
-            if wait_finalmask:
-                try:
-                    from app.wireguard.finalmask_reload import (
-                        flush_finalmask_xray_reload,
-                        schedule_finalmask_xray_reload,
-                    )
-
-                    # Mark bulk so any nested schedule uses the longer debounce.
-                    schedule_finalmask_xray_reload(delay=0.1, bulk=True)
-                    flush_finalmask_xray_reload()
-                    result["finalmask_reloaded"] = True
-                except Exception as exc:
-                    logger.exception("Bulk Finalmask flush failed")
-                    errors.append(f"finalmask: {exc}")
-                    result["sync_ok"] = False
-            else:
-                try:
-                    from app.wireguard.finalmask_reload import schedule_finalmask_xray_reload
-
-                    schedule_finalmask_xray_reload(bulk=True)
-                except Exception as exc:
-                    logger.warning("Bulk Finalmask schedule failed: %s", exc)
 
         if needs_singbox:
             try:
@@ -118,3 +97,96 @@ def pending_sync_meta() -> Dict[str, Any]:
         "sync_error": None,
         "sync_ms": 0,
     }
+
+
+_RESULT_KEY = "shahkar:bulk:converge:{job}"
+_WAIT_TIMEOUT_SEC = 25.0
+
+
+def _redis():
+    from config import REDIS_URL
+
+    if not REDIS_URL:
+        return None
+    try:
+        import redis
+
+        return redis.Redis.from_url(
+            REDIS_URL,
+            decode_responses=True,
+            socket_connect_timeout=1.5,
+            socket_timeout=2.5,
+        )
+    except Exception:
+        return None
+
+
+def store_converge_result(job_id: str, meta: Dict[str, Any]) -> None:
+    client = _redis()
+    if client is None or not job_id:
+        return
+    try:
+        import json
+
+        client.set(_RESULT_KEY.format(job=job_id), json.dumps(meta), ex=90)
+    except Exception:
+        logger.debug("bulk converge result store failed", exc_info=True)
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+
+def wait_converge_result(job_id: str, timeout: float = _WAIT_TIMEOUT_SEC) -> Optional[Dict[str, Any]]:
+    client = _redis()
+    if client is None or not job_id:
+        return None
+    try:
+        import json
+
+        deadline = time.monotonic() + max(1.0, float(timeout))
+        key = _RESULT_KEY.format(job=job_id)
+        while time.monotonic() < deadline:
+            raw = client.get(key)
+            if raw:
+                data = json.loads(raw)
+                return data if isinstance(data, dict) else None
+            time.sleep(0.2)
+        return None
+    except Exception:
+        logger.debug("bulk converge result wait failed", exc_info=True)
+        return None
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+
+def request_bulk_converge(*, protocol: str, wait: bool = True) -> Dict[str, Any]:
+    """Run native dataplane converge on the worker; API never walks xray.nodes.
+
+    ``wait=True`` blocks HTTP until the worker writes a result (bounded), so
+    Bulk Assign can report whether peers actually landed.
+    """
+    proto = (protocol or "wireguard").strip() or "wireguard"
+    from app.runtime_role import owns_control_plane
+
+    if owns_control_plane():
+        return converge_after_bulk_native(protocol=proto, wait_finalmask=True)
+
+    import uuid
+
+    from app.sync.wake import notify_worker
+
+    job_id = uuid.uuid4().hex[:16]
+    notify_worker("converge_bulk", f"{proto}|{job_id}")
+    if not wait:
+        return pending_sync_meta()
+    meta = wait_converge_result(job_id)
+    if not meta:
+        out = pending_sync_meta()
+        out["sync_error"] = "worker still applying"
+        return out
+    return meta

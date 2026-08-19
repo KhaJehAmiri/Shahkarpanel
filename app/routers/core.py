@@ -121,13 +121,33 @@ async def core_logs(websocket: WebSocket, db: Session = Depends(get_db)):
 @router.get("/core", response_model=CoreStats)
 def get_core_stats(admin: Admin = _core_read):
     """Retrieve core statistics such as version and uptime."""
+    started = bool(xray.core.started)
+    version = xray.core.version
+    startup_error = xray.core.startup_error if not started else None
+    failed_inbound_tag = xray.core.failed_inbound_tag if not started else None
+    failed_port = xray.core.failed_port if not started else None
+    try:
+        from app.runtime_role import owns_control_plane
+        from app.sync.live import load_snapshot, snapshot_fresh
+
+        if not owns_control_plane():
+            snap = load_snapshot()
+            if snapshot_fresh(snap):
+                started = bool(snap.get("xray_started"))
+                version = snap.get("xray_version") or version
+                if started:
+                    startup_error = None
+                    failed_inbound_tag = None
+                    failed_port = None
+    except Exception:
+        pass
     return CoreStats(
-        version=xray.core.version,
-        started=xray.core.started,
+        version=version,
+        started=started,
         logs_websocket=router.url_path_for("core_logs"),
-        startup_error=xray.core.startup_error if not xray.core.started else None,
-        failed_inbound_tag=xray.core.failed_inbound_tag if not xray.core.started else None,
-        failed_port=xray.core.failed_port if not xray.core.started else None,
+        startup_error=startup_error,
+        failed_inbound_tag=failed_inbound_tag,
+        failed_port=failed_port,
     )
 
 
@@ -145,7 +165,11 @@ def validate_inbounds(payload: dict, admin: Admin = _core_write) -> dict:
 
 @router.post("/core/restart", responses={403: responses._403})
 def restart_core(admin: Admin = _core_write):
-    """Restart the core and all connected nodes."""
+    """Restart the panel Xray core. Node fleet is not restarted from HTTP."""
+    from app.runtime_role import delegate_to_worker
+
+    if delegate_to_worker("restart_core"):
+        return {}
     startup_config = xray.config.include_db_users()
     xray.core.restart(startup_config, force=True)
 
@@ -226,6 +250,10 @@ def apply_egress_guard(admin: Admin = _core_write):
 @router.post("/core/start", responses={403: responses._403})
 def start_core(admin: Admin = _core_write):
     """Start the panel Xray core if it is stopped."""
+    from app.runtime_role import delegate_to_worker
+
+    if delegate_to_worker("start_core"):
+        return {"started": True}
     if xray.core.started:
         return {"started": True}
     startup_config = xray.config.include_db_users()
@@ -236,6 +264,10 @@ def start_core(admin: Admin = _core_write):
 @router.post("/core/stop", responses={403: responses._403})
 def stop_core(admin: Admin = _core_write):
     """Stop the panel Xray core."""
+    from app.runtime_role import delegate_to_worker
+
+    if delegate_to_worker("stop_core"):
+        return {"started": False}
     if xray.core.started:
         xray.core.stop()
     return {"started": xray.core.started}

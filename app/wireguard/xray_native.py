@@ -171,6 +171,13 @@ def build_xray_wireguard_shard_inbound(
                 ]
             }
         },
+        # Inner packets are IPs; sniff SNI so sensitive domain→WARP rules match
+        # (same split as VLESS). Without this, Finalmask always hits DIRECT.
+        "sniffing": {
+            "enabled": True,
+            "destOverride": ["http", "tls", "quic"],
+            "routeOnly": False,
+        },
     }
 
 

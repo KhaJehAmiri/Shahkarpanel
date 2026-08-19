@@ -254,11 +254,12 @@ def add_node(
 
 @router.get("/node/{node_id}", response_model=NodeResponse)
 def get_node(
-    dbnode: NodeResponse = Depends(get_dbnode),
+    dbnode=Depends(get_dbnode),
+    db: Session = Depends(get_db),
     _: Admin = Depends(Admin.check_sudo_admin),
 ):
     """Retrieve details of a specific node by its ID."""
-    return dbnode
+    return _node_row(db, dbnode)
 
 
 @router.websocket("/node/{node_id}/logs")
@@ -327,58 +328,73 @@ async def node_logs(node_id: int, websocket: WebSocket, db: Session = Depends(ge
                 break
 
 
+def _node_row(db: Session, dbnode, *, cursors: Optional[dict] = None) -> NodeResponse:
+    """API node payload from Postgres only — never ``xray.nodes`` or local tunnels."""
+    from app.provisioning import jobs as provision_jobs
+    from app.sync.node_report import decorate_node_response
+
+    row = NodeResponse.model_validate(dbnode)
+    cursor = None
+    if cursors is not None:
+        cursor = cursors.get(dbnode.id)
+    else:
+        cursor = getattr(dbnode, "sync_cursor", None)
+    decorate_node_response(row, dbnode, cursor=cursor)
+    job = provision_jobs.progress_for_node(dbnode.id)
+    if job:
+        row.provision_progress = job.progress
+        row.provision_step = job.step
+        if job.message:
+            row.provision_message = job.message
+    elif row.provision_status == "provisioning":
+        row.provision_progress = row.provision_progress or 5
+        row.provision_step = row.provision_step or "queued"
+    return row
+
+
 @router.get("/nodes", response_model=List[NodeResponse])
 def get_nodes(
     db: Session = Depends(get_db),
     admin: Admin = Depends(require_permission("nodes:read")),
 ):
     """List nodes. Sudo sees all; resellers see only their workspace."""
-    from app.provisioning import jobs as provision_jobs
+    from app.db.models import NodeSyncCursor
     from app.tenant.reseller_ops import list_scoped_nodes
 
-    out: List[NodeResponse] = []
-    for dbnode in list_scoped_nodes(db, admin):
-        row = NodeResponse.model_validate(dbnode)
-        try:
-            from app.control_tunnel import is_active as control_tunnel_active
-
-            row.control_tunneled = bool(control_tunnel_active(dbnode.id))
-        except Exception:
-            row.control_tunneled = False
-        if not row.control_tunneled:
-            live = xray.nodes.get(dbnode.id)
-            if live is not None and getattr(live, "control_tunneled", False):
-                row.control_tunneled = True
-        job = provision_jobs.progress_for_node(dbnode.id)
-        if job:
-            row.provision_progress = job.progress
-            row.provision_step = job.step
-            if job.message:
-                row.provision_message = job.message
-        elif row.provision_status == "provisioning":
-            row.provision_progress = row.provision_progress or 5
-            row.provision_step = row.provision_step or "queued"
-        out.append(row)
-    return out
+    dbnodes = list(list_scoped_nodes(db, admin))
+    ids = [n.id for n in dbnodes]
+    cursors = {}
+    if ids:
+        cursors = {
+            c.node_id: c
+            for c in db.query(NodeSyncCursor).filter(NodeSyncCursor.node_id.in_(ids)).all()
+        }
+    return [_node_row(db, n, cursors=cursors) for n in dbnodes]
 
 
 @router.put("/node/{node_id}", response_model=NodeResponse)
 def modify_node(
     modified_node: NodeModify,
     bg: BackgroundTasks,
-    dbnode: NodeResponse = Depends(get_node),
+    dbnode=Depends(get_dbnode),
     db: Session = Depends(get_db),
     _: Admin = Depends(Admin.check_sudo_admin),
 ):
     """Update a node's details. Only accessible to sudo admins."""
     updated_node = crud.update_node(db, dbnode, modified_node)
+    try:
+        from app.sync.node_report import refresh_desired
+
+        refresh_desired(db, updated_node, commit=True)
+    except Exception:
+        logger.exception("refresh_desired after modify_node %s failed", updated_node.id)
     xray.operations.remove_node(updated_node.id)
     if updated_node.status != NodeStatus.disabled:
         bg.add_task(xray.operations.connect_node, node_id=updated_node.id)
 
     publish(EventType.node_modified, {"node_id": updated_node.id, "name": updated_node.name})
     logger.info(f'Node "{dbnode.name}" modified')
-    return NodeResponse.model_validate(updated_node)
+    return _node_row(db, updated_node)
 
 
 class AmneziaWGConfig(BaseModel):
@@ -994,6 +1010,12 @@ def set_node_warp(
             cfg.xray_wg_mtu = WARP_NESTED_CLIENT_MTU
     db.commit()
     db.refresh(dbnode)
+    try:
+        from app.sync.node_report import refresh_desired
+
+        refresh_desired(db, dbnode, commit=True)
+    except Exception:
+        logger.exception("refresh_desired after warp change on node %s failed", dbnode.id)
 
     def _apply_warp_runtime(node_id: int) -> None:
         from app.db import GetDB, crud
@@ -1024,7 +1046,7 @@ def set_node_warp(
         dbnode.warp_mode or "full",
         dbnode.warp_tag or "warp",
     )
-    return NodeResponse.model_validate(dbnode)
+    return _node_row(db, dbnode)
 
 
 @router.post("/node/{node_id}/reconnect")
@@ -1036,6 +1058,24 @@ def reconnect_node(
     """Trigger a reconnection for a node in the caller's workspace."""
     bg.add_task(xray.operations.connect_node, node_id=dbnode.id)
     return {"detail": "Reconnection task scheduled"}
+
+
+@router.post("/node/{node_id}/converge")
+def converge_node_endpoint(
+    bg: BackgroundTasks,
+    dbnode=Depends(get_scoped_node),
+    _: Admin = Depends(require_permission("nodes:provision")),
+):
+    """Apply desired policy and resume WG cursor (worker owns RPyC)."""
+    from app.runtime_role import owns_control_plane
+    from app.sync.node_report import converge_node
+    from app.sync.wake import notify_worker
+
+    if owns_control_plane():
+        bg.add_task(converge_node, int(dbnode.id))
+    else:
+        notify_worker("converge_node", str(dbnode.id))
+    return {"detail": "Converge scheduled"}
 
 
 @router.post("/node/{node_id}/repin")

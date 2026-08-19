@@ -425,6 +425,9 @@ class UserResponse(User):
     overage_traffic: int = 0
     lifetime_used_traffic: int = 0
     created_at: datetime
+    sync_state: str = "live"
+    sync_error: Optional[str] = None
+    sync_acked_at: Optional[datetime] = None
     sub_token: Optional[str] = None
     session_limit_minutes: Optional[int] = None
     routing_preset: Optional[str] = None

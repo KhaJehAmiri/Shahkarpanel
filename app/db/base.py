@@ -25,8 +25,9 @@ else:
         SQLALCHEMY_DATABASE_URL,
         pool_size=SQLALCHEMY_POOL_SIZE,
         max_overflow=SQLALCHEMY_MAX_OVERFLOW,
-        pool_recycle=3600,
-        pool_timeout=10,
+        pool_recycle=1800,
+        pool_timeout=8,
+        pool_use_lifo=True,
         # Validate connections before use; avoids "server closed the connection"
         # errors on long-lived pooled connections (important for PostgreSQL/HA).
         pool_pre_ping=True,

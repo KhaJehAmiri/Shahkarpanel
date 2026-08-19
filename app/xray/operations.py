@@ -260,6 +260,20 @@ def _sync_wireguard_node(node_id: int, node_object):
 
 def add_user(dbuser: "DBUser"):
     """Register user on main core (DB rebuild) and push to connected nodes."""
+    from app.runtime_role import owns_control_plane
+
+    if not owns_control_plane():
+        try:
+            from app.wireguard.instant_sync import provision_and_sync_wireguard_user
+
+            if getattr(dbuser, "id", None) is not None:
+                provision_and_sync_wireguard_user(int(dbuser.id), push=False)
+        except Exception:
+            logger.exception("WireGuard DB provision failed for new user")
+        from app.sync.outbox import schedule_user_sync_by_id
+
+        schedule_user_sync_by_id(getattr(dbuser, "id", None), "add")
+        return
     schedule_core_sync()
     _push_user_to_nodes(dbuser)
     # WireGuard / Finalmask: allocate IP+slot and push to relays immediately
@@ -330,12 +344,30 @@ def remove_user_immediate(dbuser: "DBUser"):
     while everyone else stays connected. Falls back to a full-core restart only
     when the main core's API is unreachable.
     """
+    from app.runtime_role import owns_control_plane
+
+    if not owns_control_plane():
+        from app.sync.outbox import schedule_user_sync_by_id
+
+        schedule_user_sync_by_id(getattr(dbuser, "id", None), "disable")
+        return
     from app.quota import disconnect_users_everywhere
 
     disconnect_users_everywhere([dbuser])
 
 
 def remove_user(dbuser: "DBUser"):
+    from app.runtime_role import owns_control_plane
+
+    if not owns_control_plane():
+        from app.sync.outbox import snapshot_user, schedule_user_sync_by_id
+
+        schedule_user_sync_by_id(
+            getattr(dbuser, "id", None),
+            "delete",
+            payload=snapshot_user(dbuser),
+        )
+        return
     schedule_core_sync()
 
 
@@ -382,6 +414,13 @@ def _push_user_to_nodes(dbuser: "DBUser"):
 
 
 def update_user(dbuser: "DBUser"):
+    from app.runtime_role import owns_control_plane
+
+    if not owns_control_plane():
+        from app.sync.outbox import schedule_user_sync_by_id
+
+        schedule_user_sync_by_id(getattr(dbuser, "id", None), "protocol_change")
+        return
     schedule_core_sync()
     sync_main_core_user(dbuser)
     _push_user_to_nodes(dbuser)
@@ -535,7 +574,12 @@ def _apply_native_wireguard_inbound(config, node_id: int):
 
         routing = result.setdefault("routing", {})
         rules = [r for r in (routing.get("rules") or []) if not _references_finalmask(r)]
-        rules.insert(0, rule)
+        # Tunnel/WARP catch-all must win first. A DIRECT pin at index 0 would
+        # shadow later domain→WARP rules so WireGuard never uses the split.
+        if outbound_tag and outbound_tag not in ("DIRECT", "direct"):
+            rules.insert(0, rule)
+        else:
+            rules.append(rule)
         routing["rules"] = rules
         return result
     except Exception as exc:
@@ -880,6 +924,21 @@ def _change_node_status(node_id: int, status: NodeStatus, message: str = None, v
             previous_status = dbnode.status
             crud.update_node_status(db, dbnode, status, message, version)
 
+            if status == NodeStatus.connected:
+                try:
+                    from app.sync.node_report import stamp_applied
+
+                    tunneled = None
+                    try:
+                        live = xray.nodes.get(node_id)
+                        if live is not None:
+                            tunneled = bool(getattr(live, "control_tunneled", False))
+                    except Exception:
+                        tunneled = None
+                    stamp_applied(db, dbnode, commit=True, control_tunneled=tunneled)
+                except Exception:
+                    logger.exception("stamp_applied failed for node %s", node_id)
+
             # Only emit on a real transition into connected/error to avoid noise.
             if status != previous_status:
                 if status == NodeStatus.connected:
@@ -888,6 +947,22 @@ def _change_node_status(node_id: int, status: NodeStatus, message: str = None, v
                 elif status == NodeStatus.error:
                     publish(EventType.node_error,
                             {"node_id": node_id, "name": dbnode.name, "message": message})
+                try:
+                    from app.sync.live import publish_event
+                    from app.sync.node_report import health_status
+
+                    st = getattr(status, "value", status)
+                    publish_event(
+                        "node.status",
+                        {
+                            "node_id": node_id,
+                            "name": dbnode.name,
+                            "status": str(st or ""),
+                            "health_status": health_status(dbnode),
+                        },
+                    )
+                except Exception:
+                    pass
         except SQLAlchemyError:
             db.rollback()
 
@@ -1111,8 +1186,26 @@ def push_all_node_configs_sync() -> int:
     return pushed
 
 
+def _stamp_warp_policy_rev(node, dbnode) -> None:
+    """Remember which sensitive-WARP domain list this live session already has."""
+    if node is None or dbnode is None:
+        return
+    if not bool(getattr(dbnode, "warp_enabled", False)):
+        return
+    try:
+        from app.xray.warp_routing import WARP_SENSITIVE_POLICY_REV
+
+        node.warp_sensitive_policy_rev = WARP_SENSITIVE_POLICY_REV
+    except Exception:
+        pass
+
+
 @threaded_function
 def connect_node(node_id, config=None):
+    from app.runtime_role import delegate_to_worker
+
+    if delegate_to_worker("connect_node", str(node_id)):
+        return
     if not _claim_connecting_node(node_id):
         return
 
@@ -1244,11 +1337,27 @@ def connect_node(node_id, config=None):
             )
             capture_flag = bool(getattr(node, "wg_tunnel_capture_active", False))
             was_connected = prev_status == _NSKeep.connected
+            warp_policy_stale = False
+            try:
+                from app.xray.warp_routing import WARP_SENSITIVE_POLICY_REV
+
+                if bool(getattr(dbnode, "warp_enabled", False)):
+                    applied = getattr(node, "warp_sensitive_policy_rev", None)
+                    if applied != WARP_SENSITIVE_POLICY_REV:
+                        warp_policy_stale = True
+                        logger.info(
+                            "WireGuard node \"%s\" WARP policy rev %s→%s — re-push Xray",
+                            dbnode.name,
+                            applied,
+                            WARP_SENSITIVE_POLICY_REV,
+                        )
+            except Exception:
+                warp_policy_stale = bool(getattr(dbnode, "warp_enabled", False))
             # Degraded message → must re-push. A mere "connecting" DB status
             # after panel restart must NOT — re-pushing Finalmask multi-MB
             # configs for every relay saturates the single uvicorn worker and
             # freezes /api/health (panel appears "down" / extremely slow).
-            hard_reconnect = bool(degraded)
+            hard_reconnect = bool(degraded) or warp_policy_stale
             try:
                 if not node.connected:
                     node.connect()
@@ -1256,7 +1365,7 @@ def connect_node(node_id, config=None):
                     with GetDB() as db:
                         prepare_relay_wireguard_tunnel(db, node_id, node)
                 version = node.get_version()
-                if version and prefer_keep_live and not degraded:
+                if version and prefer_keep_live and not degraded and not warp_policy_stale:
                     if delegates_tunnel:
                         node.wg_tunnel_capture_active = True
                     try:
@@ -1265,6 +1374,17 @@ def connect_node(node_id, config=None):
                         pass
                     kept_live = True
                     hard_reconnect = False
+                    _stamp_warp_policy_rev(node, dbnode)
+                    try:
+                        from app.wireguard.finalmask_reload import (
+                            peek_finalmask_dirty_slots,
+                            schedule_finalmask_xray_reload,
+                        )
+
+                        if peek_finalmask_dirty_slots():
+                            schedule_finalmask_xray_reload(delay=2.0)
+                    except Exception:
+                        pass
                     if _live_inbound_repush_due(node_id) and _live_core_lost_inbounds(dbnode):
                         kept_live = False
                         hard_reconnect = True
@@ -1344,6 +1464,7 @@ def connect_node(node_id, config=None):
                             node.restart(config)
                         version = node.get_version()
                         node.wg_tunnel_capture_active = True
+                        _stamp_warp_policy_rev(node, dbnode)
                         xray_exc = None
                         logger.info(
                             "WireGuard node \"%s\" Xray/tunnel config applied (%s)",
@@ -1392,6 +1513,7 @@ def connect_node(node_id, config=None):
                             node.restart(config)
                         version = node.get_version()
                         node.wg_tunnel_capture_active = False
+                        _stamp_warp_policy_rev(node, dbnode)
                         xray_exc = None
                         logger.info(
                             "WireGuard node \"%s\" Xray config applied (%s)",
@@ -1492,6 +1614,10 @@ def connect_node(node_id, config=None):
 
 @threaded_function
 def restart_node(node_id, config=None):
+    from app.runtime_role import delegate_to_worker
+
+    if delegate_to_worker("restart_node", str(node_id)):
+        return
     # Shares the connect_node() in-flight guard: the two operations both
     # touch xray.nodes[node_id] and talk to the same physical node, so they
     # must never run concurrently for the same id (H6/H7 — @threaded_function

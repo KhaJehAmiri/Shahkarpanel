@@ -7,9 +7,11 @@ import uvicorn
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 
-from app import app, logger
 from config import (DEBUG, UVICORN_HOST, UVICORN_PORT, UVICORN_SSL_CERTFILE,
-                    UVICORN_SSL_KEYFILE, UVICORN_SSL_CA_TYPE, UVICORN_UDS)
+                    UVICORN_SSL_KEYFILE, UVICORN_SSL_CA_TYPE, UVICORN_UDS,
+                    UVICORN_WORKERS)
+
+logger = logging.getLogger("uvicorn.error")
 
 
 def validate_cert_and_key(cert_file_path, key_file_path, ca_type):
@@ -44,16 +46,24 @@ Self-signed CAs are useful in testing or internal use cases, they’re not suita
         raise ValueError(f"Certificate verification failed: {e}")
 
 
+def _http_workers() -> int:
+    """Multi-process HTTP is only safe when this process does not own Xray/scheduler."""
+    if DEBUG:
+        return 1
+    role = (os.environ.get("SHAHKAR_ROLE") or "all").strip().lower()
+    if role != "api":
+        return 1
+    return max(1, min(int(UVICORN_WORKERS or 1), 8))
+
+
 if __name__ == "__main__":
-    # Do NOT change workers count for now
-    # multi-workers support isn't implemented yet for APScheduler and XRay module
-
     bind_args = {}
-    if UVICORN_SSL_CA_TYPE not in ["public", "private"]:
-        UVICORN_SSL_CA_TYPE = "public"
+    ssl_ca_type = UVICORN_SSL_CA_TYPE
+    if ssl_ca_type not in ["public", "private"]:
+        ssl_ca_type = "public"
 
-    if UVICORN_SSL_CERTFILE and UVICORN_SSL_KEYFILE and UVICORN_SSL_CA_TYPE:
-        validate_cert_and_key(UVICORN_SSL_CERTFILE, UVICORN_SSL_KEYFILE, UVICORN_SSL_CA_TYPE)
+    if UVICORN_SSL_CERTFILE and UVICORN_SSL_KEYFILE and ssl_ca_type:
+        validate_cert_and_key(UVICORN_SSL_CERTFILE, UVICORN_SSL_KEYFILE, ssl_ca_type)
 
         bind_args['ssl_certfile'] = UVICORN_SSL_CERTFILE
         bind_args['ssl_keyfile'] = UVICORN_SSL_KEYFILE
@@ -88,12 +98,15 @@ if __name__ == "__main__":
         bind_args['uds'] = None
         bind_args['host'] = '0.0.0.0'
 
+    workers = _http_workers()
+    logger.info("uvicorn workers=%s role=%s", workers, os.environ.get("SHAHKAR_ROLE") or "all")
+
     try:
         uvicorn.run(
-            "main:app",
+            "app:app",
             **bind_args,
-            workers=1,
-            reload=DEBUG,
+            workers=workers,
+            reload=DEBUG and workers == 1,
             log_level=logging.DEBUG if DEBUG else logging.INFO
         )
     except FileNotFoundError:  # to prevent error on removing unix sock

@@ -101,6 +101,26 @@ def sync_panel_warp_egress(db) -> dict:
     ok = False
     if not enabled:
         ok = apply_panel_warp_wg(enabled=False, subnets=[])
+        try:
+            from app.services.panel_warp_tproxy_host import apply_warp_tproxy
+
+            apply_warp_tproxy(enabled=False, subnets=[], port=22000)
+        except Exception:
+            pass
+        _last_state = state
+        from app import xray
+
+        logger.info(
+            "Panel WARP egress: disabled (no full-mode panel-exit relays); skip core rebuild"
+        )
+        return {
+            "enabled": False,
+            "nodes": [],
+            "subnets": subnets,
+            "ok": ok,
+            "core_ok": bool(getattr(xray.core, "started", False)),
+            "skipped": "no-panel-exit-warp",
+        }
     else:
         creds = _warp_credentials(tag)
         if not creds:

@@ -1,5 +1,4 @@
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from operator import attrgetter
 from typing import Union
@@ -83,9 +82,17 @@ def record_user_protocol_stats(
         return
 
     created_at = datetime.fromisoformat(datetime.utcnow().strftime("%Y-%m-%dT%H:00:00"))
-    proto = str(protocol)[:32]
-
     with GetDB() as db:
+        try:
+            from app.db.usage_upsert import upsert_protocol_usage
+
+            upsert_protocol_usage(
+                db, params, node_id, created_at, protocol, consumption_factor
+            )
+            return
+        except Exception:
+            db.rollback()
+        proto = str(protocol)[:32]
         select_stmt = select(NodeUserProtocolUsage.user_id).where(
             and_(
                 NodeUserProtocolUsage.node_id == node_id,
@@ -144,6 +151,13 @@ def record_user_stats(params: list, node_id: Union[int, None],
     created_at = datetime.fromisoformat(datetime.utcnow().strftime('%Y-%m-%dT%H:00:00'))
 
     with GetDB() as db:
+        try:
+            from app.db.usage_upsert import upsert_node_user_usage
+
+            upsert_node_user_usage(db, params, node_id, created_at, consumption_factor)
+            return
+        except Exception:
+            db.rollback()
         # make user usage row if doesn't exist
         select_stmt = select(NodeUserUsage.user_id) \
             .where(and_(NodeUserUsage.node_id == node_id, NodeUserUsage.created_at == created_at))
@@ -688,29 +702,12 @@ def collect_user_usage_params() -> tuple:
             usage_coefficient[node_id] = node.usage_coefficient
             node_refs[node_id] = node
 
-    # Do NOT use ``with ThreadPoolExecutor``: after ``future.result(timeout=…)``
-    # the context manager still ``shutdown(wait=True)``, so one hung node RPC
-    # blocks the whole 5s usage job forever (max_instances=1 → Overview freeze).
-    executor = ThreadPoolExecutor(max_workers=10)
-    api_params: dict = {}
-    try:
-        futures = {
-            node_id: executor.submit(
-                _collect_node_users_stats,
-                node_id,
-                api,
-                node_refs.get(node_id),
-            )
-            for node_id, api in api_instances.items()
-        }
-        for node_id, future in futures.items():
-            try:
-                api_params[node_id] = future.result(timeout=12) or []
-            except Exception as exc:
-                logger.warning("get_users_stats timed out/failed for node %s: %s", node_id, exc)
-                api_params[node_id] = []
-    finally:
-        executor.shutdown(wait=False, cancel_futures=True)
+    from app.utils.concurrency import map_rpc
+
+    def _one(nid, api):
+        return _collect_node_users_stats(nid, api, node_refs.get(nid)) or []
+
+    api_params = map_rpc(_one, api_instances, timeout=12, default=[])
 
     protocol_breakdown: list[dict] = []
 
@@ -805,6 +802,12 @@ def record_protocol_breakdown(
 
 
 def record_user_usages():
+    try:
+        from app.presence import note_usage_tick
+
+        note_usage_tick()
+    except Exception:
+        pass
     api_params, usage_coefficient, protocol_breakdown = collect_user_usage_params()
     uids = {int(p["uid"]) for params in api_params.values() for p in params}
     # Presence first, before any billing write can stall this tick. This is a
@@ -863,18 +866,16 @@ def record_node_usages():
         elif getattr(node, "started", False) and getattr(node, "_api", None) is not None:
             api_instances[node_id] = node.api
 
-    executor = ThreadPoolExecutor(max_workers=10)
-    api_params: dict = {}
-    try:
-        futures = {node_id: executor.submit(get_outbounds_stats, api) for node_id, api in api_instances.items()}
-        for node_id, future in futures.items():
-            try:
-                api_params[node_id] = future.result(timeout=20)
-            except Exception as exc:
-                logger.warning("get_outbounds_stats timed out/failed for node %s: %s", node_id, exc)
-                api_params[node_id] = []
-    finally:
-        executor.shutdown(wait=False, cancel_futures=True)
+    from app.utils.concurrency import map_rpc
+
+    def _one(nid, api):
+        try:
+            return get_outbounds_stats(api) or []
+        except Exception as exc:
+            logger.warning("get_outbounds_stats timed out/failed for node %s: %s", nid, exc)
+            return []
+
+    api_params = map_rpc(_one, api_instances, timeout=20, default=[])
 
     total_up = 0
     total_down = 0

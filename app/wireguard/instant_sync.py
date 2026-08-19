@@ -21,16 +21,12 @@ def provision_and_sync_wireguard_user(
     user_id: int,
     *,
     immediate: bool = True,
+    push: bool = True,
 ) -> bool:
-    """Allocate WG address/slot for ``user_id`` and push Finalmask to nodes.
+    """Allocate WG address/slot for ``user_id`` and optionally push Finalmask.
 
-    Returns True when the user has (or now has) a WireGuard proxy and sync was
-    scheduled. Safe to call from background tasks; coalesces duplicate calls.
-
-    IP/slot allocation is synchronous and fast. Finalmask node push is always
-    scheduled with a near-zero debounce; ``immediate=True`` also triggers an
-    async flush so the API thread is not blocked on multi-node Xray restarts
-    (old agents without hot-replace).
+    ``push=False`` is for the API process: persist IP/slot/dirty file, then
+    the outbox worker applies to nodes.
     """
     uid = int(user_id)
     with _lock:
@@ -39,13 +35,13 @@ def provision_and_sync_wireguard_user(
         _inflight.add(uid)
 
     try:
-        return _provision_and_sync(uid, immediate=immediate)
+        return _provision_and_sync(uid, immediate=immediate, push=push)
     finally:
         with _lock:
             _inflight.discard(uid)
 
 
-def _provision_and_sync(user_id: int, *, immediate: bool) -> bool:
+def _provision_and_sync(user_id: int, *, immediate: bool, push: bool = True) -> bool:
     from app.db import GetDB, crud
     from app.models.proxy import ProxyTypes
     from app.models.user import UserStatus
@@ -83,16 +79,17 @@ def _provision_and_sync(user_id: int, *, immediate: bool) -> bool:
 
         # Wake resumable sync so tunnel-exit kernel WG (and other nodes) pick
         # up the new peer without waiting for the next churn event.
-        try:
-            from app.wireguard.operations import sync_user_change
+        if push:
+            try:
+                from app.wireguard.operations import sync_user_change
 
-            sync_user_change()
-        except Exception:
-            logger.debug(
-                "sync_user_change after instant WG provision failed for user %s",
-                user_id,
-                exc_info=True,
-            )
+                sync_user_change()
+            except Exception:
+                logger.debug(
+                    "sync_user_change after instant WG provision failed for user %s",
+                    user_id,
+                    exc_info=True,
+                )
 
         try:
             ensure_finalmask_slots(db)
@@ -117,19 +114,20 @@ def _provision_and_sync(user_id: int, *, immediate: bool) -> bool:
     if slot is not None:
         mark_finalmask_slots_dirty([slot])
 
-    schedule_finalmask_xray_reload(delay=0.1, bulk=False)
-    if immediate:
-        # Never block the caller on multi-node Xray restart (old agents).
-        threading.Thread(
-            target=_flush_finalmask_safe,
-            name=f"wg-flush-{user_id}",
-            daemon=True,
-        ).start()
+    if push:
+        schedule_finalmask_xray_reload(delay=0.1, bulk=False)
+        if immediate:
+            threading.Thread(
+                target=_flush_finalmask_safe,
+                name=f"wg-flush-{user_id}",
+                daemon=True,
+            ).start()
     logger.info(
-        "WireGuard user %s synced to Finalmask (slot=%s immediate=%s)",
+        "WireGuard user %s synced to Finalmask (slot=%s immediate=%s push=%s)",
         user_id,
         slot,
         immediate,
+        push,
     )
     return True
 

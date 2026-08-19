@@ -1,4 +1,5 @@
 import logging
+import os
 import warnings
 
 # APScheduler still imports pkg_resources; silence the setuptools deprecation noise.
@@ -153,18 +154,36 @@ def on_startup():
         ha_start()
     except Exception:
         logger.exception("Failed to start HA leader election")
-    # Own thread, started before the scheduler: the online counter must not
-    # depend on job-pool availability (see app/presence.py).
-    try:
-        from app.presence import start_presence_worker
+    from app.runtime_role import owns_control_plane
 
-        start_presence_worker()
-    except Exception:
-        logger.exception("Failed to start online presence tracker")
+    if owns_control_plane():
+        try:
+            from app.presence import start_presence_worker
+
+            start_presence_worker()
+        except Exception:
+            logger.exception("Failed to start online presence tracker")
 
     # Non-critical work: do not block uvicorn from accepting HTTP (otherwise
     # nginx sits on connection-refused for up to proxy_connect_timeout).
     def _deferred() -> None:
+        try:
+            from config import REDIS_URL
+
+            if REDIS_URL:
+                import redis
+
+                r = redis.Redis.from_url(REDIS_URL, socket_connect_timeout=1.0, socket_timeout=1.5)
+                claimed = bool(r.set("shahkar:api-startup-once", str(os.getpid()), nx=True, ex=120))
+                try:
+                    r.close()
+                except Exception:
+                    pass
+                if not claimed:
+                    logger.info("skip duplicate API deferred startup (another uvicorn worker claimed it)")
+                    return
+        except Exception:
+            pass
         try:
             from app.db import GetDB
             from app.tenant import ensure_reseller_tenants
@@ -214,12 +233,20 @@ def on_startup():
     import threading
 
     threading.Thread(target=_deferred, name="panel-deferred-startup", daemon=True).start()
-    scheduler.start()
+    from app.runtime_role import owns_control_plane
+
+    if owns_control_plane():
+        scheduler.start()
+    else:
+        logger.info("scheduler not started in API process (SHAHKAR_ROLE=api)")
 
 
 @app.on_event("shutdown")
 def on_shutdown():
-    scheduler.shutdown()
+    from app.runtime_role import owns_control_plane
+
+    if owns_control_plane() and scheduler.running:
+        scheduler.shutdown()
     try:
         from app.presence import stop_presence_worker
 

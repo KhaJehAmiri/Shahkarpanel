@@ -174,6 +174,16 @@ class NodeResponse(Node):
     server_cert_sha256: Optional[str] = None
     latency_ms: Optional[float] = None
     last_health: Optional[datetime] = None
+    last_ack_at: Optional[datetime] = None
+    last_stats_ok: Optional[datetime] = None
+    reported_peer_count: int = 0
+    ssh_ok: Optional[bool] = None
+    control_tunnel_ok: Optional[bool] = None
+    drift: bool = False
+    drift_reason: Optional[str] = None
+    # UI-only: computed from DB connection status + last_ack + drift + cursor.
+    # Not stored on the Postgres NodeStatus enum.
+    health_status: str = "connecting"
     wireguard: Optional[NodeWireGuardConfig] = None
     singbox: Optional[NodeSingBoxConfig] = None
     # Tunnel topology role: 'direct' (default), 'relay' (in-country bridge), 'exit'.

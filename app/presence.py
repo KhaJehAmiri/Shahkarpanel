@@ -36,7 +36,6 @@ Presence therefore lives here, deliberately isolated:
 import logging
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Set, Tuple
 
@@ -77,6 +76,22 @@ _worker: Optional[threading.Thread] = None
 _watchdog: Optional[threading.Thread] = None
 _generation = 0
 _stop = threading.Event()
+
+# Usage job already QueryStats / RPyC-polls every core and calls mark_online.
+# Presence QueryStats of ``user>>>`` on every node is a second full dump of
+# tens of thousands of counters — that is what pins the single worker after a
+# few hours. Skip the dump while the usage job is alive; fall back only if it
+# has been silent.
+_USAGE_COVER_SEC = 45.0
+_usage_ok_until = 0.0
+_last_window_rewrite = 0.0
+
+
+def note_usage_tick() -> None:
+    """Called at the start of ``record_user_usages`` so presence does not
+    double-QueryStats the whole fleet on the same interval."""
+    global _usage_ok_until
+    _usage_ok_until = time.monotonic() + _USAGE_COVER_SEC
 
 # Consecutive empty ticks before we complain. Quiet fleets legitimately have
 # none, but a broken collector shows up as a permanent streak.
@@ -237,38 +252,33 @@ def _poll(key: str, target, timeout: float) -> Optional[Dict[str, int]]:
 
 
 def collect_active_uids() -> Tuple[Set[int], int]:
-    """User ids whose traffic counters moved since the previous tick."""
+    """User ids whose traffic counters moved since the previous tick.
+
+    Returns ``sources=-1`` when the usage job is covering this interval so
+    callers skip the empty-streak warning and the fleet QueryStats dump.
+    """
+    if time.monotonic() < _usage_ok_until:
+        return set(), -1
+
     targets = _targets()
     if not targets:
         return set(), 0
 
     timeout = _query_timeout()
+    from app.utils.concurrency import map_rpc
+
+    def _one(key, target):
+        return _poll(key, target, timeout)
+
+    results = map_rpc(_one, targets, timeout=max(0.5, timeout * 2 + 4), default=None)
     uids: Set[int] = set()
     sources = 0
-    # Every core in parallel, and not a ``with`` block: ``shutdown`` waits for
-    # running futures, so one hung core would block presence for as long as its
-    # RPC hangs instead of just being missing from this tick.
-    executor = ThreadPoolExecutor(
-        max_workers=min(24, len(targets)), thread_name_prefix="presence-poll"
-    )
-    try:
-        futures = {
-            key: executor.submit(_poll, key, target, timeout)
-            for key, target in targets.items()
-        }
-        deadline = time.monotonic() + timeout * 2 + 4
-        for key, future in futures.items():
-            _beat()
-            try:
-                totals = future.result(timeout=max(0.5, deadline - time.monotonic()))
-            except Exception:
-                continue
-            if totals is None:
-                continue
-            sources += 1
-            uids |= _moved_uids(key, totals)
-    finally:
-        executor.shutdown(wait=False, cancel_futures=True)
+    for key, totals in results.items():
+        _beat()
+        if totals is None:
+            continue
+        sources += 1
+        uids |= _moved_uids(key, totals)
     return uids, sources
 
 
@@ -277,27 +287,40 @@ def _write_online_at(stamps: Dict[datetime, Set[int]]) -> int:
     if not stamps:
         return 0
 
+    from sqlalchemy.exc import OperationalError
+
     from app.db import GetDB
     from app.db.models import User
 
-    rows = 0
-    with GetDB() as db:
-        for seen_at, ids in stamps.items():
-            ordered = list(ids)
-            for start in range(0, len(ordered), 500):
-                rows += (
-                    db.query(User)
-                    .filter(
-                        User.id.in_(ordered[start:start + 500]),
-                        User.status.in_(BILLABLE_STATUSES),
-                        # Another writer (usage job, subscription refresh) may
-                        # already know about newer activity.
-                        (User.online_at.is_(None)) | (User.online_at < seen_at),
-                    )
-                    .update({User.online_at: seen_at}, synchronize_session=False)
-                )
-        db.commit()
-    return int(rows or 0)
+    last_err: Optional[BaseException] = None
+    for attempt in range(3):
+        rows = 0
+        try:
+            with GetDB() as db:
+                for seen_at, ids in stamps.items():
+                    ordered = list(ids)
+                    for start in range(0, len(ordered), 500):
+                        rows += (
+                            db.query(User)
+                            .filter(
+                                User.id.in_(ordered[start:start + 500]),
+                                User.status.in_(BILLABLE_STATUSES),
+                                (User.online_at.is_(None)) | (User.online_at < seen_at),
+                            )
+                            .update({User.online_at: seen_at}, synchronize_session=False)
+                        )
+                db.commit()
+            return int(rows or 0)
+        except OperationalError as exc:
+            last_err = exc
+            orig = getattr(exc, "orig", None)
+            text = f"{orig or exc}".lower()
+            if "deadlock" not in text:
+                raise
+            time.sleep(0.05 * (attempt + 1))
+    if last_err:
+        raise last_err
+    return 0
 
 
 def mark_online(uids, seen_at: Optional[datetime] = None) -> int:
@@ -338,7 +361,7 @@ def _due_stamps(now: datetime) -> Dict[datetime, Set[int]]:
 
 def presence_tick() -> int:
     """One collect-and-stamp pass. Returns the number of users marked online."""
-    global _empty_streak
+    global _empty_streak, _last_window_rewrite
 
     uids, sources = collect_active_uids()
     now = datetime.utcnow()
@@ -347,7 +370,18 @@ def presence_tick() -> int:
             for uid in uids:
                 _last_active[uid] = now
     _beat()
-    rows = _write_online_at(_due_stamps(now))
+    # Usage job already wrote online_at via mark_online. Rewriting the whole
+    # window every 15s is thousands of UPDATEs on ``users`` and is what
+    # bloated dead tuples until the dashboard froze.
+    now_m = time.monotonic()
+    if sources >= 0 and uids:
+        rows = _write_online_at({now: uids})
+        _last_window_rewrite = now_m
+    elif now_m - _last_window_rewrite >= 60:
+        rows = _write_online_at(_due_stamps(now))
+        _last_window_rewrite = now_m
+    else:
+        rows = 0
 
     with _state_lock:
         _state["ticks"] = int(_state["ticks"]) + 1
@@ -357,7 +391,9 @@ def presence_tick() -> int:
         _state["rows"] = rows
         _state["last_error"] = None
 
-    if uids:
+    if sources < 0:
+        pass
+    elif uids:
         _empty_streak = 0
     else:
         _empty_streak += 1

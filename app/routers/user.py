@@ -960,7 +960,7 @@ def remove_user(
     """Remove a user"""
     username = dbuser.username
     user_admin = Admin.model_validate(dbuser.admin) if dbuser.admin else None
-    from app.sync.outbox import snapshot_user, schedule_user_sync
+    from app.sync.outbox import schedule_user_sync, snapshot_user
 
     schedule_user_sync(db, dbuser, "delete", payload=snapshot_user(dbuser))
     crud.remove_user(db, dbuser)

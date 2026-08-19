@@ -1,5 +1,5 @@
-from typing import List, Union
 import time
+from typing import List, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel

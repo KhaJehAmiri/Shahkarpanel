@@ -45,6 +45,7 @@ _lock = threading.Lock()
 # instant cancel.
 _git_lock = threading.Lock()
 _jobs: Dict[str, "UpdateJob"] = {}
+_JOB_FILE_NAME = "update-job.json"
 
 STEP_ORDER = ("pull", "backup", "migrate", "build", "restart")
 
@@ -506,10 +507,26 @@ def plan_update(changed: List[str]) -> Tuple[UpdateMode, str]:
     return "restart", "app/config only (bind-mounted code)"
 
 
+def _git_fetch_origin(branch: str, *, timeout: int = 120) -> None:
+    """Update ``origin/<branch>`` *and* ``FETCH_HEAD``.
+
+    ``git fetch origin master --depth 1`` on a shallow/grafted checkout only
+    writes ``FETCH_HEAD``. ``reset --hard origin/master`` then no-ops on the
+    stale remote-tracking ref — in-panel Update looks like it ran but HEAD
+    never moved.
+    """
+    spec = f"+refs/heads/{branch}:refs/remotes/origin/{branch}"
+    try:
+        _run_git_locked(["fetch", "--depth", "1", "origin", spec], timeout=timeout)
+    except RuntimeError:
+        _run_git_locked(["fetch", "origin", branch, "--depth", "1"], timeout=timeout)
+
+
 def _git_pull() -> None:
     branch = _github_branch()
-    _run_git_locked(["fetch", "origin", branch, "--depth", "1"], timeout=120)
-    _run_git_locked(["reset", "--hard", f"origin/{branch}"], timeout=120)
+    _git_fetch_origin(branch, timeout=120)
+    # Always reset to what was just fetched, not a possibly-stale origin/*.
+    _run_git_locked(["reset", "--hard", "FETCH_HEAD"], timeout=120)
 
 
 def _pip_install_requirements() -> None:
@@ -536,32 +553,44 @@ def _build_dashboard() -> None:
         raise RuntimeError("npm unavailable and dashboard out/ is missing")
 
 
-def _own_container_id() -> Optional[str]:
-    """Resolve this panel's own container id.
+def _panel_services() -> List[str]:
+    """Compose services the in-panel updater must bounce (API + worker)."""
+    names = ["shahkar"]
+    for fname in (
+        "docker-compose.yml",
+        "docker-compose.postgres.yml",
+        "docker-compose.override.yml",
+    ):
+        path = _ROOT / fname
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if re.search(r"(?m)^  shahkar-worker:\s*$", text):
+            names.append("shahkar-worker")
+            break
+    return names
 
-    ``$HOSTNAME``/cgroup are unreliable inside our container (compose sets a
-    custom hostname; cgroup v2 exposes nothing), so ask compose for the id of
-    the ``shahkar`` service while the container is still alive.
-    """
+
+def _service_container_id(service: str) -> Optional[str]:
     try:
         out = subprocess.check_output(
-            _compose_cmd("ps", "-q", "shahkar"),
+            _compose_cmd("ps", "-q", service),
             cwd=str(_ROOT),
             text=True,
             stderr=subprocess.DEVNULL,
             timeout=15,
         ).strip().splitlines()
     except (subprocess.SubprocessError, FileNotFoundError, OSError, RuntimeError):
-        return None
+        out = []
     if out and out[0].strip():
         return out[0].strip()
-    # Fallback: label filter (compose file / project mismatch).
     try:
         out = subprocess.check_output(
             [
                 "docker", "ps", "-aq",
                 "--filter", f"label=com.docker.compose.project={_COMPOSE_PROJECT}",
-                "--filter", "label=com.docker.compose.service=shahkar",
+                "--filter", f"label=com.docker.compose.service={service}",
             ],
             text=True,
             stderr=subprocess.DEVNULL,
@@ -570,6 +599,16 @@ def _own_container_id() -> Optional[str]:
     except (subprocess.SubprocessError, FileNotFoundError, OSError):
         return None
     return out[0].strip() if out and out[0].strip() else None
+
+
+def _own_container_id() -> Optional[str]:
+    """Resolve this panel's own container id.
+
+    ``$HOSTNAME``/cgroup are unreliable inside our container (compose sets a
+    custom hostname; cgroup v2 exposes nothing), so ask compose for the id of
+    the ``shahkar`` service while the container is still alive.
+    """
+    return _service_container_id("shahkar")
 
 
 def _host_code_dir() -> str:
@@ -783,13 +822,15 @@ def _schedule_compose_action(mode: UpdateMode) -> None:
       --force-recreate`` (``--build`` for rebuild) and outlives the swap.
     """
     cid = _own_container_id()
+    services = _panel_services()
+    service_ids = [c for c in (_service_container_id(s) for s in services) if c]
     ensure_nginx = _nginx_ensure_sidecar_shell()
     host_code = _host_code_dir()
     image = _own_image()
 
     label = mode
     if mode in ("recreate", "rebuild"):
-        up_args = ["up", "-d", "--force-recreate", "--no-deps", "shahkar"]
+        up_args = ["up", "-d", "--force-recreate", "--no-deps", *services]
         if mode == "rebuild":
             up_args.insert(2, "--build")
         compose = _compose_file()
@@ -800,12 +841,15 @@ def _schedule_compose_action(mode: UpdateMode) -> None:
             # not exist on the Docker host and caused exit 14 / missing compose).
             inner_compose = _compose_up_shell(host_code, *up_args)
             pre = f"{ensure_nginx}; " if ensure_nginx else ""
-            # After recreate, force-start in case compose left the service exited.
-            ensure_up = (
-                f"cid=$(docker ps -aq --filter label=com.docker.compose.project={shlex.quote(_COMPOSE_PROJECT)} "
-                f"--filter label=com.docker.compose.service=shahkar | head -n1); "
-                f"[ -n \"$cid\" ] && docker start \"$cid\" >/dev/null 2>&1 || true"
-            )
+            # After recreate, force-start in case compose left a service exited.
+            ensure_bits = []
+            for svc in services:
+                ensure_bits.append(
+                    f"cid=$(docker ps -aq --filter label=com.docker.compose.project={shlex.quote(_COMPOSE_PROJECT)} "
+                    f"--filter label=com.docker.compose.service={shlex.quote(svc)} | head -n1); "
+                    f"[ -n \"$cid\" ] && docker start \"$cid\" >/dev/null 2>&1 || true"
+                )
+            ensure_up = "; ".join(ensure_bits)
             cmd = [
                 "docker", "run", "-d", "--rm",
                 "--network", "host",
@@ -819,20 +863,24 @@ def _schedule_compose_action(mode: UpdateMode) -> None:
         else:
             # Best effort if we can't resolve the image/socket: recreate inline.
             cmd = _compose_cmd(*up_args)
-    elif cid:
+    elif service_ids:
         # NEVER run `docker stop && docker start` from inside this container:
         # stop kills the shell before start runs, leaving the panel Stopped while
         # RestartPolicy stays "always" (Autostart=Yes). Docker also ignores
         # restart policies after a manual stop until the daemon reboots.
         #
         # Always bounce from a detached sidecar (or a single daemon-side
-        # `docker restart`) so start survives our own teardown.
+        # `docker restart`) so start survives our own teardown. Restart API and
+        # worker — otherwise the control plane keeps the old in-memory code.
         pre = f"{ensure_nginx}; " if ensure_nginx else ""
-        bounce = (
-            f"docker restart -t 3 {shlex.quote(cid)} "
-            f"|| docker start {shlex.quote(cid)}; "
-            f"sleep 1; docker start {shlex.quote(cid)} >/dev/null 2>&1 || true"
-        )
+        bounce_bits = []
+        for c in service_ids:
+            q = shlex.quote(c)
+            bounce_bits.append(
+                f"docker restart -t 3 {q} || docker start {q}; "
+                f"sleep 1; docker start {q} >/dev/null 2>&1 || true"
+            )
+        bounce = "; ".join(bounce_bits)
         if image and Path("/var/run/docker.sock").exists():
             cmd = [
                 "docker", "run", "-d", "--rm",
@@ -843,10 +891,10 @@ def _schedule_compose_action(mode: UpdateMode) -> None:
             ]
         else:
             # One daemon RPC — safer than stop&&start if the client dies mid-call.
-            cmd = ["sh", "-c", f"{pre}docker restart -t 3 {shlex.quote(cid)}"]
+            cmd = ["sh", "-c", f"{pre}{bounce}"]
     else:
         # No container id — fall back to compose recreate (best effort).
-        cmd = _compose_cmd("up", "-d", "--force-recreate", "--no-deps", "shahkar")
+        cmd = _compose_cmd("up", "-d", "--force-recreate", "--no-deps", *services)
         label = "recreate"
 
     # A short delay lets the update-job status flush before we go down.
@@ -951,7 +999,7 @@ def _worker(job_id: str) -> None:
         job.step_running("pull")
         if _git_available():
             _git_pull()
-            job.step_done("pull", detail=f"origin/{_github_branch()}")
+            job.step_done("pull", detail=f"HEAD {_git_head_sha() or ''} origin/{_github_branch()}".strip())
         else:
             raise RuntimeError(
                 "git unavailable — bind-mount the app dir (/opt/shahkar:/code) and install git in the panel container"
@@ -1004,6 +1052,8 @@ def _worker(job_id: str) -> None:
             job.step_done("restart")
 
         job.status = "success"
+        job.finished_at = time.time()
+        _persist_job(job)
         if use_docker:
             time.sleep(1)
             # Preserve rebuild/recreate: a plain restart can't apply an image
@@ -1019,7 +1069,8 @@ def _worker(job_id: str) -> None:
                 break
         job.status = "failed"
     finally:
-        job.finished_at = time.time()
+        job.finished_at = job.finished_at or time.time()
+        _persist_job(job)
 
 
 class UpdateInProgress(Exception):
@@ -1040,7 +1091,10 @@ def start_apply_job() -> str:
 
 def get_job(job_id: str) -> Optional[UpdateJob]:
     with _lock:
-        return _jobs.get(job_id)
+        job = _jobs.get(job_id)
+    if job:
+        return job
+    return _load_persisted_job(job_id)
 
 
 # Cache the (network-bound) update check so opening the Updates modal is
@@ -1140,7 +1194,7 @@ def _compute_check_updates() -> dict:
             # budget and falsely falls back to unauthenticated HTTPS (no update).
             fetch_ok = False
             try:
-                _run_git_locked(["fetch", "origin", branch, "--depth", "1"], timeout=60)
+                _git_fetch_origin(branch, timeout=60)
                 fetch_ok = True
             except (RuntimeError, subprocess.SubprocessError, OSError):
                 # Auth missing inside the container is common for private repos —
@@ -1148,12 +1202,20 @@ def _compute_check_updates() -> dict:
                 fetch_ok = False
             try:
                 remote_sha = _run_git_locked(
-                    ["rev-parse", "--short", f"origin/{branch}"], timeout=15
+                    ["rev-parse", "--short", "FETCH_HEAD"], timeout=15
                 )
             except (RuntimeError, subprocess.SubprocessError, OSError):
                 remote_sha = None
+            if not remote_sha:
+                try:
+                    remote_sha = _run_git_locked(
+                        ["rev-parse", "--short", f"origin/{branch}"], timeout=15
+                    )
+                except (RuntimeError, subprocess.SubprocessError, OSError):
+                    remote_sha = None
             remote_version = (
-                _version_at_git_ref(f"origin/{branch}")
+                (fetch_ok and _version_at_git_ref("FETCH_HEAD"))
+                or _version_at_git_ref(f"origin/{branch}")
                 or _remote_version_https()
                 or current_version
             )
@@ -1218,3 +1280,43 @@ def job_to_api(job: UpdateJob) -> dict:
             for s in job.steps
         ],
     }
+
+
+def _job_persist_paths() -> List[Path]:
+    return [_data_dir() / _JOB_FILE_NAME, Path("/tmp") / f"shahkar-{_JOB_FILE_NAME}"]
+
+
+def _persist_job(job: UpdateJob) -> None:
+    raw = json.dumps(job_to_api(job), indent=2)
+    for path in _job_persist_paths():
+        try:
+            path.write_text(raw, encoding="utf-8")
+            return
+        except OSError:
+            continue
+
+
+def _load_persisted_job(job_id: str) -> Optional[UpdateJob]:
+    for path in _job_persist_paths():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            continue
+        if not isinstance(data, dict) or str(data.get("id") or "") != job_id:
+            continue
+        job = UpdateJob(id=job_id)
+        job.status = data.get("status") or "failed"  # type: ignore[assignment]
+        job.error_message = data.get("error_message")
+        job.update_mode = data.get("update_mode") or "restart"  # type: ignore[assignment]
+        for step in data.get("steps") or []:
+            if not isinstance(step, dict) or not step.get("id"):
+                continue
+            job.steps.append(
+                UpdateStep(
+                    id=str(step["id"]),
+                    status=step.get("status") or "pending",  # type: ignore[arg-type]
+                    detail=step.get("detail"),
+                )
+            )
+        return job
+    return None

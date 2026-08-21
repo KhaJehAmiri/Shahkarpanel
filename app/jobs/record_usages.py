@@ -914,6 +914,36 @@ def record_protocol_breakdown(
 
 
 def record_user_usages():
+    """Scheduler entry: hard-capped so the 5s slot is never held by a hung tick."""
+    import threading
+
+    started = time.monotonic()
+    limit = max(3.0, float(JOB_RECORD_USER_USAGES_INTERVAL) - 0.2)
+    done = threading.Event()
+
+    def _run():
+        try:
+            _record_user_usages_body()
+        except Exception:
+            logger.exception("record_user_usages body failed")
+        finally:
+            done.set()
+
+    t = threading.Thread(target=_run, name="record-user-usages", daemon=True)
+    t.start()
+    if not done.wait(limit):
+        logger.warning(
+            "record_user_usages wall-clock timeout after %.1fs — releasing scheduler slot",
+            time.monotonic() - started,
+        )
+    else:
+        logger.info(
+            "record_user_usages finished in %.1fs",
+            time.monotonic() - started,
+        )
+
+
+def _record_user_usages_body():
     started = time.monotonic()
     # Leave a little headroom so the next 5s tick is not skipped.
     budget = max(3.0, float(JOB_RECORD_USER_USAGES_INTERVAL) - 0.4)
@@ -970,8 +1000,6 @@ def record_user_usages():
             logger.exception("non-billable disconnect failed")
 
     if _over_budget("billing"):
-        elapsed = time.monotonic() - started
-        logger.info("record_user_usages finished in %.1fs", elapsed)
         return
 
     # Live 1-device exclusivity (WG vs VLESS/sing-box) — after traffic commit.
@@ -999,8 +1027,6 @@ def record_user_usages():
             check_billing_integrity(xray)
         except Exception:
             logger.exception("billing integrity check failed")
-    elapsed = time.monotonic() - started
-    logger.info("record_user_usages finished in %.1fs", elapsed)
 
 
 def record_node_usages():

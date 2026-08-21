@@ -1,3 +1,7 @@
+## 0.22.95
+
+- Actually ship the hard wall-clock timeout on ``record_user_usages`` (0.22.94 commit raced the edit). Scheduler slot releases every ~4.8s so traffic/online record every 5s.
+
 ## 0.22.94
 
 - Hard wall-clock timeout on the whole usage job (~4.8s) so the scheduler slot is always released every 5s even when DB billing is slow; always commit collected traffic.

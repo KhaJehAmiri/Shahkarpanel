@@ -136,10 +136,10 @@ def collect_wg_usage_params(db=None) -> Tuple[Dict[int, List[dict]], Dict[int, f
     deltas_by_node: Dict[int, Dict[str, int]] = {}
     coefficient: Dict[int, float] = {}
 
-    for plan in plans:
+    def _one(_nid, plan: dict):
         client = client_for_node(_node_object(plan["id"], connect=False))
         if client is None and not plan["need_autoscale"]:
-            continue
+            return None
         combined: Dict[str, dict] = {}
         if plan["need_autoscale"]:
             try:
@@ -156,11 +156,9 @@ def collect_wg_usage_params(db=None) -> Tuple[Dict[int, List[dict]], Dict[int, f
                 break
             pool = ThreadPoolExecutor(max_workers=1)
             try:
-                # Reading WG counters on a healthy node is sub-second; a longer
-                # wait only ever happens on a broken/slow node. Cap it well under
-                # the 5s usage-job interval so one bad node can't repeatedly make
-                # the job overrun ("maximum number of running instances" skips).
-                part = pool.submit(client.transfer, iface).result(timeout=4)
+                # Cap well under the 5s usage interval; map_rpc applies one
+                # wall-clock budget across the fleet (not N × timeout).
+                part = pool.submit(client.transfer, iface).result(timeout=1)
             except Exception as exc:
                 logger.warning(
                     "WireGuard transfer read from node %s iface %s failed: %s",
@@ -178,9 +176,27 @@ def collect_wg_usage_params(db=None) -> Tuple[Dict[int, List[dict]], Dict[int, f
                     "tx": int(prev.get("tx", 0)) + int(counters.get("tx", 0)),
                 }
         if not combined:
+            return None
+        return (
+            plan["id"],
+            _tracker.deltas(plan["id"], combined),
+            plan["coefficient"],
+        )
+
+    from app.utils.concurrency import map_rpc
+
+    indexed = {int(plan["id"]): plan for plan in plans}
+    results = map_rpc(_one, indexed, timeout=1.5, default=None)
+    for node_id, result in results.items():
+        if not result:
             continue
-        deltas_by_node[plan["id"]] = _tracker.deltas(plan["id"], combined)
-        coefficient[plan["id"]] = plan["coefficient"]
+        try:
+            nid, email_deltas, coef = result
+        except Exception:
+            continue
+        coefficient[nid] = coef
+        if email_deltas:
+            deltas_by_node[nid] = email_deltas
 
     return build_wg_usage_params(deltas_by_node, pubkey_map), coefficient
 

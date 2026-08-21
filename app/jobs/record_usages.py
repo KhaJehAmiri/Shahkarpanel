@@ -873,15 +873,20 @@ def collect_user_usage_params() -> tuple:
     t = threading.Thread(target=_run, name="usage-collect", daemon=True)
     t.start()
     t.join(budget + 0.25)
+    if "r" in box:
+        return box["r"]
     if t.is_alive():
         logger.warning(
-            "collect_user_usage_params hard-timeout after %.1fs — returning partial",
+            "collect_user_usage_params hard-timeout after %.1fs — waiting briefly for partial",
             budget,
         )
-        return {None: []}, {None: 1}, []
+        t.join(0.75)
+    if "r" in box:
+        return box["r"]
     if errors:
         raise errors[0]
-    return box.get("r") or ({None: []}, {None: 1}, [])
+    logger.warning("collect_user_usage_params returned empty after timeout")
+    return {None: []}, {None: 1}, []
 
 
 def record_protocol_breakdown(

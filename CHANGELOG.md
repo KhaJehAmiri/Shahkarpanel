@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.22.85 — 2026-08-22
+
 ### Karing: online status and traffic accounting
 
 - Default Karing UA is ``sing-box <core>``, which was treated as a browser (HTML subscribe page). Main ``/sub/<token>`` now recognises Karing / sing-box as a known client so they always get a config, whatever ``Accept`` says.

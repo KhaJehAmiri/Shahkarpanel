@@ -6,6 +6,10 @@
 - WireGuard node agent: if ``awg`` CLI is missing for an Amnezia iface, fall back to ``wg`` instead of aborting peer sync with FileNotFoundError.
 - Throttle ``wallet.low_balance`` events to once per admin per 30 minutes (was flooding events table).
 
+## 0.22.88
+
+- Usage / online recording defaults to **5s** (`JOB_RECORD_USER_USAGES_INTERVAL`, `ONLINE_PRESENCE_INTERVAL`). Also fix `map_rpc` so a hung fleet waits one wall-clock timeout instead of N×timeout — that stack was pinning `record_user_usages` for minutes and skipping every 5s tick (`max_instances=1`). Collect budgets tightened to fit the 5s cadence.
+
 ## 0.22.86
 
 - Fix in-panel Update aborting on pull when `app/dashboard-next/out/` (or other paths) are root-owned: ensure the checkout is writable (privileged chown sidecar) before `git reset --hard`, so HEAD actually moves and the restart runs.

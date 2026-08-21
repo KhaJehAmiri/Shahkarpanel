@@ -269,7 +269,7 @@ def collect_finalmask_usage_params(db=None) -> Tuple[Dict[int, List[dict]], Dict
         return _one(plan)
 
     indexed = {int(plan["id"]): plan for plan in plans}
-    results = map_rpc(_run, indexed, timeout=8, default=None)
+    results = map_rpc(_run, indexed, timeout=3, default=None)
     for node_id, result in results.items():
         if not result:
             continue

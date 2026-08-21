@@ -1,4 +1,4 @@
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 from threading import Thread, Semaphore
 import os
 
@@ -32,10 +32,15 @@ _NODE_RPC_QUEUE_CAP = Semaphore(_NODE_RPC_WORKERS * 2)
 
 
 def map_rpc(func, items: dict, timeout: float, default=None) -> dict:
-    """Run ``func(key, value)`` for each item with a hard per-future timeout.
+    """Run ``func(key, value)`` for each item under one wall-clock timeout.
 
     Submits onto the process-wide pool. If the pool is saturated, the key is
     skipped (same as a timeout) instead of queueing unbounded work.
+
+    Important: wait once for the whole batch. A per-future ``result(timeout)``
+    loop used to stack (N × timeout) when several nodes hung — with 14 nodes
+    and timeout=12 that pinned ``record_user_usages`` for minutes
+    (``max_instances=1`` → every 5s tick skipped).
     """
     if not items:
         return {}
@@ -55,10 +60,16 @@ def map_rpc(func, items: dict, timeout: float, default=None) -> dict:
         except RuntimeError:
             _NODE_RPC_QUEUE_CAP.release()
     out = {}
+    if not futures:
+        return out
+    wait(list(futures.values()), timeout=max(0.1, float(timeout)))
     for key, fut in futures.items():
-        try:
-            out[key] = fut.result(timeout=timeout)
-        except Exception:
+        if fut.done():
+            try:
+                out[key] = fut.result(timeout=0)
+            except Exception:
+                out[key] = default
+        else:
             out[key] = default
     return out
 

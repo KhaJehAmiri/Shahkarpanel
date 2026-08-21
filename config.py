@@ -475,8 +475,8 @@ JOB_CORE_USER_RECONCILE_INTERVAL = config("JOB_CORE_USER_RECONCILE_INTERVAL", ca
 # Opt-in: periodically flush idle AWG peer endpoints during the health-check tick.
 # Off by default — endpoint reconcile (`reconcile_awg_endpoints`) already runs every tick.
 JOB_AWG_FLUSH_STALE_PEERS = config("JOB_AWG_FLUSH_STALE_PEERS", cast=bool, default=False)
-JOB_RECORD_NODE_USAGES_INTERVAL = config("JOB_RECORD_NODE_USAGES_INTERVAL", cast=int, default=30)
-JOB_RECORD_USER_USAGES_INTERVAL = config("JOB_RECORD_USER_USAGES_INTERVAL", cast=int, default=15)
+JOB_RECORD_NODE_USAGES_INTERVAL = config("JOB_RECORD_NODE_USAGES_INTERVAL", cast=int, default=15)
+JOB_RECORD_USER_USAGES_INTERVAL = config("JOB_RECORD_USER_USAGES_INTERVAL", cast=int, default=5)
 # Drop hourly per-user usage rows older than this. 0 keeps forever (will
 # eventually pin Postgres and freeze the dashboard). 14 days is enough for
 # Overview / Analytics charts.
@@ -487,7 +487,7 @@ JOB_USAGE_RETENTION_DAYS = config("JOB_USAGE_RETENTION_DAYS", cast=int, default=
 # one minute here is a true "online right now" without losing anyone to a missed
 # poll. Raise it only if you want the number to include recently-idle clients.
 ONLINE_WINDOW_MINUTES = config("ONLINE_WINDOW_MINUTES", cast=int, default=1)
-ONLINE_PRESENCE_INTERVAL = config("ONLINE_PRESENCE_INTERVAL", cast=int, default=15)
+ONLINE_PRESENCE_INTERVAL = config("ONLINE_PRESENCE_INTERVAL", cast=int, default=5)
 ONLINE_PRESENCE_QUERY_TIMEOUT = config("ONLINE_PRESENCE_QUERY_TIMEOUT", cast=int, default=2)
 # Fail-closed: after this many blind usage cycles, disconnect all active users on local inbounds.
 # 0 disables mass disconnect (logging only). Default 6 cycles ≈ 30s at 5s interval.

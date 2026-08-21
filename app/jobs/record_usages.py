@@ -751,7 +751,9 @@ def collect_user_usage_params() -> tuple:
     def _one(nid, api):
         return _collect_node_users_stats(nid, api, node_refs.get(nid)) or []
 
-    api_params = map_rpc(_one, api_instances, timeout=12, default=[])
+    # Wall-clock budget for the whole fleet (see map_rpc). Keep under the
+    # JOB_RECORD_USER_USAGES_INTERVAL default of 5s so ticks do not pile up.
+    api_params = map_rpc(_one, api_instances, timeout=4, default=[])
 
     protocol_breakdown: list[dict] = []
 
@@ -902,7 +904,7 @@ def record_user_usages():
 
     check_billing_integrity(xray)
     elapsed = time.monotonic() - started
-    if elapsed >= 8:
+    if elapsed >= 3:
         logger.info("record_user_usages finished in %.1fs", elapsed)
 
 
@@ -923,7 +925,7 @@ def record_node_usages():
             logger.warning("get_outbounds_stats timed out/failed for node %s: %s", nid, exc)
             return []
 
-    api_params = map_rpc(_one, api_instances, timeout=20, default=[])
+    api_params = map_rpc(_one, api_instances, timeout=8, default=[])
 
     total_up = 0
     total_down = 0

@@ -703,21 +703,18 @@ def _readopt_stats_channel(node_id, node, *, timeout: float = 2.0) -> bool:
     return True
 
 
-def collect_user_usage_params() -> tuple:
-    """Gather raw per-user stats from the local Xray core and every connected
-    node.  Returns ``(api_params, usage_coefficient, protocol_breakdown)``.
+def _collect_user_usage_params_body(*, deadline: float) -> tuple:
+    """Inner collect; skips later sources once ``deadline`` is reached."""
 
-    ``api_params`` is the *merged* per-node/user shape that feeds the single
-    authoritative ``User.used_traffic``. ``protocol_breakdown`` is a separate
-    list of per-source contributions — ``{"protocol", "node_id", "params",
-    "coefficient"}`` — captured *before* merging so a node that serves several
-    protocols (e.g. a WireGuard-core node that also runs sing-box) is attributed
-    correctly instead of collapsing to one per-node label.
+    def _remaining() -> float:
+        return max(0.0, deadline - time.monotonic())
 
-    Finalmask relays are billed only via ``finalmask_usage`` (cumulative /
-    delta over RPyC). They are excluded from ``get_users_stats(reset=True)``
-    so a flaky TLS API cannot wipe unread WireGuard counters.
-    """
+    def _timed_out(where: str) -> bool:
+        if time.monotonic() < deadline:
+            return False
+        logger.warning("usage collect deadline hit after %s", where)
+        return True
+
     try:
         from app.wireguard.finalmask_usage import finalmask_node_ids
 
@@ -732,7 +729,7 @@ def collect_user_usage_params() -> tuple:
     # Cap serial re-adopt attempts: each ensure_api used to cost up to 5s, and
     # N failed nodes made collect exceed the 5s usage interval forever
     # (max_instances=1 → every tick skipped).
-    readopt_deadline = time.monotonic() + 1.0
+    readopt_deadline = time.monotonic() + min(1.0, _remaining())
     for node_id, node in list(xray.nodes.items()):
         if node_id in fm_ids:
             # Authoritative Finalmask path is collect_finalmask_usage_params().
@@ -748,7 +745,7 @@ def collect_user_usage_params() -> tuple:
             usage_coefficient[node_id] = node.usage_coefficient
             node_refs[node_id] = node
         elif time.monotonic() < readopt_deadline and _readopt_stats_channel(
-            node_id, node, timeout=1.0
+            node_id, node, timeout=min(1.0, _remaining())
         ):
             api_instances[node_id] = node._api
             usage_coefficient[node_id] = node.usage_coefficient
@@ -759,9 +756,8 @@ def collect_user_usage_params() -> tuple:
     def _one(nid, api):
         return _collect_node_users_stats(nid, api, node_refs.get(nid)) or []
 
-    # Wall-clock budget for the whole fleet (see map_rpc). Keep under the
-    # JOB_RECORD_USER_USAGES_INTERVAL default of 5s so ticks do not pile up.
-    api_params = map_rpc(_one, api_instances, timeout=4, default=[])
+    rpc_timeout = min(2.5, max(0.5, _remaining()))
+    api_params = map_rpc(_one, api_instances, timeout=rpc_timeout, default=[])
 
     protocol_breakdown: list[dict] = []
 
@@ -785,6 +781,9 @@ def collect_user_usage_params() -> tuple:
         proto = proto_map.get(node_id, "xray")
         _add_breakdown(proto, node_id, params, usage_coefficient.get(node_id, 1))
 
+    if _timed_out("xray"):
+        return api_params, usage_coefficient, protocol_breakdown
+
     # Finalmask: cumulative user>>>email over RPyC (never reset-on-read).
     try:
         from app.wireguard.finalmask_usage import (
@@ -801,6 +800,9 @@ def collect_user_usage_params() -> tuple:
     except Exception:
         logger.exception("Finalmask usage collection failed")
 
+    if _timed_out("finalmask"):
+        return api_params, usage_coefficient, protocol_breakdown
+
     try:
         from app.wireguard.usage import collect_wg_usage_params, merge_wg_usage
 
@@ -810,6 +812,9 @@ def collect_user_usage_params() -> tuple:
         merge_wg_usage(api_params, usage_coefficient, wg_params, wg_coefficient)
     except Exception:
         pass
+
+    if _timed_out("wireguard"):
+        return api_params, usage_coefficient, protocol_breakdown
 
     # Panel-host WireGuard exit: when the panel itself terminates tunneled WG,
     # user traffic exits via the panel host's kernel wg0 (not any node), so its
@@ -828,6 +833,9 @@ def collect_user_usage_params() -> tuple:
     except Exception:
         logger.debug("panel-host WG usage collection skipped", exc_info=True)
 
+    if _timed_out("panel-wg"):
+        return api_params, usage_coefficient, protocol_breakdown
+
     try:
         from app.singbox.usage import collect_singbox_usage_params, merge_singbox_usage
 
@@ -839,6 +847,41 @@ def collect_user_usage_params() -> tuple:
         logger.exception("sing-box usage collection failed")
 
     return api_params, usage_coefficient, protocol_breakdown
+
+
+def collect_user_usage_params() -> tuple:
+    """Gather raw per-user stats from the local Xray core and every connected
+    node.  Returns ``(api_params, usage_coefficient, protocol_breakdown)``.
+
+    Hard-capped to the usage-job interval so a hung Finalmask/WG/sing-box
+    path cannot pin ``max_instances=1`` and freeze the 5s cadence.
+    """
+    import threading
+
+    budget = max(2.5, float(JOB_RECORD_USER_USAGES_INTERVAL) - 0.8)
+    box: dict = {}
+    errors: list = []
+
+    def _run():
+        try:
+            box["r"] = _collect_user_usage_params_body(
+                deadline=time.monotonic() + budget
+            )
+        except Exception as exc:
+            errors.append(exc)
+
+    t = threading.Thread(target=_run, name="usage-collect", daemon=True)
+    t.start()
+    t.join(budget + 0.25)
+    if t.is_alive():
+        logger.warning(
+            "collect_user_usage_params hard-timeout after %.1fs — returning partial",
+            budget,
+        )
+        return {None: []}, {None: 1}, []
+    if errors:
+        raise errors[0]
+    return box.get("r") or ({None: []}, {None: 1}, [])
 
 
 def record_protocol_breakdown(

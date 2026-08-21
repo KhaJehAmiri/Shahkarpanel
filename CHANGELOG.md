@@ -1,3 +1,11 @@
+## 0.22.90
+
+- Hard-cap usage collection to the job interval (thread + stage deadlines) so a hung Finalmask/WG/sing-box path cannot pin the 5s tick; Finalmask poll budget 1.5s.
+
+## 0.22.89
+
+- Keep the 5s usage tick from stalling: cap serial Xray stats re-adopt to ~1s, end the tick when the interval budget is spent (skip heavy device/billing_guard work), and always log finish time so cadence is visible.
+
 ## 0.22.88
 
 - Usage / online recording defaults to **5s** (`JOB_RECORD_USER_USAGES_INTERVAL`, `ONLINE_PRESENCE_INTERVAL`). Also fix `map_rpc` so a hung fleet waits one wall-clock timeout instead of N×timeout — that stack was pinning `record_user_usages` for minutes and skipping every 5s tick (`max_instances=1`). Collect budgets tightened to fit the 5s cadence.

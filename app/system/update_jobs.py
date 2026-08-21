@@ -522,8 +522,90 @@ def _git_fetch_origin(branch: str, *, timeout: int = 120) -> None:
         _run_git_locked(["fetch", "origin", branch, "--depth", "1"], timeout=timeout)
 
 
+def _checkout_writable() -> bool:
+    """True when the panel uid can create files under the bind-mounted checkout."""
+    probe_dirs = (
+        _ROOT / "app" / "dashboard-next" / "out" / "_next" / "static",
+        _ROOT / "app" / "dashboard-next" / "out",
+        _ROOT,
+    )
+    for parent in probe_dirs:
+        try:
+            parent.mkdir(parents=True, exist_ok=True)
+            probe = parent / ".shahkar-write-probe"
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink(missing_ok=True)
+            return True
+        except OSError:
+            continue
+    return False
+
+
+def _ensure_checkout_writable() -> None:
+    """Make the git checkout writable for the panel user before ``reset --hard``.
+
+    Host-side / privileged writes often leave ``app/dashboard-next/out/`` (and
+    other paths) ``root:root``. The panel process runs as uid 1000, so
+    ``git reset --hard`` then fails with ``Permission denied`` creating new
+    artifact directories — the Update job aborts on pull and HEAD never moves,
+    which looks like "Update did nothing".
+    """
+    if _checkout_writable():
+        return
+
+    uid = os.getuid()
+    gid = os.getgid()
+    host_code = _host_code_dir()
+    image = _own_image()
+    fixed = False
+
+    if image and Path("/var/run/docker.sock").exists() and host_code not in ("", "/code"):
+        try:
+            proc = subprocess.run(
+                [
+                    "docker", "run", "--rm", "--privileged",
+                    "-v", f"{host_code}:{host_code}",
+                    "--entrypoint", "chown",
+                    image,
+                    "-R", f"{uid}:{gid}", host_code,
+                ],
+                timeout=180,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            fixed = proc.returncode == 0
+        except (subprocess.SubprocessError, FileNotFoundError, OSError):
+            fixed = False
+
+    if not fixed and hasattr(os, "geteuid") and os.geteuid() == 0:
+        try:
+            for dirpath, dirnames, filenames in os.walk(_ROOT):
+                try:
+                    os.chown(dirpath, uid, gid)
+                except OSError:
+                    pass
+                for name in dirnames + filenames:
+                    try:
+                        os.chown(os.path.join(dirpath, name), uid, gid)
+                    except OSError:
+                        pass
+            fixed = True
+        except OSError:
+            fixed = False
+
+    if not _checkout_writable():
+        raise RuntimeError(
+            "checkout not writable for panel user "
+            f"(uid {uid}); root-owned files under the app dir block "
+            f"git reset — run as root: chown -R {uid}:{gid} {host_code}"
+        )
+
+
 def _git_pull() -> None:
     branch = _github_branch()
+    # Must run *before* reset: root-owned dashboard out/ aborts the update.
+    _ensure_checkout_writable()
     _git_fetch_origin(branch, timeout=120)
     # Always reset to what was just fetched, not a possibly-stale origin/*.
     _run_git_locked(["reset", "--hard", "FETCH_HEAD"], timeout=120)

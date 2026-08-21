@@ -1,3 +1,7 @@
+## 0.22.86
+
+- Fix in-panel Update aborting on pull when `app/dashboard-next/out/` (or other paths) are root-owned: ensure the checkout is writable (privileged chown sidecar) before `git reset --hard`, so HEAD actually moves and the restart runs.
+
 # Changelog
 
 ## Unreleased

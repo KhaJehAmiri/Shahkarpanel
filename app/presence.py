@@ -293,12 +293,14 @@ def _write_online_at(stamps: Dict[datetime, Set[int]]) -> int:
     from app.db.models import User
 
     last_err: Optional[BaseException] = None
-    for attempt in range(3):
+    # Ascending id order + retries: traffic billing also locks ``users`` rows;
+    # matching lock order cuts cross-job deadlocks with record_usages.
+    for attempt in range(5):
         rows = 0
         try:
             with GetDB() as db:
                 for seen_at, ids in stamps.items():
-                    ordered = list(ids)
+                    ordered = sorted({int(i) for i in ids})
                     for start in range(0, len(ordered), 500):
                         rows += (
                             db.query(User)
@@ -315,9 +317,9 @@ def _write_online_at(stamps: Dict[datetime, Set[int]]) -> int:
             last_err = exc
             orig = getattr(exc, "orig", None)
             text = f"{orig or exc}".lower()
-            if "deadlock" not in text:
+            if "deadlock" not in text and "could not serialize" not in text:
                 raise
-            time.sleep(0.05 * (attempt + 1))
+            time.sleep(0.08 * (attempt + 1))
     if last_err:
         raise last_err
     return 0

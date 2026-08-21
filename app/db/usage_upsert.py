@@ -22,6 +22,27 @@ def _chunked(rows: Sequence[dict], size: int = _CHUNK) -> Iterable[List[dict]]:
         yield list(rows[i : i + size])
 
 
+def _coalesce_rows(rows: Sequence[dict], conflict_cols: Sequence[str]) -> List[dict]:
+    """Merge duplicate conflict keys in one INSERT batch.
+
+    Postgres rejects ``ON CONFLICT DO UPDATE`` when the same constrained key
+    appears twice in a single VALUES list (``cannot affect row a second time``).
+    Usage collectors often emit the same ``(user, node[, protocol])`` twice in
+    one tick (Xray + Finalmask / multi-inbound), so sum traffic here first.
+    """
+    merged: dict = {}
+    for row in rows:
+        key = tuple(row[c] for c in conflict_cols)
+        prev = merged.get(key)
+        if prev is None:
+            merged[key] = dict(row)
+            continue
+        prev["used_traffic"] = int(prev.get("used_traffic") or 0) + int(
+            row.get("used_traffic") or 0
+        )
+    return list(merged.values())
+
+
 def _pg_upsert(db: Session, table, rows: Sequence[dict], conflict_cols: Sequence[str]) -> bool:
     if not rows:
         return True
@@ -29,6 +50,7 @@ def _pg_upsert(db: Session, table, rows: Sequence[dict], conflict_cols: Sequence
         from sqlalchemy.dialects.postgresql import insert as pg_insert
     except Exception:
         return False
+    rows = _coalesce_rows(rows, conflict_cols)
     for chunk in _chunked(rows):
         stmt = pg_insert(table).values(list(chunk))
         stmt = stmt.on_conflict_do_update(

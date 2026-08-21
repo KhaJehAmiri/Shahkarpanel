@@ -280,11 +280,34 @@ def usage_summary_for_admin(
 
 
 def _log_low_balance_event(db: Session, dbadmin: Admin, needed: int, balance: int) -> None:
+    """Record a low-balance signal at most once per admin per cooldown window.
+
+    Usage billing can re-enter every minute for the same unpaid reseller; writing
+    a ``wallet.low_balance`` event each time flooded ``events`` (thousands/hour)
+    without changing operator actionability.
+    """
+    cooldown = timedelta(minutes=30)
+    since = datetime.utcnow() - cooldown
+    admin_id = int(dbadmin.id)
+    try:
+        rows = (
+            db.query(Event)
+            .filter(Event.type == "wallet.low_balance", Event.created_at >= since)
+            .order_by(Event.created_at.desc())
+            .limit(80)
+            .all()
+        )
+        for ev in rows:
+            payload = ev.payload if isinstance(ev.payload, dict) else {}
+            if int(payload.get("admin_id") or 0) == admin_id:
+                return
+    except Exception:
+        pass
     db.add(
         Event(
             type="wallet.low_balance",
             payload={
-                "admin_id": dbadmin.id,
+                "admin_id": admin_id,
                 "username": dbadmin.username,
                 "balance": balance,
                 "needed": needed,

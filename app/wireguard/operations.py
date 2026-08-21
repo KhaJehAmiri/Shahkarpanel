@@ -801,7 +801,13 @@ def sync_node(db, dbnode, *, peers: Optional[List[WGUserPeer]] = None, node_obje
             logger.warning("WARP TPROXY sync after WG apply failed for node %s", dbnode.id, exc_info=True)
         return True
     except Exception as exc:  # best-effort: log and move on
-        logger.warning("WireGuard sync to node %s failed: %s", dbnode.id, exc)
+        msg = str(exc)
+        # Missing ``awg`` on an Amnezia-capable iface is recoverable (node falls
+        # back to ``wg`` after agent update); avoid error-spam every sync tick.
+        if "No such file or directory" in msg and "awg" in msg:
+            logger.debug("WireGuard sync to node %s skipped (awg CLI missing): %s", dbnode.id, exc)
+        else:
+            logger.warning("WireGuard sync to node %s failed: %s", dbnode.id, exc)
         try:
             open_node_listen_ports(dbnode, node_object=node_object, client=client)
         except Exception:

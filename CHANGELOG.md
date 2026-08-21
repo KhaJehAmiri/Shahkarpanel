@@ -1,3 +1,11 @@
+## 0.22.87
+
+- Fix Postgres ``ON CONFLICT … cannot affect row a second time`` on ``node_user_usages`` by coalescing duplicate ``(hour, user, node[, protocol])`` rows before upsert (Xray + Finalmask double-emit in one tick).
+- Fix ``users`` deadlocks between usage billing and presence: traffic UPDATE no longer writes ``online_at`` (presence owns it); sort user ids; retry deadlocks with backoff.
+- Demote expected Finalmask/RPyC ``busy`` skips to debug so worker logs stay actionable.
+- WireGuard node agent: if ``awg`` CLI is missing for an Amnezia iface, fall back to ``wg`` instead of aborting peer sync with FileNotFoundError.
+- Throttle ``wallet.low_balance`` events to once per admin per 30 minutes (was flooding events table).
+
 ## 0.22.86
 
 - Fix in-panel Update aborting on pull when `app/dashboard-next/out/` (or other paths) are root-owned: ensure the checkout is writable (privileged chown sidecar) before `git reset --hard`, so HEAD actually moves and the restart runs.

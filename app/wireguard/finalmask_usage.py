@@ -113,7 +113,13 @@ def _read_transfer_via_rpyc(node, *, timeout: float = 8.0) -> Dict[str, dict]:
     except AttributeError:
         return {}
     except Exception as exc:
-        logger.warning("Finalmask xray_users_transfer failed: %s", exc)
+        # Lock contention with WG/sing-box sync is expected every few ticks —
+        # log at debug so worker logs stay readable; next tick / gRPC path bills.
+        msg = str(exc)
+        if "RPyC busy" in msg or "skipped fast call" in msg:
+            logger.debug("Finalmask xray_users_transfer skipped (busy): %s", exc)
+        else:
+            logger.warning("Finalmask xray_users_transfer failed: %s", exc)
         return {}
 
     return _normalize_transfer_payload(raw)

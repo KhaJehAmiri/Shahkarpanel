@@ -378,9 +378,22 @@ class WireGuardManager:
 
     @staticmethod
     def _default_run(cmd, input=None, check=True):
-        return subprocess.run(
-            cmd, input=input, text=True, capture_output=True, check=check
-        )
+        try:
+            return subprocess.run(
+                cmd, input=input, text=True, capture_output=True, check=check
+            )
+        except FileNotFoundError:
+            # ``awg`` chosen while CLI briefly looked present, or amneziawg-go
+            # iface without the awg tool — peer sync must not abort the batch.
+            if cmd and str(cmd[0]) == "awg":
+                return subprocess.run(
+                    ["wg", *list(cmd)[1:]],
+                    input=input,
+                    text=True,
+                    capture_output=True,
+                    check=check,
+                )
+            raise
 
     def available(self) -> bool:
         return shutil.which("wg") is not None and shutil.which("ip") is not None
@@ -432,7 +445,11 @@ class WireGuardManager:
         return self._awg_daemon_running(interface)
 
     def _wg_bin_for_iface(self, interface: str) -> str:
-        """``awg`` only for live userspace-AWG ifaces; otherwise plain ``wg``."""
+        """``awg`` only when the CLI exists; otherwise plain ``wg``.
+
+        Userspace ``amneziawg-go`` ifaces can exist without the ``awg`` binary.
+        Preferring a missing ``awg`` aborted peer sync with FileNotFoundError.
+        """
         if self._interface_is_userspace_awg(interface) and shutil.which("awg"):
             return "awg"
         return "wg"

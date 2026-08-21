@@ -60,10 +60,12 @@ def safe_execute(db: Session, stmt, params=None):
                 if isinstance(stmt, Insert):
                     return
                 raise
-            except SAOperationalError:
+            except SAOperationalError as err:
                 db.rollback()
-                if tries < 3:
+                text = f"{getattr(err, 'orig', None) or err}".lower()
+                if tries < 5 and ("deadlock" in text or "could not serialize" in text):
                     tries += 1
+                    time.sleep(0.05 * tries)
                     continue
                 raise
 
@@ -326,7 +328,11 @@ def _collect_node_users_stats(node_id, api: XRayAPI, node=None) -> list:
     except AttributeError:
         return []
     except Exception as exc:
-        logger.warning("xray_users_transfer fallback failed for node %s: %s", node_id, exc)
+        msg = str(exc)
+        if "RPyC busy" in msg or "skipped fast call" in msg:
+            logger.debug("xray_users_transfer fallback skipped (busy) for node %s", node_id)
+        else:
+            logger.warning("xray_users_transfer fallback failed for node %s: %s", node_id, exc)
         return []
 
 
@@ -516,10 +522,14 @@ def record_aggregated_user_usages(api_params: dict, usage_coefficient: dict):
         if admin_id and _payg_billable(uid):
             admin_usage[admin_id] += user_usage["value"]
 
-    # record users usage (only active / on_hold — disabled users must not accrue traffic or online_at)
+    # record users usage (only active / on_hold — disabled users must not accrue traffic).
+    # Do NOT write ``online_at`` here: presence + ``bump_users_online_at`` own that
+    # column. Concurrent per-row traffic UPDATEs + bulk online_at UPDATEs deadlocked
+    # on ``users`` (different lock order) and aborted billing ticks.
     newly_limited: list = []
     with GetDB() as db:
         if users_usage:
+            users_usage = sorted(users_usage, key=lambda p: int(p["uid"]))
             stmt = update(User). \
                 where(User.id == bindparam('uid')). \
                 values(
@@ -531,7 +541,6 @@ def record_aggregated_user_usages(api_params: dict, usage_coefficient: dict):
                         ), User.data_limit),
                         else_=User.used_traffic + bindparam('value'),
                     ),
-                    online_at=datetime.utcnow(),
                 )
             safe_execute(db, stmt, users_usage)
 
@@ -595,6 +604,7 @@ def record_aggregated_user_usages(api_params: dict, usage_coefficient: dict):
             if int(uid) in billable_ids and (ups.get(uid, 0) or downs.get(uid, 0))
         ]
         if split_rows:
+            split_rows = sorted(split_rows, key=lambda p: int(p["uid"]))
             with GetDB() as db:
                 split_stmt = update(User). \
                     where(User.id == bindparam('uid')). \

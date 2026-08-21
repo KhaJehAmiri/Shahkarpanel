@@ -703,11 +703,15 @@ def _readopt_stats_channel(node_id, node, *, timeout: float = 2.0) -> bool:
     return True
 
 
-def _collect_user_usage_params_body(*, deadline: float) -> tuple:
+def _collect_user_usage_params_body(*, deadline: float, progress: dict | None = None) -> tuple:
     """Inner collect; skips later sources once ``deadline`` is reached."""
 
     def _remaining() -> float:
         return max(0.0, deadline - time.monotonic())
+
+    def _publish(api_params, usage_coefficient, protocol_breakdown):
+        if progress is not None:
+            progress["r"] = (api_params, usage_coefficient, list(protocol_breakdown))
 
     def _timed_out(where: str) -> bool:
         if time.monotonic() < deadline:
@@ -729,7 +733,7 @@ def _collect_user_usage_params_body(*, deadline: float) -> tuple:
     # Cap serial re-adopt attempts: each ensure_api used to cost up to 5s, and
     # N failed nodes made collect exceed the 5s usage interval forever
     # (max_instances=1 → every tick skipped).
-    readopt_deadline = time.monotonic() + min(1.0, _remaining())
+    readopt_deadline = time.monotonic() + min(0.8, _remaining())
     for node_id, node in list(xray.nodes.items()):
         if node_id in fm_ids:
             # Authoritative Finalmask path is collect_finalmask_usage_params().
@@ -745,7 +749,7 @@ def _collect_user_usage_params_body(*, deadline: float) -> tuple:
             usage_coefficient[node_id] = node.usage_coefficient
             node_refs[node_id] = node
         elif time.monotonic() < readopt_deadline and _readopt_stats_channel(
-            node_id, node, timeout=min(1.0, _remaining())
+            node_id, node, timeout=min(0.8, _remaining())
         ):
             api_instances[node_id] = node._api
             usage_coefficient[node_id] = node.usage_coefficient
@@ -756,7 +760,7 @@ def _collect_user_usage_params_body(*, deadline: float) -> tuple:
     def _one(nid, api):
         return _collect_node_users_stats(nid, api, node_refs.get(nid)) or []
 
-    rpc_timeout = min(2.5, max(0.5, _remaining()))
+    rpc_timeout = min(1.8, max(0.4, _remaining()))
     api_params = map_rpc(_one, api_instances, timeout=rpc_timeout, default=[])
 
     protocol_breakdown: list[dict] = []
@@ -776,10 +780,15 @@ def _collect_user_usage_params_body(*, deadline: float) -> tuple:
             )
 
     # Non-Finalmask Xray API stats (tunnel exits, panel core, …).
-    proto_map = _node_usage_protocols(api_instances.keys())
+    try:
+        proto_map = _node_usage_protocols(api_instances.keys())
+    except Exception:
+        logger.debug("protocol map lookup failed", exc_info=True)
+        proto_map = {}
     for node_id, params in api_params.items():
         proto = proto_map.get(node_id, "xray")
         _add_breakdown(proto, node_id, params, usage_coefficient.get(node_id, 1))
+    _publish(api_params, usage_coefficient, protocol_breakdown)
 
     if _timed_out("xray"):
         return api_params, usage_coefficient, protocol_breakdown
@@ -795,6 +804,7 @@ def _collect_user_usage_params_body(*, deadline: float) -> tuple:
         for node_id, params in fm_params.items():
             _add_breakdown("wireguard", node_id, params, fm_coefficient.get(node_id, 1))
         merge_finalmask_usage(api_params, usage_coefficient, fm_params, fm_coefficient)
+        _publish(api_params, usage_coefficient, protocol_breakdown)
     except (ConnectionError, TimeoutError, OSError) as exc:
         logger.warning("Finalmask usage collection skipped: %s", exc)
     except Exception:
@@ -810,6 +820,7 @@ def _collect_user_usage_params_body(*, deadline: float) -> tuple:
         for node_id, params in wg_params.items():
             _add_breakdown("wireguard", node_id, params, wg_coefficient.get(node_id, 1))
         merge_wg_usage(api_params, usage_coefficient, wg_params, wg_coefficient)
+        _publish(api_params, usage_coefficient, protocol_breakdown)
     except Exception:
         pass
 
@@ -830,6 +841,7 @@ def _collect_user_usage_params_body(*, deadline: float) -> tuple:
         for node_id, params in host_params.items():
             _add_breakdown("wireguard", node_id, params, host_coefficient.get(node_id, 1))
         merge_wg_usage(api_params, usage_coefficient, host_params, host_coefficient)
+        _publish(api_params, usage_coefficient, protocol_breakdown)
     except Exception:
         logger.debug("panel-host WG usage collection skipped", exc_info=True)
 
@@ -843,6 +855,7 @@ def _collect_user_usage_params_body(*, deadline: float) -> tuple:
         for node_id, params in sb_params.items():
             _add_breakdown("singbox", node_id, params, sb_coefficient.get(node_id, 1))
         merge_singbox_usage(api_params, usage_coefficient, sb_params, sb_coefficient)
+        _publish(api_params, usage_coefficient, protocol_breakdown)
     except Exception:
         logger.exception("sing-box usage collection failed")
 
@@ -865,7 +878,8 @@ def collect_user_usage_params() -> tuple:
     def _run():
         try:
             box["r"] = _collect_user_usage_params_body(
-                deadline=time.monotonic() + budget
+                deadline=time.monotonic() + budget,
+                progress=box,
             )
         except Exception as exc:
             errors.append(exc)

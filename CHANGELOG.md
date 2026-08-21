@@ -1,3 +1,11 @@
+## 0.22.92
+
+- Publish partial Xray usage snapshots during collect so a 5s hard-timeout still bills what was already gathered (no more empty ticks).
+
+## 0.22.91
+
+- Parallelize WireGuard transfer reads under a 1.5s fleet wall-clock (was serial 4s×node×iface, which blew past the 5s usage tick and returned empty hard-timeouts).
+
 ## 0.22.90
 
 - Hard-cap usage collection to the job interval (thread + stage deadlines) so a hung Finalmask/WG/sing-box path cannot pin the 5s tick; Finalmask poll budget 1.5s.

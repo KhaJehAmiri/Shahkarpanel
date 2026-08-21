@@ -678,7 +678,7 @@ def _node_usage_protocols(node_ids) -> dict:
         }
 
 
-def _readopt_stats_channel(node_id, node) -> bool:
+def _readopt_stats_channel(node_id, node, *, timeout: float = 2.0) -> bool:
     """Re-attach the gRPC stats client to a core that is up but unadopted.
 
     A failed ``restart()`` (Finalmask Xray-WG flip, connect backoff) leaves
@@ -689,7 +689,9 @@ def _readopt_stats_channel(node_id, node) -> bool:
     if not (getattr(node, "has_live_rpyc", None) and node.has_live_rpyc()):
         return False
     try:
-        adopted = node.ensure_api(refresh=True, allow_unstarted=True, timeout=5)
+        adopted = node.ensure_api(
+            refresh=True, allow_unstarted=True, timeout=max(0.5, float(timeout))
+        )
     except Exception as exc:
         logger.warning("xray stats re-adopt for node %s failed: %s", node_id, exc)
         return False
@@ -727,6 +729,10 @@ def collect_user_usage_params() -> tuple:
     usage_coefficient = {None: 1}
     node_refs: dict = {None: None}
 
+    # Cap serial re-adopt attempts: each ensure_api used to cost up to 5s, and
+    # N failed nodes made collect exceed the 5s usage interval forever
+    # (max_instances=1 → every tick skipped).
+    readopt_deadline = time.monotonic() + 1.0
     for node_id, node in list(xray.nodes.items()):
         if node_id in fm_ids:
             # Authoritative Finalmask path is collect_finalmask_usage_params().
@@ -741,7 +747,9 @@ def collect_user_usage_params() -> tuple:
             api_instances[node_id] = node.api
             usage_coefficient[node_id] = node.usage_coefficient
             node_refs[node_id] = node
-        elif _readopt_stats_channel(node_id, node):
+        elif time.monotonic() < readopt_deadline and _readopt_stats_channel(
+            node_id, node, timeout=1.0
+        ):
             api_instances[node_id] = node._api
             usage_coefficient[node_id] = node.usage_coefficient
             node_refs[node_id] = node
@@ -849,6 +857,21 @@ def record_protocol_breakdown(
 
 def record_user_usages():
     started = time.monotonic()
+    # Leave a little headroom so the next 5s tick is not skipped.
+    budget = max(3.0, float(JOB_RECORD_USER_USAGES_INTERVAL) - 0.4)
+
+    def _over_budget(where: str) -> bool:
+        elapsed = time.monotonic() - started
+        if elapsed < budget:
+            return False
+        logger.warning(
+            "record_user_usages budget %.1fs exceeded after %s (%.1fs) — ending tick",
+            budget,
+            where,
+            elapsed,
+        )
+        return True
+
     try:
         from app.presence import note_usage_tick
 
@@ -856,6 +879,10 @@ def record_user_usages():
     except Exception:
         pass
     api_params, usage_coefficient, protocol_breakdown = collect_user_usage_params()
+    if _over_budget("collect"):
+        elapsed = time.monotonic() - started
+        logger.info("record_user_usages finished in %.1fs", elapsed)
+        return
     uids = {int(p["uid"]) for params in api_params.values() for p in params}
     # Presence first, before any billing write can stall this tick. This is a
     # secondary source: app.presence keeps online_at fresh on its own thread.
@@ -884,6 +911,11 @@ def record_user_usages():
     if billable_ids:
         record_protocol_breakdown(protocol_breakdown, billable_ids)
 
+    if _over_budget("billing"):
+        elapsed = time.monotonic() - started
+        logger.info("record_user_usages finished in %.1fs", elapsed)
+        return
+
     # Live 1-device exclusivity (WG vs VLESS/sing-box) — after traffic commit.
     try:
         from app.utils.device_exclusivity import enforce_device_exclusivity
@@ -900,12 +932,17 @@ def record_user_usages():
     except Exception:
         logger.exception("live device limit enforcement failed")
 
-    from app.billing_guard import check_billing_integrity
+    # Reclaim/restart inside billing_guard can block for tens of seconds — never
+    # run it once the tick is already tight, or the 5s cadence collapses.
+    if time.monotonic() - started < min(1.5, budget * 0.35):
+        try:
+            from app.billing_guard import check_billing_integrity
 
-    check_billing_integrity(xray)
+            check_billing_integrity(xray)
+        except Exception:
+            logger.exception("billing integrity check failed")
     elapsed = time.monotonic() - started
-    if elapsed >= 3:
-        logger.info("record_user_usages finished in %.1fs", elapsed)
+    logger.info("record_user_usages finished in %.1fs", elapsed)
 
 
 def record_node_usages():

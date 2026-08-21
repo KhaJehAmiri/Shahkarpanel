@@ -1,3 +1,7 @@
+## 0.22.88
+
+- Usage / online recording defaults to **5s** (`JOB_RECORD_USER_USAGES_INTERVAL`, `ONLINE_PRESENCE_INTERVAL`). Also fix `map_rpc` so a hung fleet waits one wall-clock timeout instead of N×timeout — that stack was pinning `record_user_usages` for minutes and skipping every 5s tick (`max_instances=1`). Collect budgets tightened to fit the 5s cadence.
+
 ## 0.22.87
 
 - Fix Postgres ``ON CONFLICT … cannot affect row a second time`` on ``node_user_usages`` by coalescing duplicate ``(hour, user, node[, protocol])`` rows before upsert (Xray + Finalmask double-emit in one tick).
@@ -5,10 +9,6 @@
 - Demote expected Finalmask/RPyC ``busy`` skips to debug so worker logs stay actionable.
 - WireGuard node agent: if ``awg`` CLI is missing for an Amnezia iface, fall back to ``wg`` instead of aborting peer sync with FileNotFoundError.
 - Throttle ``wallet.low_balance`` events to once per admin per 30 minutes (was flooding events table).
-
-## 0.22.88
-
-- Usage / online recording defaults to **5s** (`JOB_RECORD_USER_USAGES_INTERVAL`, `ONLINE_PRESENCE_INTERVAL`). Also fix `map_rpc` so a hung fleet waits one wall-clock timeout instead of N×timeout — that stack was pinning `record_user_usages` for minutes and skipping every 5s tick (`max_instances=1`). Collect budgets tightened to fit the 5s cadence.
 
 ## 0.22.86
 

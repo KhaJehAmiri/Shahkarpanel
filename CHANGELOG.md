@@ -1,3 +1,7 @@
+## 0.22.93
+
+- Always commit collected traffic even when the 5s budget is tight; drop hot-path stats re-adopt; publish map_rpc results immediately so timeouts still bill.
+
 ## 0.22.92
 
 - Publish partial Xray usage snapshots during collect so a 5s hard-timeout still bills what was already gathered (no more empty ticks).

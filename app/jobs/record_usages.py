@@ -733,25 +733,20 @@ def _collect_user_usage_params_body(*, deadline: float, progress: dict | None = 
     # Cap serial re-adopt attempts: each ensure_api used to cost up to 5s, and
     # N failed nodes made collect exceed the 5s usage interval forever
     # (max_instances=1 → every tick skipped).
-    readopt_deadline = time.monotonic() + min(0.8, _remaining())
     for node_id, node in list(xray.nodes.items()):
         if node_id in fm_ids:
             # Authoritative Finalmask path is collect_finalmask_usage_params().
             continue
         # Use lock-free has_live_api — node.connected pings RPyC under a lock
         # shared with WG/health jobs and was freezing Overview stats.
+        # No ensure_api re-adopt on the hot 5s path (hung adopt burned the
+        # whole interval before map_rpc). Health/reconcile re-adopts offline.
         if getattr(node, "has_live_api", None) and node.has_live_api():
             api_instances[node_id] = node.api
             usage_coefficient[node_id] = node.usage_coefficient
             node_refs[node_id] = node
         elif getattr(node, "started", False) and getattr(node, "_api", None) is not None:
             api_instances[node_id] = node.api
-            usage_coefficient[node_id] = node.usage_coefficient
-            node_refs[node_id] = node
-        elif time.monotonic() < readopt_deadline and _readopt_stats_channel(
-            node_id, node, timeout=min(0.8, _remaining())
-        ):
-            api_instances[node_id] = node._api
             usage_coefficient[node_id] = node.usage_coefficient
             node_refs[node_id] = node
 
@@ -762,6 +757,7 @@ def _collect_user_usage_params_body(*, deadline: float, progress: dict | None = 
 
     rpc_timeout = min(1.8, max(0.4, _remaining()))
     api_params = map_rpc(_one, api_instances, timeout=rpc_timeout, default=[])
+    _publish(api_params, usage_coefficient, [])
 
     protocol_breakdown: list[dict] = []
 

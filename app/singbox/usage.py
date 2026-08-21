@@ -18,19 +18,78 @@ from app.singbox.transport import client_for_node
 
 logger = logging.getLogger("shahkar-singbox")
 
+# Long enough to survive a panel deploy, short enough that a node retired for
+# days does not pin a stale incarnation id.
+_EPOCH_TTL_SEC = 7 * 24 * 3600
+
+
+def _redis_store():
+    """Shared Redis handle, or ``None`` — the tracker degrades to memory."""
+    try:
+        from config import REDIS_URL
+
+        if not REDIS_URL:
+            return None
+        import redis
+
+        return redis.Redis.from_url(
+            REDIS_URL, socket_connect_timeout=1.0, socket_timeout=1.5
+        )
+    except Exception:
+        return None
+
 
 class SingBoxUsageTracker:
     """Turns cumulative per-user readings into per-interval deltas.
 
-    Keyed by ``(node_id, name)``. First observation establishes a baseline
-    (delta 0). A counter that goes *down* means sing-box restarted (counters
-    reset), so the current value itself is the delta.
+    Keyed by ``(node_id, name)``. A counter that goes *down* means sing-box
+    restarted (counters reset), so the current value itself is the delta.
+
+    The first reading of an engine incarnation (``epoch``) counts in full:
+    sing-box counters start at zero when the process does, and treating that
+    reading as a mere baseline threw away everything a client had transferred
+    since the restart — with the engine recycling on every config push, AnyTLS
+    / Hysteria2 / TUIC users could stay connected and never be billed. Only a
+    reading whose epoch we have *never* seen but that carries a remembered
+    baseline (panel restart, engine untouched) is diffed against that baseline.
     """
 
-    def __init__(self):
+    def __init__(self, store=None):
         self._last: Dict[Tuple[int, str], int] = {}
+        self._epochs: Dict[int, str] = {}
+        # ``store=False`` keeps the tracker purely in memory (tests).
+        self._store = _redis_store() if store is None else store
 
-    def deltas(self, node_id: int, transfer: Dict[str, dict]) -> Dict[str, int]:
+    def _load_epoch(self, node_id: int) -> Optional[str]:
+        if node_id in self._epochs:
+            return self._epochs[node_id]
+        if self._store:
+            try:
+                stored = self._store.get(f"shahkar:sb:epoch:{node_id}")
+            except Exception:
+                stored = None
+            if stored is not None:
+                epoch = stored.decode() if isinstance(stored, bytes) else str(stored)
+                self._epochs[node_id] = epoch
+                return epoch
+        return None
+
+    def _save_epoch(self, node_id: int, epoch: str) -> None:
+        self._epochs[node_id] = epoch
+        if not self._store:
+            return
+        try:
+            self._store.set(f"shahkar:sb:epoch:{node_id}", epoch, ex=_EPOCH_TTL_SEC)
+        except Exception:
+            logger.debug("sing-box epoch persist failed for node %s", node_id, exc_info=True)
+
+    def deltas(
+        self, node_id: int, transfer: Dict[str, dict], epoch: str = ""
+    ) -> Dict[str, int]:
+        known_epoch = self._load_epoch(node_id)
+        fresh_engine = bool(epoch) and epoch != known_epoch
+        if epoch:
+            self._save_epoch(node_id, epoch)
         out: Dict[str, int] = {}
         for name, counters in (transfer or {}).items():
             try:
@@ -41,15 +100,24 @@ class SingBoxUsageTracker:
             last = self._last.get(key)
             self._last[key] = total
             if last is None:
-                continue
-            delta = total if total < last else total - last
+                if not fresh_engine:
+                    continue
+                delta = total
+            else:
+                delta = total if total < last else total - last
             if delta > 0:
                 out[name] = delta
+        if fresh_engine:
+            # Counters restarted from zero; drop stale per-name baselines that
+            # belong to the previous incarnation.
+            for key in [k for k in self._last if k[0] == node_id and k[1] not in transfer]:
+                del self._last[key]
         return out
 
     def forget_node(self, node_id: int) -> None:
         for key in [k for k in self._last if k[0] == node_id]:
             del self._last[key]
+        self._epochs.pop(node_id, None)
 
 
 def build_singbox_usage_params(
@@ -76,6 +144,20 @@ def build_singbox_usage_params(
 _tracker = SingBoxUsageTracker()
 
 
+def split_transfer(transfer: Dict[str, dict]) -> Tuple[str, str, Dict[str, dict]]:
+    """Split a node reading into ``(source, engine epoch, per-user counters)``.
+
+    ``clash`` marks cumulative counters (Clash / V2Ray read without reset);
+    anything else is already interval bytes.
+    """
+    raw = dict(transfer or {})
+    source = str(raw.pop("__source__", "") or "")
+    epoch = str(raw.pop("__epoch__", "") or "")
+    if source in ("clash", "cumulative"):
+        return "clash", epoch, raw
+    return "v2ray", epoch, raw
+
+
 def _interval_bytes(transfer: Dict[str, dict]) -> Dict[str, int]:
     """Sum rx+tx per user from a reset-on-read V2Ray stats poll."""
     out: Dict[str, int] = {}
@@ -87,6 +169,17 @@ def _interval_bytes(transfer: Dict[str, dict]) -> Dict[str, int]:
         if total > 0:
             out[name] = total
     return out
+
+
+def deltas_from_transfer(
+    node_id: int,
+    transfer: Dict[str, dict],
+    tracker: SingBoxUsageTracker,
+) -> Dict[str, int]:
+    source, epoch, users = split_transfer(transfer)
+    if source == "clash":
+        return tracker.deltas(node_id, users, epoch)
+    return _interval_bytes(users)
 
 
 def collect_singbox_usage_params(db=None) -> Tuple[Dict[int, List[dict]], Dict[int, float]]:
@@ -124,6 +217,7 @@ def collect_singbox_usage_params(db=None) -> Tuple[Dict[int, List[dict]], Dict[i
     for plan in plans:
         client = client_for_node(_node_object(plan["id"], connect=False))
         if client is None:
+            logger.info("sing-box transfer skipped node %s (no live channel)", plan["id"])
             continue
         try:
             # ``RPyCSingBoxClient.transfer`` never dials; a dead channel is {}.
@@ -131,9 +225,18 @@ def collect_singbox_usage_params(db=None) -> Tuple[Dict[int, List[dict]], Dict[i
         except Exception as exc:
             logger.warning("sing-box transfer read from node %s failed: %s", plan["id"], exc)
             transfer = None
-        if not transfer:
+        names = list((transfer or {}) or [])
+        if not names:
+            logger.info("sing-box transfer empty node %s", plan["id"])
             continue
-        deltas_by_node[plan["id"]] = _interval_bytes(transfer)
+        logger.info(
+            "sing-box transfer node %s users=%d",
+            plan["id"],
+            len(names),
+        )
+        deltas_by_node[plan["id"]] = deltas_from_transfer(
+            plan["id"], transfer, _tracker
+        )
         coefficient[plan["id"]] = plan["coefficient"]
 
     return build_singbox_usage_params(deltas_by_node, name_map), coefficient

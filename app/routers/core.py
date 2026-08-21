@@ -132,10 +132,21 @@ def get_core_stats(admin: Admin = _core_read):
 
         if not owns_control_plane():
             snap = load_snapshot()
-            if snapshot_fresh(snap):
-                started = bool(snap.get("xray_started"))
-                version = snap.get("xray_version") or version
+            snap_started = bool(snap.get("xray_started")) if snap else False
+            # Never treat a stale snapshot as "stopped" — that made the Core
+            # banner flash stopped while the worker's Xray was still running.
+            if snap_started or (snap is not None and snapshot_fresh(snap)):
+                started = snap_started
+                version = (snap.get("xray_version") if snap else None) or version
                 if started:
+                    startup_error = None
+                    failed_inbound_tag = None
+                    failed_port = None
+            if not started:
+                from app.xray.core import find_stdin_xray_pids
+
+                if find_stdin_xray_pids(XRAY_EXECUTABLE_PATH):
+                    started = True
                     startup_error = None
                     failed_inbound_tag = None
                     failed_port = None
@@ -755,7 +766,9 @@ def add_routing_rule(
     db: Session = Depends(get_db),
     admin: Admin = _core_write,
 ) -> dict:
-    """Insert a routing rule. Optional ``index`` positions it (default: append)."""
+    """Insert a routing rule. Optional ``index`` positions it (default: before catch-all)."""
+    from app.xray.warp_routing import insert_rule_before_catchall
+
     rule = payload.get("rule") if "rule" in payload else payload
     if not isinstance(rule, dict):
         raise HTTPException(status_code=400, detail="rule object is required")
@@ -766,7 +779,7 @@ def add_routing_rule(
     if isinstance(index, int) and 0 <= index <= len(rules):
         rules.insert(index, rule)
     else:
-        rules.append(rule)
+        rules = insert_rule_before_catchall(rules, rule)
     routing["rules"] = rules
     return modify_core_config(payload=cfg, db=db, admin=admin)
 

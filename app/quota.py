@@ -363,11 +363,14 @@ def disconnect_users_everywhere(
         logger.debug("WireGuard sync during disconnect skipped", exc_info=True)
 
     try:
-        from app.singbox.operations import sync_user_change
+        from app.singbox.operations import revoke_singbox_users, user_identifiers
 
-        sync_user_change()
+        names: list[str] = []
+        for dbuser in users:
+            names.extend(user_identifiers(dbuser))
+        revoke_singbox_users(names)
     except Exception:
-        logger.debug("sing-box sync during disconnect skipped", exc_info=True)
+        logger.debug("sing-box revoke during disconnect skipped", exc_info=True)
 
     return True
 
@@ -422,8 +425,19 @@ def restore_users_everywhere(user_ids: Sequence[int]) -> None:
         logger.exception("restore_users_everywhere: WireGuard/Finalmask sync failed")
 
     try:
-        from app.singbox.operations import sync_user_change as singbox_sync
+        from app.singbox.operations import (
+            sync_user_change as singbox_sync,
+            unrevoke_singbox_users,
+            user_identifiers,
+        )
 
+        names: list[str] = []
+        with GetDB() as db:
+            for uid in ids:
+                dbuser = crud.get_user_by_id(db, uid)
+                if dbuser is not None:
+                    names.extend(user_identifiers(dbuser))
+        unrevoke_singbox_users(names)
         singbox_sync()
     except Exception:
         logger.exception("restore_users_everywhere: sing-box sync failed")

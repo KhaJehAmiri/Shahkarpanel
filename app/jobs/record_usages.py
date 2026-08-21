@@ -2,6 +2,7 @@ from collections import defaultdict
 from datetime import datetime
 from operator import attrgetter
 from typing import Union
+import time
 
 from pymysql.err import OperationalError
 from sqlalchemy import and_, bindparam, case, insert, select, update
@@ -229,6 +230,10 @@ def get_users_stats(api: XRayAPI):
         # (max_instances=1) long enough for Overview online_users to hit 0.
         for stat in filter(attrgetter('value'), api.get_users_stats(reset=True, timeout=4)):
             uid = stat.name.split('.', 1)[0]
+            try:
+                int(uid)
+            except (TypeError, ValueError):
+                continue
             params[uid] += stat.value
             # Preserve the up/down split (Xray reports uplink/downlink per user)
             # so the subscription header can show real upload/download.
@@ -293,8 +298,10 @@ def _collect_node_users_stats(node_id, api: XRayAPI, node=None) -> list:
 
     if node is not None and hasattr(node, "ensure_api"):
         try:
-            if node.ensure_api(refresh=True, timeout=5):
-                params = get_users_stats(node.api)
+            if node.ensure_api(refresh=True, allow_unstarted=True, timeout=5):
+                # ``node.api`` raises while ``started`` is False; the channel we
+                # just dialled is what matters, not who started the core.
+                params = get_users_stats(getattr(node, "_api", None))
                 if params is not None:
                     return params
         except Exception as exc:
@@ -661,6 +668,29 @@ def _node_usage_protocols(node_ids) -> dict:
         }
 
 
+def _readopt_stats_channel(node_id, node) -> bool:
+    """Re-attach the gRPC stats client to a core that is up but unadopted.
+
+    A failed ``restart()`` (Finalmask Xray-WG flip, connect backoff) leaves
+    ``started=False``/``_api=None`` while the node's Xray keeps serving users.
+    The collector then skipped the node with no log at all, so every byte on
+    it — VLESS included — went unbilled and ``online_at`` never advanced.
+    """
+    if not (getattr(node, "has_live_rpyc", None) and node.has_live_rpyc()):
+        return False
+    try:
+        adopted = node.ensure_api(refresh=True, allow_unstarted=True, timeout=5)
+    except Exception as exc:
+        logger.warning("xray stats re-adopt for node %s failed: %s", node_id, exc)
+        return False
+    if not adopted:
+        logger.warning("xray stats channel unavailable for node %s", node_id)
+        return False
+    node.started = True
+    logger.warning("xray stats channel re-adopted for node %s", node_id)
+    return True
+
+
 def collect_user_usage_params() -> tuple:
     """Gather raw per-user stats from the local Xray core and every connected
     node.  Returns ``(api_params, usage_coefficient, protocol_breakdown)``.
@@ -699,6 +729,10 @@ def collect_user_usage_params() -> tuple:
             node_refs[node_id] = node
         elif getattr(node, "started", False) and getattr(node, "_api", None) is not None:
             api_instances[node_id] = node.api
+            usage_coefficient[node_id] = node.usage_coefficient
+            node_refs[node_id] = node
+        elif _readopt_stats_channel(node_id, node):
+            api_instances[node_id] = node._api
             usage_coefficient[node_id] = node.usage_coefficient
             node_refs[node_id] = node
 
@@ -782,7 +816,7 @@ def collect_user_usage_params() -> tuple:
             _add_breakdown("singbox", node_id, params, sb_coefficient.get(node_id, 1))
         merge_singbox_usage(api_params, usage_coefficient, sb_params, sb_coefficient)
     except Exception:
-        pass
+        logger.exception("sing-box usage collection failed")
 
     return api_params, usage_coefficient, protocol_breakdown
 
@@ -802,6 +836,7 @@ def record_protocol_breakdown(
 
 
 def record_user_usages():
+    started = time.monotonic()
     try:
         from app.presence import note_usage_tick
 
@@ -856,6 +891,9 @@ def record_user_usages():
     from app.billing_guard import check_billing_integrity
 
     check_billing_integrity(xray)
+    elapsed = time.monotonic() - started
+    if elapsed >= 8:
+        logger.info("record_user_usages finished in %.1fs", elapsed)
 
 
 def record_node_usages():

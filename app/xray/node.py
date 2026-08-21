@@ -118,6 +118,39 @@ def cert_sha256(pem_cert: str) -> str:
     return hashlib.sha256(der).hexdigest()
 
 
+def grpc_ssl_target_name(pem_cert) -> str:
+    """gRPC hostname override must match the TOFU cert CN.
+
+    Older node certs are ``CN=Shahkar``; some rebuilt agents mint
+    ``CN=NexusPanel``. Hardcoding Shahkar makes QueryStats fail with
+    ``Peer name Shahkar is not in peer certificate`` and drops VLESS billing
+    on that core (inbound counters keep growing, ``used_traffic`` does not).
+    """
+    raw = pem_cert.decode("utf-8", errors="ignore") if isinstance(pem_cert, (bytes, bytearray)) else (pem_cert or "")
+    if not raw.strip():
+        return "Shahkar"
+    try:
+        from cryptography import x509
+        from cryptography.hazmat.backends import default_backend
+
+        cert = x509.load_pem_x509_certificate(raw.encode("utf-8"), default_backend())
+        for attr in cert.subject:
+            if attr.oid == x509.NameOID.COMMON_NAME:
+                val = str(attr.value or "").strip()
+                if val:
+                    return val
+        try:
+            ext = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName)
+            for name in ext.value.get_values_for_type(x509.DNSName):
+                if name:
+                    return str(name)
+        except Exception:
+            pass
+    except Exception:
+        pass
+    return "Shahkar"
+
+
 def verify_or_capture_pin(node_label, pem_cert: str, pinned):
     """Return the observed cert fingerprint, raising on a pin mismatch.
 
@@ -257,7 +290,7 @@ class ReSTXRayNode:
                     address=self.address,
                     port=self.api_port,
                     ssl_cert=self._node_cert.encode(),
-                    ssl_target_name="Shahkar"
+                    ssl_target_name=grpc_ssl_target_name(self._node_cert),
                 )
             else:
                 raise ConnectionError("Node is not started")
@@ -312,7 +345,7 @@ class ReSTXRayNode:
             address=self.address,
             port=self.api_port,
             ssl_cert=self._node_cert.encode(),
-            ssl_target_name="Shahkar"
+            ssl_target_name=grpc_ssl_target_name(self._node_cert),
         )
 
         try:
@@ -365,7 +398,7 @@ class ReSTXRayNode:
             address=self.address,
             port=self.api_port,
             ssl_cert=self._node_cert.encode(),
-            ssl_target_name="Shahkar"
+            ssl_target_name=grpc_ssl_target_name(self._node_cert),
         )
 
         try:
@@ -804,7 +837,7 @@ class RPyCXRayNode:
                 address=self.address,
                 port=self.api_port,
                 ssl_cert=self._node_cert.encode(),
-                ssl_target_name="Shahkar",
+                ssl_target_name=grpc_ssl_target_name(self._node_cert),
             )
             grpc.channel_ready_future(self._api._channel).result(timeout=timeout)
             return True
@@ -888,7 +921,7 @@ class RPyCXRayNode:
             address=self.address,
             port=self.api_port,
             ssl_cert=self._node_cert.encode(),
-            ssl_target_name="Shahkar"
+            ssl_target_name=grpc_ssl_target_name(self._node_cert),
         )
         try:
             grpc.channel_ready_future(self._api._channel).result(timeout=NODE_API_READY_TIMEOUT)

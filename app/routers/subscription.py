@@ -342,7 +342,7 @@ def _sub_client_ip(request: Request) -> str:
 _KNOWN_CLIENT_UA_RE = re.compile(
     r'^(Surge|Loon|Quantumult|Quantumult%20X|[Cc]lash-verge|[Cc]lash[-\.]?[Mm]eta|'
     r'[Ff][Ll][Cc]lash|[Mm]ihomo|[Cc]lash|[Ss]tash|HiddifyNext|Hiddify/|[Vv]2[Bb]ox|'
-    r'v2rayN/|v2rayNG/|Happ/)'
+    r'v2rayN/|v2rayNG/|Happ/|[Kk]aring|[Ss]ing-box|[Ss]ingbox|NekoBox|SagerNet)'
 )
 
 
@@ -811,6 +811,24 @@ def user_subscription(
             )
         return _v2ray_base64_response(
             user, response_headers, inbound_filter=inbound_filter, branding=branding, access=access
+        )
+
+    elif re.match(r'^NekoBox', user_agent):
+        return _format_response("clash-meta", "text/yaml")
+
+    elif re.match(r'^([Kk]aring|SagerNet|[Ss]ing-box|[Ss]ingbox)', user_agent):
+        # Same as digicdn: share links (vless://, wireguard://, hy2://, anytls://).
+        # clash-meta YAML drops Finalmask WG and mangles xhttp.
+        # xhttp is the one exception: this core carries the stream but never
+        # feeds the per-user counters, so a client parked on it stays "online"
+        # in the app while the panel bills nothing and never sets online_at.
+        return _v2ray_base64_response(
+            user,
+            response_headers,
+            inbound_filter=inbound_filter,
+            branding=branding,
+            exclude_protocols={"xhttp"},
+            access=access,
         )
 
     else:

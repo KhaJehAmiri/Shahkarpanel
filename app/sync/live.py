@@ -94,7 +94,10 @@ def publish_raw(payload: dict) -> None:
             host = _host_overlay(client)
             if host:
                 payload = dict(payload)
-                payload.update(host)
+                for key, val in host.items():
+                    if key == "cpu_usage" and not val and payload.get("cpu_usage"):
+                        continue
+                    payload[key] = val
         raw = json.dumps(payload, default=str, separators=(",", ":"))
         pipe = client.pipeline()
         if payload.get("kind") == "tick":

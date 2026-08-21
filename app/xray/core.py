@@ -65,6 +65,22 @@ def find_stdin_xray_pids(executable_path: str) -> list[int]:
     misreading previously caused the health check to restart a perfectly
     healthy core on every tick.
     """
+    tried: set[str] = set()
+    for path in (
+        executable_path,
+        "/var/lib/nexuspanel/bin/xray",
+        "/var/lib/shahkar/bin/xray",
+    ):
+        if not path or path in tried:
+            continue
+        tried.add(path)
+        found = _pgrep_stdin_xray(path)
+        if found:
+            return found
+    return []
+
+
+def _pgrep_stdin_xray(executable_path: str) -> list[int]:
     try:
         out = subprocess.check_output(
             ["pgrep", "-f", f"^{re.escape(executable_path)} run -config stdin:"],

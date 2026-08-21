@@ -650,7 +650,7 @@ const LiveHero: FC<{
   const core = useFetch<CoreStats>(() => api.get("/core"), []);
   const [busy, setBusy] = useState(false);
   usePolling(() => core.reload(), 2000);
-  const running = coreStarted ?? !!core.data?.started;
+  const running = (typeof xray === "number" && xray > 0) || (coreStarted ?? !!core.data?.started);
   const versionLabel = coreVersion || core.data?.version;
   const upSeries = useSeries(up);
   const downSeries = useSeries(down);
@@ -808,6 +808,7 @@ export const Overview: FC = () => {
   const [rtStale, setRtStale] = useState(false);
   const [sysFetchedAt, setSysFetchedAt] = useState(() => Date.now());
   const [, setTick] = useState(0);
+  const lastGauges = useRef<{ cpu?: number; xray?: number; os?: number }>({});
 
   const live = useOverviewEvents({
     onNodeStatus: () => nodes.reload({ background: true }),
@@ -825,6 +826,12 @@ export const Overview: FC = () => {
       bandwidth_source: tick.bandwidth_source,
       bandwidth_scope: tick.bandwidth_scope,
     });
+    const cpu = Number(tick.cpu_usage) > 0 ? tick.cpu_usage : lastGauges.current.cpu;
+    const xrayUptime = Number(tick.xray_uptime) > 0 ? tick.xray_uptime : lastGauges.current.xray;
+    const osUptime = Number(tick.os_uptime) > 0 ? tick.os_uptime : lastGauges.current.os;
+    if (Number(cpu) > 0) lastGauges.current.cpu = Number(cpu);
+    if (Number(xrayUptime) > 0) lastGauges.current.xray = Number(xrayUptime);
+    if (Number(osUptime) > 0) lastGauges.current.os = Number(osUptime);
     setLiveSys({
       version: tick.version,
       mem_total: tick.mem_total,
@@ -832,7 +839,7 @@ export const Overview: FC = () => {
       disk_total: tick.disk_total,
       disk_used: tick.disk_used,
       cpu_cores: tick.cpu_cores,
-      cpu_usage: tick.cpu_usage,
+      cpu_usage: cpu,
       total_user: tick.total_user,
       online_users: tick.online_users,
       users_active: tick.users_active,
@@ -845,15 +852,15 @@ export const Overview: FC = () => {
       incoming_bandwidth_speed: tick.incoming_bandwidth_speed,
       outgoing_bandwidth_speed: tick.outgoing_bandwidth_speed,
       bandwidth_source: tick.bandwidth_source,
-      os_uptime: tick.os_uptime,
-      xray_uptime: tick.xray_uptime,
-      node_uptime: tick.node_uptime,
+      os_uptime: osUptime,
+      xray_uptime: xrayUptime,
+      node_uptime: Number(tick.node_uptime) > 0 ? tick.node_uptime : xrayUptime,
     });
     setCoreLive({
-      started: tick.xray_started,
+      started: Boolean(tick.xray_started) || Number(xrayUptime) > 0,
       version: tick.xray_version,
     });
-    setSysFetchedAt(Date.now());
+    if (Number(xrayUptime) > 0) setSysFetchedAt(Date.now());
     setRtStale(false);
   }, [live.tick]);
 
@@ -878,7 +885,12 @@ export const Overview: FC = () => {
   }, 5000, httpFallback);
 
   useEffect(() => {
-    if (sys.data) setSysFetchedAt(Date.now());
+    const up = Number(sys.data?.xray_uptime);
+    if (!(up > 0) || !sys.data) return;
+    lastGauges.current.xray = up;
+    if (Number(sys.data.cpu_usage) > 0) lastGauges.current.cpu = Number(sys.data.cpu_usage);
+    if (Number(sys.data.os_uptime) > 0) lastGauges.current.os = Number(sys.data.os_uptime);
+    setSysFetchedAt(Date.now());
   }, [sys.data]);
 
   useEffect(() => {
@@ -906,6 +918,11 @@ export const Overview: FC = () => {
   const s = (sys.data || liveSys)
     ? { ...(sys.data || {}), ...(liveSys || {}) } as SystemStats
     : null;
+  if (s) {
+    if (!(Number(s.cpu_usage) > 0) && lastGauges.current.cpu != null) s.cpu_usage = lastGauges.current.cpu;
+    if (!(Number(s.xray_uptime) > 0) && lastGauges.current.xray != null) s.xray_uptime = lastGauges.current.xray;
+    if (!(Number(s.os_uptime) > 0) && lastGauges.current.os != null) s.os_uptime = lastGauges.current.os;
+  }
   const elapsedSec = Math.max(0, Math.floor((Date.now() - sysFetchedAt) / 1000));
   const liveXrayUptime = s?.xray_uptime != null ? s.xray_uptime + elapsedSec : undefined;
   const liveOsUptime = s?.os_uptime != null ? s.os_uptime + elapsedSec : undefined;

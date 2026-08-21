@@ -165,11 +165,44 @@ def _normalize_xhttp_client_compat(stream: Dict[str, Any]) -> bool:
     return changed
 
 
+# Xray 26+ Reality handshake only works on these transports. Anything else
+# (httpupgrade, ws, kcp, …) fails ``xray run`` and takes the whole core down.
+_REALITY_NETWORKS = frozenset({"tcp", "raw", "xhttp", "splithttp", "grpc", "gun", ""})
+_REALITY_DROP_SETTINGS = (
+    "httpupgradeSettings",
+    "wsSettings",
+    "httpSettings",
+    "kcpSettings",
+    "quicSettings",
+)
+
+
+def _normalize_reality_transport(stream: Dict[str, Any]) -> bool:
+    """Fall Reality+unsupported-transport back to RAW TCP.
+
+    Same Reality identity (keys, SNI, shortIds) stays; only the inner
+    transport is rewritten. That is the Karing-compatible sibling of
+    VLESS+xhttp+Reality: sing-box speaks Reality on TCP, and Xray will
+    actually start.
+    """
+    if str(stream.get("security") or "").lower() != "reality":
+        return False
+    net = str(stream.get("network") or "").lower()
+    if net in _REALITY_NETWORKS:
+        return False
+    stream["network"] = "tcp"
+    for key in _REALITY_DROP_SETTINGS:
+        stream.pop(key, None)
+    return True
+
+
 def _normalize_inbound_stream(stream: Dict[str, Any]) -> bool:
     changed = False
     if migrate_legacy_quic_stream_settings(stream):
         changed = True
     if _normalize_xhttp_client_compat(stream):
+        changed = True
+    if _normalize_reality_transport(stream):
         changed = True
     tls = stream.get("tlsSettings")
     if isinstance(tls, dict) and _normalize_tls_ech_fields(tls):

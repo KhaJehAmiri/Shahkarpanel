@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### Karing: online status and traffic accounting
+
+- Default Karing UA is ``sing-box <core>``, which was treated as a browser (HTML subscribe page). Main ``/sub/<token>`` now recognises Karing / sing-box as a known client so they always get a config, whatever ``Accept`` says.
+- Karing / ``sing-box`` UA gets the same share list as a browser (VLESS, WireGuard, Hysteria2, TUIC, AnyTLS) — same as the working digicdn panel. Do not strip protocols from the subscription; online/traffic are counted on the node. Saving a Reality inbound on an unsupported transport is rewritten to TCP so the rest of the core cannot be taken down.
+- Sing-box usage map also keys on the auth password; Clash fallback reads ``inboundUser`` / ``sourceUser`` when ``metadata.user`` is empty.
+- Disable of an already-connected Karing client was a no-op on Hy2/TUIC/AnyTLS: the outbox only removed the Xray user (which does not close established sessions) and never kicked Clash connections or stripped the sing-box user list. The 8k-user sing-box apply also held the node RPyC lock past 15s, so billing (``singbox_transfer``) was skipped as busy and disable sat behind the same queue. Disable/delete now kick matching Clash connections, strip that user from the node's on-disk config, and restart only that engine. Full spec apply is gzipped and queued on the node so usage ticks keep running. Clash fallback counters are differenced. Outbox drains disable/delete before add.
+- xhttp share links repeat ``mode`` inside the ``extra`` JSON (MHSanaei/3x-ui#4364 / #5446). That is for Xray clients, not a reason to hide VLESS from Karing.
+- Subscription export drops VLESS hosts that are not a connected node's address/SNI and have no ``node_ids``. Extra hostnames bound with ``node_ids`` stay in the list (CDN / alias names for the same inbound).
+- A node whose Xray restart failed (Finalmask Xray-WG flip, connect backoff) kept ``started=False``/``_api=None`` while its core happily served users. The usage collector skipped such a node with no log at all, so *every* byte on it went unbilled and ``online_at`` never advanced — vl1 (the lowest-latency node, and therefore the one Karing's url-test always picks) sat unbilled for a whole hour. The collector now re-adopts the stats channel of a core that is up on a live control channel, and says so in the log.
+- sing-box has no live user reload, so each apply recycled the process — and the panel re-pushes the whole spec 2s after *any* user mutation. Every AnyTLS / Hysteria2 / TUIC tunnel dropped every few minutes and the v2ray-api counters reset before the next usage poll. An apply that renders byte-identical config (user order is not stable across queries, so the compare is order-insensitive) now leaves the running engine alone.
+- The first reading of a recycled sing-box was treated as a baseline and thrown away, so with the engine restarting constantly a client could stay connected and never be billed. Node readings now carry the engine incarnation (``__epoch__``); a new incarnation counts from zero in full, and the last seen incarnation is remembered in Redis so a panel restart still baselines instead of double-charging.
+- Node sing-box TLS is a self-signed cert generated with only ``/CN=`` and no SAN, so it matches *no* name and every verifying client rejects it — the client then reports "connected" while the handshake is dead: no bytes, no ``online_at``. Only the TUIC link happened to carry ``allow_insecure``, which is the spelling Karing honours, so TUIC worked while Hysteria2 and AnyTLS did not. All three links now carry every skip-verify spelling in use (``insecure``, ``allow_insecure``, ``allowInsecure``, ``skip-cert-verify``), and both self-signed generators add a ``subjectAltName``.
+- ``JOB_RECORD_USER_USAGES_INTERVAL`` was pinned to 45s by ``/var/lib/shahkar/.env``, which compose loads after the project ``.env`` and therefore wins. Measured billing lag on live nodes dropped from 34–50s to 6–28s once the runtime file was set to 15s too.
+- VLESS xhttp is now withheld from the Karing subscription. The core carries the stream but never feeds the per-user counters, so a client that settles on an xhttp entry stays "connected" in the app while the panel bills nothing and ``online_at`` never moves. Every other protocol still ships.
+- ``tls_trusted`` only ever changed when an admin opened a node's TLS page, so every node still claimed an untrusted certificate and every AnyTLS link shipped four skip-verify parameters even on nodes holding a valid Let's Encrypt cert. A node's certificate is now re-read every 6 hours, and a probe that cannot read the file (node down, RPyC blip) no longer overwrites the last known result — otherwise a momentary outage would push ``insecure=1`` back into every share link on that node.
+
+### Stored usernames with dots no longer 500 every read
+
+- ``UserResponse`` re-ran the create-time username rule while reading a row, so the six live accounts the Telegram admin flow had created with dots or ``@`` (``handlers/admin.py`` accepts ``[a-zA-Z0-9-_@.]``) returned 500 on every ``/sub`` fetch and could not connect at all. Reads now take the stored value as-is; ``UserCreate`` / ``UserModify`` still reject the same input.
+
+### Finalmask reload no longer starves the fleet
+
+- A node that could not be reached still counted as an apply failure, so its dirty shard slots were re-marked forever and the pass rescheduled itself every 0.1s. One dead relay therefore pinned the whole fleet: node RPyC channels thrashed and ``xray_users_transfer`` (Finalmask/WireGuard billing) kept returning "node RPyC busy" / "result expired".
+- Nodes in connect backoff are now skipped instead of failing the pass; they reconcile from their own cursor via ``on_node_connected`` when the channel returns. Failed passes back off 1s→30s instead of spinning.
+- Subscription export keeps a node for ``FLAP_GRACE_SEC`` after it stops reporting ``connected``, measured from the last time the process actually saw it connected. A momentary channel blip used to strip that node's Hysteria2/TUIC/AnyTLS/WireGuard entries from every profile generated in that window, and clients cache a whole update interval. A node that never reaches ``connected`` still ages out, and ``disabled`` never gets grace.
+
 ## 0.22.84 — 2026-08-20
 
 ### Split API/worker and make Overview CPU/RAM live

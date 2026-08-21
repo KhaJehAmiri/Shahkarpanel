@@ -381,12 +381,35 @@ class XrayService(rpyc.Service):
     @rpyc.exposed
     def singbox_apply_json(self, spec_json: str):
         import json
-        self.singbox.apply(SingBoxSpec.from_dict(json.loads(spec_json)))
+        self.singbox.schedule_apply(SingBoxSpec.from_dict(json.loads(spec_json)))
+        return "queued"
+
+    @rpyc.exposed
+    def singbox_apply_gz(self, spec_b64: str):
+        import base64
+        import gzip
+        import json
+
+        raw = gzip.decompress(base64.b64decode(spec_b64))
+        self.singbox.schedule_apply(SingBoxSpec.from_dict(json.loads(raw)))
+        return "queued"
 
     @rpyc.exposed
     def singbox_transfer(self) -> str:
         import json
         return json.dumps(self.singbox.get_transfer())
+
+    @rpyc.exposed
+    def singbox_revoke_json(self, names_json: str) -> str:
+        import json
+        names = json.loads(names_json or "[]")
+        return json.dumps(self.singbox.revoke_users(names))
+
+    @rpyc.exposed
+    def singbox_unrevoke_json(self, names_json: str) -> str:
+        import json
+        names = json.loads(names_json or "[]")
+        return json.dumps({"cleared": self.singbox.unrevoke_users(names)})
 
     @rpyc.exposed
     def xray_users_transfer(self, reset: bool = True) -> str:

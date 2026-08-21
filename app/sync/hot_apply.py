@@ -205,13 +205,17 @@ def apply_action(action: str, *, user_id=None, payload: Optional[dict] = None) -
             accounts = list(iter_user_hot_accounts(dbuser))
             slot = _slot(dbuser, payload)
             has_sb = _user_has_singbox(dbuser)
+            from app.singbox.operations import user_identifiers
+
+            sb_names = user_identifiers(dbuser, payload)
 
         def _bg_nodes():
             _push_accounts_to_nodes(accounts)
             if has_sb:
                 try:
-                    from app.singbox.operations import sync_user_change
+                    from app.singbox.operations import sync_user_change, unrevoke_singbox_users
 
+                    unrevoke_singbox_users(sb_names)
                     sync_user_change()
                 except Exception:
                     logger.debug("hot-apply singbox bg failed", exc_info=True)
@@ -229,6 +233,9 @@ def apply_action(action: str, *, user_id=None, payload: Optional[dict] = None) -
             hot_disconnect_users([dbuser])
             email = _email(dbuser, payload)
             slot = _slot(dbuser, payload)
+            from app.singbox.operations import user_identifiers
+
+            sb_names = user_identifiers(dbuser, payload)
         from app.xray.serving import _inbound_supports_hot_sync
 
         tags = [
@@ -243,6 +250,13 @@ def apply_action(action: str, *, user_id=None, payload: Optional[dict] = None) -
                 name=f"hot-dis-{uid}",
                 daemon=True,
             ).start()
+        if sb_names:
+            try:
+                from app.singbox.operations import revoke_singbox_users
+
+                revoke_singbox_users(sb_names)
+            except Exception:
+                logger.debug("hot-apply singbox revoke failed", exc_info=True)
         _flush_slot(slot)
         return
 
@@ -283,10 +297,10 @@ def apply_delete(payload: dict) -> None:
     def _bg_proto():
         try:
             from app.wireguard.operations import sync_user_change
-            from app.singbox.operations import sync_user_change as sb_sync
+            from app.singbox.operations import revoke_singbox_users, user_identifiers
 
             sync_user_change(immediate=True)
-            sb_sync()
+            revoke_singbox_users(user_identifiers(payload=payload))
         except Exception:
             logger.debug("hot-apply delete protocol sync failed", exc_info=True)
 

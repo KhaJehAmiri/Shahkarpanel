@@ -39,7 +39,7 @@ def snapshot_user(dbuser) -> dict[str, Any]:
         settings = dict(getattr(proxy, "settings", None) or {})
         slim = {
             k: settings[k]
-            for k in ("id", "password", "method", "public_key", "private_key", "address")
+            for k in ("id", "password", "method", "public_key", "private_key", "address", "uuid")
             if k in settings and settings[k] is not None
         }
         proxies.append({"type": type_s, "settings": slim})
@@ -246,7 +246,7 @@ def _claim_postgres(db: Session, limit: int) -> list[int]:
                 WHERE status IN ('pending', 'failed')
                   AND (next_retry_at IS NULL OR next_retry_at <= (NOW() AT TIME ZONE 'utc'))
                   AND attempts < :max_attempts
-                ORDER BY id
+                ORDER BY CASE WHEN action IN ('disable', 'delete') THEN 0 ELSE 1 END, id
                 FOR UPDATE SKIP LOCKED
                 LIMIT :lim
             )
@@ -263,6 +263,8 @@ def _claim_generic(db: Session, limit: int) -> list[int]:
     from app.db.models import UserSyncOutbox
 
     now = datetime.utcnow()
+    from sqlalchemy import case
+
     rows = (
         db.query(UserSyncOutbox)
         .filter(
@@ -271,7 +273,13 @@ def _claim_generic(db: Session, limit: int) -> list[int]:
             | (UserSyncOutbox.next_retry_at <= now),
             UserSyncOutbox.attempts < MAX_ATTEMPTS,
         )
-        .order_by(UserSyncOutbox.id)
+        .order_by(
+            case(
+                (UserSyncOutbox.action.in_(("disable", "delete")), 0),
+                else_=1,
+            ),
+            UserSyncOutbox.id,
+        )
         .limit(int(limit))
         .all()
     )

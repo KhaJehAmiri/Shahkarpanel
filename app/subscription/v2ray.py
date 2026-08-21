@@ -30,6 +30,42 @@ def _coerce_sni(value) -> str:
     return items[0] if items else ""
 
 
+def _xhttp_extra(
+        *,
+        mode: str,
+        sc_max_each_post_bytes: int,
+        sc_max_concurrent_posts: int,
+        sc_min_posts_interval_ms: int,
+        x_padding_bytes: str,
+        noGRPCHeader: bool,
+        keepAlivePeriod: int = 0,
+        xmux: dict | None = None,
+        as_json: bool = True,
+):
+    """Build the xhttp ``extra`` blob, with ``mode`` repeated inside it.
+
+    Karing populates its transport solely from ``extra`` whenever that param is
+    present and ignores the flat ``mode=``. Without this the node imports with
+    no mode, the handshake fails, and the app sits on a "connected" outbound
+    that moves no bytes — so nothing bills and the account never goes online
+    (same defect 3x-ui fixed in MHSanaei/3x-ui#4364 / #5446). Clients that read
+    only flat params are unaffected: the flat ``mode`` stays where it was.
+    """
+    extra: dict = {
+        "mode": mode,
+        "scMaxEachPostBytes": sc_max_each_post_bytes,
+        "scMaxConcurrentPosts": sc_max_concurrent_posts,
+        "scMinPostsIntervalMs": sc_min_posts_interval_ms,
+        "xPaddingBytes": x_padding_bytes,
+        "noGRPCHeader": noGRPCHeader,
+    }
+    if keepAlivePeriod > 0:
+        extra["keepAlivePeriod"] = keepAlivePeriod
+    if xmux:
+        extra["xmux"] = xmux
+    return json.dumps(extra) if as_json else extra
+
+
 def _mask_address_hint(address: str) -> str:
     addr = (address or "").strip()
     if not addr:
@@ -321,19 +357,18 @@ class V2rayShareLink(str):
                 payload["mode"] = "gun"
 
         elif net in ("splithttp", "xhttp"):
-            extra = {
-                "scMaxEachPostBytes": sc_max_each_post_bytes,
-                "scMaxConcurrentPosts": sc_max_concurrent_posts,
-                "scMinPostsIntervalMs": sc_min_posts_interval_ms,
-                "xPaddingBytes": x_padding_bytes,
-                "noGRPCHeader": noGRPCHeader,
-            }
-            if xmux:
-                extra["xmux"] = xmux
             payload["type"] = mode
-            if keepAlivePeriod > 0:
-                extra["keepAlivePeriod"] = keepAlivePeriod
-            payload["extra"] = extra
+            payload["extra"] = _xhttp_extra(
+                mode=mode,
+                sc_max_each_post_bytes=sc_max_each_post_bytes,
+                sc_max_concurrent_posts=sc_max_concurrent_posts,
+                sc_min_posts_interval_ms=sc_min_posts_interval_ms,
+                x_padding_bytes=x_padding_bytes,
+                noGRPCHeader=noGRPCHeader,
+                keepAlivePeriod=keepAlivePeriod,
+                xmux=xmux,
+                as_json=False,
+            )
 
         elif net == "ws":
             if heartbeatPeriod:
@@ -407,18 +442,16 @@ class V2rayShareLink(str):
             payload["path"] = path
             payload["host"] = host
             payload["mode"] = mode
-            extra = {
-                "scMaxEachPostBytes": sc_max_each_post_bytes,
-                "scMaxConcurrentPosts": sc_max_concurrent_posts,
-                "scMinPostsIntervalMs": sc_min_posts_interval_ms,
-                "xPaddingBytes": x_padding_bytes,
-                "noGRPCHeader": noGRPCHeader,
-            }
-            if keepAlivePeriod > 0:
-                extra["keepAlivePeriod"] = keepAlivePeriod
-            if xmux:
-                extra["xmux"] = xmux
-            payload["extra"] = json.dumps(extra)
+            payload["extra"] = _xhttp_extra(
+                mode=mode,
+                sc_max_each_post_bytes=sc_max_each_post_bytes,
+                sc_max_concurrent_posts=sc_max_concurrent_posts,
+                sc_min_posts_interval_ms=sc_min_posts_interval_ms,
+                x_padding_bytes=x_padding_bytes,
+                noGRPCHeader=noGRPCHeader,
+                keepAlivePeriod=keepAlivePeriod,
+                xmux=xmux,
+            )
 
         elif net == 'kcp':
             payload['seed'] = path
@@ -525,18 +558,16 @@ class V2rayShareLink(str):
             payload["path"] = path
             payload["host"] = host
             payload["mode"] = mode
-            extra = {
-                "scMaxEachPostBytes": sc_max_each_post_bytes,
-                "scMaxConcurrentPosts": sc_max_concurrent_posts,
-                "scMinPostsIntervalMs": sc_min_posts_interval_ms,
-                "xPaddingBytes": x_padding_bytes,
-                "noGRPCHeader": noGRPCHeader,
-            }
-            if keepAlivePeriod > 0:
-                extra["keepAlivePeriod"] = keepAlivePeriod
-            if xmux:
-                extra["xmux"] = xmux
-            payload["extra"] = json.dumps(extra)
+            payload["extra"] = _xhttp_extra(
+                mode=mode,
+                sc_max_each_post_bytes=sc_max_each_post_bytes,
+                sc_max_concurrent_posts=sc_max_concurrent_posts,
+                sc_min_posts_interval_ms=sc_min_posts_interval_ms,
+                x_padding_bytes=x_padding_bytes,
+                noGRPCHeader=noGRPCHeader,
+                keepAlivePeriod=keepAlivePeriod,
+                xmux=xmux,
+            )
 
         elif net == 'quic':
             payload['key'] = path

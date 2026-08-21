@@ -448,6 +448,18 @@ class UserResponse(User):
     admin: Optional[Admin] = None
     model_config = ConfigDict(from_attributes=True)
 
+    @field_validator("username")
+    @classmethod
+    def validate_username(cls, v):
+        """Read stored usernames as-is; the format rule only guards writes.
+
+        The Telegram admin flow has always accepted dots, ``@`` and hyphens
+        (``handlers/admin.py``), so such rows exist. Re-checking the create-time
+        rule on the way out turned every read of those accounts into a 500 —
+        including ``/sub``, which left them unable to connect at all.
+        """
+        return v
+
     @field_serializer("family_controls")
     def serialize_family_controls(self, value: Optional[dict]) -> Optional[dict]:
         if not value:

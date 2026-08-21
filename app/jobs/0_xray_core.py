@@ -307,6 +307,16 @@ def core_health_check():
         if _probe_main_core_api():
             _api_unreachable_streak = 0
             _clear_bind_failure_backoff()
+            try:
+                from app.sync.core_status import note_core
+
+                note_core(
+                    True,
+                    str(getattr(xray.core, "version", "") or ""),
+                    getattr(xray.core, "started_at", None),
+                )
+            except Exception:
+                pass
         else:
             _api_unreachable_streak += 1
             if _api_unreachable_streak < CORE_HEALTH_API_FAILURE_THRESHOLD:

@@ -47,7 +47,12 @@ def apply_tls_status_to_config(cfg, status: Dict[str, Any], *, le_domain: Option
 
 
 def refresh_node_tls(db, dbnode) -> Dict[str, Any]:
-    """Poll the node for cert metadata and update the DB row."""
+    """Poll the node for cert metadata and update the DB row.
+
+    An unreadable probe (node down, RPyC hiccup) is never persisted: dropping
+    ``tls_trusted`` back to false would re-add ``insecure=1`` to every share
+    link on that node until the next successful poll.
+    """
     from app import xray
     from app.db import crud
 
@@ -57,6 +62,8 @@ def refresh_node_tls(db, dbnode) -> Dict[str, Any]:
     cert_path = cfg.certificate_path or "/var/lib/shahkar-node/tls/cert.pem"
     node_object = xray.nodes.get(dbnode.id)
     status = fetch_remote_tls_status(node_object, cert_path)
+    if not status.get("present") and cfg.tls_issuer:
+        return status
     apply_tls_status_to_config(cfg, status, le_domain=cfg.tls_le_domain or cfg.sni)
     db.commit()
     db.refresh(cfg)

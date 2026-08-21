@@ -411,6 +411,108 @@ def _is_catch_all_network_rule(rule: dict[str, Any]) -> bool:
     )
 
 
+def _is_bootstrap_direct_rule(rule: dict[str, Any]) -> bool:
+    """Cloudflare / DNS / LAN DIRECT escapes that must stay ahead of WARP."""
+    if str(rule.get("outboundTag") or "") != "DIRECT":
+        return False
+    if _is_catch_all_network_rule(rule):
+        return False
+    domains = rule.get("domain") or []
+    if isinstance(domains, list) and any(
+        DEFAULT_WARP_ENDPOINT_HOST in str(d) for d in domains
+    ):
+        return True
+    ips = rule.get("ip") or []
+    if isinstance(ips, list) and any("geoip:private" in str(i) for i in ips):
+        return True
+    return str(rule.get("port") or "") == "53"
+
+
+def insert_rule_before_catchall(
+    rules: list[dict[str, Any]],
+    rule: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Place a specific rule ahead of catch-all ``tcp,udp`` DIRECT/WARP.
+
+    Xray first-match-wins. Appending inbound→WARP after catch-all DIRECT
+    silently sends every inbound to DIRECT — the usual dashboard pitfall.
+    """
+    out = list(rules)
+    if _is_catch_all_network_rule(rule):
+        out.append(rule)
+        return out
+    for i, existing in enumerate(out):
+        if isinstance(existing, dict) and _is_catch_all_network_rule(existing):
+            out.insert(i, rule)
+            return out
+    out.append(rule)
+    return out
+
+
+def _unshadow_warp_rules(rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep inbound/domain WARP rules in front of catch-all DIRECT.
+
+    A catch-all WARP (full-exit) also drops a later/earlier catch-all DIRECT
+    so the default exit is actually WARP.
+    """
+    api: list[dict[str, Any]] = []
+    bootstrap: list[dict[str, Any]] = []
+    specific_warp: list[dict[str, Any]] = []
+    specific_other: list[dict[str, Any]] = []
+    catch_warp: list[dict[str, Any]] = []
+    catch_direct: list[dict[str, Any]] = []
+    for rule in rules:
+        if not isinstance(rule, dict):
+            continue
+        ot = str(rule.get("outboundTag") or "")
+        balancer = str(rule.get("balancerTag") or "")
+        if _is_api_inbound_rule(rule):
+            api.append(rule)
+        elif ot == "DIRECT" and _is_catch_all_network_rule(rule):
+            catch_direct.append(rule)
+        elif is_warp_tag(ot) and _is_catch_all_network_rule(rule):
+            catch_warp.append(rule)
+        elif _is_bootstrap_direct_rule(rule):
+            bootstrap.append(rule)
+        elif is_warp_tag(ot) or balancer == SENSITIVE_WARP_BALANCER_TAG:
+            specific_warp.append(rule)
+        else:
+            specific_other.append(rule)
+    if catch_warp:
+        catch_direct = []
+    return _dedupe_rules(
+        api + bootstrap + specific_warp + specific_other + catch_warp + catch_direct
+    )
+
+
+def _sanitize_direct_outbound(payload: dict[str, Any]) -> dict[str, Any]:
+    """Drop freedom ``finalRules`` that would black-hole public DIRECT traffic.
+
+    An allow-only ``geoip:private`` list breaks Cloudflare/DNS bypass and the
+    WARP handshake path when those flows are routed to DIRECT.
+    """
+    outbounds = list(payload.get("outbounds") or [])
+    changed = False
+    for ob in outbounds:
+        if not isinstance(ob, dict):
+            continue
+        if str(ob.get("tag") or "") != "DIRECT" or str(ob.get("protocol") or "") != "freedom":
+            continue
+        settings = ob.get("settings")
+        if not isinstance(settings, dict) or "finalRules" not in settings:
+            continue
+        settings = dict(settings)
+        settings.pop("finalRules", None)
+        if settings:
+            ob["settings"] = settings
+        else:
+            ob.pop("settings", None)
+        changed = True
+    if changed:
+        payload["outbounds"] = outbounds
+    return payload
+
+
 def _has_warp_default_rule(rules: list[dict[str, Any]], tag: str = "warp") -> bool:
     for rule in rules:
         if str(rule.get("outboundTag") or "") == tag and _is_catch_all_network_rule(rule):
@@ -676,7 +778,10 @@ def apply_warp_safe_routing(payload: dict[str, Any]) -> dict[str, Any]:
         rule["outboundTag"] = primary
         rules.append(rule)
 
-    routing["rules"] = _dedupe_rules(rules)
+    routing["rules"] = _unshadow_warp_rules(_dedupe_rules(rules))
+    data = _sanitize_direct_outbound(data)
+    if _has_warp_default_rule(routing["rules"], primary):
+        data = apply_warp_dns_for_exit(data)
     return pin_api_inbound_route(data)
 
 

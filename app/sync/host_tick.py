@@ -128,6 +128,7 @@ def run_loop() -> None:
     client = None
     hist: list[tuple[float, int, int]] = []
     last_pct = 0.0
+    have_pct = False
     cores = read_cpu_cores()
     while True:
         t0 = time.monotonic()
@@ -140,11 +141,13 @@ def run_loop() -> None:
                 hist, pct = cpu_percent_from_hist(hist, times[0], times[1], t0)
                 if pct is not None:
                     last_pct = pct
+                    have_pct = True
             host = {
-                "cpu_usage": float(last_pct),
                 "cpu_cores": int(cores),
                 "t": time.time(),
             }
+            if have_pct:
+                host["cpu_usage"] = float(last_pct)
             if mem is not None:
                 total, avail = mem
                 host["mem_total"] = int(total)

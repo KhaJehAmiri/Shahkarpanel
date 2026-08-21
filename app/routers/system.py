@@ -45,12 +45,11 @@ def get_system_stats(
         from app.sync.live import (
             load_snapshot,
             scope_snapshot,
-            snapshot_fresh,
             snapshot_to_system_stats,
         )
 
         snap = load_snapshot()
-        if snapshot_fresh(snap):
+        if snap:
             scoped = scope_snapshot(
                 snap,
                 admin=admin,
@@ -64,8 +63,32 @@ def get_system_stats(
                 ),
             )
             stats = snapshot_to_system_stats(scoped)
+            updates: dict = {}
+            if cached:
+                prev = cached[1]
+                if not int(getattr(stats, "xray_uptime", 0) or 0) and int(getattr(prev, "xray_uptime", 0) or 0):
+                    updates["xray_uptime"] = prev.xray_uptime
+                    updates["node_uptime"] = stats.node_uptime or prev.node_uptime
+                if not float(getattr(stats, "cpu_usage", 0) or 0) and float(getattr(prev, "cpu_usage", 0) or 0):
+                    updates["cpu_usage"] = prev.cpu_usage
+            if not int((updates.get("xray_uptime") if "xray_uptime" in updates else getattr(stats, "xray_uptime", 0)) or 0):
+                try:
+                    from app.sync.core_status import snapshot as core_snap
+
+                    up, _node, started, _ver = core_snap()
+                    if started and up:
+                        updates["xray_uptime"] = up
+                        updates["node_uptime"] = stats.node_uptime or up
+                except Exception:
+                    pass
+            if updates:
+                stats = stats.model_copy(update=updates)
             _system_stats_cache[cache_key] = (now, stats)
             return stats
+        # Snapshot missing: keep the last good payload instead of API-local
+        # zeros (API process does not run Xray, so fallback looks like a restart).
+        if cached:
+            return cached[1]
     except Exception:
         pass
 
@@ -76,9 +99,21 @@ def get_system_stats(
 
     xray_started_at = getattr(xray.core, "started_at", None)
     xray_uptime = int(time.time() - xray_started_at) if xray_started_at else 0
+    if not xray_uptime:
+        try:
+            from app.sync.core_status import snapshot as core_snap
+
+            up, _node, started, _ver = core_snap()
+            if started and up:
+                xray_uptime = up
+        except Exception:
+            pass
     # API process has an empty xray.nodes map; node_uptime comes from the
     # worker snapshot above. Fallback stays 0 rather than walking a lie.
-    node_uptime = 0
+    node_uptime = xray_uptime if xray_uptime else 0
+    cpu_percent = float(cpu.percent or 0)
+    if not cpu_percent and cached:
+        cpu_percent = float(getattr(cached[1], "cpu_usage", 0) or 0)
     scope_admin = dbadmin if not admin.is_sudo else None
     counts = crud.get_user_status_counts(db, admin=scope_admin)
     by_status = counts.get("by_status") or {}
@@ -92,7 +127,7 @@ def get_system_stats(
         disk_total=disk.total,
         disk_used=disk.used,
         cpu_cores=cpu.cores,
-        cpu_usage=cpu.percent,
+        cpu_usage=cpu_percent,
         total_user=counts.get("total") or 0,
         online_users=online_users,
         users_active=by_status.get(UserStatus.active.value, 0),

@@ -9,6 +9,18 @@ from urllib import parse
 
 _NodeT = TypeVar("_NodeT")
 
+# Node sing-box TLS is a self-signed cert with no SAN, so a client that verifies
+# it fails the handshake and then sits there "connected" with nothing flowing —
+# no traffic billed, ``online_at`` never set. Clients disagree on the skip-verify
+# key, and Karing only honoured ``allow_insecure``: TUIC (which already sent it)
+# worked while Hysteria2 and AnyTLS silently did not. Send every spelling in use.
+_INSECURE_QUERY = {
+    "insecure": "1",
+    "allow_insecure": "1",
+    "allowInsecure": "1",
+    "skip-cert-verify": "1",
+}
+
 
 def filter_singbox_client_entry_nodes(db, nodes: Iterable[_NodeT]) -> List[_NodeT]:
     """Publish every node that has sing-box protocols enabled.
@@ -60,7 +72,7 @@ def hysteria2_link(
     """Build a ``hysteria2://`` share link."""
     query = {}
     if insecure:
-        query["insecure"] = "1"
+        query.update(_INSECURE_QUERY)
     if sni:
         query["sni"] = sni
     if obfs_password:
@@ -88,16 +100,15 @@ def tuic_link(
     insecure: bool = True,
 ) -> str:
     """Build a ``tuic://`` share link."""
-    # TUIC has no official URI spec; clients disagree on TLS skip flags (insecure vs
-    # allow_insecure) and often expect udp_relay_mode + alpn for sing-box peers.
+    # TUIC has no official URI spec; clients expect udp_relay_mode + alpn for
+    # sing-box peers.
     query = {
         "congestion_control": congestion_control,
         "udp_relay_mode": "native",
         "alpn": "h3",
     }
     if insecure:
-        query["insecure"] = "1"
-        query["allow_insecure"] = "1"
+        query.update(_INSECURE_QUERY)
     if sni:
         query["sni"] = sni
     q = f"?{parse.urlencode(query)}"
@@ -118,7 +129,7 @@ def anytls_link(
     """Build an ``anytls://`` share link (password in auth segment)."""
     query = {}
     if insecure:
-        query["insecure"] = "1"
+        query.update(_INSECURE_QUERY)
     if sni:
         query["sni"] = sni
     q = f"?{parse.urlencode(query)}" if query else ""

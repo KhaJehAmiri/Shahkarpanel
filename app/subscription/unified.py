@@ -17,6 +17,7 @@ from app.subscription.quic import (
     user_hysteria2_link,
     user_tuic_link,
 )
+from app.subscription.node_eligibility import serviceable_nodes
 from app.subscription.region_display import node_config_remark
 from app.subscription.wireguard import node_endpoint, user_config
 
@@ -316,10 +317,7 @@ def _append_singbox(user: "UserResponse", config_text: str) -> str:
     before = len(outbounds)
 
     with GetDB() as db:
-        nodes = [
-            n for n in crud.get_nodes(db)
-            if n.status == NodeStatus.connected
-        ]
+        nodes = serviceable_nodes(crud.get_nodes(db))
         wg_nodes = [n for n in nodes if n.core_kind == "wireguard" or getattr(n, "wireguard", None)]
         sb_nodes = filter_singbox_client_entry_nodes(
             db, [n for n in nodes if getattr(n, "singbox", None)]
@@ -492,7 +490,7 @@ def _append_clash_meta(user: "UserResponse", config_text: str) -> str:
     before = len(proxies)
 
     with GetDB() as db:
-        nodes = [n for n in crud.get_nodes(db) if n.status == NodeStatus.connected]
+        nodes = serviceable_nodes(crud.get_nodes(db))
         sb_nodes = filter_singbox_client_entry_nodes(
             db, [n for n in nodes if getattr(n, "singbox", None)]
         )
@@ -663,7 +661,7 @@ def _append_v2ray_json(user: "UserResponse", config_text: str) -> str:
     with GetDB() as db:
         from app.wireguard.xray_native import finalmask_client_mtu
 
-        nodes = [n for n in crud.get_nodes(db) if n.status == NodeStatus.connected]
+        nodes = serviceable_nodes(crud.get_nodes(db))
         wg_nodes = [n for n in nodes if n.core_kind == "wireguard" or getattr(n, "wireguard", None)]
         exports = _collect_wireguard_exports(user, wg_nodes, prefer_xray_native=True)
         if not exports:
@@ -761,7 +759,7 @@ def collect_unified_share_links(
     skip = {p.lower() for p in (exclude_protocols or set())}
     links: list[str] = []
     with GetDB() as db:
-        nodes = [n for n in crud.get_nodes(db) if n.status == NodeStatus.connected]
+        nodes = serviceable_nodes(crud.get_nodes(db))
         wg_nodes = [n for n in nodes if n.core_kind == "wireguard" or getattr(n, "wireguard", None)]
         sb_nodes = filter_singbox_client_entry_nodes(
             db, [n for n in nodes if getattr(n, "singbox", None)]

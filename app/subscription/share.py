@@ -234,6 +234,37 @@ def collect_xray_share_links(
     return links
 
 
+def _share_link_scheme(link: str) -> str:
+    scheme = (link.split("://", 1)[0] or "").lower()
+    if scheme == "hy2":
+        return "hysteria2"
+    return scheme
+
+
+def _share_link_network(link: str) -> str:
+    """V2Ray ``type=`` / ``net=`` transport, lowercased (``xhttp``, ``ws``, …)."""
+    if "?" not in link:
+        return ""
+    query = link.split("?", 1)[1].split("#", 1)[0]
+    for part in query.split("&"):
+        key, _, val = part.partition("=")
+        if key in ("type", "net") and val:
+            return val.lower()
+    return ""
+
+
+def _link_is_excluded(link: str, skip: set[str]) -> bool:
+    scheme = _share_link_scheme(link)
+    if scheme in skip:
+        return True
+    net = _share_link_network(link)
+    if net and net in skip:
+        return True
+    if "xhttp" in skip and net in ("xhttp", "splithttp"):
+        return True
+    return False
+
+
 def collect_v2ray_share_links(
     user: "UserResponse",
     *,
@@ -241,7 +272,12 @@ def collect_v2ray_share_links(
     reverse: bool = False,
     exclude_protocols: set[str] | None = None,
 ) -> list[str]:
-    """All share URIs including QUIC/WG (for display endpoints that tolerate mixed schemes)."""
+    """All share URIs including QUIC/WG (for display endpoints that tolerate mixed schemes).
+
+    ``exclude_protocols`` matches URI schemes (``vless``, ``wireguard``, …)
+    *and* V2Ray transports (``xhttp``). Used for clients that cannot speak a
+    protocol (v2box vs Hysteria2), not for Karing.
+    """
     links = collect_xray_share_links(
         user, inbound_filter=inbound_filter, reverse=reverse
     )
@@ -250,6 +286,9 @@ def collect_v2ray_share_links(
     links.extend(
         collect_unified_share_links(user, exclude_protocols=exclude_protocols)
     )
+    skip = {p.lower() for p in (exclude_protocols or set())}
+    if skip:
+        links = [l for l in links if not _link_is_excluded(l, skip)]
     return links
 
 
@@ -535,6 +574,7 @@ def _is_template_host(host: dict) -> bool:
 
 
 def _export_hosts(tag: str, hosts: list[dict], node_id: int | None = None) -> list[dict]:
+    from app.subscription.billable_hosts import host_is_billable
     from app.utils.node_ids import host_visible_on_node
 
     active = []
@@ -544,6 +584,8 @@ def _export_hosts(tag: str, hosts: list[dict], node_id: int | None = None) -> li
         # Subscription export (node_id=None) must include node-bound hosts; fan-out
         # happens later in _multinode_variants. Per-node config builds pass node_id.
         if node_id is not None and not host_visible_on_node(h.get("node_ids"), node_id):
+            continue
+        if node_id is None and not host_is_billable(h):
             continue
         active.append(h)
     if len(active) <= 1:

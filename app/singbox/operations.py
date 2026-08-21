@@ -276,3 +276,108 @@ def sync_user_change() -> None:
         timer.daemon = True
         _sb_sync_timer = timer
         timer.start()
+
+
+def user_identifiers(dbuser=None, payload=None) -> list:
+    """Every Clash/sing-box name a live session might be tagged with."""
+    payload = dict(payload or {})
+    out: List[str] = []
+    uid = getattr(dbuser, "id", None) or payload.get("user_id")
+    username = getattr(dbuser, "username", None) or payload.get("username")
+    email = payload.get("email")
+    if uid and username:
+        out.append(f"{uid}.{username}")
+    if email:
+        out.append(str(email))
+    if username:
+        out.append(str(username))
+    proxies = list(getattr(dbuser, "proxies", None) or [])
+    if not proxies:
+        proxies = list(payload.get("proxies") or [])
+    for proxy in proxies:
+        settings = getattr(proxy, "settings", None)
+        if settings is None and isinstance(proxy, dict):
+            settings = proxy.get("settings") or {}
+        settings = dict(settings or {})
+        for key in ("password", "uuid", "id"):
+            val = settings.get(key)
+            if val:
+                out.append(str(val))
+    seen = set()
+    uniq: List[str] = []
+    for name in out:
+        text = str(name).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        uniq.append(text)
+    return uniq
+
+
+def revoke_singbox_users(identifiers) -> int:
+    """Kick live Hy2/TUIC/AnyTLS sessions and strip the users from node configs.
+
+    Does **not** push the full 8k-user spec. Disable used to sit behind that
+    apply, so a disabled client stayed connected until the next successful
+    fleet sync (which was itself timing out).
+    """
+    names = [str(n).strip() for n in (identifiers or []) if str(n).strip()]
+    if not names:
+        return 0
+    from app.runtime_role import delegate_to_worker
+
+    if delegate_to_worker("user_change"):
+        return 0
+    with GetDB() as session:
+        nodes = crud.get_singbox_nodes(session)
+        node_ids = [int(n.id) for n in nodes if getattr(n, "singbox", None) is not None]
+    ok = 0
+    for nid in node_ids:
+        node_object = _node_object(nid, connect=False)
+        if not _node_channel_live(node_object):
+            continue
+        client = client_for_node(node_object)
+        if client is None or not hasattr(client, "revoke"):
+            continue
+        try:
+            result = client.revoke(names) or {}
+            if result.get("unsupported"):
+                continue
+            ok += 1
+            logger.info(
+                "sing-box revoke node %s kicked=%s removed=%s",
+                nid,
+                result.get("kicked"),
+                result.get("removed"),
+            )
+        except Exception as exc:
+            logger.warning("sing-box revoke on node %s failed: %s", nid, exc)
+    return ok
+
+
+def unrevoke_singbox_users(identifiers) -> int:
+    """Allow a previously disabled user back into the next sing-box apply."""
+    names = [str(n).strip() for n in (identifiers or []) if str(n).strip()]
+    if not names:
+        return 0
+    from app.runtime_role import delegate_to_worker
+
+    if delegate_to_worker("user_change"):
+        return 0
+    with GetDB() as session:
+        nodes = crud.get_singbox_nodes(session)
+        node_ids = [int(n.id) for n in nodes if getattr(n, "singbox", None) is not None]
+    ok = 0
+    for nid in node_ids:
+        node_object = _node_object(nid, connect=False)
+        if not _node_channel_live(node_object):
+            continue
+        client = client_for_node(node_object)
+        if client is None or not hasattr(client, "unrevoke"):
+            continue
+        try:
+            client.unrevoke(names)
+            ok += 1
+        except Exception as exc:
+            logger.warning("sing-box unrevoke on node %s failed: %s", nid, exc)
+    return ok

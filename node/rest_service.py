@@ -93,6 +93,8 @@ class Service(object):
         self.router.add_api_route("/singbox/apply", self.singbox_apply, methods=["POST"])
         self.router.add_api_route("/singbox/transfer", self.singbox_transfer, methods=["POST"])
         self.router.add_api_route("/singbox/down", self.singbox_down, methods=["POST"])
+        self.router.add_api_route("/singbox/revoke", self.singbox_revoke, methods=["POST"])
+        self.router.add_api_route("/singbox/unrevoke", self.singbox_unrevoke, methods=["POST"])
         self.router.add_api_route("/singbox/tls/status", self.singbox_tls_status, methods=["POST"])
         self.router.add_api_route("/xray/hot-replace-inbounds", self.xray_hot_replace_inbounds, methods=["POST"])
         self.router.add_api_route("/xray/upgrade", self.xray_upgrade, methods=["POST"])
@@ -624,11 +626,11 @@ class Service(object):
         if not self.singbox.available():
             raise HTTPException(status_code=503, detail="sing-box binary not installed on node")
         try:
-            self.singbox.apply(sb_spec)
+            self.singbox.schedule_apply(sb_spec)
         except Exception as exc:
             logger.error(f"Failed to apply sing-box spec: {exc}")
             raise HTTPException(status_code=503, detail=str(exc))
-        return {"inbounds": len(sb_spec.inbounds), "running": self.singbox.is_running()}
+        return {"inbounds": len(sb_spec.inbounds), "queued": True}
 
     def singbox_transfer(self, session_id: UUID = Body(embed=True)):
         self.match_session_id(session_id)
@@ -636,6 +638,30 @@ class Service(object):
             return {"transfer": self.singbox.get_transfer()}
         except Exception as exc:
             logger.error(f"Failed to read sing-box transfer: {exc}")
+            raise HTTPException(status_code=503, detail=str(exc))
+
+    def singbox_revoke(
+        self,
+        session_id: UUID = Body(embed=True),
+        names: list = Body(embed=True, default=[]),
+    ):
+        self.match_session_id(session_id)
+        try:
+            return self.singbox.revoke_users(names or [])
+        except Exception as exc:
+            logger.error(f"Failed to revoke sing-box users: {exc}")
+            raise HTTPException(status_code=503, detail=str(exc))
+
+    def singbox_unrevoke(
+        self,
+        session_id: UUID = Body(embed=True),
+        names: list = Body(embed=True, default=[]),
+    ):
+        self.match_session_id(session_id)
+        try:
+            return {"cleared": self.singbox.unrevoke_users(names or [])}
+        except Exception as exc:
+            logger.error(f"Failed to unrevoke sing-box users: {exc}")
             raise HTTPException(status_code=503, detail=str(exc))
 
     def singbox_down(self, session_id: UUID = Body(embed=True)):

@@ -81,6 +81,28 @@ def _mark_agent_hot_unsupported(node_id: int) -> None:
     _agent_hot_checked_at[nid] = time.time()
 
 
+def _node_backoff_left(node_id: int) -> float:
+    """Seconds left on a node's connect backoff; 0 when it can take an apply.
+
+    A node in backoff cannot accept a hot-replace, and counting that as an
+    apply failure keeps every dirty slot pending forever — one dead relay then
+    stops new peers from landing on the healthy nodes too, and the retry timer
+    below spins hard enough to starve the usage collector of RPyC calls. The
+    node reconciles from its own cursor via ``on_node_connected`` when it comes
+    back, so skipping it here loses nothing.
+    """
+    try:
+        from app import xray as xray_pkg
+
+        node_obj = xray_pkg.nodes.get(int(node_id))
+        if node_obj is None or getattr(node_obj, "connected", False):
+            return 0.0
+        nxt = float(getattr(node_obj, "_next_connect_attempt", 0.0) or 0.0)
+        return max(0.0, nxt - time.time())
+    except Exception:
+        return 0.0
+
+
 def _full_restart_allowed(node_id: int) -> bool:
     last = _last_full_restart_at.get(int(node_id), 0.0)
     return (time.time() - last) >= FULL_RESTART_COOLDOWN_SEC
@@ -116,6 +138,12 @@ COLD_CACHE_SLOT_FLOOR = 40
 # then the 20s retry makes bulk-create Finalmask look "minutes late"). Newest
 # slots (the accounts the customer just made) go first.
 HOT_REPLACE_SLOT_BUDGET = 2
+# A failed pass used to reschedule itself in 0.1s forever. Every retry dialed
+# each node again, so an unreachable relay turned the loop into an RPyC hog and
+# ``xray_users_transfer`` (Finalmask billing) started returning "node RPyC busy".
+RETRY_BACKOFF_START_SEC = 1.0
+RETRY_BACKOFF_MAX_SEC = 30.0
+_retry_backoff_sec = RETRY_BACKOFF_START_SEC
 
 _lock = threading.Lock()
 _timer: Optional[threading.Timer] = None
@@ -669,6 +697,7 @@ def _run_finalmask_xray_reload(*, urgent: bool = False) -> bool:
 
     dirty: Set[int] = set()
     apply_failed: List[int] = []
+    skipped_unreachable: List[Tuple[int, float]] = []
     try:
         from app.db import GetDB
         from app.wireguard.finalmask_shard import ensure_finalmask_slots
@@ -692,22 +721,40 @@ def _run_finalmask_xray_reload(*, urgent: bool = False) -> bool:
             peers = peer_cache.get_peers(db)
             for dbnode in nodes:
                 node_by_id[int(dbnode.id)] = dbnode
+                backoff_left = _node_backoff_left(dbnode.id)
+                if backoff_left > 0:
+                    skipped_unreachable.append((int(dbnode.id), round(backoff_left, 1)))
+                    continue
                 mode, changed, _ = _plan_node_reload(db, dbnode, peers, dirty_slots=dirty or None)
                 if mode != "noop":
                     plans.append((dbnode.id, mode, changed))
 
+        if skipped_unreachable:
+            logger.info(
+                "Finalmask reload: skipping unreachable node(s) %s — they resync "
+                "from their own cursor on reconnect",
+                skipped_unreachable,
+            )
+
+        unreachable_ids = {nid for nid, _left in skipped_unreachable}
         if not plans:
-            if dirty:
+            reachable = [n for nid, n in node_by_id.items() if nid not in unreachable_ids]
+            if dirty and reachable:
                 # Fingerprint cache already matches DB (often a false "seed"
                 # commit after keep-live). Still push the persisted dirty slots.
-                for dbnode in node_by_id.values():
+                for dbnode in reachable:
                     plans.append((int(dbnode.id), "hot", set(dirty)))
                 logger.info(
                     "Finalmask reload: fingerprint cache clean but dirty slots %s — forcing live apply",
                     sorted(dirty),
                 )
             else:
-                logger.debug("Finalmask reload skipped: peer membership unchanged")
+                if dirty:
+                    # Every Finalmask node is in backoff; keep the slots so the
+                    # peers land once one of them answers again.
+                    mark_finalmask_slots_dirty(dirty)
+                else:
+                    logger.debug("Finalmask reload skipped: peer membership unchanged")
                 return True
 
         # Extreme churn across many nodes: one restart each can be cheaper than
@@ -953,6 +1000,7 @@ def _run_finalmask_xray_reload(*, urgent: bool = False) -> bool:
         mark_finalmask_slots_dirty(dirty)
         apply_failed.append(-1)
     finally:
+        global _retry_backoff_sec
         if apply_failed:
             logger.warning(
                 "Finalmask reload incomplete on nodes %s — keeping dirty slots %s",
@@ -960,10 +1008,15 @@ def _run_finalmask_xray_reload(*, urgent: bool = False) -> bool:
                 sorted(dirty),
             )
             mark_finalmask_slots_dirty(dirty)
+            retry_in = _retry_backoff_sec
+            _retry_backoff_sec = min(RETRY_BACKOFF_MAX_SEC, _retry_backoff_sec * 2)
+        else:
+            retry_in = 0.1
+            _retry_backoff_sec = RETRY_BACKOFF_START_SEC
         with _lock:
             _reload_in_flight = False
             if _dirty_slots:
-                timer = threading.Timer(0.1, _run_finalmask_xray_reload)
+                timer = threading.Timer(retry_in, _run_finalmask_xray_reload)
                 timer.daemon = True
                 _timer = timer
                 timer.start()

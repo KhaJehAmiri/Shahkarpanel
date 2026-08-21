@@ -24,9 +24,12 @@ def build_self_signed_command(
         "  || (yum install -y openssl 2>/dev/null) "
         "  || (dnf install -y openssl 2>/dev/null); "
         "fi; "
+        # Without a SAN the cert matches nothing ("certificate is not valid for
+        # any names"), so a client that verifies at all rejects the handshake
+        # and then sits there connected with no traffic.
         "openssl req -x509 -nodes -newkey rsa:2048 "
         f"-keyout \"$KEY\" -out \"$CERT\" -days {int(days)} "
-        "-subj \"/CN=$SNI\"; "
+        "-subj \"/CN=$SNI\" -addext \"subjectAltName=DNS:$SNI\"; "
         "chmod 644 \"$CERT\"; chmod 600 \"$KEY\"; "
         "docker restart shahkarnode >/dev/null 2>&1 || true; "
         "echo SELF_SIGNED"

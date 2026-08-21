@@ -178,7 +178,23 @@ def build_node_spec(cfg: dict, users: List[SBUser]) -> dict:
 
 
 def build_name_user_map(users: List[SBUser]) -> Dict[str, int]:
-    return {u.name: u.user_id for u in users}
+    """Map every identifier sing-box/Clash might put on a counter to ``User.id``.
+
+    The planner writes ``{id}.{username}``. Clash metadata and some v2ray-api
+    builds report only the username, UUID, or the auth password (Karing / Hy2
+    clients); those bytes used to be dropped (connected, not billed, never
+    online).
+    """
+    out: Dict[str, int] = {}
+    for u in users:
+        out[u.name] = u.user_id
+        if u.username:
+            out[str(u.username)] = u.user_id
+        if u.uuid:
+            out[str(u.uuid)] = u.user_id
+        if u.password:
+            out[str(u.password)] = u.user_id
+    return out
 
 
 def tuic_port_for_user(base_port: int, speed_limit_up, speed_limit_down) -> int:

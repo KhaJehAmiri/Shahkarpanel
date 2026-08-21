@@ -249,6 +249,9 @@ def _handle(msg: str) -> None:
     if kind == "restart_core":
         from app import xray
 
+        # API writes XRAY_JSON then wakes us; reload so routing/outbound
+        # edits are not applied from the worker's stale in-memory copy.
+        xray.refresh_for_subscription()
         xray.core.restart(xray.config.include_db_users(), force=True)
         return
     if kind == "start_core":

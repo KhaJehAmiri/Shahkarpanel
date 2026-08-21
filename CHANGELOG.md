@@ -1,3 +1,7 @@
+## 0.22.96
+
+- Usage job returns immediately (non-blocking lock + background tick) so the 5s scheduler slot is never held; billing writes are time-capped so ticks do not stack behind a slow upsert.
+
 ## 0.22.95
 
 - Actually ship the hard wall-clock timeout on ``record_user_usages`` (0.22.94 commit raced the edit). Scheduler slot releases every ~4.8s so traffic/online record every 5s.

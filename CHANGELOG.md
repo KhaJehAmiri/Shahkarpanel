@@ -1,3 +1,7 @@
+## 0.22.94
+
+- Hard wall-clock timeout on the whole usage job (~4.8s) so the scheduler slot is always released every 5s even when DB billing is slow; always commit collected traffic.
+
 ## 0.22.93
 
 - Always commit collected traffic even when the 5s budget is tight; drop hot-path stats re-adopt; publish map_rpc results immediately so timeouts still bill.

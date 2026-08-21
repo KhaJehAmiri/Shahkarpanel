@@ -937,10 +937,6 @@ def record_user_usages():
     except Exception:
         pass
     api_params, usage_coefficient, protocol_breakdown = collect_user_usage_params()
-    if _over_budget("collect"):
-        elapsed = time.monotonic() - started
-        logger.info("record_user_usages finished in %.1fs", elapsed)
-        return
     uids = {int(p["uid"]) for params in api_params.values() for p in params}
     # Presence first, before any billing write can stall this tick. This is a
     # secondary source: app.presence keeps online_at fresh on its own thread.
@@ -948,15 +944,9 @@ def record_user_usages():
         bump_users_online_at(uids)
     except Exception:
         logger.exception("online_at bump failed")
-    if uids:
-        from app.quota import enforce_disconnect_for_non_billable
-
-        # Pass db=None so the enforce helper opens a short query session and
-        # never holds a transaction across hot-disconnect / core-restart I/O.
-        enforce_disconnect_for_non_billable(None, uids)
+    # Never discard collected traffic on budget — always commit what we have.
     billable_ids: set = set()
     with GetDB() as db:
-        uids = {int(p["uid"]) for params in api_params.values() for p in params}
         if uids:
             billable_ids = {
                 row[0]
@@ -968,6 +958,16 @@ def record_user_usages():
     record_overage_usages(api_params, usage_coefficient)
     if billable_ids:
         record_protocol_breakdown(protocol_breakdown, billable_ids)
+
+    if uids and not _over_budget("billing"):
+        from app.quota import enforce_disconnect_for_non_billable
+
+        # Pass db=None so the enforce helper opens a short query session and
+        # never holds a transaction across hot-disconnect / core-restart I/O.
+        try:
+            enforce_disconnect_for_non_billable(None, uids)
+        except Exception:
+            logger.exception("non-billable disconnect failed")
 
     if _over_budget("billing"):
         elapsed = time.monotonic() - started

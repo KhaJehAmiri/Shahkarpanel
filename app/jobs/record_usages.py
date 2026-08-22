@@ -866,149 +866,111 @@ def _collect_user_usage_params_body(*, deadline: float, progress: dict | None = 
     if _timed_out("xray"):
         return api_params, usage_coefficient, protocol_breakdown
 
-    # Secondary collectors in parallel so no protocol is starved when the 5s
-    # budget is tight (sequential order used to skip sing-box / WG entirely).
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    # Sequential, sing-box FIRST. Parallel ThreadPoolExecutor looked attractive
+    # but ``with Executor`` waits for stragglers on exit after as_completed
+    # timeout — abandoned collect threads piled up, deadlocked ``users``, and
+    # froze AnyTLS/Hy2/TUIC billing (user traffic stopped advancing).
 
-    def _collect_singbox():
-        from app.singbox.usage import collect_singbox_usage_params
+    def _store_pending(key: str, pend: list) -> None:
+        if progress is not None and pend:
+            progress.setdefault(key, []).extend(pend)
 
-        return ("singbox",) + collect_singbox_usage_params()
+    try:
+        from app.singbox.usage import collect_singbox_usage_params, merge_singbox_usage
 
-    def _collect_finalmask():
-        from app.wireguard.finalmask_usage import collect_finalmask_usage_params
+        sb_params, sb_coefficient, sb_pending = collect_singbox_usage_params()
+        _store_pending("singbox_pending", sb_pending)
+        for node_id, params in sb_params.items():
+            _add_breakdown("singbox", node_id, params, sb_coefficient.get(node_id, 1))
+        merge_singbox_usage(api_params, usage_coefficient, sb_params, sb_coefficient)
+        _publish(api_params, usage_coefficient, protocol_breakdown)
+    except Exception:
+        logger.exception("sing-box usage collection failed")
 
-        return ("finalmask",) + collect_finalmask_usage_params()
+    if _timed_out("singbox"):
+        return api_params, usage_coefficient, protocol_breakdown
 
-    def _collect_wg():
-        from app.wireguard.usage import collect_wg_usage_params
+    try:
+        from app.wireguard.finalmask_usage import (
+            collect_finalmask_usage_params,
+            merge_finalmask_usage,
+        )
 
-        return ("wg",) + collect_wg_usage_params()
+        fm_params, fm_coefficient, fm_pending = collect_finalmask_usage_params()
+        _store_pending("finalmask_pending", fm_pending)
+        for node_id, params in fm_params.items():
+            _add_breakdown("wireguard", node_id, params, fm_coefficient.get(node_id, 1))
+        merge_finalmask_usage(api_params, usage_coefficient, fm_params, fm_coefficient)
+        _publish(api_params, usage_coefficient, protocol_breakdown)
+    except (ConnectionError, TimeoutError, OSError) as exc:
+        logger.warning("Finalmask usage collection skipped: %s", exc)
+    except Exception:
+        logger.exception("Finalmask usage collection failed")
 
-    def _collect_panel_wg():
-        from app.wireguard.usage import collect_panel_host_wg_usage_params
+    if _timed_out("finalmask"):
+        return api_params, usage_coefficient, protocol_breakdown
 
-        return ("panel_wg",) + collect_panel_host_wg_usage_params()
+    try:
+        from app.wireguard.usage import collect_wg_usage_params, merge_wg_usage
 
-    secondary_budget = max(0.5, _remaining())
-    with ThreadPoolExecutor(max_workers=4, thread_name_prefix="usage-proto") as pool:
-        futures = [
-            pool.submit(_collect_singbox),
-            pool.submit(_collect_finalmask),
-            pool.submit(_collect_wg),
-            pool.submit(_collect_panel_wg),
-        ]
-        try:
-            for fut in as_completed(futures, timeout=secondary_budget):
-                try:
-                    kind, params, coef, pend = fut.result()
-                except (ConnectionError, TimeoutError, OSError) as exc:
-                    logger.warning("secondary usage collector failed: %s", exc)
-                    continue
-                except Exception:
-                    logger.exception("secondary usage collector failed")
-                    continue
-                if progress is not None and pend:
-                    key = {
-                        "singbox": "singbox_pending",
-                        "finalmask": "finalmask_pending",
-                        "wg": "wg_pending",
-                        "panel_wg": "panel_wg_pending",
-                    }.get(kind)
-                    if key:
-                        progress.setdefault(key, []).extend(pend)
-                if kind == "singbox":
-                    from app.singbox.usage import merge_singbox_usage
+        wg_params, wg_coefficient, wg_pending = collect_wg_usage_params()
+        _store_pending("wg_pending", wg_pending)
+        for node_id, params in wg_params.items():
+            _add_breakdown("wireguard", node_id, params, wg_coefficient.get(node_id, 1))
+        merge_wg_usage(api_params, usage_coefficient, wg_params, wg_coefficient)
+        _publish(api_params, usage_coefficient, protocol_breakdown)
+    except Exception:
+        logger.debug("WireGuard usage collection skipped", exc_info=True)
 
-                    for node_id, rows in params.items():
-                        _add_breakdown(
-                            "singbox", node_id, rows, coef.get(node_id, 1)
-                        )
-                    merge_singbox_usage(api_params, usage_coefficient, params, coef)
-                else:
-                    from app.wireguard.finalmask_usage import merge_finalmask_usage
-                    from app.wireguard.usage import merge_wg_usage
+    if _timed_out("wireguard"):
+        return api_params, usage_coefficient, protocol_breakdown
 
-                    for node_id, rows in params.items():
-                        _add_breakdown(
-                            "wireguard", node_id, rows, coef.get(node_id, 1)
-                        )
-                    if kind == "finalmask":
-                        merge_finalmask_usage(
-                            api_params, usage_coefficient, params, coef
-                        )
-                    else:
-                        merge_wg_usage(api_params, usage_coefficient, params, coef)
-                _publish(api_params, usage_coefficient, protocol_breakdown)
-        except TimeoutError:
-            logger.warning(
-                "usage collect deadline during secondary protocols (%.1fs)",
-                secondary_budget,
+    try:
+        from app.wireguard.usage import (
+            collect_panel_host_wg_usage_params,
+            merge_wg_usage,
+        )
+
+        host_params, host_coefficient, host_pending = collect_panel_host_wg_usage_params()
+        _store_pending("panel_wg_pending", host_pending)
+        for node_id, params in host_params.items():
+            _add_breakdown(
+                "wireguard", node_id, params, host_coefficient.get(node_id, 1)
             )
-            for fut in futures:
-                fut.cancel()
+        merge_wg_usage(api_params, usage_coefficient, host_params, host_coefficient)
+        _publish(api_params, usage_coefficient, protocol_breakdown)
+    except Exception:
+        logger.debug("panel-host WG usage collection skipped", exc_info=True)
 
-    _timed_out("secondary")
     return api_params, usage_coefficient, protocol_breakdown
 
 
 def collect_user_usage_params() -> tuple:
     """Gather raw per-user stats from the local Xray core and every connected
-    node.  Returns ``(api_params, usage_coefficient, protocol_breakdown)``.
+    node.  Returns ``(api_params, usage_coefficient, protocol_breakdown, pending)``.
 
-    Hard-capped to the usage-job interval so a hung Finalmask/WG/sing-box
-    path cannot pin ``max_instances=1`` and freeze the 5s cadence.
+    Runs inline (no abandoned background thread): each collector already
+    respects ``deadline``, and abandoning a ThreadPool/worker left zombies that
+    deadlocked billing.
     """
-    import threading
-
     budget = max(2.5, float(JOB_RECORD_USER_USAGES_INTERVAL) - 0.8)
     box: dict = {}
-    errors: list = []
-
-    def _run():
-        try:
-            box["r"] = _collect_user_usage_params_body(
-                deadline=time.monotonic() + budget,
-                progress=box,
-            )
-        except Exception as exc:
-            errors.append(exc)
-
-    t = threading.Thread(target=_run, name="usage-collect", daemon=True)
-    t.start()
-    t.join(budget + 0.25)
-
-    def _pack():
-        result = box.get("r") or ({None: []}, {None: 1}, [])
-        pending = {
-            "singbox": list(box.get("singbox_pending") or []),
-            "finalmask": list(box.get("finalmask_pending") or []),
-            "wg": list(box.get("wg_pending") or []),
-            "panel_wg": list(box.get("panel_wg_pending") or []),
-            "xray": list(box.get("xray_pending") or []),
-        }
-        return result[0], result[1], result[2], pending
-
-    if "r" in box:
-        return _pack()
-    if t.is_alive():
-        logger.warning(
-            "collect_user_usage_params hard-timeout after %.1fs — waiting briefly for partial",
-            budget,
+    try:
+        result = _collect_user_usage_params_body(
+            deadline=time.monotonic() + budget,
+            progress=box,
         )
-        t.join(0.75)
-    if "r" in box:
-        return _pack()
-    if errors:
-        raise errors[0]
-    logger.warning("collect_user_usage_params returned empty after timeout")
-    return {None: []}, {None: 1}, [], {
-        "singbox": [],
-        "finalmask": [],
-        "wg": [],
-        "panel_wg": [],
-        "xray": [],
+    except Exception:
+        logger.exception("collect_user_usage_params failed")
+        result = ({None: []}, {None: 1}, [])
+    pending = {
+        "singbox": list(box.get("singbox_pending") or []),
+        "finalmask": list(box.get("finalmask_pending") or []),
+        "wg": list(box.get("wg_pending") or []),
+        "panel_wg": list(box.get("panel_wg_pending") or []),
+        "xray": list(box.get("xray_pending") or []),
     }
+    return result[0], result[1], result[2], pending
 
 
 def record_protocol_breakdown(

@@ -22,6 +22,29 @@ logger = logging.getLogger("shahkar-singbox")
 # days does not pin a stale incarnation id.
 _EPOCH_TTL_SEC = 7 * 24 * 3600
 
+# Building the 40k+ name→uid map every 5s hammers Postgres; cache briefly.
+_NAME_MAP_TTL_SEC = 30.0
+_name_map_cache: Tuple[float, Dict[str, int]] = (0.0, {})
+_name_map_lock = None  # threading.Lock, lazy
+
+
+def _cached_name_map(session) -> Dict[str, int]:
+    import threading
+    import time
+
+    global _name_map_cache, _name_map_lock
+    if _name_map_lock is None:
+        _name_map_lock = threading.Lock()
+    now = time.monotonic()
+    with _name_map_lock:
+        ts, cached = _name_map_cache
+        if cached and (now - ts) < _NAME_MAP_TTL_SEC:
+            return cached
+    built = build_name_user_map(collect_singbox_users(session))
+    with _name_map_lock:
+        _name_map_cache = (now, built)
+    return built
+
 
 def _redis_store():
     """Shared Redis handle, or ``None`` — the tracker degrades to memory."""
@@ -224,7 +247,7 @@ def collect_singbox_usage_params(
         sb_nodes = crud.get_singbox_nodes(session)
         if not sb_nodes:
             return None
-        name_map = build_name_user_map(collect_singbox_users(session))
+        name_map = _cached_name_map(session)
         plans = [
             {"id": n.id, "coefficient": n.usage_coefficient}
             for n in sb_nodes

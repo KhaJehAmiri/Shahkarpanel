@@ -1,3 +1,7 @@
+## 0.22.103
+
+- Hotfix: revert parallel secondary usage collectors (executor shutdown after timeout piled up threads, deadlocked ``users``, froze AnyTLS billing); collect inline with sing-box first; cache sing-box name map 30s.
+
 ## 0.22.102
 
 - All-protocol billing safety: Xray VLESS/etc now uses ``reset=False`` + deferred baselines (same as AnyTLS); Finalmask / kernel WG / panel-host WG peek→commit after DB bill; secondary collectors run in parallel so none are starved by the 5s deadline.

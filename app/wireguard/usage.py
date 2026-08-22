@@ -37,7 +37,7 @@ class WireGuardUsageTracker:
     def __init__(self):
         from app.usage_baselines import CumulativeByteTracker
 
-        self._inner = CumulativeByteTracker()
+        self._inner = CumulativeByteTracker(redis_prefix="shahkar:usage:wg")
 
     def deltas(self, node_id, transfer: Dict[str, dict]) -> Dict[str, int]:
         out, pending = self.peek_deltas(node_id, transfer)

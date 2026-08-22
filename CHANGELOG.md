@@ -1,3 +1,7 @@
+## 0.22.104
+
+- Fix runaway traffic billing: persist Xray/WG/Finalmask cumulative baselines in Redis and clamp per-tick deltas (``USAGE_MAX_DELTA_BYTES``) so worker restarts cannot bill lifetime counters as one interval.
+
 ## 0.22.103
 
 - Hotfix: revert parallel secondary usage collectors (executor shutdown after timeout piled up threads, deadlocked ``users``, froze AnyTLS billing); collect inline with sing-box first; cache sing-box name map 30s.

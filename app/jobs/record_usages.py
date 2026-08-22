@@ -220,11 +220,11 @@ def record_node_stats(params: dict, node_id: Union[int, None]):
         safe_execute(db, stmt, params)
 
 
-# Cumulative Xray user>>>email totals (reset=False). Advancing the baseline
-# before a successful DB bill permanently drops VLESS/etc bytes on timeout.
+# Cumulative Xray user>>>email totals (reset=False). Baselines live in Redis
+# (see ``app.usage_baselines``) so a worker restart cannot re-bill lifetime bytes.
 from app.usage_baselines import CumulativeByteTracker
 
-_xray_usage_tracker = CumulativeByteTracker()
+_xray_usage_tracker = CumulativeByteTracker(redis_prefix="shahkar:usage:xray")
 
 
 def get_users_stats(api: XRayAPI):

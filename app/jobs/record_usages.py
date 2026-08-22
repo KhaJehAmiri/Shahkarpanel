@@ -972,20 +972,16 @@ def _collect_usage_tick_payload():
 
 
 def _bill_usage_tick_payload(payload):
-    """Bill phase — runs outside the collect lock; at most one in flight."""
+    """Bill phase — runs outside the collect lock; serialized billing."""
     import threading
 
     global _USAGE_BILL_LOCK
     if _USAGE_BILL_LOCK is None:
         _USAGE_BILL_LOCK = threading.Lock()
 
-    if not _USAGE_BILL_LOCK.acquire(blocking=False):
-        logger.warning(
-            "usage billing still busy — dropping this tick's traffic deltas"
-        )
-        return
-
-    try:
+    # Blocking is fine here: collect lock is already released, so the next
+    # 5s collect can proceed while we wait for the previous upsert to finish.
+    with _USAGE_BILL_LOCK:
         api_params, usage_coefficient, protocol_breakdown = payload
         uids = {int(p["uid"]) for params in api_params.values() for p in params}
         try:
@@ -1005,8 +1001,6 @@ def _bill_usage_tick_payload(payload):
         record_overage_usages(api_params, usage_coefficient)
         if billable_ids:
             record_protocol_breakdown(protocol_breakdown, billable_ids)
-    finally:
-        _USAGE_BILL_LOCK.release()
 
 
 def record_node_usages():

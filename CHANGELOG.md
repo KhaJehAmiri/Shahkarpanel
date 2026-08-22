@@ -1,3 +1,7 @@
+## 0.22.99
+
+- Billing lock is blocking (not drop-on-busy) so traffic deltas are never discarded while still keeping collect off the critical path every 5s.
+
 ## 0.22.98
 
 - Split usage collect and bill locks: collect runs every 5s; billing serializes afterward so a slow DB upsert cannot block the next collect (and no traffic deltas are dropped).

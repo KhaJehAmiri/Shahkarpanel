@@ -63,7 +63,12 @@ def safe_execute(db: Session, stmt, params=None):
             except SAOperationalError as err:
                 db.rollback()
                 text = f"{getattr(err, 'orig', None) or err}".lower()
-                if tries < 5 and ("deadlock" in text or "could not serialize" in text):
+                if tries < 5 and (
+                    "deadlock" in text
+                    or "could not serialize" in text
+                    or "statement timeout" in text
+                    or "querycanceled" in text
+                ):
                     tries += 1
                     time.sleep(0.05 * tries)
                     continue
@@ -488,7 +493,7 @@ def record_aggregated_user_usages(api_params: dict, usage_coefficient: dict):
         try:
             from sqlalchemy import text
 
-            db.execute(text("SET LOCAL statement_timeout = '4000ms'"))
+            db.execute(text("SET LOCAL statement_timeout = '15000ms'"))
         except Exception:
             pass
         uids = [int(u["uid"]) for u in users_usage]
@@ -537,7 +542,7 @@ def record_aggregated_user_usages(api_params: dict, usage_coefficient: dict):
         try:
             from sqlalchemy import text
 
-            db.execute(text("SET LOCAL statement_timeout = '4000ms'"))
+            db.execute(text("SET LOCAL statement_timeout = '15000ms'"))
         except Exception:
             pass
         if users_usage:
@@ -554,7 +559,11 @@ def record_aggregated_user_usages(api_params: dict, usage_coefficient: dict):
                         else_=User.used_traffic + bindparam('value'),
                     ),
                 )
-            safe_execute(db, stmt, users_usage)
+            # Chunk to shrink row-lock windows (full-fleet executemany was
+            # hitting statement_timeout and dropping already-collected bytes).
+            chunk = 80
+            for i in range(0, len(users_usage), chunk):
+                safe_execute(db, stmt, users_usage[i:i + chunk])
 
             billed_uids = [int(u["uid"]) for u in users_usage]
             hit_limit_uids = [
@@ -801,6 +810,25 @@ def _collect_user_usage_params_body(*, deadline: float, progress: dict | None = 
     if _timed_out("xray"):
         return api_params, usage_coefficient, protocol_breakdown
 
+    # AnyTLS / Hy2 / TUIC (sing-box) BEFORE Finalmask/WG: the 5s budget often
+    # expired after wireguard and skipped this path entirely — connected AnyTLS
+    # users transferred for free until a later lucky tick.
+    try:
+        from app.singbox.usage import collect_singbox_usage_params, merge_singbox_usage
+
+        sb_params, sb_coefficient, sb_pending = collect_singbox_usage_params()
+        if progress is not None and sb_pending:
+            progress.setdefault("singbox_pending", []).extend(sb_pending)
+        for node_id, params in sb_params.items():
+            _add_breakdown("singbox", node_id, params, sb_coefficient.get(node_id, 1))
+        merge_singbox_usage(api_params, usage_coefficient, sb_params, sb_coefficient)
+        _publish(api_params, usage_coefficient, protocol_breakdown)
+    except Exception:
+        logger.exception("sing-box usage collection failed")
+
+    if _timed_out("singbox"):
+        return api_params, usage_coefficient, protocol_breakdown
+
     # Finalmask: cumulative user>>>email over RPyC (never reset-on-read).
     try:
         from app.wireguard.finalmask_usage import (
@@ -853,20 +881,6 @@ def _collect_user_usage_params_body(*, deadline: float, progress: dict | None = 
     except Exception:
         logger.debug("panel-host WG usage collection skipped", exc_info=True)
 
-    if _timed_out("panel-wg"):
-        return api_params, usage_coefficient, protocol_breakdown
-
-    try:
-        from app.singbox.usage import collect_singbox_usage_params, merge_singbox_usage
-
-        sb_params, sb_coefficient = collect_singbox_usage_params()
-        for node_id, params in sb_params.items():
-            _add_breakdown("singbox", node_id, params, sb_coefficient.get(node_id, 1))
-        merge_singbox_usage(api_params, usage_coefficient, sb_params, sb_coefficient)
-        _publish(api_params, usage_coefficient, protocol_breakdown)
-    except Exception:
-        logger.exception("sing-box usage collection failed")
-
     return api_params, usage_coefficient, protocol_breakdown
 
 
@@ -895,8 +909,14 @@ def collect_user_usage_params() -> tuple:
     t = threading.Thread(target=_run, name="usage-collect", daemon=True)
     t.start()
     t.join(budget + 0.25)
+
+    def _pack():
+        result = box.get("r") or ({None: []}, {None: 1}, [])
+        pending = list(box.get("singbox_pending") or [])
+        return result[0], result[1], result[2], pending
+
     if "r" in box:
-        return box["r"]
+        return _pack()
     if t.is_alive():
         logger.warning(
             "collect_user_usage_params hard-timeout after %.1fs — waiting briefly for partial",
@@ -904,11 +924,11 @@ def collect_user_usage_params() -> tuple:
         )
         t.join(0.75)
     if "r" in box:
-        return box["r"]
+        return _pack()
     if errors:
         raise errors[0]
     logger.warning("collect_user_usage_params returned empty after timeout")
-    return {None: []}, {None: 1}, []
+    return {None: []}, {None: 1}, [], []
 
 
 def record_protocol_breakdown(
@@ -985,8 +1005,10 @@ def _collect_usage_tick_payload():
         note_usage_tick()
     except Exception:
         pass
-    api_params, usage_coefficient, protocol_breakdown = collect_user_usage_params()
-    return api_params, usage_coefficient, protocol_breakdown
+    api_params, usage_coefficient, protocol_breakdown, sb_pending = (
+        collect_user_usage_params()
+    )
+    return api_params, usage_coefficient, protocol_breakdown, sb_pending
 
 
 def _bill_usage_tick_payload(payload):
@@ -1000,7 +1022,7 @@ def _bill_usage_tick_payload(payload):
     # Blocking is fine here: collect lock is already released, so the next
     # 5s collect can proceed while we wait for the previous upsert to finish.
     with _USAGE_BILL_LOCK:
-        api_params, usage_coefficient, protocol_breakdown = payload
+        api_params, usage_coefficient, protocol_breakdown, sb_pending = payload
         uids = {int(p["uid"]) for params in api_params.values() for p in params}
         try:
             bump_users_online_at(uids)
@@ -1011,7 +1033,7 @@ def _bill_usage_tick_payload(payload):
             try:
                 from sqlalchemy import text
 
-                db.execute(text("SET LOCAL statement_timeout = '4000ms'"))
+                db.execute(text("SET LOCAL statement_timeout = '15000ms'"))
             except Exception:
                 pass
             if uids:
@@ -1021,10 +1043,19 @@ def _bill_usage_tick_payload(payload):
                     .filter(User.id.in_(uids), User.status.in_(BILLABLE_STATUSES))
                     .all()
                 }
-        record_aggregated_user_usages(api_params, usage_coefficient)
-        record_overage_usages(api_params, usage_coefficient)
-        if billable_ids:
-            record_protocol_breakdown(protocol_breakdown, billable_ids)
+        try:
+            record_aggregated_user_usages(api_params, usage_coefficient)
+            record_overage_usages(api_params, usage_coefficient)
+            if billable_ids:
+                record_protocol_breakdown(protocol_breakdown, billable_ids)
+        except Exception:
+            # Leave sing-box baselines uncommitted so the next tick re-bills.
+            raise
+        else:
+            if sb_pending:
+                from app.singbox.usage import commit_singbox_pending
+
+                commit_singbox_pending(sb_pending)
 
 
 def record_node_usages():

@@ -1,3 +1,7 @@
+## 0.22.101
+
+- AnyTLS/Hy2/TUIC billing: collect sing-box *before* Finalmask/WG (deadline was skipping it), defer baseline commit until DB bill succeeds so a statement_timeout cannot permanently drop bytes, chunk user UPDATEs and raise timeout/retries.
+
 ## 0.22.100
 
 - Bill off the collect thread; set Postgres ``statement_timeout=4s`` on usage writes so idle-in-transaction / lock waits cannot freeze traffic recording.

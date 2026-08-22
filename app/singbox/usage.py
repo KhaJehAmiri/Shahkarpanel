@@ -86,11 +86,23 @@ class SingBoxUsageTracker:
     def deltas(
         self, node_id: int, transfer: Dict[str, dict], epoch: str = ""
     ) -> Dict[str, int]:
+        """Compute deltas and advance baselines (legacy one-shot path)."""
+        out, pending = self.peek_deltas(node_id, transfer, epoch)
+        self.commit_pending(pending)
+        return out
+
+    def peek_deltas(
+        self, node_id: int, transfer: Dict[str, dict], epoch: str = ""
+    ) -> Tuple[Dict[str, int], dict]:
+        """Compute deltas without advancing baselines until ``commit_pending``.
+
+        If billing fails after collect, the next tick must see the same bytes
+        again — otherwise AnyTLS/Hy2/TUIC traffic is permanently lost.
+        """
         known_epoch = self._load_epoch(node_id)
         fresh_engine = bool(epoch) and epoch != known_epoch
-        if epoch:
-            self._save_epoch(node_id, epoch)
         out: Dict[str, int] = {}
+        new_last: Dict[Tuple[int, str], int] = {}
         for name, counters in (transfer or {}).items():
             try:
                 total = int(counters.get("rx", 0)) + int(counters.get("tx", 0))
@@ -98,7 +110,7 @@ class SingBoxUsageTracker:
                 continue
             key = (node_id, name)
             last = self._last.get(key)
-            self._last[key] = total
+            new_last[key] = total
             if last is None:
                 if not fresh_engine:
                     continue
@@ -107,12 +119,28 @@ class SingBoxUsageTracker:
                 delta = total if total < last else total - last
             if delta > 0:
                 out[name] = delta
-        if fresh_engine:
-            # Counters restarted from zero; drop stale per-name baselines that
-            # belong to the previous incarnation.
-            for key in [k for k in self._last if k[0] == node_id and k[1] not in transfer]:
+        pending = {
+            "node_id": node_id,
+            "epoch": epoch if epoch else None,
+            "fresh_engine": fresh_engine,
+            "new_last": new_last,
+            "transfer_names": set((transfer or {}) or []),
+        }
+        return out, pending
+
+    def commit_pending(self, pending: Optional[dict]) -> None:
+        if not pending:
+            return
+        node_id = int(pending["node_id"])
+        epoch = pending.get("epoch")
+        if epoch:
+            self._save_epoch(node_id, str(epoch))
+        for key, total in (pending.get("new_last") or {}).items():
+            self._last[key] = total
+        if pending.get("fresh_engine"):
+            names = pending.get("transfer_names") or set()
+            for key in [k for k in self._last if k[0] == node_id and k[1] not in names]:
                 del self._last[key]
-        return out
 
     def forget_node(self, node_id: int) -> None:
         for key in [k for k in self._last if k[0] == node_id]:
@@ -175,18 +203,21 @@ def deltas_from_transfer(
     node_id: int,
     transfer: Dict[str, dict],
     tracker: SingBoxUsageTracker,
-) -> Dict[str, int]:
+) -> Tuple[Dict[str, int], Optional[dict]]:
     source, epoch, users = split_transfer(transfer)
     if source == "clash":
-        return tracker.deltas(node_id, users, epoch)
-    return _interval_bytes(users)
+        return tracker.peek_deltas(node_id, users, epoch)
+    return _interval_bytes(users), None
 
 
-def collect_singbox_usage_params(db=None) -> Tuple[Dict[int, List[dict]], Dict[int, float]]:
-    """Read traffic counters from every connected sing-box node and return
-    ``(api_params, usage_coefficient)`` deltas in the central accounting shape.
+def collect_singbox_usage_params(
+    db=None,
+) -> Tuple[Dict[int, List[dict]], Dict[int, float], list]:
+    """Read traffic counters from every connected sing-box node.
 
-    DB work finishes before node RPCs so hung transfers cannot idle-in-transaction.
+    Returns ``(api_params, usage_coefficient, pending_baselines)``. Call
+    ``commit_singbox_pending`` after a successful DB bill so a failed upsert
+    does not permanently drop AnyTLS/Hy2/TUIC bytes.
     """
 
     def _plan(session):
@@ -208,11 +239,12 @@ def collect_singbox_usage_params(db=None) -> Tuple[Dict[int, List[dict]], Dict[i
             planned = _plan(session)
 
     if not planned:
-        return {}, {}
+        return {}, {}, []
 
     name_map, plans = planned
     deltas_by_node: Dict[int, Dict[str, int]] = {}
     coefficient: Dict[int, float] = {}
+    pending: list = []
 
     for plan in plans:
         client = client_for_node(_node_object(plan["id"], connect=False))
@@ -234,12 +266,20 @@ def collect_singbox_usage_params(db=None) -> Tuple[Dict[int, List[dict]], Dict[i
             plan["id"],
             len(names),
         )
-        deltas_by_node[plan["id"]] = deltas_from_transfer(
+        node_deltas, node_pending = deltas_from_transfer(
             plan["id"], transfer, _tracker
         )
+        if node_pending:
+            pending.append(node_pending)
+        deltas_by_node[plan["id"]] = node_deltas
         coefficient[plan["id"]] = plan["coefficient"]
 
-    return build_singbox_usage_params(deltas_by_node, name_map), coefficient
+    return build_singbox_usage_params(deltas_by_node, name_map), coefficient, pending
+
+
+def commit_singbox_pending(pending: list) -> None:
+    for item in pending or []:
+        _tracker.commit_pending(item)
 
 
 def merge_singbox_usage(

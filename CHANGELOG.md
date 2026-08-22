@@ -1,3 +1,7 @@
+## 0.22.102
+
+- All-protocol billing safety: Xray VLESS/etc now uses ``reset=False`` + deferred baselines (same as AnyTLS); Finalmask / kernel WG / panel-host WG peek→commit after DB bill; secondary collectors run in parallel so none are starved by the 5s deadline.
+
 ## 0.22.101
 
 - AnyTLS/Hy2/TUIC billing: collect sing-box *before* Finalmask/WG (deadline was skipping it), defer baseline commit until DB bill succeeds so a statement_timeout cannot permanently drop bytes, chunk user UPDATEs and raise timeout/retries.

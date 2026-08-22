@@ -1,7 +1,7 @@
 from collections import defaultdict
 from datetime import datetime
 from operator import attrgetter
-from typing import Union
+from typing import Optional, Union
 import time
 
 from pymysql.err import OperationalError
@@ -220,12 +220,20 @@ def record_node_stats(params: dict, node_id: Union[int, None]):
         safe_execute(db, stmt, params)
 
 
+# Cumulative Xray user>>>email totals (reset=False). Advancing the baseline
+# before a successful DB bill permanently drops VLESS/etc bytes on timeout.
+from app.usage_baselines import CumulativeByteTracker
+
+_xray_usage_tracker = CumulativeByteTracker()
+
+
 def get_users_stats(api: XRayAPI):
-    """Return per-user params, or ``None`` when the API call itself failed.
+    """Return per-user *cumulative* counters, or ``None`` when the API failed.
 
     Distinguishing failure from a genuine empty interval lets the collector
     refresh a stale gRPC channel / fall back to RPyC loopback stats instead of
-    silently dropping Finalmask WireGuard traffic.
+    silently dropping traffic. Callers must convert cumulatives to deltas via
+    ``_xray_usage_tracker`` and only commit baselines after a successful bill.
     """
     if api is None:
         return None
@@ -233,17 +241,14 @@ def get_users_stats(api: XRayAPI):
         params = defaultdict(int)
         up_params = defaultdict(int)
         down_params = defaultdict(int)
-        # Keep timeout short so one hung node cannot pin the usage job
-        # (max_instances=1) long enough for Overview online_users to hit 0.
-        for stat in filter(attrgetter('value'), api.get_users_stats(reset=True, timeout=4)):
+        # reset=False: never zero node counters before DB bill succeeds.
+        for stat in filter(attrgetter('value'), api.get_users_stats(reset=False, timeout=4)):
             uid = stat.name.split('.', 1)[0]
             try:
                 int(uid)
             except (TypeError, ValueError):
                 continue
             params[uid] += stat.value
-            # Preserve the up/down split (Xray reports uplink/downlink per user)
-            # so the subscription header can show real upload/download.
             link = getattr(stat, "link", None)
             if link == "uplink":
                 up_params[uid] += stat.value
@@ -262,6 +267,29 @@ def get_users_stats(api: XRayAPI):
     except xray_exc.XrayError as exc:
         logger.warning("get_users_stats failed: %s", exc)
         return None
+
+
+def _cumulative_params_to_deltas(node_id, params: list) -> tuple:
+    """Convert cumulative ``{"uid","value",...}`` rows into interval deltas."""
+    if not params:
+        return [], None
+    totals = {str(p["uid"]): int(p.get("value") or 0) for p in params}
+    up_map = {str(p["uid"]): int(p.get("up") or 0) for p in params}
+    down_map = {str(p["uid"]): int(p.get("down") or 0) for p in params}
+    deltas, pending = _xray_usage_tracker.peek_from_totals(node_id, totals)
+    out = []
+    for uid, value in deltas.items():
+        # Preserve up/down proportion from the cumulative split when possible.
+        up_c = up_map.get(uid, 0)
+        down_c = down_map.get(uid, 0)
+        total_c = up_c + down_c
+        if total_c > 0 and value > 0:
+            up = int(value * up_c / total_c)
+            down = value - up
+        else:
+            up, down = 0, value
+        out.append({"uid": uid, "value": value, "up": up, "down": down})
+    return out, pending
 
 
 def bump_users_online_at(uids) -> int:
@@ -297,48 +325,58 @@ def _params_from_xray_transfer(transfer: dict) -> list:
     return out
 
 
-def _collect_node_users_stats(node_id, api: XRayAPI, node=None) -> list:
-    """gRPC stats with stale-channel refresh + RPyC loopback fallback."""
-    params = get_users_stats(api)
-    if params is not None:
-        return params
+def _collect_node_users_stats(
+    node_id, api: XRayAPI, node=None, *, pending_out: Optional[list] = None
+) -> list:
+    """gRPC stats with stale-channel refresh + RPyC loopback fallback.
 
-    if node is not None and hasattr(node, "ensure_api"):
+    Returns *interval* deltas. Cumulative baselines are appended to
+    ``pending_out`` and must be committed after a successful DB bill.
+    """
+    params = get_users_stats(api)
+    if params is None and node is not None and hasattr(node, "ensure_api"):
         try:
             if node.ensure_api(refresh=True, allow_unstarted=True, timeout=5):
-                # ``node.api`` raises while ``started`` is False; the channel we
-                # just dialled is what matters, not who started the core.
                 params = get_users_stats(getattr(node, "_api", None))
-                if params is not None:
-                    return params
         except Exception as exc:
             logger.warning("get_users_stats refresh failed for node %s: %s", node_id, exc)
 
-    if node is None:
-        return []
-    try:
-        remote = getattr(node, "remote", None)
-        if remote is None or not hasattr(remote, "xray_users_transfer"):
-            return []
-        raw = remote.xray_users_transfer(True)
-        if isinstance(raw, (bytes, bytearray)):
-            raw = raw.decode("utf-8", errors="ignore")
-        if isinstance(raw, str):
-            import json
+    if params is None and node is not None:
+        try:
+            remote = getattr(node, "remote", None)
+            if remote is not None and hasattr(remote, "xray_users_transfer"):
+                # reset=False — never wipe counters before DB bill.
+                raw = remote.xray_users_transfer(False)
+                if isinstance(raw, (bytes, bytearray)):
+                    raw = raw.decode("utf-8", errors="ignore")
+                if isinstance(raw, str):
+                    import json
 
-            transfer = json.loads(raw or "{}")
-        else:
-            transfer = dict(raw or {})
-        return _params_from_xray_transfer(transfer)
-    except AttributeError:
+                    transfer = json.loads(raw or "{}")
+                else:
+                    transfer = dict(raw or {})
+                params = _params_from_xray_transfer(transfer)
+        except AttributeError:
+            params = None
+        except Exception as exc:
+            msg = str(exc)
+            if "RPyC busy" in msg or "skipped fast call" in msg:
+                logger.debug(
+                    "xray_users_transfer fallback skipped (busy) for node %s", node_id
+                )
+            else:
+                logger.warning(
+                    "xray_users_transfer fallback failed for node %s: %s", node_id, exc
+                )
+            params = None
+
+    if not params:
         return []
-    except Exception as exc:
-        msg = str(exc)
-        if "RPyC busy" in msg or "skipped fast call" in msg:
-            logger.debug("xray_users_transfer fallback skipped (busy) for node %s", node_id)
-        else:
-            logger.warning("xray_users_transfer fallback failed for node %s: %s", node_id, exc)
-        return []
+
+    deltas, pending = _cumulative_params_to_deltas(node_id, params)
+    if pending is not None and pending_out is not None:
+        pending_out.append(pending)
+    return deltas
 
 
 def flush_node_user_stats(node_id: int) -> int:
@@ -357,7 +395,10 @@ def flush_node_user_stats(node_id: int) -> int:
         pass
     api = getattr(node, "_api", None)
     try:
-        params = _collect_node_users_stats(node_id, api, node)
+        xray_pending: list = []
+        params = _collect_node_users_stats(
+            node_id, api, node, pending_out=xray_pending
+        )
     except Exception as exc:
         logger.warning("flush_node_user_stats node %s failed: %s", node_id, exc)
         return 0
@@ -365,6 +406,8 @@ def flush_node_user_stats(node_id: int) -> int:
         return 0
     coefficient = {node_id: float(getattr(node, "usage_coefficient", 1) or 1)}
     record_aggregated_user_usages({node_id: params}, coefficient)
+    for item in xray_pending:
+        _xray_usage_tracker.commit_pending(item)
     try:
         uids = {int(p["uid"]) for p in params}
         with GetDB() as db:
@@ -772,12 +815,25 @@ def _collect_user_usage_params_body(*, deadline: float, progress: dict | None = 
             node_refs[node_id] = node
 
     from app.utils.concurrency import map_rpc
+    import threading
+
+    xray_pending: list = []
+    _xray_pend_lock = threading.Lock()
 
     def _one(nid, api):
-        return _collect_node_users_stats(nid, api, node_refs.get(nid)) or []
+        local: list = []
+        result = _collect_node_users_stats(
+            nid, api, node_refs.get(nid), pending_out=local
+        ) or []
+        if local:
+            with _xray_pend_lock:
+                xray_pending.extend(local)
+        return result
 
     rpc_timeout = min(1.8, max(0.4, _remaining()))
     api_params = map_rpc(_one, api_instances, timeout=rpc_timeout, default=[])
+    if progress is not None and xray_pending:
+        progress.setdefault("xray_pending", []).extend(xray_pending)
     _publish(api_params, usage_coefficient, [])
 
     protocol_breakdown: list[dict] = []
@@ -810,77 +866,89 @@ def _collect_user_usage_params_body(*, deadline: float, progress: dict | None = 
     if _timed_out("xray"):
         return api_params, usage_coefficient, protocol_breakdown
 
-    # AnyTLS / Hy2 / TUIC (sing-box) BEFORE Finalmask/WG: the 5s budget often
-    # expired after wireguard and skipped this path entirely — connected AnyTLS
-    # users transferred for free until a later lucky tick.
-    try:
-        from app.singbox.usage import collect_singbox_usage_params, merge_singbox_usage
+    # Secondary collectors in parallel so no protocol is starved when the 5s
+    # budget is tight (sequential order used to skip sing-box / WG entirely).
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
-        sb_params, sb_coefficient, sb_pending = collect_singbox_usage_params()
-        if progress is not None and sb_pending:
-            progress.setdefault("singbox_pending", []).extend(sb_pending)
-        for node_id, params in sb_params.items():
-            _add_breakdown("singbox", node_id, params, sb_coefficient.get(node_id, 1))
-        merge_singbox_usage(api_params, usage_coefficient, sb_params, sb_coefficient)
-        _publish(api_params, usage_coefficient, protocol_breakdown)
-    except Exception:
-        logger.exception("sing-box usage collection failed")
+    def _collect_singbox():
+        from app.singbox.usage import collect_singbox_usage_params
 
-    if _timed_out("singbox"):
-        return api_params, usage_coefficient, protocol_breakdown
+        return ("singbox",) + collect_singbox_usage_params()
 
-    # Finalmask: cumulative user>>>email over RPyC (never reset-on-read).
-    try:
-        from app.wireguard.finalmask_usage import (
-            collect_finalmask_usage_params,
-            merge_finalmask_usage,
-        )
+    def _collect_finalmask():
+        from app.wireguard.finalmask_usage import collect_finalmask_usage_params
 
-        fm_params, fm_coefficient = collect_finalmask_usage_params()
-        for node_id, params in fm_params.items():
-            _add_breakdown("wireguard", node_id, params, fm_coefficient.get(node_id, 1))
-        merge_finalmask_usage(api_params, usage_coefficient, fm_params, fm_coefficient)
-        _publish(api_params, usage_coefficient, protocol_breakdown)
-    except (ConnectionError, TimeoutError, OSError) as exc:
-        logger.warning("Finalmask usage collection skipped: %s", exc)
-    except Exception:
-        logger.exception("Finalmask usage collection failed")
+        return ("finalmask",) + collect_finalmask_usage_params()
 
-    if _timed_out("finalmask"):
-        return api_params, usage_coefficient, protocol_breakdown
+    def _collect_wg():
+        from app.wireguard.usage import collect_wg_usage_params
 
-    try:
-        from app.wireguard.usage import collect_wg_usage_params, merge_wg_usage
+        return ("wg",) + collect_wg_usage_params()
 
-        wg_params, wg_coefficient = collect_wg_usage_params()
-        for node_id, params in wg_params.items():
-            _add_breakdown("wireguard", node_id, params, wg_coefficient.get(node_id, 1))
-        merge_wg_usage(api_params, usage_coefficient, wg_params, wg_coefficient)
-        _publish(api_params, usage_coefficient, protocol_breakdown)
-    except Exception:
-        pass
+    def _collect_panel_wg():
+        from app.wireguard.usage import collect_panel_host_wg_usage_params
 
-    if _timed_out("wireguard"):
-        return api_params, usage_coefficient, protocol_breakdown
+        return ("panel_wg",) + collect_panel_host_wg_usage_params()
 
-    # Panel-host WireGuard exit: when the panel itself terminates tunneled WG,
-    # user traffic exits via the panel host's kernel wg0 (not any node), so its
-    # per-peer counters must be collected here or that traffic is never billed
-    # and online_at never advances (Overview / online-user freeze).
-    try:
-        from app.wireguard.usage import (
-            collect_panel_host_wg_usage_params,
-            merge_wg_usage,
-        )
+    secondary_budget = max(0.5, _remaining())
+    with ThreadPoolExecutor(max_workers=4, thread_name_prefix="usage-proto") as pool:
+        futures = [
+            pool.submit(_collect_singbox),
+            pool.submit(_collect_finalmask),
+            pool.submit(_collect_wg),
+            pool.submit(_collect_panel_wg),
+        ]
+        try:
+            for fut in as_completed(futures, timeout=secondary_budget):
+                try:
+                    kind, params, coef, pend = fut.result()
+                except (ConnectionError, TimeoutError, OSError) as exc:
+                    logger.warning("secondary usage collector failed: %s", exc)
+                    continue
+                except Exception:
+                    logger.exception("secondary usage collector failed")
+                    continue
+                if progress is not None and pend:
+                    key = {
+                        "singbox": "singbox_pending",
+                        "finalmask": "finalmask_pending",
+                        "wg": "wg_pending",
+                        "panel_wg": "panel_wg_pending",
+                    }.get(kind)
+                    if key:
+                        progress.setdefault(key, []).extend(pend)
+                if kind == "singbox":
+                    from app.singbox.usage import merge_singbox_usage
 
-        host_params, host_coefficient = collect_panel_host_wg_usage_params()
-        for node_id, params in host_params.items():
-            _add_breakdown("wireguard", node_id, params, host_coefficient.get(node_id, 1))
-        merge_wg_usage(api_params, usage_coefficient, host_params, host_coefficient)
-        _publish(api_params, usage_coefficient, protocol_breakdown)
-    except Exception:
-        logger.debug("panel-host WG usage collection skipped", exc_info=True)
+                    for node_id, rows in params.items():
+                        _add_breakdown(
+                            "singbox", node_id, rows, coef.get(node_id, 1)
+                        )
+                    merge_singbox_usage(api_params, usage_coefficient, params, coef)
+                else:
+                    from app.wireguard.finalmask_usage import merge_finalmask_usage
+                    from app.wireguard.usage import merge_wg_usage
 
+                    for node_id, rows in params.items():
+                        _add_breakdown(
+                            "wireguard", node_id, rows, coef.get(node_id, 1)
+                        )
+                    if kind == "finalmask":
+                        merge_finalmask_usage(
+                            api_params, usage_coefficient, params, coef
+                        )
+                    else:
+                        merge_wg_usage(api_params, usage_coefficient, params, coef)
+                _publish(api_params, usage_coefficient, protocol_breakdown)
+        except TimeoutError:
+            logger.warning(
+                "usage collect deadline during secondary protocols (%.1fs)",
+                secondary_budget,
+            )
+            for fut in futures:
+                fut.cancel()
+
+    _timed_out("secondary")
     return api_params, usage_coefficient, protocol_breakdown
 
 
@@ -912,7 +980,13 @@ def collect_user_usage_params() -> tuple:
 
     def _pack():
         result = box.get("r") or ({None: []}, {None: 1}, [])
-        pending = list(box.get("singbox_pending") or [])
+        pending = {
+            "singbox": list(box.get("singbox_pending") or []),
+            "finalmask": list(box.get("finalmask_pending") or []),
+            "wg": list(box.get("wg_pending") or []),
+            "panel_wg": list(box.get("panel_wg_pending") or []),
+            "xray": list(box.get("xray_pending") or []),
+        }
         return result[0], result[1], result[2], pending
 
     if "r" in box:
@@ -928,7 +1002,13 @@ def collect_user_usage_params() -> tuple:
     if errors:
         raise errors[0]
     logger.warning("collect_user_usage_params returned empty after timeout")
-    return {None: []}, {None: 1}, [], []
+    return {None: []}, {None: 1}, [], {
+        "singbox": [],
+        "finalmask": [],
+        "wg": [],
+        "panel_wg": [],
+        "xray": [],
+    }
 
 
 def record_protocol_breakdown(
@@ -1005,10 +1085,39 @@ def _collect_usage_tick_payload():
         note_usage_tick()
     except Exception:
         pass
-    api_params, usage_coefficient, protocol_breakdown, sb_pending = (
+    api_params, usage_coefficient, protocol_breakdown, pending = (
         collect_user_usage_params()
     )
-    return api_params, usage_coefficient, protocol_breakdown, sb_pending
+    return api_params, usage_coefficient, protocol_breakdown, pending
+
+
+def _commit_all_usage_pending(pending: dict) -> None:
+    """Advance cumulative baselines only after a successful DB bill."""
+    if not pending:
+        return
+    sb = pending.get("singbox") or []
+    if sb:
+        from app.singbox.usage import commit_singbox_pending
+
+        commit_singbox_pending(sb)
+    fm = pending.get("finalmask") or []
+    if fm:
+        from app.wireguard.finalmask_usage import commit_finalmask_pending
+
+        commit_finalmask_pending(fm)
+    wg = pending.get("wg") or []
+    if wg:
+        from app.wireguard.usage import commit_wg_pending
+
+        commit_wg_pending(wg)
+    host = pending.get("panel_wg") or []
+    if host:
+        from app.wireguard.usage import commit_panel_host_wg_pending
+
+        commit_panel_host_wg_pending(host)
+    xr = pending.get("xray") or []
+    for item in xr:
+        _xray_usage_tracker.commit_pending(item)
 
 
 def _bill_usage_tick_payload(payload):
@@ -1022,7 +1131,7 @@ def _bill_usage_tick_payload(payload):
     # Blocking is fine here: collect lock is already released, so the next
     # 5s collect can proceed while we wait for the previous upsert to finish.
     with _USAGE_BILL_LOCK:
-        api_params, usage_coefficient, protocol_breakdown, sb_pending = payload
+        api_params, usage_coefficient, protocol_breakdown, pending = payload
         uids = {int(p["uid"]) for params in api_params.values() for p in params}
         try:
             bump_users_online_at(uids)
@@ -1049,13 +1158,10 @@ def _bill_usage_tick_payload(payload):
             if billable_ids:
                 record_protocol_breakdown(protocol_breakdown, billable_ids)
         except Exception:
-            # Leave sing-box baselines uncommitted so the next tick re-bills.
+            # Leave all cumulative baselines uncommitted so the next tick re-bills.
             raise
         else:
-            if sb_pending:
-                from app.singbox.usage import commit_singbox_pending
-
-                commit_singbox_pending(sb_pending)
+            _commit_all_usage_pending(pending)
 
 
 def record_node_usages():

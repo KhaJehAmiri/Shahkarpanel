@@ -35,32 +35,29 @@ class FinalmaskUsageTracker:
     Keyed by ``(node_id, email)``. First sighting baselines (delta 0). A drop
     means the core restarted / shard was replaced — treat current value as the
     delta for that interval.
+
+    Baselines are advanced only via ``commit_pending`` after a successful DB
+    bill (see ``app.usage_baselines``).
     """
 
     def __init__(self):
-        self._last: Dict[Tuple[int, str], int] = {}
+        from app.usage_baselines import CumulativeByteTracker
+
+        self._inner = CumulativeByteTracker()
 
     def deltas(self, node_id: int, transfer: Dict[str, dict]) -> Dict[str, int]:
-        out: Dict[str, int] = {}
-        for email, counters in (transfer or {}).items():
-            try:
-                total = int(counters.get("rx", 0)) + int(counters.get("tx", 0))
-            except (AttributeError, TypeError, ValueError):
-                continue
-            key = (int(node_id), str(email))
-            last = self._last.get(key)
-            self._last[key] = total
-            if last is None:
-                continue
-            delta = total if total < last else total - last
-            if delta > 0:
-                out[str(email)] = delta
+        out, pending = self.peek_deltas(node_id, transfer)
+        self.commit_pending(pending)
         return out
 
+    def peek_deltas(self, node_id: int, transfer: Dict[str, dict]):
+        return self._inner.peek_deltas(int(node_id), transfer)
+
+    def commit_pending(self, pending) -> None:
+        self._inner.commit_pending(pending)
+
     def forget_node(self, node_id: int) -> None:
-        nid = int(node_id)
-        for key in [k for k in self._last if k[0] == nid]:
-            del self._last[key]
+        self._inner.forget_group(int(node_id))
 
 
 _tracker = FinalmaskUsageTracker()
@@ -229,8 +226,10 @@ def _read_transfer_via_grpc(node, *, timeout: float = 15.0) -> Dict[str, dict]:
         return {}
 
 
-def collect_finalmask_usage_params(db=None) -> Tuple[Dict[int, List[dict]], Dict[int, float]]:
-    """Return ``(api_params, usage_coefficient)`` deltas for Finalmask relays."""
+def collect_finalmask_usage_params(
+    db=None,
+) -> Tuple[Dict[int, List[dict]], Dict[int, float], list]:
+    """Return ``(api_params, usage_coefficient, pending_baselines)``."""
 
     def _plan(session):
         nodes = crud.get_wireguard_nodes(session)
@@ -249,19 +248,21 @@ def collect_finalmask_usage_params(db=None) -> Tuple[Dict[int, List[dict]], Dict
             plans = _plan(session)
 
     if not plans:
-        return {}, {}
+        return {}, {}, []
 
     deltas_by_node: Dict[int, Dict[str, int]] = {}
     coefficient: Dict[int, float] = {}
+    pending: list = []
 
     # Parallel, no reconnect: usage tick must finish even when Finalmask sync
     # holds node locks (otherwise Overview online_users freezes at 0).
-    def _one(plan: dict) -> Tuple[int, Dict[str, int], float]:
+    def _one(plan: dict) -> Tuple[int, Dict[str, int], float, Optional[dict]]:
         node_id = int(plan["id"])
         transfer = _read_node_transfer(node_id, allow_reconnect=False)
         if not transfer:
-            return node_id, {}, float(plan["coefficient"])
-        return node_id, _tracker.deltas(node_id, transfer), float(plan["coefficient"])
+            return node_id, {}, float(plan["coefficient"]), None
+        email_deltas, pend = _tracker.peek_deltas(node_id, transfer)
+        return node_id, email_deltas, float(plan["coefficient"]), pend
 
     from app.utils.concurrency import map_rpc
 
@@ -274,15 +275,22 @@ def collect_finalmask_usage_params(db=None) -> Tuple[Dict[int, List[dict]], Dict
         if not result:
             continue
         try:
-            nid, email_deltas, coef = result
+            nid, email_deltas, coef, pend = result
         except Exception as exc:
             logger.warning("Finalmask usage node poll failed: %s", exc)
             continue
         coefficient[nid] = coef
+        if pend:
+            pending.append(pend)
         if email_deltas:
             deltas_by_node[nid] = email_deltas
 
-    return build_finalmask_usage_params(deltas_by_node), coefficient
+    return build_finalmask_usage_params(deltas_by_node), coefficient, pending
+
+
+def commit_finalmask_pending(pending: list) -> None:
+    for item in pending or []:
+        _tracker.commit_pending(item)
 
 
 def merge_finalmask_usage(

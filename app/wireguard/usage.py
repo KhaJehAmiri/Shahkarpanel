@@ -30,31 +30,28 @@ class WireGuardUsageTracker:
     establishes a baseline (delta 0). A counter that goes *down* means the
     interface or peer was recreated (counters reset to 0), so the current value
     itself is the delta.
+
+    Baselines advance only via ``commit_pending`` after a successful DB bill.
     """
 
     def __init__(self):
-        self._last: Dict[Tuple[int, str], int] = {}
+        from app.usage_baselines import CumulativeByteTracker
 
-    def deltas(self, node_id: int, transfer: Dict[str, dict]) -> Dict[str, int]:
-        out: Dict[str, int] = {}
-        for public_key, counters in (transfer or {}).items():
-            try:
-                total = int(counters.get("rx", 0)) + int(counters.get("tx", 0))
-            except (AttributeError, TypeError, ValueError):
-                continue
-            key = (node_id, public_key)
-            last = self._last.get(key)
-            self._last[key] = total
-            if last is None:
-                continue  # baseline only
-            delta = total if total < last else total - last
-            if delta > 0:
-                out[public_key] = delta
+        self._inner = CumulativeByteTracker()
+
+    def deltas(self, node_id, transfer: Dict[str, dict]) -> Dict[str, int]:
+        out, pending = self.peek_deltas(node_id, transfer)
+        self.commit_pending(pending)
         return out
 
-    def forget_node(self, node_id: int) -> None:
-        for key in [k for k in self._last if k[0] == node_id]:
-            del self._last[key]
+    def peek_deltas(self, node_id, transfer: Dict[str, dict]):
+        return self._inner.peek_deltas(node_id, transfer)
+
+    def commit_pending(self, pending) -> None:
+        self._inner.commit_pending(pending)
+
+    def forget_node(self, node_id) -> None:
+        self._inner.forget_group(node_id)
 
 
 def build_wg_usage_params(
@@ -85,13 +82,12 @@ _tracker = WireGuardUsageTracker()
 _panel_host_tracker = WireGuardUsageTracker()
 
 
-def collect_wg_usage_params(db=None) -> Tuple[Dict[int, List[dict]], Dict[int, float]]:
-    """Read transfer counters from every connected WireGuard node and return
-    ``(api_params, usage_coefficient)`` deltas in the central accounting shape.
+def collect_wg_usage_params(
+    db=None,
+) -> Tuple[Dict[int, List[dict]], Dict[int, float], list]:
+    """Read transfer counters from every connected WireGuard node.
 
-    Best-effort per node: a node that is disconnected or errors is simply
-    skipped this cycle. DB work is finished before any node RPC so a hung
-    transfer cannot leave Postgres idle-in-transaction.
+    Returns ``(api_params, usage_coefficient, pending_baselines)``.
     """
     from app.wireguard.sync import amneziawg_enabled, plain_wg_enabled
     from app.wireguard.wg_manager import autoscale_enabled, collect_autoscale_transfer
@@ -130,11 +126,12 @@ def collect_wg_usage_params(db=None) -> Tuple[Dict[int, List[dict]], Dict[int, f
             planned = _plan(session)
 
     if not planned:
-        return {}, {}
+        return {}, {}, []
 
     pubkey_map, plans = planned
     deltas_by_node: Dict[int, Dict[str, int]] = {}
     coefficient: Dict[int, float] = {}
+    pending: list = []
 
     def _one(_nid, plan: dict):
         client = client_for_node(_node_object(plan["id"], connect=False))
@@ -177,11 +174,8 @@ def collect_wg_usage_params(db=None) -> Tuple[Dict[int, List[dict]], Dict[int, f
                 }
         if not combined:
             return None
-        return (
-            plan["id"],
-            _tracker.deltas(plan["id"], combined),
-            plan["coefficient"],
-        )
+        peer_deltas, pend = _tracker.peek_deltas(plan["id"], combined)
+        return plan["id"], peer_deltas, plan["coefficient"], pend
 
     from app.utils.concurrency import map_rpc
 
@@ -191,19 +185,26 @@ def collect_wg_usage_params(db=None) -> Tuple[Dict[int, List[dict]], Dict[int, f
         if not result:
             continue
         try:
-            nid, email_deltas, coef = result
+            nid, email_deltas, coef, pend = result
         except Exception:
             continue
         coefficient[nid] = coef
+        if pend:
+            pending.append(pend)
         if email_deltas:
             deltas_by_node[nid] = email_deltas
 
-    return build_wg_usage_params(deltas_by_node, pubkey_map), coefficient
+    return build_wg_usage_params(deltas_by_node, pubkey_map), coefficient, pending
+
+
+def commit_wg_pending(pending: list) -> None:
+    for item in pending or []:
+        _tracker.commit_pending(item)
 
 
 def collect_panel_host_wg_usage_params(
     db=None,
-) -> Tuple[Dict[Optional[int], List[dict]], Dict[Optional[int], float]]:
+) -> Tuple[Dict[Optional[int], List[dict]], Dict[Optional[int], float], list]:
     """Collect per-peer WireGuard usage from the PANEL HOST's own interface(s).
 
     When a tunnel's exit is the panel itself (``exit_node_id is NULL`` and the
@@ -212,9 +213,8 @@ def collect_panel_host_wg_usage_params(
     only reads remote WireGuard nodes, so without this collector that traffic is
     never billed and ``online_at`` never advances (Overview / online-user freeze).
 
-    Returns ``({None: [{"uid", "value"}, ...]}, {None: 1})`` so it merges into the
-    local core's slot via :func:`merge_wg_usage`, keeping one authoritative
-    ``User.used_traffic`` across every protocol.
+    Returns ``({None: [{"uid", "value"}, ...]}, {None: 1}, pending)`` so it merges
+    into the local core's slot via :func:`merge_wg_usage`.
     """
     from app.tunnel.relay import canonical_panel_exit_wireguard, panel_tunnel_exit_active
     from app.wireguard.host_sync import read_host_wireguard_transfer
@@ -243,7 +243,7 @@ def collect_panel_host_wg_usage_params(
             planned = _plan(session)
 
     if not planned:
-        return {}, {}
+        return {}, {}, []
 
     pubkey_map, interfaces = planned
     combined: Dict[str, dict] = {}
@@ -257,10 +257,16 @@ def collect_panel_host_wg_usage_params(
             }
 
     if not combined:
-        return {}, {}
+        return {}, {}, []
 
-    deltas = _panel_host_tracker.deltas(None, combined)
-    return build_wg_usage_params({None: deltas}, pubkey_map), {None: 1}
+    deltas, pend = _panel_host_tracker.peek_deltas(None, combined)
+    pending = [pend] if pend else []
+    return build_wg_usage_params({None: deltas}, pubkey_map), {None: 1}, pending
+
+
+def commit_panel_host_wg_pending(pending: list) -> None:
+    for item in pending or []:
+        _panel_host_tracker.commit_pending(item)
 
 
 def merge_wg_usage(

@@ -1,3 +1,7 @@
+## 0.22.105
+
+- Stop quota drain from desynced baselines: implausible per-tick jumps are discarded and the baseline is resynced (no longer billed at ``USAGE_MAX_DELTA_BYTES`` every 5s). Default cap lowered to 100 MiB; same guard on sing-box.
+
 ## 0.22.104
 
 - Fix runaway traffic billing: persist Xray/WG/Finalmask cumulative baselines in Redis and clamp per-tick deltas (``USAGE_MAX_DELTA_BYTES``) so worker restarts cannot bill lifetime counters as one interval.

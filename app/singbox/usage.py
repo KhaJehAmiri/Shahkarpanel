@@ -124,6 +124,12 @@ class SingBoxUsageTracker:
         """
         known_epoch = self._load_epoch(node_id)
         fresh_engine = bool(epoch) and epoch != known_epoch
+        try:
+            from config import USAGE_MAX_DELTA_BYTES
+
+            cap = max(0, int(USAGE_MAX_DELTA_BYTES or 0))
+        except Exception:
+            cap = 104_857_600
         out: Dict[str, int] = {}
         new_last: Dict[Tuple[int, str], int] = {}
         for name, counters in (transfer or {}).items():
@@ -140,8 +146,19 @@ class SingBoxUsageTracker:
                 delta = total
             else:
                 delta = total if total < last else total - last
-            if delta > 0:
-                out[name] = delta
+            if delta <= 0:
+                continue
+            if cap and delta > cap:
+                logger.warning(
+                    "sing-box delta discarded (resync) node=%s name=%s delta=%s cap=%s",
+                    node_id,
+                    name,
+                    delta,
+                    cap,
+                )
+                self._last[key] = total
+                continue
+            out[name] = delta
         pending = {
             "node_id": node_id,
             "epoch": epoch if epoch else None,

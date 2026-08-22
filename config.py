@@ -479,7 +479,7 @@ JOB_RECORD_NODE_USAGES_INTERVAL = config("JOB_RECORD_NODE_USAGES_INTERVAL", cast
 JOB_RECORD_USER_USAGES_INTERVAL = config("JOB_RECORD_USER_USAGES_INTERVAL", cast=int, default=5)
 # Max bytes billable per user per usage tick (per cumulative counter key).
 # Clamps runaway deltas when baselines were lost or counters jumped; 0 disables.
-USAGE_MAX_DELTA_BYTES = config("USAGE_MAX_DELTA_BYTES", cast=int, default=524288000)
+USAGE_MAX_DELTA_BYTES = config("USAGE_MAX_DELTA_BYTES", cast=int, default=104857600)
 # Drop hourly per-user usage rows older than this. 0 keeps forever (will
 # eventually pin Postgres and freeze the dashboard). 14 days is enough for
 # Overview / Analytics charts.

@@ -100,18 +100,24 @@ class CumulativeByteTracker:
                 continue
             key = (group_id, str(name))
             last = self._load_last(key)
+            # Always advance pending baseline to the observed cumulative so a
+            # successful bill (or resync) never re-reads the same jump.
             new_last[key] = total
             if last is None:
                 continue
             if total < last:
+                # Core/counter reset: current reading is the interval delta.
                 delta = total
             else:
                 delta = total - last
             if delta <= 0:
                 continue
             if cap and delta > cap:
+                # Implausible jump (lost/desynced baseline, not real 5s traffic).
+                # Resync baseline immediately and bill nothing — charging ``cap``
+                # every tick used to drain accounts at ~6 MB/s until caught up.
                 logger.warning(
-                    "usage delta clamped group=%s name=%s delta=%s cap=%s total=%s last=%s",
+                    "usage delta discarded (resync) group=%s name=%s delta=%s cap=%s total=%s last=%s",
                     group_id,
                     name,
                     delta,
@@ -119,7 +125,8 @@ class CumulativeByteTracker:
                     total,
                     last,
                 )
-                delta = cap
+                self._save_last(key, total)
+                continue
             out[str(name)] = delta
         pending = {"new_last": new_last}
         return out, pending

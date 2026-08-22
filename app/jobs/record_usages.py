@@ -485,6 +485,12 @@ def record_aggregated_user_usages(api_params: dict, usage_coefficient: dict):
         return
 
     with GetDB() as db:
+        try:
+            from sqlalchemy import text
+
+            db.execute(text("SET LOCAL statement_timeout = '4000ms'"))
+        except Exception:
+            pass
         uids = [int(u["uid"]) for u in users_usage]
         billable_rows = (
             db.query(User.id, User.used_traffic, User.data_limit, User.admin_id)
@@ -528,6 +534,12 @@ def record_aggregated_user_usages(api_params: dict, usage_coefficient: dict):
     # on ``users`` (different lock order) and aborted billing ticks.
     newly_limited: list = []
     with GetDB() as db:
+        try:
+            from sqlalchemy import text
+
+            db.execute(text("SET LOCAL statement_timeout = '4000ms'"))
+        except Exception:
+            pass
         if users_usage:
             users_usage = sorted(users_usage, key=lambda p: int(p["uid"]))
             stmt = update(User). \
@@ -946,7 +958,11 @@ def record_user_usages():
         finally:
             _USAGE_TICK_LOCK.release()
 
-        if payload is not None:
+        if payload is None:
+            return
+
+        # Bill off-thread so a slow upsert never piles up collect runners.
+        def _bill():
             try:
                 _bill_usage_tick_payload(payload)
                 logger.info(
@@ -955,6 +971,8 @@ def record_user_usages():
                 )
             except Exception:
                 logger.exception("record_user_usages billing failed")
+
+        threading.Thread(target=_bill, name="usage-bill", daemon=True).start()
 
     threading.Thread(target=_run, name="record-user-usages", daemon=True).start()
 
@@ -990,6 +1008,12 @@ def _bill_usage_tick_payload(payload):
             logger.exception("online_at bump failed")
         billable_ids: set = set()
         with GetDB() as db:
+            try:
+                from sqlalchemy import text
+
+                db.execute(text("SET LOCAL statement_timeout = '4000ms'"))
+            except Exception:
+                pass
             if uids:
                 billable_ids = {
                     row[0]

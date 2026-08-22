@@ -1,3 +1,7 @@
+## 0.22.100
+
+- Bill off the collect thread; set Postgres ``statement_timeout=4s`` on usage writes so idle-in-transaction / lock waits cannot freeze traffic recording.
+
 ## 0.22.99
 
 - Billing lock is blocking (not drop-on-busy) so traffic deltas are never discarded while still keeping collect off the critical path every 5s.

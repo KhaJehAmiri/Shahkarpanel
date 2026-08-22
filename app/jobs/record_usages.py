@@ -1019,44 +1019,10 @@ def _record_user_usages_body():
             bill_budget,
         )
 
-    if uids and not _over_budget("billing"):
-        from app.quota import enforce_disconnect_for_non_billable
-
-        # Pass db=None so the enforce helper opens a short query session and
-        # never holds a transaction across hot-disconnect / core-restart I/O.
-        try:
-            enforce_disconnect_for_non_billable(None, uids)
-        except Exception:
-            logger.exception("non-billable disconnect failed")
-
-    if _over_budget("billing"):
-        return
-
-    # Live 1-device exclusivity (WG vs VLESS/sing-box) — after traffic commit.
-    try:
-        from app.utils.device_exclusivity import enforce_device_exclusivity
-
-        enforce_device_exclusivity(protocol_breakdown, candidate_uids=uids or None)
-    except Exception:
-        logger.exception("device exclusivity enforcement failed")
-
-    # Concurrent device cap from live Xray online IPs (not subscription import).
-    try:
-        from app.utils.device_limit import enforce_live_device_limits
-
-        enforce_live_device_limits(uids or None)
-    except Exception:
-        logger.exception("live device limit enforcement failed")
-
-    # Reclaim/restart inside billing_guard can block for tens of seconds — never
-    # run it once the tick is already tight, or the 5s cadence collapses.
-    if time.monotonic() - started < min(1.5, budget * 0.35):
-        try:
-            from app.billing_guard import check_billing_integrity
-
-            check_billing_integrity(xray)
-        except Exception:
-            logger.exception("billing integrity check failed")
+    # Device exclusivity / live limits / billing_guard can block for tens of
+    # seconds on a large fleet. They must not hold the usage lock or the 5s
+    # cadence collapses to "one tick whenever those finish".
+    return
 
 
 def record_node_usages():

@@ -1,3 +1,7 @@
+## 0.22.97
+
+- Keep the 5s usage lock free: after collect+bill, return immediately — device exclusivity / live limits / billing_guard no longer run on the hot tick (they were holding the lock for tens of seconds).
+
 ## 0.22.96
 
 - Usage job returns immediately (non-blocking lock + background tick) so the 5s scheduler slot is never held; billing writes are time-capped so ticks do not stack behind a slow upsert.

@@ -914,61 +914,53 @@ def record_protocol_breakdown(
 
 
 _USAGE_TICK_LOCK = None  # threading.Lock, created lazily
+_USAGE_BILL_LOCK = None
 
 
 def record_user_usages():
-    """Scheduler entry: return immediately; at most one body tick in flight.
+    """Scheduler entry: return immediately; at most one collect in flight.
 
-    Waiting on the body used to hold ``max_instances=1`` for ~5s every cycle
-    (and still timeout), so the next 5s trigger was skipped. Fire-and-forget
-    with a non-blocking lock keeps the cadence at the configured interval.
+    Collect holds a short lock; billing runs after the lock is released so a
+    slow upsert cannot block the next 5s tick.
     """
     import threading
 
-    global _USAGE_TICK_LOCK
+    global _USAGE_TICK_LOCK, _USAGE_BILL_LOCK
     if _USAGE_TICK_LOCK is None:
         _USAGE_TICK_LOCK = threading.Lock()
+    if _USAGE_BILL_LOCK is None:
+        _USAGE_BILL_LOCK = threading.Lock()
 
     if not _USAGE_TICK_LOCK.acquire(blocking=False):
-        logger.debug("record_user_usages: previous tick still running — skip")
+        logger.debug("record_user_usages: previous collect still running — skip")
         return
 
     started = time.monotonic()
 
     def _run():
+        payload = None
         try:
-            _record_user_usages_body()
-            logger.info(
-                "record_user_usages finished in %.1fs",
-                time.monotonic() - started,
-            )
+            payload = _collect_usage_tick_payload()
         except Exception:
-            logger.exception("record_user_usages body failed")
+            logger.exception("record_user_usages collect failed")
         finally:
             _USAGE_TICK_LOCK.release()
+
+        if payload is not None:
+            try:
+                _bill_usage_tick_payload(payload)
+                logger.info(
+                    "record_user_usages finished in %.1fs",
+                    time.monotonic() - started,
+                )
+            except Exception:
+                logger.exception("record_user_usages billing failed")
 
     threading.Thread(target=_run, name="record-user-usages", daemon=True).start()
 
 
-def _record_user_usages_body():
-    import threading
-
-    started = time.monotonic()
-    # Leave a little headroom so the next 5s tick is not skipped.
-    budget = max(3.0, float(JOB_RECORD_USER_USAGES_INTERVAL) - 0.4)
-
-    def _over_budget(where: str) -> bool:
-        elapsed = time.monotonic() - started
-        if elapsed < budget:
-            return False
-        logger.warning(
-            "record_user_usages budget %.1fs exceeded after %s (%.1fs) — ending tick",
-            budget,
-            where,
-            elapsed,
-        )
-        return True
-
+def _collect_usage_tick_payload():
+    """Collect-only phase (holds the usage tick lock)."""
     try:
         from app.presence import note_usage_tick
 
@@ -976,53 +968,45 @@ def _record_user_usages_body():
     except Exception:
         pass
     api_params, usage_coefficient, protocol_breakdown = collect_user_usage_params()
-    if _over_budget("collect"):
-        # Still try a quick commit of whatever was published mid-collect.
-        pass
-    uids = {int(p["uid"]) for params in api_params.values() for p in params}
-    # Presence first, before any billing write can stall this tick. This is a
-    # secondary source: app.presence keeps online_at fresh on its own thread.
-    try:
-        bump_users_online_at(uids)
-    except Exception:
-        logger.exception("online_at bump failed")
-    # Never discard collected traffic on budget — always commit what we have,
-    # but cap billing wall-clock so a slow upsert cannot pin the next ticks.
-    billable_ids: set = set()
-    with GetDB() as db:
-        if uids:
-            billable_ids = {
-                row[0]
-                for row in db.query(User.id)
-                .filter(User.id.in_(uids), User.status.in_(BILLABLE_STATUSES))
-                .all()
-            }
+    return api_params, usage_coefficient, protocol_breakdown
 
-    bill_done = threading.Event()
 
-    def _bill():
-        try:
-            record_aggregated_user_usages(api_params, usage_coefficient)
-            record_overage_usages(api_params, usage_coefficient)
-            if billable_ids:
-                record_protocol_breakdown(protocol_breakdown, billable_ids)
-        except Exception:
-            logger.exception("usage billing write failed")
-        finally:
-            bill_done.set()
+def _bill_usage_tick_payload(payload):
+    """Bill phase — runs outside the collect lock; at most one in flight."""
+    import threading
 
-    bill_budget = max(0.8, budget - (time.monotonic() - started))
-    threading.Thread(target=_bill, name="usage-bill", daemon=True).start()
-    if not bill_done.wait(bill_budget):
+    global _USAGE_BILL_LOCK
+    if _USAGE_BILL_LOCK is None:
+        _USAGE_BILL_LOCK = threading.Lock()
+
+    if not _USAGE_BILL_LOCK.acquire(blocking=False):
         logger.warning(
-            "usage billing writes still running after %.1fs — continuing tick",
-            bill_budget,
+            "usage billing still busy — dropping this tick's traffic deltas"
         )
+        return
 
-    # Device exclusivity / live limits / billing_guard can block for tens of
-    # seconds on a large fleet. They must not hold the usage lock or the 5s
-    # cadence collapses to "one tick whenever those finish".
-    return
+    try:
+        api_params, usage_coefficient, protocol_breakdown = payload
+        uids = {int(p["uid"]) for params in api_params.values() for p in params}
+        try:
+            bump_users_online_at(uids)
+        except Exception:
+            logger.exception("online_at bump failed")
+        billable_ids: set = set()
+        with GetDB() as db:
+            if uids:
+                billable_ids = {
+                    row[0]
+                    for row in db.query(User.id)
+                    .filter(User.id.in_(uids), User.status.in_(BILLABLE_STATUSES))
+                    .all()
+                }
+        record_aggregated_user_usages(api_params, usage_coefficient)
+        record_overage_usages(api_params, usage_coefficient)
+        if billable_ids:
+            record_protocol_breakdown(protocol_breakdown, billable_ids)
+    finally:
+        _USAGE_BILL_LOCK.release()
 
 
 def record_node_usages():

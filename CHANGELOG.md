@@ -1,3 +1,7 @@
+## 0.22.98
+
+- Split usage collect and bill locks: collect runs every 5s; billing serializes afterward so a slow DB upsert cannot block the next collect (and no traffic deltas are dropped).
+
 ## 0.22.97
 
 - Keep the 5s usage lock free: after collect+bill, return immediately — device exclusivity / live limits / billing_guard no longer run on the hot tick (they were holding the lock for tens of seconds).
